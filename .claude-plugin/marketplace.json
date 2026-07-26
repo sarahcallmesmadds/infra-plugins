@@ -5,20 +5,24 @@
     "url": "https://github.com/sarahcallmesmadds"
   },
   "metadata": {
-    "description": "Plugins for people building with AI who aren't systems engineers.",
-    "pluginRoot": "./plugins"
+    "description": "Plugins for people building with AI who aren't systems engineers."
   },
   "plugins": [
     {
       "name": "guardrails",
-      "source": "guardrails",
+      "source": "./plugins/guardrails",
       "description": "Blocks commits to protected branches and irreversible deletes, and flags prompt injection in content the model reads or writes.",
       "version": "0.1.0",
       "author": {
         "name": "Sarah Madden"
       },
       "category": "security",
-      "tags": ["safety", "prompt-injection", "git", "hooks"]
+      "tags": [
+        "safety",
+        "prompt-injection",
+        "git",
+        "hooks"
+      ]
     }
   ]
 }
