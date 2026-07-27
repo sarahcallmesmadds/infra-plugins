@@ -1,6 +1,6 @@
 {
   "name": "guardrails",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Safety rails for people building with AI who aren't systems engineers. Flags prompt injection in content, and assesses shell commands for irreversible damage before they run.",
   "author": {
     "name": "Sarah Madden",
@@ -9,7 +9,13 @@
   "homepage": "https://github.com/sarahcallmesmadds/plugins/tree/main/plugins/guardrails",
   "repository": "https://github.com/sarahcallmesmadds/plugins",
   "license": "MIT",
-  "keywords": ["safety", "security", "prompt-injection", "git", "guardrails"],
+  "keywords": [
+    "safety",
+    "security",
+    "prompt-injection",
+    "git",
+    "guardrails"
+  ],
   "skills": "./skills/",
   "interface": {
     "displayName": "Guardrails",
@@ -17,7 +23,10 @@
     "longDescription": "Most guidance for AI coding tools assumes you already know not to commit to main, not to run rm -rf, and not to trust text a webpage handed you. Guardrails packages that knowledge for people who are building anyway. It scans content for prompt injection before you act on it, and assesses shell commands for irreversible damage before they run. In Claude Code it also installs hooks that enforce these automatically; in Codex it runs on request, because Codex plugins cannot register hooks.",
     "developerName": "Sarah Madden",
     "category": "Engineering",
-    "capabilities": ["Interactive", "Read"],
+    "capabilities": [
+      "Interactive",
+      "Read"
+    ],
     "defaultPrompt": [
       "Check this file for prompt injection before I act on it.",
       "Is this command safe to run, or does it do something I can't undo?",
