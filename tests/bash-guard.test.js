@@ -24,17 +24,28 @@ const { execFileSync } = require('child_process');
 const HOOK = path.join(__dirname, '..', 'plugins', 'guardrails', 'hooks', 'bash-guard.js');
 const FAKE_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrails-home-'));
 
+// Somewhere to stand that is definitely not a git repository. The home
+// directory is the obvious choice and the wrong one: plenty of people keep
+// their dotfiles in a repo at $HOME, and on those machines a test meaning "the
+// hook is nowhere useful" would quietly start meaning something else.
+const NOWHERE = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrails-nowhere-'));
+
 // Runs the hook the way the harness does and returns its parsed stdout, or
 // null when it stays quiet, which is how a hook says "no objection".
-function runHook(command, cwd) {
+// `eventCwd` goes in the event, the way the harness reports where the command
+// will run. `processCwd` is where the hook process itself is spawned. Keeping
+// them separate is the whole point: they are frequently different, and the
+// guard used to read only the second one.
+function runHook(command, { eventCwd, processCwd } = {}) {
   const event = JSON.stringify({
     tool_name: 'Bash',
     tool_input: { command },
+    ...(eventCwd ? { cwd: eventCwd } : {}),
   });
   const stdout = execFileSync(process.execPath, [HOOK], {
     input: event,
     encoding: 'utf8',
-    cwd: cwd || __dirname,
+    cwd: processCwd || __dirname,
     env: { ...process.env, HOME: FAKE_HOME },
   }).trim();
   return stdout ? JSON.parse(stdout) : null;
@@ -123,7 +134,131 @@ check('committing on a feature branch is left alone', () => {
   fs.rmSync(repo, { recursive: true, force: true });
 });
 
-fs.rmSync(FAKE_HOME, { recursive: true, force: true });
+// --- the repository the guard reads ---------------------------------------
+//
+// A hook runs in its own process, spawned wherever the harness chose. That is
+// not necessarily where the command will run, and the Bash tool keeps its
+// working directory across calls, so `cd repo` in one call and a bare
+// `git commit` in the next is ordinary. Only the event knows about the first
+// call. These two pin that the event is what gets believed.
 
-console.log(`\n7 checks, ${failed} failed`);
+check('a bare commit is judged against the event cwd, not the hook process cwd', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrails-repo-'));
+  execFileSync('git', ['init', '-b', 'main', repo], { stdio: 'ignore' });
+  const reason = assertDenies(
+    // No `-C` and no `cd`, so the only clue to the repository is the event.
+    // The hook process deliberately sits somewhere else entirely.
+    runHook('git commit -m "wip"', { eventCwd: repo, processCwd: NOWHERE }),
+    'bare commit with event cwd on main'
+  );
+  assert.ok(reason.includes('main'), `reason did not name the branch: ${reason}`);
+  fs.rmSync(repo, { recursive: true, force: true });
+});
+
+check('an explicit -C still wins over the event cwd', () => {
+  // Precedence matters: the command says where it acts, and it overrides the
+  // ambient directory. A feature branch named explicitly must not be blocked
+  // just because the session happens to be sitting on main.
+  const onMain = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrails-repo-'));
+  const onFeature = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrails-repo-'));
+  execFileSync('git', ['init', '-b', 'main', onMain], { stdio: 'ignore' });
+  execFileSync('git', ['init', '-b', 'some-feature', onFeature], { stdio: 'ignore' });
+  assert.strictEqual(
+    runHook(`git -C ${onFeature} commit -m "wip"`, { eventCwd: onMain }),
+    null,
+    'hook read the event cwd instead of the -C path'
+  );
+  fs.rmSync(onMain, { recursive: true, force: true });
+  fs.rmSync(onFeature, { recursive: true, force: true });
+});
+
+// The field name above is not a guess. `cwd` is a documented common field on
+// every hook event, and it appears in the published PreToolUse example next to
+// session_id, transcript_path, permission_mode and hook_event_name. This test
+// feeds that whole documented event rather than the two fields the guard reads,
+// so the assertion is against the contract as published and not against a
+// convenient subset of it. If the harness ever renames the field, this is where
+// it surfaces.
+check('the guard reads the PreToolUse event exactly as documented', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrails-repo-'));
+  execFileSync('git', ['init', '-b', 'main', repo], { stdio: 'ignore' });
+  const documented = JSON.stringify({
+    session_id: 'abc123',
+    transcript_path: '/home/user/.claude/projects/x/transcript.jsonl',
+    cwd: repo,
+    permission_mode: 'default',
+    hook_event_name: 'PreToolUse',
+    tool_name: 'Bash',
+    tool_input: { command: 'git commit -m "wip"', description: 'Commit' },
+    tool_use_id: 'toolu_01ABC123',
+  });
+  const stdout = execFileSync(process.execPath, [HOOK], {
+    input: documented,
+    encoding: 'utf8',
+    cwd: NOWHERE,
+    env: { ...process.env, HOME: FAKE_HOME },
+  }).trim();
+  const reason = assertDenies(stdout ? JSON.parse(stdout) : null, 'documented event');
+  assert.ok(reason.includes('main'), `reason did not name the branch: ${reason}`);
+  fs.rmSync(repo, { recursive: true, force: true });
+});
+
+// The fallback is deliberate, and it fails open. Worth being explicit about
+// why, because the alternative looks safer and is not.
+//
+// If `cwd` ever went missing, hard-failing every commit would take the guard
+// from "checks the wrong repo in one uncommon case" to "nobody can commit
+// anything", for everyone, on a plugin whose whole job is to stay out of the
+// way until it matters. Degrading to the process directory is what the guard
+// did for its entire life before this change, so the floor here is the
+// previous shipped behaviour rather than nothing at all.
+check('a missing cwd degrades to the process directory rather than crashing', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrails-repo-'));
+  execFileSync('git', ['init', '-b', 'main', repo], { stdio: 'ignore' });
+  // No cwd in the event, hook process sitting in the repo. It should still
+  // find main from where it stands, and it must not throw.
+  const reason = assertDenies(
+    runHook('git commit -m "wip"', { processCwd: repo }),
+    'no cwd in event'
+  );
+  assert.ok(reason.includes('main'), `reason did not name the branch: ${reason}`);
+  fs.rmSync(repo, { recursive: true, force: true });
+});
+
+check('a missing cwd outside any repository stays silent rather than erroring', () => {
+  assert.strictEqual(
+    runHook('git commit -m "wip"', { processCwd: NOWHERE }),
+    null,
+    'hook objected or crashed when it could not identify a repository'
+  );
+});
+
+// --- disposable paths spelled either way ----------------------------------
+
+check('/private/tmp is as disposable as /tmp, being the same directory', () => {
+  // On macOS /tmp is a symlink to /private/tmp. Anything that reports a real
+  // path rather than the symlink produced the blocked spelling every time, so
+  // the guard fired constantly on genuinely throwaway directories, which is
+  // how a guard teaches people to click through it.
+  assert.strictEqual(
+    runHook('rm -rf /tmp/scratch-dir'),
+    null,
+    'hook objected to /tmp, which was already meant to be allowed'
+  );
+  assert.strictEqual(
+    runHook('rm -rf /private/tmp/scratch-dir'),
+    null,
+    'hook objected to /private/tmp while allowing the identical /tmp path'
+  );
+});
+
+check('a real path outside the disposable list is still denied', () => {
+  // The pair above widens one directory. It must not have widened the prefix.
+  assertDenies(runHook('rm -rf /private/etc/something'), '/private/etc/something');
+});
+
+fs.rmSync(FAKE_HOME, { recursive: true, force: true });
+fs.rmSync(NOWHERE, { recursive: true, force: true });
+
+console.log(`\n14 checks, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);
