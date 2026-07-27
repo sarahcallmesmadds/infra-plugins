@@ -33,7 +33,7 @@ You are logging a correction to the build loop bug queue at `~/.claude/build-loo
 
 If there is no session history (brand new session, /flag-issue run immediately with no prior exchanges), open with:
 
-> "No recent context to pull from — what went wrong, and what was it that misbehaved?"
+> "No recent context to pull from. What went wrong, and what was it that misbehaved?"
 
 Then proceed to Step 1 using whatever the user tells you.
 
@@ -49,7 +49,7 @@ Look back at the last 3–5 exchanges in the current session. Extract five piece
 - If the user's last message names something explicitly (e.g. "the daily-brief skill did X", "the style hook blocked that"), use that name.
 - If a slash command was recently invoked, use that command's name.
 - If a hook fired and its output is in the transcript, use the hook's name from that output.
-- Otherwise, make a best guess from context and ask: "Which one is this about? My best guess is `{guess}` — is that right?"
+- Otherwise, make a best guess from context and ask: "Which one is this about? My best guess is `{guess}`. Is that right?"
 
 **2. target_kind** — one of `skill`, `hook`, `command`, `plugin`, `script`, `other`. Infer it rather than asking:
 
@@ -111,7 +111,7 @@ You show this in the draft at Step 2, so a wrong guess costs nothing. Asking abo
 
 **5. what_expected** — what the user said it should have done. If they stated it explicitly, quote them. If not, ask ONE clarifying question:
 
-> "Got it — what should it have done instead? A rough description is fine."
+> "Got it. What should it have done instead? A rough description is fine."
 
 **6. correct_example** — a concrete example of correct output. If the user gave one, use it verbatim. If not, ask ONE question:
 
@@ -140,7 +140,7 @@ On the user's response:
 
 - `y`, `yes`, `sure`, `go`, or any clear affirmative → proceed to Step 3.
 - `edit` or any change request → update the draft with them edits, re-show, ask again.
-- `skip`, `no`, `nope`, or any negative → respond "Skipped — nothing logged." and stop. Do not write anything.
+- `skip`, `no`, `nope`, or any negative → respond "Skipped, nothing logged." and stop. Do not write anything.
 
 **No silent writes. Ever.**
 
@@ -218,7 +218,7 @@ After the primary entry is written in Step 4, flag anything the map says depends
 Read `~/.claude/build-loop/DEPS.json` using the Read tool.
 
 **If the read fails** (file missing, permission denied, or the content is not valid JSON):
-> Print: "⚠ DEPS.json missing or unreadable — skipping dep-review flagging. Run /audit-deps to fix."
+> Print: "⚠ DEPS.json missing or unreadable, skipping dep-review flagging. Run /audit-deps to fix."
 > Jump to Step 4c with `dep_reviews_written: 0`. Never block the primary write.
 
 ### Look up the captured target's entry
@@ -248,7 +248,7 @@ A pre-v3 map is the file where `plugins:cli` meant three different things, so th
 **c. Nothing matched.** There is no entry, which is the case handled below.
 
 **If the key is NOT in the map:**
-> Print: "⚠ {target} not in DEPS.json — skipping dep-review flagging. Run /audit-deps to add it."
+> Print: "⚠ {target} not in DEPS.json, skipping dep-review flagging. Run /audit-deps to add it."
 > Jump to Step 4c with `dep_reviews_written: 0`.
 
 **If the key IS present**, look at its `dependents`. If the array is empty, jump to Step 4c with `dep_reviews_written: 0` — there's nothing to flag, which is the common case.
@@ -286,7 +286,7 @@ Never write `{P}/{X}` into the entry's `target`, its `id`, or its filename. A qu
    session_id:       {same as primary entry's session_id}
    session_cwd:      {same as primary entry's session_cwd}
    what_happened:    "Review: {X} may be affected by fix to {primary target}. Reason: {Y}"
-   what_expected:    "(not applicable — this is a dependency review)"
+   what_expected:    "(not applicable, this is a dependency review)"
    correct_example:  "(not applicable)"
    source:           "dep-review-auto"
    urgency_hint:     {computed above}
@@ -316,7 +316,7 @@ Pluralization: use "entry" when `dep_reviews_written == 1`, "entries" otherwise.
 ### Failure handling inside Step 4b
 
 If ANY dep-review write fails (Write tool error, tempfile issue), continue with the remaining dependents and note the failure in the confirmation:
-> "Flagged {K} of {total} dep-reviews — {total - K} failed to write. Check queue directory manually."
+> "Flagged {K} of {total} dep-reviews, {total - K} failed to write. Check queue directory manually."
 
 The primary entry write is never rolled back because a dep-review write failed. The primary is the source of truth; dep-reviews are convenience.
 
@@ -326,7 +326,7 @@ The primary entry write is never rolled back because a dep-review write failed. 
 
 - If the Write tool fails for any reason, tell the user exactly what failed. Do NOT retry silently. They may want to fix the root cause before retrying.
 - If the user declines to answer a clarifying question, record the missing field as `"(not provided)"` and still write the entry — a partial entry is better than a lost correction. Flag this in the confirmation message:
-  > "Logged with missing {field} — you can edit the file later at `{path}`."
+  > "Logged with missing {field}. You can edit the file later at `{path}`."
 - If `repo` ends up as `"unknown"`, add a note in the `notes` array:
-  `{"ts": "{created_at}", "text": "repo unknown — target_path {target_path} is outside both known roots. Resolve before Phase 3 can apply the fix."}`
+  `{"ts": "{created_at}", "text": "repo unknown, target_path {target_path} is outside both known roots. Resolve before Phase 3 can apply the fix."}`
 - If DEPS.json cannot be read in Step 4b, NEVER block the primary confirmation. The primary entry is the source of truth. Dep-review is best-effort.

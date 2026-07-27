@@ -166,6 +166,33 @@ answer, not its conclusion.
 opinion about whether something is any good, and it will not rewrite anything
 you did not complain about.
 
+## Upgrading to 0.2.4
+
+Twenty-four output templates across seven skills told the model to print an em
+dash. `slop-check` ships a Stop hook that blocks exactly that, so a skill would
+produce its message, the hook would block it, and the model would rewrite it.
+Every single time.
+
+Nobody noticed because the rewrite succeeds and the answer still arrives, just
+after an extra round trip. The plugins were failing a rule their sibling plugin
+enforces.
+
+Fixed in `flag-issue`, `apply-fix`, `verify-fix`, `revert-fix`, `list-bugs` and
+`audit-deps`. Nothing else changed: the messages say the same things with a
+comma or a full stop instead.
+
+Step headings and prose keep theirs. `## Step 3 — Gather evidence` is structure
+and never reaches anybody, so rewriting it would churn a lot of files to fix
+nothing. The line that matters is the one inside quotes that a skill says to
+display.
+
+`tests/output-templates.test.js` keeps new ones out. It is a floor rather than
+an audit: it matches the shapes that clearly print a message, which is fourteen
+of the twenty-four. The rest are values written into a file that gets displayed
+later and carry no syntax marking them as output. Widening the pattern to catch
+those would start flagging prose, and a linter that cries wolf gets switched
+off.
+
 ## Upgrading to 0.2.3
 
 0.2.2 gave the composite key a plugin segment and stopped there. The

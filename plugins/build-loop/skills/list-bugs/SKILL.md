@@ -35,7 +35,7 @@ Determine the human-readable `filter_label`:
    ```bash
    ls ~/.claude/build-loop/queue/*.json 2>/dev/null
    ```
-2. If the `ls` returns nothing (no output, no files, or directory does not exist): print "Queue is empty — nothing to show." and stop. Do NOT error.
+2. If the `ls` returns nothing (no output, no files, or directory does not exist): print "Queue is empty, nothing to show." and stop. Do NOT error.
 3. For each `.json` file listed, read it with the Read tool.
 4. For each file, attempt to parse its contents as JSON:
    - If parsing succeeds: extract `target`, `target_kind`, `what_happened`, `status`, `created_at`, `what_expected`, `target_path`, `dedup_key`, `type` fields. Apply the read-time defaults from SCHEMA.md so an older entry never crashes this view: a missing `type` reads as `"primary"`, a missing `target` reads from `skill`, a missing `target_path` reads from `skill_path`, and a missing `target_kind` reads as `"skill"`.
@@ -85,7 +85,7 @@ If at least one `Open` entry exists: find the oldest one (lowest `created_at`) a
 
 ```
 **Most urgent open item:**
-- Target: {target} {if type == "dep-review" append "  (dep-review — triggered by parent " + parent_id + ")"}
+- Target: {target} {if type == "dep-review" append "  (dep-review, triggered by parent " + parent_id + ")"}
 - What happened: {full what_happened, not truncated}
 - What expected: {full what_expected}
 - Logged: {created_at as YYYY-MM-DD} ({days-ago} days ago, where days-ago = today's date minus created_at date)
@@ -98,12 +98,12 @@ If there are zero `Open` entries (after filtering), skip this block entirely.
 
 Always end with this exact line, regardless of what was shown above:
 
-"Run `/flag-issue` to log a new correction. Run `/list-bugs all` to see every status. Dep-review entries are reviews triggered automatically — see SCHEMA.md Type enum for details."
+"Run `/flag-issue` to log a new correction. Run `/list-bugs all` to see every status. Dep-review entries are reviews triggered automatically. See SCHEMA.md Type enum for details."
 
 ### Failure handling
 
 - Never throw. Never exit without producing some output.
-- If ALL files fail to read or parse, still print the "Queue is empty — nothing to show." message rather than an error.
+- If ALL files fail to read or parse, still print the "Queue is empty, nothing to show." message rather than an error.
 - If `what_happened` or `what_expected` fields are missing from an entry, substitute `"(missing)"` rather than crashing.
 - If `created_at` is missing or unparseable, treat as `"?"` for display and sort these entries last within their status group.
 - If the `type` field is missing from an entry (Phase 1 v1 entries), render it as `"primary"`. Never display an empty column.
