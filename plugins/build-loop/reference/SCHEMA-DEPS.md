@@ -109,6 +109,25 @@ A lookup that quietly finds nothing looks exactly like a target with no dependen
 
 ## Entry Shape
 
+An entry inside a `plugin-repo` root carries `plugin` beside `target`, for the
+same reason an edge does: the plugin has to be readable as a field, not only
+recoverable by parsing the key. Anything building an edge out of this entry
+reads `entry.plugin`, and if that only lives in the key it reads nothing.
+
+```json
+{
+  "target": "hook-io",
+  "plugin": "guardrails",
+  "kind": "script",
+  "repo": "plugins",
+  "path": "~/Projects/plugins/plugins/guardrails/scripts/hook-io.js",
+  "depends_on": [],
+  "dependents": []
+}
+```
+
+The general shape, outside a `plugin-repo` root:
+
 ```json
 {
   "target": "daily-brief",
@@ -136,7 +155,8 @@ A lookup that quietly finds nothing looks exactly like a target with no dependen
 
 | Field | Type | Required | Description | Notes |
 |-------|------|----------|-------------|-------|
-| `target` | string | yes | Name on disk. Matches the name portion of the composite key. | Called `skill` before v2. |
+| `target` | string | yes | Name on disk. Bare, matching the name portion of the composite key after any plugin segment. | Called `skill` before v2. |
+| `plugin` | string | no | Which plugin inside a `plugin-repo` root holds this. Required when `repo` names a `plugin-repo` root, absent otherwise. | Added in v3. Without it the plugin exists only inside the key, so anything building an edge from this entry has nothing to read. |
 | `kind` | string | yes | `skill`, `hook`, `command`, `plugin`, `script`, or `other`. | Same vocabulary as the queue's `target_kind`. Defaults to `"skill"` when absent, for v1 files. |
 | `repo` | string | yes | Which root owns this. | Matches the repo portion of the composite key. |
 | `path` | string | yes | Absolute path to the file a fix would edit. | Example: `~/.claude/hooks/style-lint.js`. Not always a `SKILL.md`. |
@@ -162,15 +182,36 @@ Each item in `depends_on` and `dependents`:
 }
 ```
 
+Inside a `plugin-repo` root, an edge also carries `plugin`:
+
+```json
+{
+  "target": "hook-io",
+  "plugin": "guardrails",
+  "kind": "script",
+  "repo": "plugins",
+  "reason": "bash-guard requires readEvent and block from scripts/hook-io.js"
+}
+```
+
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `target` | string | yes | Name of the related thing. Called `skill` before v2. |
+| `target` | string | yes | Name of the related thing. **Bare, never `plugin/name`.** Called `skill` before v2. |
+| `plugin` | string | no | Which plugin inside a `plugin-repo` root holds it. Required when `repo` names a `plugin-repo` root, absent otherwise. |
 | `kind` | string | yes | What sort of thing it is. Defaults to `"skill"` when absent. |
 | `repo` | string | yes | Root that owns it. |
 | `reason` | string | yes | One sentence, plain language, on what the relationship is. |
 | `confidence` | string | no | Include only when flagging an uncertain relationship. Value: `"low"`. |
 
+**`plugin` is a separate field and `target` stays bare.** The composite key an edge points at is rebuilt as `{repo}:{plugin}/{target}`, or `{repo}:{target}` where there is no `plugin`.
+
+Folding the plugin into `target` looks equivalent and is not. `/flag-issue` copies an edge's `target` verbatim into the `target` field of the dep-review entry it writes, and a queue entry's `target` is a bare name on disk that later has to resolve to a file. An edge saying `"target": "guardrails/hook-io"` produces a queue entry for something called `guardrails/hook-io`, which no search will ever find.
+
+Leaving `plugin` out entirely is equally wrong in the other direction. `cli`, `config`, `hook-io` and `patterns` each exist in more than one plugin, so a bare edge naming `cli` cannot say which one it means, and that ambiguity is the exact thing the composite key was introduced to remove. The edge needs both halves because it feeds two different consumers: the key, which wants the plugin, and the queue entry, which must not have it.
+
 **Edge-level `confidence` is optional** and marks one uncertain relationship. The entry-level `confidence` is required and describes overall map accuracy for that entry. Two different fields, related purposes, do not conflate them.
+
+**Reading an edge with no `plugin` under a `plugin-repo` root.** That is a map written before v3, or one written by hand. Resolve it with the same ordered lookup used for keys: exact, then bare, then a unique `/{target}` suffix match, and report an ambiguous name rather than choosing.
 
 ---
 

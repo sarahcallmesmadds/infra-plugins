@@ -152,6 +152,100 @@ check('an ambiguous match is reported rather than guessed at', () => {
   }
 });
 
+// --- edges point at a key without becoming one -----------------------------
+//
+// The key carries the plugin. An edge has to reach the same key, and it also
+// feeds /flag-issue, which copies an edge's `target` verbatim into a queue
+// entry. A queue entry's target is a name on disk. So the plugin has to travel
+// beside `target`, not inside it: fold it in and every dep-review entry names
+// something like `guardrails/hook-io`, which no search will ever resolve.
+
+check('the edge format carries plugin as its own field', () => {
+  assert.ok(
+    /\| `plugin` \| string \| no \|/.test(SCHEMA),
+    'the edge field table has no `plugin`, so an edge inside a plugin-repo root '
+    + 'cannot say which plugin it means'
+  );
+  assert.ok(
+    /\*\*Bare, never `plugin\/name`\.\*\*/.test(SCHEMA),
+    'nothing says the edge target stays bare, which is the half that breaks quietly'
+  );
+});
+
+check('flag-issue keeps the edge target bare in the entry it writes', () => {
+  const t = SKILLS['flag-issue'];
+  assert.ok(
+    /plugin: P/.test(t),
+    'flag-issue does not read the edge plugin field'
+  );
+  assert.ok(
+    /Never write `\{P\}\/\{X\}` into the entry's `target`/.test(t),
+    'flag-issue does not forbid writing a slashed name into a queue entry, '
+    + 'which produces an entry that cannot resolve to a file'
+  );
+});
+
+check('audit-deps writes plugin beside target, and carries it to back-edges', () => {
+  const t = SKILLS['audit-deps'];
+  assert.ok(
+    /never `\{"target": "guardrails\/hook-io"\}`/.test(t),
+    'audit-deps does not say to keep the edge target bare'
+  );
+  assert.ok(
+    /plugin: A\.plugin/.test(t),
+    'the back-edge step drops plugin, so dependents lose it while depends_on keeps it'
+  );
+});
+
+check('an entry stores plugin as a field, so back-edges have it to read', () => {
+  // The back-edge step reads A.plugin off an entry. If the plugin only lives
+  // inside the composite key, that read returns nothing and every dependent is
+  // written without one, which is the ambiguity this change removed from edges
+  // reappearing on the reverse direction.
+  assert.ok(
+    /\| `plugin` \| string \| no \| Which plugin inside a `plugin-repo` root holds this/.test(SCHEMA),
+    'the entry field table has no `plugin`, so A.plugin in the back-edge step '
+    + 'reads a field that does not exist'
+  );
+  assert.ok(
+    /`plugin` when the root is a\n  `plugin-repo`/.test(SKILLS['audit-deps'])
+      || /plus \*\*`plugin` when the root is a/.test(SKILLS['audit-deps']),
+    'audit-deps never writes plugin onto the entry it builds'
+  );
+});
+
+check('a dep-review id and dedup key carry the plugin, so two cli entries survive', () => {
+  // target and id want opposite things. target is a name that has to resolve to
+  // a file, so it stays bare. id, filename and dedup_key exist to be unique,
+  // and a bare name is not: one fix touching something both guardrails/cli and
+  // slop-check/cli depend on produced the same filename twice and the same
+  // dedup key twice, so one review overwrote the other or was skipped as a
+  // duplicate. The dependent in the other plugin then vanished with no message,
+  // inside the machinery built to stop exactly that.
+  const t = SKILLS['flag-issue'];
+  assert.ok(
+    /dep-review-\{slug\(P\)\}-\{slug\(X\)\}/.test(t),
+    'the dep-review id is built from the bare name, so two dependents sharing a '
+    + 'name across plugins collide on one filename'
+  );
+  assert.ok(
+    /dep-review::\{P\}\/\{X\}::/.test(t),
+    'the dedup key is built from the bare name, so the second dependent is '
+    + 'skipped as a duplicate of the first'
+  );
+});
+
+check('the dependents warning names the plugin, not just the bare name', () => {
+  // Guidance said to show {plugin}/{target}; the template below it still said
+  // {dep.target}. The template is the part that reaches the user.
+  const t = SKILLS['apply-fix'];
+  assert.ok(
+    /\{dep\.plugin\}\/\{dep\.target\}/.test(t),
+    'the warning template still shows a bare dependent name, so a fix can warn '
+    + 'about "cli" without saying which of the three it means'
+  );
+});
+
 // --- and the repository this rule exists for -------------------------------
 
 function targetsInRepo() {
@@ -200,5 +294,5 @@ check('plugin-qualified keys are unique across the whole repository', () => {
   }
 });
 
-console.log(`\n11 checks, ${failed} failed`);
+console.log(`\n17 checks, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);
