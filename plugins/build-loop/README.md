@@ -166,6 +166,28 @@ answer, not its conclusion.
 opinion about whether something is any good, and it will not rewrite anything
 you did not complain about.
 
+## Upgrading to 0.2.5
+
+`/built-check` decided where to look on disk purely from an item's `kind`, and
+for kind `other` the answer was that disk evidence is not available at all. So
+an item whose own text names the file it produced was told there was no sign of
+it, even with the file sitting exactly where the item said it would be.
+
+It now reads the item's text first. If `what` or `why` names an explicit
+filesystem path, that path is checked whatever the `kind` is, and the kind
+conventions are the fallback for items that name nothing. The rule that
+evidence must be newer than the item still applies, so a file that was already
+there does not close anything.
+
+`reference/SCHEMA.md` changed in the same commit, because it stated the same
+rule in different words. "No convention" means there is no layout to guess
+from, not that a path is unreachable.
+
+Found by driving `/built-check` during an audit of the skills that had never
+been run. It reached the right answer on an item of kind `other` by reading a
+path out of the item's text, which nothing in the spec told it to do, so the
+next run was free not to.
+
 ## Upgrading to 0.2.4
 
 Twenty-four output templates across seven skills told the model to print an em

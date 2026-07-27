@@ -4,6 +4,9 @@ type: human
 description: Cross-checks the to-build list at ~/.claude/build-loop/to-build/ against what has actually been built, and offers to close the finished items in one step. Looks for evidence in the git log of every configured root, on disk, and in the current session. Use at the end of a session, when wrapping up, or when the user asks "what did I ship", "did I build any of this", "close the ones I've done", "is anything on the list done", or explicitly invokes /built-check. Shows the evidence for each item and closes nothing without an explicit yes.
 argument-hint: "[optional: number of days back to look, default 90]"
 allowed-tools: Read, Write, Bash(ls:*), Bash(cat:*), Bash(date:*), Bash(mv:*), Bash(rm:*), Bash(node:*), Bash(git:*), Bash(find:*), Bash(stat:*)
+version: 2
+last_updated: 2026-07-27T23:13:01.000Z
+correction_notes: "2026-07-27: Step 3b reads a path named in the item's own text before falling back to the kind conventions [queue:2026-07-27T23-01-50-built-check]"
 ---
 
 You are reconciling the to-build list against reality. The schema is at `${CLAUDE_PLUGIN_ROOT}/reference/SCHEMA-BUILD.md`. Read it if you have not already in this session.
@@ -100,14 +103,18 @@ Count the commits this returns, across all roots, and keep the total. Step 7 nee
 
 ### 3b — What is on disk now
 
-For each open item, check whether something with its name exists in a plausible place. Use the item's `kind` to decide where to look, following the same conventions the bug queue uses:
+**Read the item's own text first.** If `what` or `why` names an explicit filesystem path, `stat` that path and use it as evidence, whatever the item's `kind` is. An item that names a path has already said where to look, so the conventions below are the fallback for items that do not. This is the only disk evidence available for kind `other`, and it also catches items whose title slug does not match the filename that actually got built.
+
+Treat text as naming a path when it carries a `~/`, `/` or `./` prefix, or a bare filename with an extension. Expand `~` before the `stat`. When the path is a JSON file, read it and quote something from inside, since "the file exists" and "the file holds what the item asked for" are different findings. When nothing exists at the named path, that is a real "no sign of it" for that item rather than a reason to fall back to guessing.
+
+Then, for each open item, check whether something with its name exists in a plausible place. Use the item's `kind` to decide where to look, following the same conventions the bug queue uses:
 
 - `skill`: `<root>/<slug>/SKILL.md` and `<root>/<slug>/skill/SKILL.md`, in roots of kind `skill`
 - `hook`: `<root>/<slug>` and `<root>/<slug>.*`, in roots of kind `hook`
 - `command`: `<root>/<slug>.md`, in roots of kind `command`
 - `plugin`: `<root>/plugins/<slug>/` containing a `.claude-plugin` directory
 - `script`: `<root>/<slug>` and `<root>/<slug>.*`, in roots of kind `hook` or `script`, plus the `plugin-repo` search below. A script inside a plugin lives in `scripts/` and is findable, so this is not a "no convention" case.
-- `other`: no convention, so disk evidence is not available. Rely on 3a and 3c.
+- `other`: no convention to guess from, so the explicit-path rule above is the only disk evidence there is. When the text names no path, say that disk evidence is not available and rely on 3a and 3c.
 
 Also search every root of kind `plugin-repo`, whatever the item's `kind`, since that layout nests one level deeper:
 
