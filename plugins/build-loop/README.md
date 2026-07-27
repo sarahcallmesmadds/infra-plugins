@@ -166,6 +166,48 @@ answer, not its conclusion.
 opinion about whether something is any good, and it will not rewrite anything
 you did not complain about.
 
+## Upgrading to 0.2.2
+
+Two faults, both found the first time `/audit-deps` was run against a real
+`plugin-repo` checkout.
+
+**`scripts/` was invisible to every search.** The plugin-repo lookup covered
+`skills/`, `hooks/` and `commands/`, and stopped there. In a well-built plugin
+the hook and the skill are thin wrappers and the logic sits in `scripts/`, so
+that is the file a fix edits. `/flag-issue hook-io` could not resolve and fell
+through to asking for a path by hand. Two of the four `guardrails` bugs fixed on
+2026-07-27 were in `scripts/`, so this was the ordinary case rather than the
+edge. `/flag-issue`, `/audit-deps` and `/built-check` all search it now.
+
+**`DEPS.json` keys collided.** The rule was `{repo}:{name on disk}`, which
+assumes the root name tells two things apart. Under a `plugin-repo` root it does
+not, because one root holds many plugins. A single root named `plugins` produced:
+
+```
+plugins:cli       <- 3 different files
+plugins:config    <- 2
+plugins:hook-io   <- 2
+plugins:patterns  <- 2
+```
+
+Later entries overwrote earlier ones, so the map described the wrong file and a
+fix to one plugin would flag another plugin's dependents for review.
+
+Under a `plugin-repo` root the key is now `{repo}:{plugin}/{name}`, so
+`plugins:guardrails/hook-io` and `plugins:slop-check/hook-io` are separate. The
+plugin's own entry keeps a bare key and cannot collide with anything inside it,
+since everything inside carries a `/`. `DEPS.json` is now schema v3.
+
+**Lookups fall back rather than failing quietly.** If the exact key is absent,
+readers look for one whose name portion ends with `/{target}`. One match is
+used, so a map written before v3 keeps resolving. More than one is reported as
+ambiguous rather than guessed at, because picking sends a fix to the wrong
+plugin. A lookup that silently finds nothing is indistinguishable from a target
+with no dependents, and those two needed to stay different.
+
+If you already have a `DEPS.json`, it keeps working through the fallback. Run
+`/audit-deps` when convenient and it will rewrite the keys.
+
 ## Upgrading to 0.2.1
 
 **If you are on 0.2.0, `/built-check` never read the git log.** It gathered

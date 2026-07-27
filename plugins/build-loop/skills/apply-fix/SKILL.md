@@ -61,8 +61,22 @@ Then check:
 
 Read `~/.claude/build-loop/DEPS.json` using the Read tool.
 
-Compute the composite key `{repo}:{target}`, where `repo` is the root name
-recorded on the queue entry.
+Compute the composite key per the Composite Key Rule in SCHEMA-DEPS.md, where
+`repo` is the root name recorded on the queue entry.
+
+- Normally `{repo}:{target}`.
+- **When the owning root is of kind `plugin-repo`, it is `{repo}:{plugin}/{target}`.**
+  Read the plugin segment out of `target_path`, the directory under `plugins/`,
+  never out of the target name. Three plugins here ship a `cli`.
+
+**If the exact key is absent, try a suffix match before concluding there are no
+dependents.** Look for keys whose name portion ends with `/{target}`. Exactly one
+match, use it. More than one, do not choose: say which keys matched and that the
+name is ambiguous, and treat it as a warning rather than silence. None, there is
+genuinely no entry.
+
+A lookup that finds nothing and a target with no dependents both end in silence
+here, and only one of them means it is safe to proceed.
 
 Read the map from `DEPS.json.targets`. **If that is absent and `DEPS.json.skills` is present, use `skills` instead**, treating each entry's `skill` field as `target`. That is a v1 map, per SCHEMA-DEPS.md. Reading only `targets` against a v1 map reports every dependency as absent, so the warning below never fires and a fix lands with no heads-up about what it might break.
 

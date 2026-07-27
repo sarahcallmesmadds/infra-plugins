@@ -80,12 +80,20 @@ You show this in the draft at Step 2, so a wrong guess costs nothing. Asking abo
    ls <root.path>/plugins/*/hooks/{target}              # -> target_kind: hook
    ls <root.path>/plugins/*/hooks/{target}.*            # -> target_kind: hook
    ls <root.path>/plugins/*/commands/{target}.md        # -> target_kind: command
+   ls <root.path>/plugins/*/scripts/{target}            # -> target_kind: script
+   ls <root.path>/plugins/*/scripts/{target}.*          # -> target_kind: script
    ls -d <root.path>/plugins/{target}                   # -> target_kind: plugin
    ```
 
    A hit here **overrides the kind you guessed in step 2 of this list**, because the directory it was found in is evidence and your guess was not.
 
-4. If `target_kind` is `script` or `other` and nothing above matched, there is no convention left to search. Ask.
+   **`scripts/` is not optional and it is where the logic usually lives.** A hook or a skill in a well-built plugin is a thin wrapper over a module in `scripts/`, so that is the file a fix edits. Leaving it out meant `hook-io`, `config`, `command`, `scan` and `patterns` all failed to resolve and fell through to asking the user for a path. Two of the four `guardrails` bugs fixed on 2026-07-27 were in `scripts/`, so this was the common case rather than the edge.
+
+   If more than one plugin holds a file with the same name, `scripts/cli.js` exists in three, do not pick one. List the paths and ask which:
+
+   > "`{target}` exists in more than one plugin: {paths}. Which one?"
+
+4. If `target_kind` is `other` and nothing above matched, there is no convention left to search. Ask.
 
 5. If nothing was found anywhere, first check whether any configured root exists on disk at all. If none do, say this once rather than asking for a path every time:
 
@@ -215,9 +223,18 @@ Read `~/.claude/build-loop/DEPS.json` using the Read tool.
 
 ### Look up the captured target's entry
 
-Build the composite key: `{repo}:{target}` where both values come from the primary entry you just wrote.
+Build the composite key from the primary entry you just wrote, following the Composite Key Rule in SCHEMA-DEPS.md:
+
+- Normally `{repo}:{target}`.
+- **When the owning root is of kind `plugin-repo`, it is `{repo}:{plugin}/{target}`.** Take the plugin segment from `target_path`, which is the directory under `plugins/`, not from the target name. The name alone cannot say which plugin it is in, and three of them ship a `cli`.
 
 Read the map from `DEPS.json.targets`. **If that key is absent and `DEPS.json.skills` is present, use `skills` instead**, treating each entry's `skill` field as `target` and a missing `kind` as `"skill"`. That is a v1 map, per SCHEMA-DEPS.md. Reading only `targets` against a v1 map finds nothing, reports every dependency as absent, and silently skips the dep-review flagging that is the whole point of this step.
+
+**If the exact key is absent, try a suffix match before giving up.** Look for keys whose name portion ends with `/{target}`. A map written before v3 stores bare names, and a lookup that quietly finds nothing is indistinguishable from a target that genuinely has no dependents.
+
+- Exactly one match: use it.
+- More than one: do not choose. Say which keys matched and that the name is ambiguous, then carry on to Step 4c with `dep_reviews_written: 0`. Picking one sends a review to the wrong plugin, which is the exact failure the key format exists to stop.
+- None: there is no entry, which is the case handled below.
 
 **If the key is NOT in the map:**
 > Print: "⚠ {target} not in DEPS.json — skipping dep-review flagging. Run /audit-deps to add it."
