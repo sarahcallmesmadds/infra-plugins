@@ -53,6 +53,61 @@ check('the cutoff is built with an explicit time, not a bare date', () => {
   }
 });
 
+check('the cutoff says which zone it is in', () => {
+  // The other half of the same fault. A timestamp with no zone is read by git
+  // as local time, and this cutoff is computed with `date -u`. On a UTC-4
+  // machine that starts the window four hours late, further east it starts
+  // early, and either way the count looks plausible.
+  const dateCalls = text.match(/date -u [^\n`]*%Y-%m-%d[^\n`]*/g) || [];
+  for (const call of dateCalls) {
+    assert.ok(
+      /%Y-%m-%dT00:00:00Z|\+0000/.test(call),
+      `cutoff carries no timezone, so git reads a UTC value as local: ${call}`
+    );
+  }
+});
+
+check('git really does read an unzoned timestamp as local time', () => {
+  // The reason the Z is needed, measured rather than asserted. If git ever
+  // changes this, the explanation in the skill stops being true and we find
+  // out here instead of from a wrong answer.
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'built-check-tz-'));
+  const stamp = new Date(Date.now() - 2 * 3600 * 1000).toISOString().replace(/\.\d+Z$/, 'Z');
+  execFileSync('git', ['init', '-b', 'main', repo], { stdio: 'ignore' });
+  const git = (...a) => execFileSync('git', ['-C', repo, ...a], {
+    encoding: 'utf8',
+    env: { ...process.env, GIT_AUTHOR_DATE: stamp, GIT_COMMITTER_DATE: stamp },
+  });
+  git('config', 'user.email', 't@t.t');
+  git('config', 'user.name', 't');
+  fs.writeFileSync(path.join(repo, 'a.txt'), 'x');
+  git('add', '-A');
+  git('commit', '-m', 'two hours ago');
+
+  const count = (since) =>
+    execFileSync('git', ['-C', repo, 'log', `--since=${since}`, '--oneline'], { encoding: 'utf8' })
+      .trim().split('\n').filter(Boolean).length;
+
+  // One hour before the commit, expressed three ways.
+  const t = new Date(Date.now() - 3 * 3600 * 1000);
+  const iso = t.toISOString().replace(/\.\d+Z$/, 'Z');
+  const bareUtc = iso.replace('T', ' ').replace('Z', '');
+
+  assert.strictEqual(count(iso), 1, 'a zoned UTC cutoff did not find a commit inside the window');
+
+  const offsetMinutes = t.getTimezoneOffset();
+  if (offsetMinutes === 0) {
+    console.log('        (skipped the unzoned half, this machine runs on UTC)');
+  } else {
+    assert.notStrictEqual(
+      count(bareUtc), 1,
+      'git now reads an unzoned timestamp as UTC. The Z is no longer load-bearing '
+      + 'and the explanation in built-check SKILL.md is out of date.'
+    );
+  }
+  fs.rmSync(repo, { recursive: true, force: true });
+});
+
 check('both date implementations are still covered', () => {
   // BSD and macOS take -v, GNU and Linux take -d. Losing either one fails the
   // same silent way the bare date did.
@@ -116,5 +171,5 @@ check('git reads a bare date as the current time of day, not midnight', () => {
   fs.rmSync(repo, { recursive: true, force: true });
 });
 
-console.log(`\n4 checks, ${failed} failed`);
+console.log(`\n6 checks, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

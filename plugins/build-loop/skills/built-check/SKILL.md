@@ -56,20 +56,26 @@ Skip any file that fails to parse, and count them. Report the count at the end r
 Compute the cutoff date. Never look further back than the oldest open item's `created_at`, since evidence older than the item cannot be evidence for it:
 
 ```bash
-date -u -v-{days}d +"%Y-%m-%d 00:00:00" 2>/dev/null || date -u -d "{days} days ago" +"%Y-%m-%d 00:00:00"
+date -u -v-{days}d +"%Y-%m-%dT00:00:00Z" 2>/dev/null || date -u -d "{days} days ago" +"%Y-%m-%dT00:00:00Z"
 ```
 
-**The `00:00:00` is load-bearing. Do not drop it, and do not reformat the cutoff to a bare date anywhere downstream.** Given a date with no time, `git log --since=` fills in the *current clock time* rather than midnight, silently. Measured in a real repository on 2026-07-27 at 16:53 local:
+**Both the time and the `Z` are load-bearing.** Drop either and the window silently starts somewhere other than where you meant, which reads as "nothing was built".
+
+**The time.** Given a date with no time at all, `git log --since=` fills in the *current clock time* rather than midnight. So a bare date drops every commit made before the hour you happen to run this: at 09:00 most of the boundary day is there, at 17:00 it is gone.
+
+**The `Z`.** Given a timestamp with no zone, git reads it as **local time**, and this cutoff is computed in UTC. Measured on a machine at UTC-4, at 19:53 local:
 
 ```
---since="2026-07-27"           ->  0 commits
---since="2026-07-27 00:00:00"  -> 39 commits
---since="2026-07-27 16:53"     ->  0 commits
+--since="2026-07-27 21:53:54"          ->  0 commits    UTC string, read as local, still in the future
+--since="2026-07-27 17:53:54"          -> 13 commits    the same instant written in local time
+--since="2026-07-27T21:53:54Z"         -> 13 commits    the same instant, said unambiguously
 ```
 
-So a bare date drops every commit made before the time of day you happen to run this. Run it at 09:00 and most of the boundary day is there; run it at 17:00 and it is gone. The answer is always plausible, and for an item created today the git evidence is empty every time. That produced "no sign of it" on work that was committed hours earlier.
+A UTC cutoff handed over bare starts the window four hours late here, and further east it starts it early. Either way the count is plausible and wrong. The `Z` form also matches the `created_at` written on every queue and to-build item, so the cutoff and the thing it is compared against are finally in the same units.
 
-The two `date` implementations also disagree. BSD and macOS take `-v`, GNU and Linux take `-d`. Running the wrong one alone fails the same silent way.
+The two `date` implementations disagree too. BSD and macOS take `-v`, GNU and Linux take `-d`. Running the wrong one alone fails the same silent way.
+
+All three faults land in the same place: a window that is not the window you asked for, and no error. That is why Step 7 reports an empty log as its own line.
 
 Both faults land on the same result: an empty window that reads exactly like a clean "nothing was built". Whenever this step returns no commits at all across every root, say so as its own line in Step 7 rather than folding it into the verdicts, so an empty window is visible as an empty window:
 
@@ -95,7 +101,7 @@ For each root that is a git repository:
 git -C <root.path> log --since="{cutoff}" --pretty=format:"%h %ad %s" --date=short --name-status
 ```
 
-`{cutoff}` still carries the `00:00:00` from Step 2. Passing a bare date here is the bug described there, so do not trim it.
+`{cutoff}` arrives from Step 2 as `YYYY-MM-DDT00:00:00Z`. Pass it through untouched. Trimming the time, or dropping the `Z`, is the bug described there, and both fail as a plausible-looking count rather than an error.
 
 If a root is not a git repository, skip it silently. That is normal, not an error.
 
