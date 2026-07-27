@@ -29,6 +29,7 @@ never arrive and installs fail.
 | Plugin | What it does |
 |---|---|
 | [`guardrails`](plugins/guardrails) | Blocks commits to protected branches and irreversible deletes. Flags prompt injection in content the model reads or writes. |
+| [`git-hygiene`](plugins/git-hygiene) | Separates the old branches that are safe to delete from the ones still holding work that exists nowhere else, and cleans up the safe ones once you approve them. |
 | [`build-loop`](plugins/build-loop) | Keeps everything you build honest. Log what a skill, hook, command or script got wrong, fix it from the queue behind an approval gate, see what else a fix puts at risk, and keep a to-build list that closes itself when the work ships. |
 
 More on the way. Each one ships when it is genuinely useful rather than when it

@@ -1,0 +1,19 @@
+{
+  "name": "git-hygiene",
+  "version": "0.1.0",
+  "description": "Tells you which old branches are safe to delete and which still hold work that exists nowhere else, then cleans up the safe ones once you approve them. Never deletes unmerged commits.",
+  "author": {
+    "name": "Sarah Madden",
+    "url": "https://github.com/sarahcallmesmadds"
+  },
+  "homepage": "https://github.com/sarahcallmesmadds/plugins/tree/main/plugins/git-hygiene",
+  "repository": "https://github.com/sarahcallmesmadds/plugins",
+  "license": "MIT",
+  "keywords": [
+    "git",
+    "branches",
+    "cleanup",
+    "housekeeping",
+    "safety"
+  ]
+}
