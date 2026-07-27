@@ -56,6 +56,7 @@ ls -1 <root.path>/*.md 2>/dev/null
 ls -1  <root.path>/plugins/*/skills/*/SKILL.md 2>/dev/null   # kind: skill
 ls -1  <root.path>/plugins/*/hooks/*           2>/dev/null   # kind: hook
 ls -1  <root.path>/plugins/*/commands/*.md     2>/dev/null   # kind: command
+ls -1  <root.path>/plugins/*/scripts/*         2>/dev/null   # kind: script
 ls -1d <root.path>/plugins/*/                  2>/dev/null   # kind: plugin
 ```
 
@@ -74,8 +75,17 @@ For each path found, derive:
   from the root itself.
 - `target` = the name on disk. For kind `skill` that is the FIRST directory
   segment below the root, so `<root>/tool-renewal/skill/SKILL.md` gives
-  `tool-renewal` and never `skill`. For kind `hook` and kind `command` it is the
-  filename with its extension stripped, so `style-lint.js` gives `style-lint`.
+  `tool-renewal` and never `skill`. For kind `hook`, `command` and `script` it is
+  the filename with its extension stripped, so `style-lint.js` gives
+  `style-lint`.
+- **Under a `plugin-repo` root, the key's name portion is `{plugin}/{target}`,**
+  per the Composite Key Rule in SCHEMA-DEPS.md. The `target` field itself stays
+  the bare name; only the key carries the plugin. A root holding four plugins
+  otherwise produced `plugins:cli` for three separate files, and `plugins:config`,
+  `plugins:hook-io` and `plugins:patterns` for two each. Later entries overwrote
+  earlier ones, so the map silently described the wrong file. The plugin's own
+  entry keeps a bare key, `plugins:guardrails`, and cannot collide with anything
+  inside it because everything inside carries a `/`.
 - A path under none of the configured roots is `repo: "unknown"`. Do not guess.
 
 **Skip these when listing a hook root**, or the map fills with things that are

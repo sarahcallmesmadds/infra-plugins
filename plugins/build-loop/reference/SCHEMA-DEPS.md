@@ -22,11 +22,12 @@ There is exactly ONE `DEPS.json` for the whole build loop, not one per repositor
 
 ```json
 {
-  "$schema_version": 2,
+  "$schema_version": 3,
   "last_updated": "2026-07-27T14:30:00.000Z",
   "targets": {
     "personal:capture": {  },
-    "hooks:style-lint": {  }
+    "hooks:style-lint": {  },
+    "plugins:guardrails/hook-io": {  }
   }
 }
 ```
@@ -35,7 +36,7 @@ Top-level fields:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `$schema_version` | int | Currently 2. Increment whenever a field is added, renamed, or removed. |
+| `$schema_version` | int | Currently 3. Increment whenever a field is added, renamed, or removed. |
 | `last_updated` | string | ISO-8601 UTC timestamp of the last write to this file. |
 | `targets` | object | Keyed by composite key, see below. One entry per thing found in any configured root. Called `skills` before v2. |
 
@@ -63,6 +64,46 @@ work:action-pipeline-standup-prep
 **Why composite keys?** The same name can exist in more than one root. A `log-plugin` skill in a personal root and a `log-plugin` skill in a work root are two different things with two different fix destinations, and a bare name cannot tell them apart.
 
 Where a skill's definition is nested one level deeper, at `<root>/tool-renewal/skill/SKILL.md`, the key still uses the first directory below the root, so `tool-renewal` and never `skill`.
+
+### Under a `plugin-repo` root, the plugin name is part of the key
+
+A `plugin-repo` root holds many plugins, so the root name does not disambiguate anything inside it. The name portion is `{plugin}/{name}`:
+
+```
+plugins:guardrails/hook-io          scripts/hook-io.js inside the guardrails plugin
+plugins:slop-check/hook-io          a different file, and now a different key
+plugins:build-loop/flag-issue       skills/flag-issue/SKILL.md
+plugins:guardrails                  the plugin itself
+```
+
+Without this, one root named `plugins` holding four plugins produced `plugins:cli` for three separate files, and `plugins:config`, `plugins:hook-io` and `plugins:patterns` for two each. Later entries overwrote earlier ones, so the map silently described the wrong file and a fix to one plugin flagged dependents of another.
+
+The plugin itself keeps a bare key, `plugins:guardrails`. There is no collision between a plugin and something inside it, because everything inside carries a `/`.
+
+### Looking a key up
+
+Derive the key from the entry's `repo` and its `target_path`, not from the target name alone. The path says which plugin the file is in and the name does not.
+
+Then try these **in order**, and stop at the first that resolves. A map can be older or newer than the reader, so both directions have to work.
+
+**1. The exact key.** `{repo}:{plugin}/{target}` under a `plugin-repo` root, `{repo}:{target}` otherwise. This is the normal case and usually the only one that runs.
+
+**2. The bare key, `{repo}:{target}`.** A map written before v3 stored plugin-repo entries under a plain name, so `plugins:hook-io` and never `plugins:guardrails/hook-io`. A qualified lookup misses it, and step 3 cannot rescue it, because `hook-io` does not end with `/hook-io`.
+
+When this step is what matched, say so, and say what it costs:
+
+> `Note: DEPS.json predates v3, so this matched on name alone. If more than one plugin has a {target}, the entry may describe a different one. Run /audit-deps to rebuild the keys.`
+
+That warning is not decoration. A pre-v3 map is exactly the file where `plugins:cli` meant three different things, so the entry it returns may well belong to another plugin. Using it beats going silent, and pretending it is precise does not.
+
+**3. A suffix match on `/{target}`.** The mirror of step 2: a bare lookup, made without a path, against a map that is already qualified.
+
+- Exactly one match: use it.
+- More than one: do not pick. Say which keys matched and that the target name is ambiguous. Guessing here sends a fix to the wrong plugin, which is the failure this key format exists to prevent.
+
+**4. Nothing matched.** There is genuinely no entry, and reporting that is correct.
+
+A lookup that quietly finds nothing looks exactly like a target with no dependents. Those two need to stay distinguishable, so say which one happened, and say which step got you there whenever it was not step 1.
 
 ---
 
@@ -185,3 +226,4 @@ Everything found in a configured root gets an entry, including standalone things
 |---------|------|--------|
 | v1 | 2026-04-23 | Initial schema. One map across all repositories, composite keys. |
 | v2 | 2026-07-27 | The map covers anything you build, not only skills. Top-level `skills` becomes `targets`, entry and edge field `skill` becomes `target`, and `kind` is added to both. Readers map the v1 names at read time, so a v1 file keeps working until `/audit-deps` next writes. |
+| v3 | 2026-07-27 | Under a `plugin-repo` root the name portion of the key becomes `{plugin}/{name}`. One root holding four plugins was producing `plugins:cli` for three different files, so later entries silently overwrote earlier ones and a fix flagged the wrong plugin's dependents. Lookups fall back to a unique `/{target}` suffix match, so a pre-v3 map keeps resolving, and report an ambiguous match instead of choosing. |

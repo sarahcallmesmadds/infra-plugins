@@ -106,7 +106,8 @@ For each open item, check whether something with its name exists in a plausible 
 - `hook`: `<root>/<slug>` and `<root>/<slug>.*`, in roots of kind `hook`
 - `command`: `<root>/<slug>.md`, in roots of kind `command`
 - `plugin`: `<root>/plugins/<slug>/` containing a `.claude-plugin` directory
-- `script`, `other`: no convention, so disk evidence is not available. Rely on 3a and 3c.
+- `script`: `<root>/<slug>` and `<root>/<slug>.*`, in roots of kind `hook` or `script`, plus the `plugin-repo` search below. A script inside a plugin lives in `scripts/` and is findable, so this is not a "no convention" case.
+- `other`: no convention, so disk evidence is not available. Rely on 3a and 3c.
 
 Also search every root of kind `plugin-repo`, whatever the item's `kind`, since that layout nests one level deeper:
 
@@ -114,6 +115,7 @@ Also search every root of kind `plugin-repo`, whatever the item's `kind`, since 
 ls  <root.path>/plugins/*/skills/<slug>/SKILL.md 2>/dev/null
 ls  <root.path>/plugins/*/hooks/<slug>*          2>/dev/null
 ls  <root.path>/plugins/*/commands/<slug>.md     2>/dev/null
+ls  <root.path>/plugins/*/scripts/<slug>*        2>/dev/null
 ls -d <root.path>/plugins/<slug>                 2>/dev/null
 ```
 
