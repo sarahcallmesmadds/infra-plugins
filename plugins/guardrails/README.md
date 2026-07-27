@@ -39,7 +39,7 @@ This is a real limitation and worth knowing before you install.
 
 Codex plugins cannot register hooks. Its plugin manifest accepts skills, MCP
 servers, and apps, and nothing else. So in Codex the same checks exist as two
-skills you invoke, `content-audit` and `command-check`, rather than as guards
+skills you invoke, `injection-scan` and `undo-possible`, rather than as guards
 that fire whether or not the model cooperates.
 
 Both runtimes call the same code in `scripts/`. The detection logic exists once,
@@ -123,6 +123,21 @@ compiled code, it does not sandbox execution, and it does not stop you from
 approving something you should not.
 
 Treat it as the seatbelt, not the airbag.
+
+## Upgrading from 0.1.x
+
+The two skills were renamed in 0.2.0, because the old names described what they
+read rather than what they look for, and you could not tell them apart from the
+installed list.
+
+| 0.2.0 | was |
+|---|---|
+| `injection-scan` | `content-audit` |
+| `undo-possible` | `command-check` |
+
+Nothing else changed. The hooks, the detection logic, and the config file are
+untouched, so an existing `guardrails.config.json` still applies. Re-run
+`/plugin install guardrails@smadds` to pick up the new names.
 
 ## Licence
 
