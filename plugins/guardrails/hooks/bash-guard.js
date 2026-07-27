@@ -7,6 +7,8 @@
 'use strict';
 
 const { execSync } = require('child_process');
+const fs = require('fs');
+const os = require('os');
 const path = require('path');
 
 const ROOT = path.join(__dirname, '..');
@@ -22,11 +24,24 @@ const CONVENTIONAL = /^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|re
 // own working directory. `git -C <path> commit` and `cd <path> && git commit`
 // both act somewhere else, and checking the wrong repo means checking the wrong
 // branch, which silently defeats the guard.
+// `~` is expanded by the shell, not by us, so a path lifted straight out of the
+// command text still has it. execSync then looks for a directory literally
+// named "~/Projects/thing", does not find one, throws, and the guard waves the
+// commit through in silence. `cd ~/some/repo && git commit` is how most people
+// write it, so the guard worked or did not depending on how the path happened
+// to be typed. A bare `~` and `~/...` are the two forms worth handling; `~user`
+// means another account's home and is not something to guess at.
+function expandHome(dir) {
+  if (dir === '~') return os.homedir();
+  if (dir.startsWith('~/')) return path.join(os.homedir(), dir.slice(2));
+  return dir;
+}
+
 function targetRepoDir(command) {
   const dashC = command.match(/\bgit\s+(?:[^\s]+\s+)*?-C\s+(?:"([^"]+)"|'([^']+)'|([^\s]+))/);
-  if (dashC) return dashC[1] || dashC[2] || dashC[3];
+  if (dashC) return expandHome(dashC[1] || dashC[2] || dashC[3]);
   const cd = command.match(/(?:^|[;&|]|&&)\s*cd\s+(?:"([^"]+)"|'([^']+)'|([^\s;&|]+))/);
-  if (cd) return cd[1] || cd[2] || cd[3];
+  if (cd) return expandHome(cd[1] || cd[2] || cd[3]);
   return null;
 }
 
@@ -38,16 +53,47 @@ function targetRepoDir(command) {
 // next is an ordinary sequence, and only the event knows about the first call.
 // Falling back to process.cwd() checked some other repository, or no repository
 // at all, and a branch guard that reads the wrong repo reads the wrong branch.
+// Returns { branch, unresolved }.
+//
+// `unresolved` is the case the guard used to hide: the command names a
+// directory to commit in, and that directory is not there. A shell variable is
+// the usual reason, `cd $REPO && git commit`, because the shell expands it and
+// we only ever see the text. It cannot be resolved from here at all.
+//
+// Everything else stays quiet on purpose:
+//
+//   directory exists but is not a repository   git commit fails by itself, so
+//                                              there is nothing to protect
+//   detached HEAD                              symbolic-ref fails on a valid
+//                                              repository doing normal work
+//   no directory named and nowhere is a repo   committing outside a repository
+//                                              is not a thing that happens
+//
+// Only the first is a case where a commit could really land on a protected
+// branch without the guard having any way to see it, and that is the only one
+// worth interrupting for.
 function currentBranch(command, eventCwd) {
-  const dir = targetRepoDir(command || '');
+  const named = targetRepoDir(command || '');
+
+  if (named) {
+    let ok = false;
+    try {
+      ok = fs.statSync(named).isDirectory();
+    } catch (_) {
+      ok = false;
+    }
+    if (!ok) return { branch: null, unresolved: true, named };
+  }
+
   try {
-    return execSync('git symbolic-ref --short HEAD', {
+    const branch = execSync('git symbolic-ref --short HEAD', {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
-      cwd: dir || eventCwd || process.cwd(),
+      cwd: named || eventCwd || process.cwd(),
     }).trim();
+    return { branch, unresolved: false, named };
   } catch (_) {
-    return null; // not a git repository, bad path, or detached HEAD
+    return { branch: null, unresolved: false, named };
   }
 }
 
@@ -82,7 +128,20 @@ readEvent((event) => {
 
   // 2. Protected branches.
   if (config.blockCommitToProtectedBranch) {
-    const branch = currentBranch(command, event.cwd);
+    const { branch, unresolved, named } = currentBranch(command, event.cwd);
+
+    if (unresolved) {
+      block(
+        `This commit names a directory the guard cannot find: "${named}".\n\n` +
+        `That usually means the path is held in a shell variable, which the ` +
+        `shell expands and this check never sees. So there is no way to tell ` +
+        `which branch the commit would land on, and it could be a protected one.\n\n` +
+        `Write the path out in full, or run the commit from inside the ` +
+        `repository, and this will check it properly.`
+      );
+      return;
+    }
+
     if (branch && config.protectedBranches.includes(branch)) {
       block(
         `You are on "${branch}", which is a protected branch.\n\n` +

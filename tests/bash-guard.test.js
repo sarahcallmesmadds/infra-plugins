@@ -233,6 +233,96 @@ check('a missing cwd outside any repository stays silent rather than erroring', 
   );
 });
 
+// --- paths written the way people write them ------------------------------
+//
+// `~` is expanded by the shell, so a path taken out of the command text still
+// has it and there is nothing on disk by that name. The guard used to look,
+// fail to find it, and allow the commit without a word. `cd ~/repo && git
+// commit` is the ordinary way to write this, so whether the guard worked came
+// down to how the path happened to be typed.
+//
+// HOME is FAKE_HOME for these, so `~` resolves there and nothing touches the
+// real home directory.
+
+function repoIn(dir, branch) {
+  const repo = path.join(dir, `repo-${branch}`);
+  fs.mkdirSync(repo, { recursive: true });
+  execFileSync('git', ['init', '-b', branch, repo], { stdio: 'ignore' });
+  return repo;
+}
+
+check('a tilde path after cd is expanded before the branch is read', () => {
+  repoIn(FAKE_HOME, 'main');
+  const reason = assertDenies(
+    runHook('cd ~/repo-main && git commit -m "wip"', { processCwd: NOWHERE }),
+    'cd ~/repo-main'
+  );
+  assert.ok(reason.includes('main'), `reason did not name the branch: ${reason}`);
+});
+
+check('a tilde path after -C is expanded too', () => {
+  repoIn(FAKE_HOME, 'main');
+  assertDenies(
+    runHook('git -C ~/repo-main commit -m "wip"', { processCwd: NOWHERE }),
+    'git -C ~/repo-main'
+  );
+});
+
+check('a tilde path on a feature branch is still left alone', () => {
+  // The expansion must not turn into "block anything with a tilde in it".
+  repoIn(FAKE_HOME, 'some-feature');
+  assert.strictEqual(
+    runHook('cd ~/repo-some-feature && git commit -m "wip"', { processCwd: NOWHERE }),
+    null,
+    'hook objected to a commit on a feature branch'
+  );
+});
+
+// --- when the guard cannot tell, it says so --------------------------------
+
+check('a named directory that does not exist is refused rather than waved through', () => {
+  // A shell variable is the usual cause. The shell expands it and the guard
+  // only ever sees the text, so there is no way to know which branch this
+  // would land on.
+  const reason = assertDenies(
+    runHook('cd $REPO && git commit -m "wip"', { processCwd: NOWHERE }),
+    'cd $REPO'
+  );
+  assert.ok(reason.includes('$REPO'), `reason did not name the path: ${reason}`);
+});
+
+check('a directory that exists but is not a repository is left alone', () => {
+  // `git commit` fails on its own here, so there is nothing to protect and an
+  // interruption would be pure noise.
+  const plain = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrails-plain-'));
+  assert.strictEqual(
+    runHook(`cd ${plain} && git commit -m "wip"`, { processCwd: NOWHERE }),
+    null,
+    'hook objected in a directory that is not a repository'
+  );
+  fs.rmSync(plain, { recursive: true, force: true });
+});
+
+check('a detached HEAD is left alone rather than treated as unresolvable', () => {
+  // symbolic-ref fails on a detached HEAD in a perfectly valid repository
+  // doing perfectly normal work. That is not the guard being unable to tell.
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrails-repo-'));
+  execFileSync('git', ['init', '-b', 'main', repo], { stdio: 'ignore' });
+  execFileSync('git', ['-C', repo, 'config', 'user.email', 't@t.t'], { stdio: 'ignore' });
+  execFileSync('git', ['-C', repo, 'config', 'user.name', 't'], { stdio: 'ignore' });
+  fs.writeFileSync(path.join(repo, 'a.txt'), 'x');
+  execFileSync('git', ['-C', repo, 'add', '-A'], { stdio: 'ignore' });
+  execFileSync('git', ['-C', repo, 'commit', '-m', 'base'], { stdio: 'ignore' });
+  const sha = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+  execFileSync('git', ['-C', repo, 'checkout', sha], { stdio: 'ignore' });
+  assert.strictEqual(
+    runHook(`git -C ${repo} commit -m "wip"`, { processCwd: NOWHERE }),
+    null,
+    'hook treated a detached HEAD as a path it could not resolve'
+  );
+  fs.rmSync(repo, { recursive: true, force: true });
+});
+
 // --- disposable paths spelled either way ----------------------------------
 
 check('/private/tmp is as disposable as /tmp, being the same directory', () => {
@@ -260,5 +350,5 @@ check('a real path outside the disposable list is still denied', () => {
 fs.rmSync(FAKE_HOME, { recursive: true, force: true });
 fs.rmSync(NOWHERE, { recursive: true, force: true });
 
-console.log(`\n14 checks, ${failed} failed`);
+console.log(`\n20 checks, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

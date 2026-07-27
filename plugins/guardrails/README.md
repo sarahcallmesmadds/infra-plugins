@@ -124,6 +124,41 @@ approving something you should not.
 
 Treat it as the seatbelt, not the airbag.
 
+## Upgrading to 0.2.4
+
+**If you are on 0.2.3 or earlier, the branch guard misses the most ordinary way
+to write a path.** This commits to `main` without a word:
+
+```
+cd ~/Projects/thing && git commit -m "wip"
+```
+
+`~` is expanded by your shell, so the guard only ever sees the four characters
+`~/Pr…` and looks for a directory literally named that. There isn't one, the
+lookup throws, and the commit is allowed. Writing the same path out in full was
+blocked correctly, so whether the guard worked came down to how the path
+happened to be typed.
+
+Tildes are now expanded before the lookup, for both `cd` and `git -C`.
+
+**The guard also no longer stays quiet when it cannot tell.** If a commit names
+a directory that is not there, usually because the path is in a shell variable
+(`cd $REPO && git commit`), it now refuses and says why. A shell variable cannot
+be resolved from inside a hook, so the honest answer is that the branch is
+unknown, and a safety check that answers "unknown" by allowing the thing is not
+a safety check.
+
+Three cases stay quiet on purpose, because none of them is the guard being
+unable to tell:
+
+| case | why it is left alone |
+|---|---|
+| directory exists, is not a repository | `git commit` fails on its own |
+| detached HEAD | a valid repository doing normal work |
+| nothing named, and nowhere is a repository | committing outside a repository is not a thing |
+
+Nothing about your config changes. Run `/plugin update guardrails@smadds`.
+
 ## Upgrading to 0.2.3
 
 **If you are on 0.2.2 or earlier, the scanner never looked at anything you
