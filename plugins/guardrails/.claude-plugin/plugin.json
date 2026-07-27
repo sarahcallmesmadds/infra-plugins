@@ -1,6 +1,6 @@
 {
   "name": "guardrails",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Safety rails for people building with AI who aren't systems engineers. Blocks commits to protected branches and irreversible deletes, and flags prompt injection in content the model reads or writes.",
   "author": {
     "name": "Sarah Madden",
@@ -9,5 +9,11 @@
   "homepage": "https://github.com/sarahcallmesmadds/plugins/tree/main/plugins/guardrails",
   "repository": "https://github.com/sarahcallmesmadds/plugins",
   "license": "MIT",
-  "keywords": ["safety", "security", "prompt-injection", "git", "guardrails"]
+  "keywords": [
+    "safety",
+    "security",
+    "prompt-injection",
+    "git",
+    "guardrails"
+  ]
 }
