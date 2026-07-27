@@ -1,0 +1,37 @@
+{
+  "name": "git-hygiene",
+  "version": "0.1.0",
+  "description": "Tells you which old branches are safe to delete and which still hold work that exists nowhere else, then cleans up the safe ones once you approve them. Never deletes unmerged commits.",
+  "author": {
+    "name": "Sarah Madden",
+    "url": "https://github.com/sarahcallmesmadds"
+  },
+  "homepage": "https://github.com/sarahcallmesmadds/plugins/tree/main/plugins/git-hygiene",
+  "repository": "https://github.com/sarahcallmesmadds/plugins",
+  "license": "MIT",
+  "keywords": [
+    "git",
+    "branches",
+    "cleanup",
+    "housekeeping",
+    "safety"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Git Hygiene",
+    "shortDescription": "Which old branches are safe to delete, and which are not",
+    "longDescription": "Branches pile up and nothing tells you which ones matter. The dangerous part is that the two things you care about are unrelated: how old a branch is, and whether its commits are already saved in your main branch. Git Hygiene separates them. It shows the branches whose work is already merged, which can go without losing anything, apart from the ones still holding commits that exist in exactly one place. It deletes only what you approve, uses the form of the delete command that refuses to destroy unmerged work, and re-checks every branch on GitHub immediately before removing it. Anything it cannot classify is kept and the reason is shown.",
+    "developerName": "Sarah Madden",
+    "category": "Engineering",
+    "capabilities": [
+      "Interactive",
+      "Read"
+    ],
+    "defaultPrompt": [
+      "Which of my branches are safe to delete?",
+      "Clean up the merged branches in this repo.",
+      "Do I have stale branches anywhere?",
+      "Am I still carrying old branches with unfinished work?"
+    ]
+  }
+}
