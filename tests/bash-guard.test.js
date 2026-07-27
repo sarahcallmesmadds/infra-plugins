@@ -24,6 +24,12 @@ const { execFileSync } = require('child_process');
 const HOOK = path.join(__dirname, '..', 'plugins', 'guardrails', 'hooks', 'bash-guard.js');
 const FAKE_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrails-home-'));
 
+// Somewhere to stand that is definitely not a git repository. The home
+// directory is the obvious choice and the wrong one: plenty of people keep
+// their dotfiles in a repo at $HOME, and on those machines a test meaning "the
+// hook is nowhere useful" would quietly start meaning something else.
+const NOWHERE = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrails-nowhere-'));
+
 // Runs the hook the way the harness does and returns its parsed stdout, or
 // null when it stays quiet, which is how a hook says "no objection".
 // `eventCwd` goes in the event, the way the harness reports where the command
@@ -142,7 +148,7 @@ check('a bare commit is judged against the event cwd, not the hook process cwd',
   const reason = assertDenies(
     // No `-C` and no `cd`, so the only clue to the repository is the event.
     // The hook process deliberately sits somewhere else entirely.
-    runHook('git commit -m "wip"', { eventCwd: repo, processCwd: os.homedir() }),
+    runHook('git commit -m "wip"', { eventCwd: repo, processCwd: NOWHERE }),
     'bare commit with event cwd on main'
   );
   assert.ok(reason.includes('main'), `reason did not name the branch: ${reason}`);
@@ -164,6 +170,67 @@ check('an explicit -C still wins over the event cwd', () => {
   );
   fs.rmSync(onMain, { recursive: true, force: true });
   fs.rmSync(onFeature, { recursive: true, force: true });
+});
+
+// The field name above is not a guess. `cwd` is a documented common field on
+// every hook event, and it appears in the published PreToolUse example next to
+// session_id, transcript_path, permission_mode and hook_event_name. This test
+// feeds that whole documented event rather than the two fields the guard reads,
+// so the assertion is against the contract as published and not against a
+// convenient subset of it. If the harness ever renames the field, this is where
+// it surfaces.
+check('the guard reads the PreToolUse event exactly as documented', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrails-repo-'));
+  execFileSync('git', ['init', '-b', 'main', repo], { stdio: 'ignore' });
+  const documented = JSON.stringify({
+    session_id: 'abc123',
+    transcript_path: '/home/user/.claude/projects/x/transcript.jsonl',
+    cwd: repo,
+    permission_mode: 'default',
+    hook_event_name: 'PreToolUse',
+    tool_name: 'Bash',
+    tool_input: { command: 'git commit -m "wip"', description: 'Commit' },
+    tool_use_id: 'toolu_01ABC123',
+  });
+  const stdout = execFileSync(process.execPath, [HOOK], {
+    input: documented,
+    encoding: 'utf8',
+    cwd: NOWHERE,
+    env: { ...process.env, HOME: FAKE_HOME },
+  }).trim();
+  const reason = assertDenies(stdout ? JSON.parse(stdout) : null, 'documented event');
+  assert.ok(reason.includes('main'), `reason did not name the branch: ${reason}`);
+  fs.rmSync(repo, { recursive: true, force: true });
+});
+
+// The fallback is deliberate, and it fails open. Worth being explicit about
+// why, because the alternative looks safer and is not.
+//
+// If `cwd` ever went missing, hard-failing every commit would take the guard
+// from "checks the wrong repo in one uncommon case" to "nobody can commit
+// anything", for everyone, on a plugin whose whole job is to stay out of the
+// way until it matters. Degrading to the process directory is what the guard
+// did for its entire life before this change, so the floor here is the
+// previous shipped behaviour rather than nothing at all.
+check('a missing cwd degrades to the process directory rather than crashing', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrails-repo-'));
+  execFileSync('git', ['init', '-b', 'main', repo], { stdio: 'ignore' });
+  // No cwd in the event, hook process sitting in the repo. It should still
+  // find main from where it stands, and it must not throw.
+  const reason = assertDenies(
+    runHook('git commit -m "wip"', { processCwd: repo }),
+    'no cwd in event'
+  );
+  assert.ok(reason.includes('main'), `reason did not name the branch: ${reason}`);
+  fs.rmSync(repo, { recursive: true, force: true });
+});
+
+check('a missing cwd outside any repository stays silent rather than erroring', () => {
+  assert.strictEqual(
+    runHook('git commit -m "wip"', { processCwd: NOWHERE }),
+    null,
+    'hook objected or crashed when it could not identify a repository'
+  );
 });
 
 // --- disposable paths spelled either way ----------------------------------
@@ -191,6 +258,7 @@ check('a real path outside the disposable list is still denied', () => {
 });
 
 fs.rmSync(FAKE_HOME, { recursive: true, force: true });
+fs.rmSync(NOWHERE, { recursive: true, force: true });
 
-console.log(`\n11 checks, ${failed} failed`);
+console.log(`\n14 checks, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);
