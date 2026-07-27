@@ -182,6 +182,74 @@ check('an unreadable PR list keeps every branch rather than dropping the protect
     'hasOpenPR must default to true when the PR list could not be read');
 });
 
+// --------------------------------------------------------- time bounds ----
+//
+// Counting commits is one blocking child process per branch. execFileSync holds
+// the event loop for the whole of each one, so a setTimeout wrapped around the
+// loop can never fire and bounds nothing. Measured on a 200-branch repository:
+// 4145 ms against a promised 4000 ms cap, on empty local commits.
+
+process.stdout.write('time bounds\n');
+
+check('every child process is given a timeout', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'scripts', 'collect.js'), 'utf8');
+  assert.ok(/timeout: PER_COMMAND_TIMEOUT_MS/.test(src),
+    'run() must pass a timeout to execFileSync, or one stuck git call hangs forever');
+  assert.ok(/maxBuffer/.test(src), 'run() should bound output size too');
+});
+
+check('a deadline already past stops the counting and reports it', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'gh-deadline-'));
+  const git = (...a) => execFileSync('git', ['-C', repo, ...a], { stdio: 'ignore' });
+  execFileSync('git', ['init', '-q', '-b', 'main', repo], { stdio: 'ignore' });
+  execFileSync('git', ['-C', repo, '-c', 'user.email=t@t', '-c', 'user.name=t',
+    'commit', '-q', '--allow-empty', '-m', 'base'], { stdio: 'ignore' });
+  for (const b of ['one', 'two', 'three']) git('branch', b, 'main');
+
+  const collect = require(path.join(ROOT, 'scripts', 'collect.js'));
+  const r = collect.localBranches(repo, { deadline: Date.now() - 1 });
+
+  assert.strictEqual(r.truncated, true, 'an expired deadline must be reported, not hidden');
+  const nonDefault = r.branches.filter((b) => !b.isDefault);
+  assert.ok(nonDefault.length > 0, 'branches should still be listed');
+  for (const b of nonDefault) {
+    assert.strictEqual(b.aheadBy, null,
+      `${b.name} was counted after the deadline had passed`);
+  }
+
+  // The safety property: an unfinished run under-reports what is safe, never
+  // over-reports it, because uncounted branches stay null and null is kept.
+  const { safe } = classify(r.branches, {}, Date.now());
+  assert.strictEqual(safe.length, 0, 'a truncated run must offer nothing as safe');
+
+  fs.rmSync(repo, { recursive: true, force: true });
+});
+
+check('no deadline means no truncation, and counting still happens', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'gh-nodeadline-'));
+  execFileSync('git', ['init', '-q', '-b', 'main', repo], { stdio: 'ignore' });
+  execFileSync('git', ['-C', repo, '-c', 'user.email=t@t', '-c', 'user.name=t',
+    'commit', '-q', '--allow-empty', '-m', 'base'], { stdio: 'ignore' });
+  execFileSync('git', ['-C', repo, 'branch', 'merged', 'main'], { stdio: 'ignore' });
+
+  const collect = require(path.join(ROOT, 'scripts', 'collect.js'));
+  const r = collect.localBranches(repo);
+
+  assert.strictEqual(r.truncated, false);
+  const merged = r.branches.find((b) => b.name === 'merged');
+  assert.strictEqual(merged.aheadBy, 0, 'a branch level with main has zero commits ahead');
+
+  fs.rmSync(repo, { recursive: true, force: true });
+});
+
+check('the hook says nothing at all rather than reporting a partial count', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'hooks', 'session-notice.js'), 'utf8');
+  assert.ok(/if \(truncated\) return;/.test(src),
+    'a truncated count must produce silence, since a one-line notice cannot carry the caveat');
+  assert.ok(/started \+ BUDGET_MS/.test(src),
+    'the deadline must be measured from process start, so a slow stdin wait cannot extend the work');
+});
+
 // ------------------------------------------------ the actual command ----
 //
 // Driving the CLI as a subprocess, because every real bug so far has been in a

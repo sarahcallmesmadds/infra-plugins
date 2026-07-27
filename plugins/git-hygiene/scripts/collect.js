@@ -8,8 +8,22 @@
 
 const { execFileSync } = require('child_process');
 
+// Every child process gets a time limit and a buffer limit.
+//
+// execFileSync blocks the event loop for as long as the child runs, so a
+// setTimeout in the caller cannot fire while it is running. A timer wrapped
+// around a series of these calls therefore bounds nothing. The bound has to be
+// on the child itself, which is what the `timeout` option does.
+const PER_COMMAND_TIMEOUT_MS = 5000;
+const MAX_BUFFER = 8 * 1024 * 1024;
+
 function run(cmd, args, opts) {
-  return execFileSync(cmd, args, Object.assign({ encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }, opts || {})).trim();
+  return execFileSync(cmd, args, Object.assign({
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    timeout: PER_COMMAND_TIMEOUT_MS,
+    maxBuffer: MAX_BUFFER,
+  }, opts || {})).trim();
 }
 
 function tryRun(cmd, args, opts) {
@@ -26,7 +40,18 @@ function isGitRepo(cwd) {
   return tryRun('git', ['-C', cwd, 'rev-parse', '--is-inside-work-tree']) === 'true';
 }
 
-function localBranches(cwd) {
+// opts.deadline is an epoch milliseconds value. Counting commits costs one git
+// call per branch, so on a repository with hundreds of branches the total is
+// unbounded even when each individual call is fast. A caller that has to finish
+// inside a budget, the session-start hook being the one that matters, passes a
+// deadline and gets `truncated: true` rather than a wrong answer late.
+//
+// Branches not reached keep `aheadBy: null`, which classify.js treats as
+// unmerged. So a truncated run under-reports what is safe and never over-
+// reports it.
+function localBranches(cwd, opts) {
+  const deadline = (opts && opts.deadline) || null;
+  let truncated = false;
   const current = tryRun('git', ['-C', cwd, 'branch', '--show-current']) || '';
 
   // Prefer the remote's idea of the default branch, then fall back to whatever
@@ -47,13 +72,16 @@ function localBranches(cwd) {
   const branches = listed.split('\n').filter(Boolean).map((line) => {
     const [name, date] = line.split('\t');
     let aheadBy = null;
-    if (name !== def) {
+    if (name === def) {
+      aheadBy = 0;
+    } else if (deadline !== null && Date.now() >= deadline) {
+      // Out of time. Leave aheadBy null so this branch is kept, not offered.
+      truncated = true;
+    } else {
       // `rev-list --count def..name` is the number of commits on `name` that
       // are not reachable from `def`. That is exactly the question being asked.
       const n = tryRun('git', ['-C', cwd, 'rev-list', '--count', `${def}..${name}`]);
       if (n !== null && /^\d+$/.test(n)) aheadBy = parseInt(n, 10);
-    } else {
-      aheadBy = 0;
     }
     return {
       name,
@@ -66,7 +94,7 @@ function localBranches(cwd) {
     };
   });
 
-  return { defaultBranch: def, branches };
+  return { defaultBranch: def, branches, truncated };
 }
 
 // --------------------------------------------------------------- remote ----

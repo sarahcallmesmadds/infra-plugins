@@ -7,17 +7,42 @@
 // because a notice you cannot safely act on is just noise at the top of every
 // session, and noise at the top of every session gets the plugin uninstalled.
 //
-// It also never blocks, never asks, and stays silent unless there is something
-// worth saying. Any error at all exits 0 without output.
-
+// It never blocks, never asks, and stays silent unless there is something worth
+// saying. Any error at all exits 0 without output.
+//
+// ---------------------------------------------------------------------------
+// On time limits, which is the part that was wrong before.
+//
+// The obvious shape is a setTimeout wrapped around the work. It does not work
+// here, and it is worth writing down why, because it looks like it does.
+//
+// Counting commits costs one `git rev-list` per branch, run through
+// execFileSync. execFileSync blocks the event loop for as long as the child
+// runs, so a setTimeout callback cannot fire while any of that is happening. A
+// timer around the work is not a bound on the work. It is a bound on the idle
+// time before the work, which was never the risk.
+//
+// Two real bounds replace it:
+//   1. Every child process gets its own `timeout`, in collect.js. That stops
+//      one stuck git call hanging forever.
+//   2. A wall-clock deadline is handed to localBranches, which checks it
+//      between branches and stops counting once it passes.
+//
+// Measured before the fix: 4145 ms on a 200-branch repository, against a
+// promised 4000 ms bound, and that was empty local commits. Real ones are
+// slower.
 'use strict';
 
 const path = require('path');
 
-const TIMEOUT_MS = 4000;
+// The whole hook, from stdin to output. Session start is not the moment to be
+// thorough, and anything near a second is already too long to spend on a
+// convenience notice.
+const BUDGET_MS = 1500;
+const STDIN_WAIT_MS = 1000;
 const MIN_TO_MENTION = 3;
 
-function main(event) {
+function main(event, deadline) {
   const cwd = (event && event.cwd) || process.cwd();
 
   const collect = require(path.join(__dirname, '..', 'scripts', 'collect.js'));
@@ -25,8 +50,14 @@ function main(event) {
 
   if (!collect.isGitRepo(cwd)) return;
 
-  const { defaultBranch, branches } = collect.localBranches(cwd);
+  const { defaultBranch, branches, truncated } = collect.localBranches(cwd, { deadline });
   if (!defaultBranch || !branches.length) return;
+
+  // A partial count is worse than no notice. "3 branches are merged" when the
+  // real number is 40 is a statement someone will act on, and it is wrong.
+  // There is nothing in a one-line notice that could carry the caveat. Silence
+  // is honest, and /stale-branches gives the full answer with no time limit.
+  if (truncated) return;
 
   const { safe } = classify(branches, {}, Date.now());
   if (safe.length < MIN_TO_MENTION) return;
@@ -46,18 +77,22 @@ function main(event) {
   }));
 }
 
-// A hook that hangs is worse than a hook that says nothing, and counting
-// commits on a repository with many branches is not instant.
-const timer = setTimeout(() => process.exit(0), TIMEOUT_MS);
+const started = Date.now();
+
+// This timer covers only the wait for stdin, which is the one genuinely idle
+// part of this file and therefore the one part a timer can actually interrupt.
+const stdinTimer = setTimeout(() => process.exit(0), STDIN_WAIT_MS);
 
 let buffer = '';
 process.stdin.setEncoding('utf8');
 process.stdin.on('data', (c) => { buffer += c; });
 process.stdin.on('error', () => process.exit(0));
 process.stdin.on('end', () => {
-  clearTimeout(timer);
+  clearTimeout(stdinTimer);
   try {
-    main(buffer ? JSON.parse(buffer) : {});
+    // Whatever the stdin wait consumed comes out of the same budget, so a slow
+    // start cannot buy the work extra time.
+    main(buffer ? JSON.parse(buffer) : {}, started + BUDGET_MS);
   } catch (_) {
     // Never surface a bug in a convenience notice as a broken session start.
   }
