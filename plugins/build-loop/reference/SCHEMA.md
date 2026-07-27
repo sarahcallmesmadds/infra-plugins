@@ -339,6 +339,20 @@ Unlike primary dedup, this is NOT time-limited. The same `parent_id` plus depend
 | `example_entries` | array | yes | Up to 5 queue entry IDs evidencing the pattern. |
 | `notes` | array | no | Append-only `{ts, text}` objects. Never cleared. |
 
+### Reading a pre-v2 flags file
+
+A flags file written before v2 stores each entry's identifier under `skill` and its path under `skill_path`, with no `target_kind`. Apply the same read-time mapping used for queue entries, to every flag, before matching anything:
+
+| Old field | Read as | Rule |
+|---|---|---|
+| `skill` | `target` | Use `target` if present, else `skill` |
+| `skill_path` | `target_path` | Use `target_path` if present, else `skill_path` |
+| (absent) | `target_kind` | Default to `"skill"` |
+
+**This mapping is load-bearing, not cosmetic.** Flags are matched by `target` to decide whether one already exists. An unmapped pre-v2 flag has no `target`, so it never matches, and a second entry is appended for something already flagged. That breaks the one-entry-per-target rule and splits the correction history the file exists to preserve. Everywhere else a missed mapping produces a visible error; here it produces a plausible-looking duplicate.
+
+The file is not rewritten on read. `/whats-breaking` writes every flag back under the v2 names on its next normal run, which converts the file as a side effect, so no migration is ever run separately and none can half-finish.
+
 ### Flag Status Enum
 
 | Status | Meaning |

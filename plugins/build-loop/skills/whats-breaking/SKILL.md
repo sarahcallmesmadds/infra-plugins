@@ -177,7 +177,19 @@ cat ~/.claude/build-loop/pattern-flags.json 2>/dev/null
 - If the file exists and parses as JSON: load its `flags` array into memory as `existingFlags`.
 - If the file does not exist OR fails to parse: start with `existingFlags = []` and treat this as the first-ever run.
 
-Preserve the structure exactly — do not re-format it. Do not silently drop unknown fields (future-compatible). Only rewrite the fields this skill owns.
+**Apply the same read-time mapping to every loaded flag that Step 1 applies to queue entries.** A flags file written before schema v5 stores the identifier under `skill`, not `target`, so a flag read without this mapping has no `target` at all, fails to match in Step 4, and gets appended a second time. That breaks the one-entry-per-target rule below and splits the history the file exists to hold.
+
+For each entry in `existingFlags`:
+
+- Missing `target` → read `skill` instead
+- Missing `target_path` → read `skill_path` instead
+- Missing `target_kind` → treat as `"skill"`
+
+Do this in memory only. The file is not rewritten here. Step 5 writes every flag back under the v5 names, which converts the file as a side effect of the next normal run, so no separate migration ever has to be run and none can half-finish.
+
+**Matching in Step 4 is on the mapped `target` value.** Never match on the raw field as it appeared in the file.
+
+Preserve the structure otherwise — do not re-format it. Do not silently drop unknown fields (future-compatible). Only rewrite the fields this skill owns.
 
 ---
 
@@ -186,6 +198,9 @@ Preserve the structure exactly — do not re-format it. Do not silently drop unk
 For each target in `flaggedTargets` from Step 2:
 
 **Case A — No existing flag for this target (first-time flag):**
+
+Before concluding this is a first-time flag, confirm the Step 3 mapping was applied. An entry written before v5 carries its name under `skill`, and comparing against `target` on an unmapped entry always reports "not found" and always creates a duplicate. If any loaded flag has a `skill` field and no `target`, the mapping was skipped: go back to Step 3.
+
 Create a new flag entry:
 
 ```json
@@ -221,7 +236,7 @@ Update the existing flag entry in place:
 **Case C — Existing flag for this target with status `"resolved"`:**
 Leave the flag entry exactly as-is. Resolved flags are archived records. Do not re-flag a resolved target even if new corrections appear — that is the maintainer's decision to reopen, not this skill's.
 
-**One entry per target, forever.** Never append a second entry for a target that already has one. All updates are in-place.
+**One entry per target, forever.** Never append a second entry for a target that already has one. All updates are in-place. The most likely way to break this is a field-name mismatch rather than a logic error, so if a run ever produces two entries naming the same thing, the mapping in Step 3 is where to look first.
 
 ---
 

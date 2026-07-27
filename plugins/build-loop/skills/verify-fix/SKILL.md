@@ -127,7 +127,7 @@ When /verify-fix is invoked directly (not from within /apply-fix), it works inde
 ### Step S1 — Locate the queue entry
 
 - If `$ARGUMENTS` matches the pattern `YYYY-MM-DDTHH-MM-SS-{target}` (a full queue entry ID): read `~/.claude/build-loop/queue/{id}.json` directly.
-- If `$ARGUMENTS` is a target name: run `ls ~/.claude/build-loop/queue/*.json 2>/dev/null`. Read each file. Find entries where `target == $ARGUMENTS` AND `status` is `"In Progress"` or `"fix applied, watching"`. If multiple match, list them (id, status, created_at) and ask the user to pick. Do not proceed until they pick.
+- If `$ARGUMENTS` is a target name: run `ls ~/.claude/build-loop/queue/*.json 2>/dev/null`. Read each file. Find entries whose name equals `$ARGUMENTS`, reading `target` and falling back to `skill` when `target` is absent (SCHEMA.md read-time mapping), AND `status` is `"In Progress"` or `"fix applied, watching"`. If multiple match, list them (id, status, created_at) and ask the user to pick. Do not proceed until they pick.
 - If `$ARGUMENTS` is empty: list all entries with status `"In Progress"` or `"fix applied, watching"`. If none, say "No fixes in progress or recently applied. Run /list-bugs to see current status." Stop.
 
 Check the loaded entry's status:
