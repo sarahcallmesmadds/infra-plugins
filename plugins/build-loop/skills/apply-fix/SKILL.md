@@ -69,11 +69,25 @@ Compute the composite key per the Composite Key Rule in SCHEMA-DEPS.md, where
   Read the plugin segment out of `target_path`, the directory under `plugins/`,
   never out of the target name. Three plugins here ship a `cli`.
 
-**If the exact key is absent, try a suffix match before concluding there are no
-dependents.** Look for keys whose name portion ends with `/{target}`. Exactly one
-match, use it. More than one, do not choose: say which keys matched and that the
-name is ambiguous, and treat it as a warning rather than silence. None, there is
-genuinely no entry.
+**If the exact key is absent, work down this list before concluding there are no
+dependents.**
+
+**a. The bare key, `{repo}:{target}`.** A map written before v3 stored
+plugin-repo entries under a plain name, `plugins:hook-io` rather than
+`plugins:guardrails/hook-io`. Step b cannot reach those, since `hook-io` does not
+end with `/hook-io`. Without this step, installing this version makes every
+pre-v3 map go quiet, and the warning about what a fix might break disappears at
+the exact moment it matters.
+
+On a match here, show this alongside the dependents:
+
+> `Note: DEPS.json predates v3, so this matched on name alone. If more than one plugin has a {target}, the entry may describe a different one. Run /audit-deps to rebuild the keys.`
+
+**b. A suffix match on `/{target}`.** Exactly one match, use it. More than one,
+do not choose: say which keys matched and that the name is ambiguous, and treat
+it as a warning rather than silence.
+
+**c. Nothing matched.** There is genuinely no entry.
 
 A lookup that finds nothing and a target with no dependents both end in silence
 here, and only one of them means it is safe to proceed.

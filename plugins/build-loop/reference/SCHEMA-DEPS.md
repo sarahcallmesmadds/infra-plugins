@@ -84,13 +84,26 @@ The plugin itself keeps a bare key, `plugins:guardrails`. There is no collision 
 
 Derive the key from the entry's `repo` and its `target_path`, not from the target name alone. The path says which plugin the file is in and the name does not.
 
-**If the exact key is absent**, before concluding there is no entry, look for entries whose name portion ends with `/{target}`:
+Then try these **in order**, and stop at the first that resolves. A map can be older or newer than the reader, so both directions have to work.
 
-- Exactly one match: use it. This is a map written before v3, or a lookup made without a path.
+**1. The exact key.** `{repo}:{plugin}/{target}` under a `plugin-repo` root, `{repo}:{target}` otherwise. This is the normal case and usually the only one that runs.
+
+**2. The bare key, `{repo}:{target}`.** A map written before v3 stored plugin-repo entries under a plain name, so `plugins:hook-io` and never `plugins:guardrails/hook-io`. A qualified lookup misses it, and step 3 cannot rescue it, because `hook-io` does not end with `/hook-io`.
+
+When this step is what matched, say so, and say what it costs:
+
+> `Note: DEPS.json predates v3, so this matched on name alone. If more than one plugin has a {target}, the entry may describe a different one. Run /audit-deps to rebuild the keys.`
+
+That warning is not decoration. A pre-v3 map is exactly the file where `plugins:cli` meant three different things, so the entry it returns may well belong to another plugin. Using it beats going silent, and pretending it is precise does not.
+
+**3. A suffix match on `/{target}`.** The mirror of step 2: a bare lookup, made without a path, against a map that is already qualified.
+
+- Exactly one match: use it.
 - More than one: do not pick. Say which keys matched and that the target name is ambiguous. Guessing here sends a fix to the wrong plugin, which is the failure this key format exists to prevent.
-- None: there is genuinely no entry, and reporting that is correct.
 
-A lookup that quietly finds nothing looks exactly like a target with no dependents. Those two need to stay distinguishable, so say which one happened.
+**4. Nothing matched.** There is genuinely no entry, and reporting that is correct.
+
+A lookup that quietly finds nothing looks exactly like a target with no dependents. Those two need to stay distinguishable, so say which one happened, and say which step got you there whenever it was not step 1.
 
 ---
 

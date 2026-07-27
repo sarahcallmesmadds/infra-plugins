@@ -230,11 +230,22 @@ Build the composite key from the primary entry you just wrote, following the Com
 
 Read the map from `DEPS.json.targets`. **If that key is absent and `DEPS.json.skills` is present, use `skills` instead**, treating each entry's `skill` field as `target` and a missing `kind` as `"skill"`. That is a v1 map, per SCHEMA-DEPS.md. Reading only `targets` against a v1 map finds nothing, reports every dependency as absent, and silently skips the dep-review flagging that is the whole point of this step.
 
-**If the exact key is absent, try a suffix match before giving up.** Look for keys whose name portion ends with `/{target}`. A map written before v3 stores bare names, and a lookup that quietly finds nothing is indistinguishable from a target that genuinely has no dependents.
+**If the exact key is absent, work down this list before giving up.** A lookup that quietly finds nothing is indistinguishable from a target that genuinely has no dependents, so exhaust the fallbacks first and then say which one matched.
+
+**a. The bare key, `{repo}:{target}`.** A map written before v3 stored plugin-repo entries under a plain name, `plugins:hook-io` rather than `plugins:guardrails/hook-io`. Step b cannot find those, because `hook-io` does not end with `/hook-io`. Without this step every pre-v3 map goes silent the moment this version is installed.
+
+On a match here, add this to the confirmation in Step 4c:
+
+> `Note: DEPS.json predates v3, so this matched on name alone. If more than one plugin has a {target}, the entry may describe a different one. Run /audit-deps to rebuild the keys.`
+
+A pre-v3 map is the file where `plugins:cli` meant three different things, so the entry may belong to another plugin. Using it beats going silent, and calling it exact would be wrong.
+
+**b. A suffix match on `/{target}`.** The mirror of a: a bare lookup against a map that is already qualified.
 
 - Exactly one match: use it.
 - More than one: do not choose. Say which keys matched and that the name is ambiguous, then carry on to Step 4c with `dep_reviews_written: 0`. Picking one sends a review to the wrong plugin, which is the exact failure the key format exists to stop.
-- None: there is no entry, which is the case handled below.
+
+**c. Nothing matched.** There is no entry, which is the case handled below.
 
 **If the key is NOT in the map:**
 > Print: "⚠ {target} not in DEPS.json — skipping dep-review flagging. Run /audit-deps to add it."

@@ -100,10 +100,46 @@ check('both key readers know about the plugin-qualified form', () => {
 check('both readers fall back to a suffix match rather than giving up quietly', () => {
   for (const name of ['flag-issue', 'apply-fix']) {
     assert.ok(
-      /ends with `\/\{target\}`/.test(SKILLS[name]),
-      `${name} has no fallback, so a map written before v3 silently resolves to nothing`
+      /ending `\/\{target\}`|ends with `\/\{target\}`|suffix match on `\/\{target\}`/.test(SKILLS[name]),
+      `${name} has no suffix fallback, so a bare lookup against a v3 map finds nothing`
     );
   }
+});
+
+check('both readers retry the bare key, which is what a pre-v3 map stored', () => {
+  // The suffix match only works in one direction. A qualified lookup against a
+  // map written before v3 finds nothing through it, because the stored name is
+  // `hook-io` and that does not end with `/hook-io`. Without a bare-key retry,
+  // installing this version makes every existing map go quiet, which is the
+  // failure the whole change set out to remove.
+  for (const name of ['flag-issue', 'apply-fix']) {
+    assert.ok(
+      /bare key, `\{repo\}:\{target\}`/.test(SKILLS[name]),
+      `${name} never retries the bare key, so a pre-v3 map silently stops reporting dependents`
+    );
+    assert.ok(
+      /predates v3/.test(SKILLS[name]),
+      `${name} matches a pre-v3 key without saying the entry may describe a different plugin`
+    );
+  }
+});
+
+check('the schema spells out the lookup order rather than one fallback', () => {
+  assert.ok(
+    /in order/.test(SCHEMA) && /bare key, `\{repo\}:\{target\}`/.test(SCHEMA),
+    'SCHEMA-DEPS.md does not define the full lookup order, so the two readers '
+    + 'have nothing to agree against'
+  );
+});
+
+check('the README does not claim an old map keeps working unqualified', () => {
+  // It said "keeps working through the fallback", which was not true for the
+  // migration direction that actually occurs.
+  const readme = read(BUILD_LOOP, 'README.md');
+  assert.ok(
+    !/keeps working through the fallback/.test(readme),
+    'README still claims a pre-v3 map resolves through the suffix fallback, which it does not'
+  );
 });
 
 check('an ambiguous match is reported rather than guessed at', () => {
@@ -164,5 +200,5 @@ check('plugin-qualified keys are unique across the whole repository', () => {
   }
 });
 
-console.log(`\n8 checks, ${failed} failed`);
+console.log(`\n11 checks, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

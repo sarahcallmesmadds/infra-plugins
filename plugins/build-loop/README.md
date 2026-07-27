@@ -198,15 +198,21 @@ Under a `plugin-repo` root the key is now `{repo}:{plugin}/{name}`, so
 plugin's own entry keeps a bare key and cannot collide with anything inside it,
 since everything inside carries a `/`. `DEPS.json` is now schema v3.
 
-**Lookups fall back rather than failing quietly.** If the exact key is absent,
-readers look for one whose name portion ends with `/{target}`. One match is
-used, so a map written before v3 keeps resolving. More than one is reported as
-ambiguous rather than guessed at, because picking sends a fix to the wrong
-plugin. A lookup that silently finds nothing is indistinguishable from a target
-with no dependents, and those two needed to stay different.
+**Lookups fall back rather than failing quietly.** A map can be older or newer
+than the reader, so both directions are handled. Readers try the exact key
+first, then the bare `{repo}:{target}`, which is what a pre-v3 map stored, then a
+match on any key ending `/{target}`, which covers a bare lookup against an
+already-qualified map. More than one match is reported as ambiguous rather than
+guessed at, because picking sends a fix to the wrong plugin.
 
-If you already have a `DEPS.json`, it keeps working through the fallback. Run
-`/audit-deps` when convenient and it will rewrite the keys.
+A lookup that silently finds nothing is indistinguishable from a target with no
+dependents, and those two needed to stay different.
+
+If you already have a `DEPS.json`, it keeps working, via the bare-key step. That
+step matches on name alone, so on a pre-v3 map, which is exactly the file where
+`plugins:cli` meant three different things, the entry it finds may describe a
+different plugin. Readers say so when it happens rather than presenting it as
+exact. Run `/audit-deps` to rebuild the keys and the caveat goes away.
 
 ## Upgrading to 0.2.1
 
