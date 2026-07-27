@@ -53,10 +53,24 @@ Skip any file that fails to parse, and count them. Report the count at the end r
 Compute the cutoff date. Never look further back than the oldest open item's `created_at`, since evidence older than the item cannot be evidence for it:
 
 ```bash
-date -u -v-{days}d +"%Y-%m-%d" 2>/dev/null || date -u -d "{days} days ago" +"%Y-%m-%d"
+date -u -v-{days}d +"%Y-%m-%d 00:00:00" 2>/dev/null || date -u -d "{days} days ago" +"%Y-%m-%d 00:00:00"
 ```
 
-The two `date` implementations disagree. BSD and macOS take `-v`, GNU and Linux take `-d`. Running the wrong one alone fails silently enough to produce an empty window, which then looks like "nothing was built."
+**The `00:00:00` is load-bearing. Do not drop it, and do not reformat the cutoff to a bare date anywhere downstream.** Given a date with no time, `git log --since=` fills in the *current clock time* rather than midnight, silently. Measured in a real repository on 2026-07-27 at 16:53 local:
+
+```
+--since="2026-07-27"           ->  0 commits
+--since="2026-07-27 00:00:00"  -> 39 commits
+--since="2026-07-27 16:53"     ->  0 commits
+```
+
+So a bare date drops every commit made before the time of day you happen to run this. Run it at 09:00 and most of the boundary day is there; run it at 17:00 and it is gone. The answer is always plausible, and for an item created today the git evidence is empty every time. That produced "no sign of it" on work that was committed hours earlier.
+
+The two `date` implementations also disagree. BSD and macOS take `-v`, GNU and Linux take `-d`. Running the wrong one alone fails the same silent way.
+
+Both faults land on the same result: an empty window that reads exactly like a clean "nothing was built". Whenever this step returns no commits at all across every root, say so as its own line in Step 7 rather than folding it into the verdicts, so an empty window is visible as an empty window:
+
+> `Note: the git log returned nothing for any root in this window. If that looks wrong, the window may be the problem rather than the work.`
 
 ---
 
@@ -78,7 +92,11 @@ For each root that is a git repository:
 git -C <root.path> log --since="{cutoff}" --pretty=format:"%h %ad %s" --date=short --name-status
 ```
 
+`{cutoff}` still carries the `00:00:00` from Step 2. Passing a bare date here is the bug described there, so do not trim it.
+
 If a root is not a git repository, skip it silently. That is normal, not an error.
+
+Count the commits this returns, across all roots, and keep the total. Step 7 needs it to tell an empty window apart from a genuinely quiet one.
 
 ### 3b — What is on disk now
 
@@ -224,6 +242,9 @@ Add these lines only when they apply:
 - `{P} files failed to parse and were skipped: {filenames}`
 - `Note: {title} was closed on session evidence and is not committed yet.`
 - `Note: something called {slug} already existed before {title} was added. Worth a look, the name may be taken.`
+- `Note: the git log returned nothing for any root in this window. If that looks wrong, the window may be the problem rather than the work.`
+
+That last line matters more than it looks. Every way this step fails, a malformed cutoff or the wrong `date` flag or a root that is not a repository, ends at the same place: no commits, and a confident "no sign of it". Saying the log came back empty costs one line and is the only signal that separates "nothing was built" from "nothing was looked at".
 
 End with:
 

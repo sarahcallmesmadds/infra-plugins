@@ -166,6 +166,38 @@ answer, not its conclusion.
 opinion about whether something is any good, and it will not rewrite anything
 you did not complain about.
 
+## Upgrading to 0.2.1
+
+**If you are on 0.2.0, `/built-check` never read the git log.** It gathered
+evidence from three places and one of them silently returned nothing on every
+run, so work that was committed hours earlier came back as "no sign of it".
+
+The cutoff was built as a bare `YYYY-MM-DD` and handed to `git log --since=`.
+Given a date with no time, git fills in the **current clock time** rather than
+midnight. Measured in a real repository on 2026-07-27 at 16:53:
+
+```
+--since="2026-07-27"           ->  0 commits
+--since="2026-07-27 00:00:00"  -> 39 commits
+--since="2026-07-27 16:53"     ->  0 commits
+```
+
+So it dropped every commit made before whatever time of day you ran it. Run it
+in the morning and most of the boundary day is there. Run it after lunch and it
+is gone. For anything added to the list today, the git evidence was empty every
+time.
+
+The cutoff now carries an explicit `00:00:00`.
+
+Disk evidence and session evidence were never affected, which is why this was
+not obvious: `/built-check` still found things, just never from the log.
+
+**It also now says when the window comes back empty.** Every way that step can
+fail, a malformed cutoff, the wrong `date` flag, or a root that is not a
+repository, ends at the same place: no commits, and a confident "no sign of it".
+One line saying the log returned nothing is the only thing that separates
+"nothing was built" from "nothing was looked at".
+
 ## Codex
 
 Codex plugins cannot register hooks, and this plugin does not use any, so both
