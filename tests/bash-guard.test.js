@@ -278,6 +278,61 @@ check('a tilde path on a feature branch is still left alone', () => {
   );
 });
 
+// --- relative paths belong to the command, not to the hook -----------------
+//
+// `cd subdir && git commit` is ordinary. A relative path means relative to
+// where the command runs, which is the event directory, never this process's
+// own location. Resolving it against the hook points somewhere unrelated, so a
+// repository that is right there looks missing. Before the unresolved check
+// existed that only meant a silent miss; with it, the same mistake turns into
+// an interruption on a commit that was fine, which is worse.
+
+check('a relative path is resolved against the event directory', () => {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrails-parent-'));
+  execFileSync('git', ['init', '-b', 'main', path.join(parent, 'sub')], { stdio: 'ignore' });
+  const reason = assertDenies(
+    runHook('cd sub && git commit -m "wip"', { eventCwd: parent, processCwd: NOWHERE }),
+    'cd sub'
+  );
+  assert.ok(
+    reason.includes('main'),
+    `expected the branch name, got a different refusal: ${reason}`
+  );
+  fs.rmSync(parent, { recursive: true, force: true });
+});
+
+check('a relative path on a feature branch is left alone', () => {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrails-parent-'));
+  execFileSync('git', ['init', '-b', 'some-feature', path.join(parent, 'sub')], { stdio: 'ignore' });
+  assert.strictEqual(
+    runHook('cd sub && git commit -m "wip"', { eventCwd: parent, processCwd: NOWHERE }),
+    null,
+    'hook objected to a commit on a feature branch reached by a relative path'
+  );
+  fs.rmSync(parent, { recursive: true, force: true });
+});
+
+check('a relative path with .. is resolved too', () => {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrails-parent-'));
+  execFileSync('git', ['init', '-b', 'main', path.join(parent, 'sub')], { stdio: 'ignore' });
+  fs.mkdirSync(path.join(parent, 'other'));
+  const reason = assertDenies(
+    runHook('cd ../sub && git commit -m "wip"', {
+      eventCwd: path.join(parent, 'other'),
+      processCwd: NOWHERE,
+    }),
+    'cd ../sub'
+  );
+  // Asserting on the reason, not just on the deny. Resolved against the wrong
+  // base this path does not exist either, so it gets refused as unresolvable
+  // and a test that only checked "denied" would pass on the broken code.
+  assert.ok(
+    reason.includes('main'),
+    `expected the branch name, got the cannot-find refusal instead: ${reason}`
+  );
+  fs.rmSync(parent, { recursive: true, force: true });
+});
+
 // --- when the guard cannot tell, it says so --------------------------------
 
 check('a named directory that does not exist is refused rather than waved through', () => {
@@ -350,5 +405,5 @@ check('a real path outside the disposable list is still denied', () => {
 fs.rmSync(FAKE_HOME, { recursive: true, force: true });
 fs.rmSync(NOWHERE, { recursive: true, force: true });
 
-console.log(`\n20 checks, ${failed} failed`);
+console.log(`\n23 checks, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

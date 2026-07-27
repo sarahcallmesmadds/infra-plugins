@@ -148,6 +148,10 @@ be resolved from inside a hook, so the honest answer is that the branch is
 unknown, and a safety check that answers "unknown" by allowing the thing is not
 a safety check.
 
+A relative path is resolved against the directory the command runs in, not
+against wherever the hook process happens to sit, so `cd subdir && git commit`
+is judged in the repository you actually mean.
+
 Three cases stay quiet on purpose, because none of them is the guard being
 unable to tell:
 

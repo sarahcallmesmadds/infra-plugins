@@ -37,12 +37,26 @@ function expandHome(dir) {
   return dir;
 }
 
+// Returns the path exactly as it was typed. Expansion and resolution happen in
+// currentBranch, because the original text is what belongs in a message shown
+// to the person who typed it.
 function targetRepoDir(command) {
   const dashC = command.match(/\bgit\s+(?:[^\s]+\s+)*?-C\s+(?:"([^"]+)"|'([^']+)'|([^\s]+))/);
-  if (dashC) return expandHome(dashC[1] || dashC[2] || dashC[3]);
+  if (dashC) return dashC[1] || dashC[2] || dashC[3];
   const cd = command.match(/(?:^|[;&|]|&&)\s*cd\s+(?:"([^"]+)"|'([^']+)'|([^\s;&|]+))/);
-  if (cd) return expandHome(cd[1] || cd[2] || cd[3]);
+  if (cd) return cd[1] || cd[2] || cd[3];
   return null;
+}
+
+// A relative path means "relative to where the command runs", which is
+// `eventCwd` and never this process's own directory. Resolving `subdir`
+// against the hook's location points at a directory that has nothing to do
+// with the command, so a repository that is right there looks missing. Before
+// the unresolved check existed that was a silent miss; with it, the same
+// mistake becomes an interruption on a commit that was fine.
+function resolveAgainst(named, base) {
+  const expanded = expandHome(named);
+  return path.isAbsolute(expanded) ? expanded : path.resolve(base, expanded);
 }
 
 // `eventCwd` is the directory the Bash tool will actually run the command in,
@@ -74,14 +88,20 @@ function targetRepoDir(command) {
 // worth interrupting for.
 function currentBranch(command, eventCwd) {
   const named = targetRepoDir(command || '');
+  const base = eventCwd || process.cwd();
 
+  let dir = null;
   if (named) {
+    dir = resolveAgainst(named, base);
     let ok = false;
     try {
-      ok = fs.statSync(named).isDirectory();
+      ok = fs.statSync(dir).isDirectory();
     } catch (_) {
       ok = false;
     }
+    // `named` rather than `dir` in the message: showing someone a resolved
+    // path they never typed, for a directory that does not exist, is a worse
+    // clue than the text they wrote.
     if (!ok) return { branch: null, unresolved: true, named };
   }
 
@@ -89,7 +109,7 @@ function currentBranch(command, eventCwd) {
     const branch = execSync('git symbolic-ref --short HEAD', {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
-      cwd: named || eventCwd || process.cwd(),
+      cwd: dir || base,
     }).trim();
     return { branch, unresolved: false, named };
   } catch (_) {
