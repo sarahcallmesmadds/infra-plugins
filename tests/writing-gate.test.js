@@ -73,6 +73,12 @@ check('options WITH a recommendation are not',
 check('identical estimates are caught',
   checkSpec('Phase one 2 weeks. Phase two 2 weeks. Phase three 2 weeks.')
     .some((f) => f.name === 'every-estimate-identical'), true);
+check('a normal doubling schedule is not "all round"',
+  checkSpec('Phase one 2 weeks. Phase two 4 weeks. Phase three 8 weeks.')
+    .some((f) => f.name === 'estimates-all-round-numbers'), false);
+check('genuinely round estimates still are',
+  checkSpec('Phase one 5 weeks. Phase two 10 weeks. Phase three 15 weeks.')
+    .some((f) => f.name === 'estimates-all-round-numbers'), true);
 
 console.log('\ntaking the long way round');
 check('hand-rolled stdlib is caught',

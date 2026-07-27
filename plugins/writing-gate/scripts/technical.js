@@ -355,7 +355,12 @@ function checkSpec(text) {
     const unique = new Set(weeks);
     if (unique.size === 1) {
       found.push({ name: 'every-estimate-identical', value: weeks[0], of: weeks.length });
-    } else if (weeks.every((w) => w % 2 === 0 || w % 5 === 0)) {
+    // Multiples of five only. An earlier version also counted every even
+    // number as round, which flagged 2, 4, 8 weeks: a perfectly ordinary
+    // doubling schedule, and arguably the most considered estimate in the
+    // list. Half of all integers are even, so that term was close to saying
+    // "some numbers appeared".
+    } else if (weeks.every((w) => w % 5 === 0)) {
       found.push({ name: 'estimates-all-round-numbers', of: weeks.length });
     }
   }
