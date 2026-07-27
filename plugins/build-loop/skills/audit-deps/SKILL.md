@@ -184,7 +184,7 @@ Write these changes to DEPS.json? (y / edit / skip)
 On the user's response:
 - `y`, `yes`, `sure`, `go` — proceed to Step 6
 - `edit` or specific change requests — update the draft and re-ask
-- `skip`, `no` — respond "Skipped — nothing written." and stop
+- `skip`, `no` — respond "Skipped, nothing written." and stop
 
 **Never silent writes.** Ever.
 

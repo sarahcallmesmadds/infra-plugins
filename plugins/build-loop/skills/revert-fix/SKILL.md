@@ -37,7 +37,7 @@ Read the queue entry JSON using the Read tool.
 
 - If `status` is NOT `"fix applied, watching"`: say "This entry has status '{status}', not 'fix applied, watching'. /revert-fix only reverts committed fixes. If you want to discard an in-progress attempt, use /apply-fix and reply 'no' to the diff." Stop.
 
-- If `repo == "unknown"`: say "This entry has repo: unknown. I can't determine which git repo to revert in — check the queue entry and resolve the repo field first." Stop.
+- If `repo == "unknown"`: say "This entry has repo: unknown. I can't determine which git repo to revert in. Check the queue entry and resolve the repo field first." Stop.
 
 ---
 
@@ -121,7 +121,7 @@ Via atomic write, update the queue entry:
    - Write the updated JSON to `~/.claude/build-loop/queue/{id}.json.tmp` using the Write tool.
    - Run: `node -e "JSON.parse(require('fs').readFileSync(require('os').homedir() + '/.claude/build-loop/queue/{id}.json.tmp','utf8'))"`
    - If parse succeeds: `mv ~/.claude/build-loop/queue/{id}.json.tmp ~/.claude/build-loop/queue/{id}.json`
-   - If parse fails: report error, do not swap. Say "The queue entry update failed — the revert DID succeed (undo commit: {revert-hash}), but the queue file was not updated. Edit it manually at ~/.claude/build-loop/queue/{id}.json"
+   - If parse fails: report error, do not swap. Say "The queue entry update failed, but the revert DID succeed (undo commit: {revert-hash}), but the queue file was not updated. Edit it manually at ~/.claude/build-loop/queue/{id}.json"
 
 Show closing message:
 
