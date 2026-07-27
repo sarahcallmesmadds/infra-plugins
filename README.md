@@ -45,6 +45,27 @@ The main asymmetry: Codex plugins cannot register hooks, so anything that
 depends on automatic enforcement is Claude Code only. In Codex the same checks
 are available as skills you invoke.
 
+## Tests
+
+```
+node tests/run-all.js          every suite
+node tests/run-all.js deps     only suites whose name contains "deps"
+```
+
+Exits non-zero if anything fails, and prints the failing suite's output in full
+so there is no second command to run to find out what happened.
+
+Suites are discovered by listing the directory rather than from a list kept
+somewhere. A list would be the same problem one step along, something to forget
+to update, and a suite that never runs is worse than no suite at all.
+
+The tests here are unusual in one way worth knowing before you add to them.
+Several of these plugins are prose that a model follows rather than code that
+executes, so what gets asserted is the instruction the skill gives and the
+behaviour of the tools underneath it. Where a bug was found by running
+something, the test reproduces the conditions rather than the conclusion, and
+most of them are written to fail against the commit that came before.
+
 ## Licence
 
 MIT. See [`LICENSE`](LICENSE).
