@@ -25,9 +25,22 @@ function readEvent(handler, timeoutMs = 5000) {
   });
 }
 
-// Stop a tool call and tell the model why.
+// Stop a tool call and tell the model why. PreToolUse only, which is the only
+// event that can stop anything and the only caller here.
+//
+// This used to emit a top-level `{ decision: 'block', reason }`. PreToolUse
+// does not read that. It reads hookSpecificOutput.permissionDecision, and an
+// unrecognised shape is ignored without a word, so through 0.2.0 every guard
+// reached the right verdict, printed it, and watched the command run anyway.
+// Nothing failed loudly, which is why it survived a full test suite.
 function block(reason) {
-  process.stdout.write(JSON.stringify({ decision: 'block', reason }));
+  process.stdout.write(JSON.stringify({
+    hookSpecificOutput: {
+      hookEventName: 'PreToolUse',
+      permissionDecision: 'deny',
+      permissionDecisionReason: reason,
+    },
+  }));
 }
 
 // Add a note to the conversation without stopping anything.
