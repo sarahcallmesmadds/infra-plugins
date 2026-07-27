@@ -16,29 +16,19 @@ const DEFAULTS = {
   enforce: true,
 };
 
-// The plugin was called writing-gate until 2026-07-27, so a config written
-// before the rename sits at the old path. Reading both means a rename does not
-// quietly switch someone's settings back to the defaults, which is the failure
-// mode here: `enforce: false` becoming `enforce: true` again turns the hook
-// back on for a person who deliberately turned it off, and nothing says so.
-//
-// New path wins when both exist. The old one is never written to and never
-// deleted; it is the user's file, not this plugin's.
-const CONFIG_PATHS = ['slop-check.config.json', 'writing-gate.config.json'];
+const CONFIG_PATH = 'slop-check.config.json';
 
-function readFirstConfig() {
-  for (const name of CONFIG_PATHS) {
-    try {
-      return JSON.parse(fs.readFileSync(path.join(os.homedir(), '.claude', name), 'utf8'));
-    } catch {
-      // Missing, unreadable, or invalid JSON. Try the next one.
-    }
+function readUserConfig() {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(os.homedir(), '.claude', CONFIG_PATH), 'utf8'));
+  } catch {
+    // Missing, unreadable, or invalid JSON. Defaults handle all three.
+    return null;
   }
-  return null;
 }
 
 function loadConfig() {
-  const user = readFirstConfig();
+  const user = readUserConfig();
 
   // No file, unreadable, or invalid JSON. Defaults are a working setup, so a
   // broken override must never take the checks offline silently.
