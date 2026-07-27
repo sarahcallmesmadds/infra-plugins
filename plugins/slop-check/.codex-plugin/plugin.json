@@ -1,12 +1,12 @@
 {
-  "name": "writing-gate",
-  "version": "0.1.0",
+  "name": "slop-check",
+  "version": "0.2.0",
   "description": "Check any draft, document, pull request, chart or spec for the habits that mean nobody edited or reviewed it before it shipped, and name the specific lines.",
   "author": {
     "name": "Sarah Madden",
     "url": "https://github.com/sarahcallmesmadds"
   },
-  "homepage": "https://github.com/sarahcallmesmadds/plugins/tree/main/plugins/writing-gate",
+  "homepage": "https://github.com/sarahcallmesmadds/plugins/tree/main/plugins/slop-check",
   "repository": "https://github.com/sarahcallmesmadds/plugins",
   "license": "MIT",
   "keywords": [
@@ -18,7 +18,7 @@
   ],
   "skills": "./skills/",
   "interface": {
-    "displayName": "Writing Gate",
+    "displayName": "Slop Check",
     "shortDescription": "Catch the habits that mean nobody edited it",
     "longDescription": "The question worth asking about a piece of work is not whether a machine touched it, it is whether a person with judgement went through it afterwards. This checks for the habits that say nobody did: filler and machine vocabulary in prose, placeholders and swallowed errors in code, numbers too round to be measured in a chart, and options laid out with no recommendation in a spec. It names the specific lines, so a finding is something to act on or to send back. In Claude Code it also installs a hook that blocks em dashes and choppy sentence runs in the assistant's own writing; Codex plugins cannot register hooks, so there it runs on request.",
     "developerName": "Sarah Madden",

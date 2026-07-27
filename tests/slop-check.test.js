@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// Regression tests for the writing-gate detectors.
+// Regression tests for the slop-check detectors.
 //
-// Run: node tests/writing-gate.test.js
+// Run: node tests/slop-check.test.js
 //
 // The rows that matter most are the negative ones. A detector that flags
 // everything is worse than no detector, because it trains you to ignore it.
@@ -11,7 +11,7 @@
 const assert = require('assert');
 const path = require('path');
 
-const base = path.join(__dirname, '..', 'plugins', 'writing-gate', 'scripts');
+const base = path.join(__dirname, '..', 'plugins', 'slop-check', 'scripts');
 const { checkHard, checkAll } = require(path.join(base, 'tells.js'));
 const { checkCode, checkData, checkSpec, checkTechnical, checkOverbuilt, checkOverplanned } = require(path.join(base, 'technical.js'));
 
@@ -193,7 +193,7 @@ console.log('\nevery finding renders a real detail');
   const tmp = path.join(os.tmpdir(), 'wg-render-check.md');
   fsx.writeFileSync(tmp, 'Split: 30% one, 30% two, 25% three. Owner: nobody.\n');
   const out = execFileSync('node',
-    [path.join(__dirname, '..', 'plugins', 'writing-gate', 'scripts', 'cli.js'),
+    [path.join(__dirname, '..', 'plugins', 'slop-check', 'scripts', 'cli.js'),
      'check', '--file', tmp, '--technical'], { encoding: 'utf8' });
   fsx.unlinkSync(tmp);
   check('no "undefined" in the rendered report', /undefined/.test(out), false);
@@ -217,6 +217,69 @@ check('a real shipped placeholder in real code still flags',
 check('a document full of its own leftovers still flags',
   checkSpec('Owner: TBD. Timeline: TBD. Body is lorem ipsum for now.')
     .some((f) => f.name === 'open-placeholders-in-a-finished-doc'), true);
+
+// ---------------------------------------------------------------------------
+// Config loading across the writing-gate to slop-check rename.
+//
+// The failure this guards against is silent and one-directional: someone who
+// set `enforce: false` on purpose has the hook switched back on by an upgrade,
+// with nothing to tell them. Defaults returning is indistinguishable from a
+// config that happens to match the defaults.
+
+console.log('\nconfig survives the rename');
+{
+  const os = require('os');
+  const fs = require('fs');
+  const cfgPath = path.join(base, 'config.js');
+
+  // loadConfig reads from the real home directory, so the only honest way to
+  // test it is to give it a different one. HOME is re-read per require because
+  // the module resolves the path inside the function, not at load time.
+  const realHome = os.homedir;
+  const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'slop-cfg-'));
+  fs.mkdirSync(path.join(sandbox, '.claude'), { recursive: true });
+
+  const loadWith = (files) => {
+    for (const f of fs.readdirSync(path.join(sandbox, '.claude'))) {
+      fs.unlinkSync(path.join(sandbox, '.claude', f));
+    }
+    for (const [name, body] of Object.entries(files)) {
+      fs.writeFileSync(path.join(sandbox, '.claude', name), body);
+    }
+    os.homedir = () => sandbox;
+    delete require.cache[require.resolve(cfgPath)];
+    const { loadConfig } = require(cfgPath);
+    const out = loadConfig();
+    os.homedir = realHome;
+    return out;
+  };
+
+  check('no config file at all gives the working defaults',
+    loadWith({}).enforce, true);
+
+  check('a config at the old writing-gate path is still honoured',
+    loadWith({ 'writing-gate.config.json': '{"enforce":false}' }).enforce, false);
+
+  check('a config at the new path is honoured',
+    loadWith({ 'slop-check.config.json': '{"enforce":false}' }).enforce, false);
+
+  check('the new path wins when both exist',
+    loadWith({
+      'slop-check.config.json': '{"choppyRunLimit":9}',
+      'writing-gate.config.json': '{"choppyRunLimit":2}',
+    }).choppyRunLimit, 9);
+
+  check('one key set does not reset the others',
+    loadWith({ 'slop-check.config.json': '{"choppyRunLimit":5}' }).enforce, true);
+
+  check('a JSON array is rejected rather than spread into settings',
+    loadWith({ 'slop-check.config.json': '[1,2,3]' }).enforce, true);
+
+  check('unparseable JSON falls back to defaults rather than disabling checks',
+    loadWith({ 'slop-check.config.json': '{not json' }).enforce, true);
+
+  fs.rmSync(sandbox, { recursive: true, force: true });
+}
 
 console.log(`\n${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);
