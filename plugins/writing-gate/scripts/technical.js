@@ -61,7 +61,12 @@ function countMatches(text, regexes) {
 // counted as a comment and make any well-structured document look
 // over-commented.
 function looksLikeCode(text) {
-  return /(^|\n)\s*(function\s+\w+|def\s+\w+|class\s+\w+|const\s+\w+\s*=|let\s+\w+\s*=|var\s+\w+\s*=|import\s+|from\s+\w+\s+import|#include|package\s+\w+)/.test(text);
+  // Declarations catch whole files. The second group catches fragments: a
+  // pasted try/catch is unmistakably code but declares nothing, and requiring
+  // a declaration would wave it through as prose.
+  const declares = /(^|\n)\s*(function\s+\w+|def\s+\w+|class\s+\w+|const\s+\w+\s*=|let\s+\w+\s*=|var\s+\w+\s*=|import\s+|from\s+\w+\s+import|#include|package\s+\w+)/;
+  const constructs = /(^#!)|(\btry\s*[:{])|(\}\s*catch\b)|(\bcatch\s*[({])|(\bexcept\b[^\n]*:)|(\bfinally\s*[:{])|(=>\s*[{(])|(\breturn\b[^\n]*;)/;
+  return declares.test(text) || constructs.test(text);
 }
 
 function commentRatio(code) {
@@ -86,6 +91,20 @@ function mixedNaming(code) {
 
 function checkCode(text) {
   const found = [];
+
+  // Everything below is about source, and every group now runs on every input,
+  // so this has to establish it is looking at source before saying anything.
+  // Two of these read as ordinary prose otherwise:
+  //
+  //   `# Set up the project` is a markdown heading, and also matches the
+  //   comment-restating-the-code pattern, because a comment marker in most
+  //   languages is the same character.
+  //
+  //   "visit example.com" is a normal sentence, and also a placeholder string.
+  //   That one was reported HARD, which is the tier the README tells the
+  //   reader to treat as fact.
+  const isCode = looksLikeCode(text);
+  if (!isCode) return found;
 
   const placeholders = CODE_PLACEHOLDERS.filter((p) => text.includes(p));
   if (placeholders.length) {
@@ -384,8 +403,13 @@ function checkSpec(text) {
     found.push({ name: 'no-owner-and-no-date' });
   }
 
-  // TBDs sitting in a document that presents itself as finished.
-  const tbd = (text.match(/\b(TBD|TBC|to be determined|to be confirmed|\[placeholder\]|\[insert)/gi) || []).length;
+  // Placeholders sitting in a document that presents itself as finished.
+  //
+  // The code-side placeholder check only runs on source now, so this is where
+  // a document's own leftovers get caught. `lorem ipsum` and `FIXME` moved here
+  // rather than being dropped: in prose they are unambiguous, where
+  // "visit example.com" is just a sentence.
+  const tbd = (text.match(/\b(TBD|TBC|to be determined|to be confirmed|\[placeholder\]|\[insert|lorem ipsum|FIXME|XXX)/gi) || []).length;
   if (tbd >= 2) found.push({ name: 'open-placeholders-in-a-finished-doc', count: tbd });
 
   return found;

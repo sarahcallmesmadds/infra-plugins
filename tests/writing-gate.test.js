@@ -200,5 +200,23 @@ console.log('\nevery finding renders a real detail');
   check('the actual total is shown', /total=85/.test(out), true);
 }
 
+
+console.log('\ncode checks stay off ordinary prose');
+{
+  const doc = '# Set up the project\n\nProse here.\n\n## Create the config\n\nMore prose.\n\n' +
+              '## Get started\n\nVisit example.com for docs.\n\n## Check if it worked\n\nA final paragraph.\n';
+  check('markdown headings are not comments restating code',
+    checkCode(doc).some((f) => f.name === 'comments-restate-the-code'), false);
+  check('"visit example.com" in prose is not a shipped placeholder',
+    checkCode(doc).some((f) => f.name === 'placeholders-left-in'), false);
+  check('...and the document reads clean overall', checkTechnical(doc).reading, 'little');
+}
+check('a real shipped placeholder in real code still flags',
+  checkCode('const KEY = "your-api-key";\nfunction go() {}')
+    .some((f) => f.name === 'placeholders-left-in' && f.hard), true);
+check('a document full of its own leftovers still flags',
+  checkSpec('Owner: TBD. Timeline: TBD. Body is lorem ipsum for now.')
+    .some((f) => f.name === 'open-placeholders-in-a-finished-doc'), true);
+
 console.log(`\n${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);
