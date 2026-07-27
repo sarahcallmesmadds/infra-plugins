@@ -141,19 +141,43 @@ happened to be typed.
 
 Tildes are now expanded before the lookup, for both `cd` and `git -C`.
 
-**The guard also no longer stays quiet when it cannot tell.** If a commit names
-a directory that is not there, usually because the path is in a shell variable
-(`cd $REPO && git commit`), it now refuses and says why. A shell variable cannot
-be resolved from inside a hook, so the honest answer is that the branch is
-unknown, and a safety check that answers "unknown" by allowing the thing is not
-a safety check.
-
 A relative path is resolved against the directory the command runs in, not
 against wherever the hook process happens to sit, so `cd subdir && git commit`
 is judged in the repository you actually mean.
 
-Three cases stay quiet on purpose, because none of them is the guard being
-unable to tell:
+**A path only your shell can work out now falls back to the directory the
+command runs in.** Plenty of paths cannot be read out of the command text at
+all:
+
+```
+cd $REPO && git commit
+cd "$(git rev-parse --show-toplevel)" && git commit
+git clone https://example.com/x r && cd r && git commit
+```
+
+Refusing these was tried during development and it was wrong. It stopped
+ordinary work and told people to write out a path that is computed, which they
+cannot do.
+
+The fallback is not a consolation prize. `$(git rev-parse --show-toplevel)` is
+the repository the command already sits in, so the fallback answers it exactly.
+A path in a variable usually points at the repository you are working in, so it
+answers that often too.
+
+Two limits, stated rather than implied:
+
+**A commit aimed at a different repository named dynamically is not checked.**
+The fallback reads the directory you are standing in, so if the computed path
+points somewhere else, the answer is about the wrong repository. It is not
+guessed at.
+
+**The reverse also happens.** Clone into a subdirectory while standing in a
+repository that is on `main`, then commit into the clone, and the fallback
+answers `main` from the outer repository and stops you. Rare, and it errs
+toward interrupting rather than toward missing, which is the right way round
+for a guard. Name the path explicitly if you hit it.
+
+These stay quiet on purpose:
 
 | case | why it is left alone |
 |---|---|

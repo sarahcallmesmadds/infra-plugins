@@ -51,9 +51,8 @@ function targetRepoDir(command) {
 // A relative path means "relative to where the command runs", which is
 // `eventCwd` and never this process's own directory. Resolving `subdir`
 // against the hook's location points at a directory that has nothing to do
-// with the command, so a repository that is right there looks missing. Before
-// the unresolved check existed that was a silent miss; with it, the same
-// mistake becomes an interruption on a commit that was fine.
+// with the command, so a repository that is right there looks missing and
+// `cd subdir && git commit` gets judged somewhere else entirely.
 function resolveAgainst(named, base) {
   const expanded = expandHome(named);
   return path.isAbsolute(expanded) ? expanded : path.resolve(base, expanded);
@@ -67,53 +66,55 @@ function resolveAgainst(named, base) {
 // next is an ordinary sequence, and only the event knows about the first call.
 // Falling back to process.cwd() checked some other repository, or no repository
 // at all, and a branch guard that reads the wrong repo reads the wrong branch.
-// Returns { branch, unresolved }.
+// A named directory that cannot be found falls back to `base`, the directory
+// the command runs in. It does not refuse.
 //
-// `unresolved` is the case the guard used to hide: the command names a
-// directory to commit in, and that directory is not there. A shell variable is
-// the usual reason, `cd $REPO && git commit`, because the shell expands it and
-// we only ever see the text. It cannot be resolved from here at all.
+// Refusing was tried and it was wrong. The text after `cd` is frequently
+// something that only the shell can turn into a path: `$REPO`, or
+// `"$(git rev-parse --show-toplevel)"`, or a directory created earlier in the
+// same line by `git clone x r && cd r`. None of those exist at the moment this
+// hook looks, and all of them are ordinary. Refusing stopped real work and
+// told people to write out a path that is computed, which they cannot do.
 //
-// Everything else stays quiet on purpose:
+// The fallback is not a consolation prize. `$(git rev-parse --show-toplevel)`
+// IS the repository the command already sits in, so reading `base` answers it
+// exactly. A path in a variable usually points at the repository you are
+// working in, so `base` answers it often. A fresh clone has no branch worth
+// protecting yet, and `base` is its parent, which is normally not a repository
+// at all, so nothing fires. The cases where the fallback is wrong are the ones
+// where a commit is aimed at a different repository named dynamically, and
+// that stays uncovered rather than being covered by guessing.
+//
+// Silence in these cases is deliberate:
 //
 //   directory exists but is not a repository   git commit fails by itself, so
 //                                              there is nothing to protect
 //   detached HEAD                              symbolic-ref fails on a valid
 //                                              repository doing normal work
-//   no directory named and nowhere is a repo   committing outside a repository
+//   nothing named and nowhere is a repository  committing outside a repository
 //                                              is not a thing that happens
-//
-// Only the first is a case where a commit could really land on a protected
-// branch without the guard having any way to see it, and that is the only one
-// worth interrupting for.
 function currentBranch(command, eventCwd) {
   const named = targetRepoDir(command || '');
   const base = eventCwd || process.cwd();
 
   let dir = null;
   if (named) {
-    dir = resolveAgainst(named, base);
-    let ok = false;
+    const candidate = resolveAgainst(named, base);
     try {
-      ok = fs.statSync(dir).isDirectory();
+      if (fs.statSync(candidate).isDirectory()) dir = candidate;
     } catch (_) {
-      ok = false;
+      // Leave dir null and fall back to base, below.
     }
-    // `named` rather than `dir` in the message: showing someone a resolved
-    // path they never typed, for a directory that does not exist, is a worse
-    // clue than the text they wrote.
-    if (!ok) return { branch: null, unresolved: true, named };
   }
 
   try {
-    const branch = execSync('git symbolic-ref --short HEAD', {
+    return execSync('git symbolic-ref --short HEAD', {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
       cwd: dir || base,
     }).trim();
-    return { branch, unresolved: false, named };
   } catch (_) {
-    return { branch: null, unresolved: false, named };
+    return null; // not a repository, or a detached HEAD
   }
 }
 
@@ -148,20 +149,7 @@ readEvent((event) => {
 
   // 2. Protected branches.
   if (config.blockCommitToProtectedBranch) {
-    const { branch, unresolved, named } = currentBranch(command, event.cwd);
-
-    if (unresolved) {
-      block(
-        `This commit names a directory the guard cannot find: "${named}".\n\n` +
-        `That usually means the path is held in a shell variable, which the ` +
-        `shell expands and this check never sees. So there is no way to tell ` +
-        `which branch the commit would land on, and it could be a protected one.\n\n` +
-        `Write the path out in full, or run the commit from inside the ` +
-        `repository, and this will check it properly.`
-      );
-      return;
-    }
-
+    const branch = currentBranch(command, event.cwd);
     if (branch && config.protectedBranches.includes(branch)) {
       block(
         `You are on "${branch}", which is a protected branch.\n\n` +

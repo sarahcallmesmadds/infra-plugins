@@ -333,17 +333,86 @@ check('a relative path with .. is resolved too', () => {
   fs.rmSync(parent, { recursive: true, force: true });
 });
 
-// --- when the guard cannot tell, it says so --------------------------------
+// --- a path only the shell can resolve ------------------------------------
+//
+// The text after `cd` is often something this hook cannot turn into a path:
+// `$REPO`, `"$(git rev-parse --show-toplevel)"`, or a directory created
+// earlier on the same line. Refusing those was tried and it stopped real work,
+// while telling people to write out a path that is computed. The fallback is
+// the directory the command runs in, which answers the common shapes correctly
+// rather than as a consolation.
 
-check('a named directory that does not exist is refused rather than waved through', () => {
-  // A shell variable is the usual cause. The shell expands it and the guard
-  // only ever sees the text, so there is no way to know which branch this
-  // would land on.
+check('a command substitution falls back to the directory the command runs in', () => {
+  // `$(git rev-parse --show-toplevel)` IS the repository already in play, so
+  // reading the event directory answers it exactly rather than approximately.
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrails-repo-'));
+  execFileSync('git', ['init', '-b', 'main', repo], { stdio: 'ignore' });
   const reason = assertDenies(
-    runHook('cd $REPO && git commit -m "wip"', { processCwd: NOWHERE }),
+    runHook('cd "$(git rev-parse --show-toplevel)" && git commit -m "wip"', {
+      eventCwd: repo,
+      processCwd: NOWHERE,
+    }),
+    'cd "$(...)"'
+  );
+  assert.ok(reason.includes('main'), `reason did not name the branch: ${reason}`);
+  fs.rmSync(repo, { recursive: true, force: true });
+});
+
+check('a shell variable falls back the same way', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrails-repo-'));
+  execFileSync('git', ['init', '-b', 'main', repo], { stdio: 'ignore' });
+  const reason = assertDenies(
+    runHook('cd $REPO && git commit -m "wip"', { eventCwd: repo, processCwd: NOWHERE }),
     'cd $REPO'
   );
-  assert.ok(reason.includes('$REPO'), `reason did not name the path: ${reason}`);
+  assert.ok(reason.includes('main'), `reason did not name the branch: ${reason}`);
+  fs.rmSync(repo, { recursive: true, force: true });
+});
+
+check('a directory created earlier in the same line is not refused', () => {
+  // `git clone x r && cd r && git commit`. `r` does not exist when this hook
+  // looks, and a fresh clone has no branch worth protecting yet. The parent is
+  // not a repository, so nothing fires and the work proceeds.
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrails-parent-'));
+  assert.strictEqual(
+    runHook('git clone https://example.com/x r && cd r && git commit -m "wip"', {
+      eventCwd: parent,
+      processCwd: NOWHERE,
+    }),
+    null,
+    'hook refused a commit into a directory the command itself creates'
+  );
+  fs.rmSync(parent, { recursive: true, force: true });
+});
+
+check('cloning inside a repo on main and committing into the clone is stopped', () => {
+  // The known cost of the fallback, pinned so it is a decision rather than a
+  // surprise. The commit is aimed at the clone, but the clone does not exist
+  // yet, so the answer comes from the outer repository, which is on main.
+  //
+  // Left as is on purpose. It errs toward interrupting rather than toward
+  // missing, which is the right way round for a guard, and the alternative is
+  // special-casing `git clone <url> <dir>` followed by `cd <dir>`, which is
+  // more moving parts than the workflow is worth.
+  const outer = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrails-outer-'));
+  execFileSync('git', ['init', '-b', 'main', outer], { stdio: 'ignore' });
+  const reason = assertDenies(
+    runHook('git clone https://example.com/x r && cd r && git commit -m "wip"', {
+      eventCwd: outer,
+      processCwd: NOWHERE,
+    }),
+    'clone inside a repo on main'
+  );
+  assert.ok(reason.includes('main'), `reason did not name the branch: ${reason}`);
+  fs.rmSync(outer, { recursive: true, force: true });
+});
+
+check('an unresolvable path outside any repository is left alone', () => {
+  assert.strictEqual(
+    runHook('cd $REPO && git commit -m "wip"', { eventCwd: NOWHERE, processCwd: NOWHERE }),
+    null,
+    'hook objected when neither the named path nor the fallback is a repository'
+  );
 });
 
 check('a directory that exists but is not a repository is left alone', () => {
@@ -405,5 +474,5 @@ check('a real path outside the disposable list is still denied', () => {
 fs.rmSync(FAKE_HOME, { recursive: true, force: true });
 fs.rmSync(NOWHERE, { recursive: true, force: true });
 
-console.log(`\n23 checks, ${failed} failed`);
+console.log(`\n27 checks, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);
