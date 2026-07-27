@@ -54,6 +54,24 @@ That last group matters most. In a spec the tell is not the prose, it is that
 the document decides nothing. Options with no recommendation is the single
 most common shape of work produced by something with no stake in the outcome.
 
+**Whether the solution is the size of the problem.** Reported separately,
+because it answers a different question. Work can be carefully reviewed and
+still take a far longer path than it needed, and the reverse.
+
+In code: layers that only forward calls, functions whose whole body delegates
+elsewhere, utilities rebuilt that the language already provides, `async` with
+nothing to await, classes used only as namespaces, deep nesting throughout.
+
+In a plan: building a framework for a one-off, more phases than the work needs,
+more process than work, language reaching for a scale nobody asked for
+("enterprise-grade", "fully scalable"), handing the reader back their own
+context before getting to the work, and never saying what it is NOT doing.
+
+**That last one is the most useful question to ask of any proposal.** A first
+version is defined by what it leaves out. Work that names no cut line has not
+been thought about, it has been enumerated. Default to wanting the smallest
+version that works, and treat a missing cut line as the finding.
+
 ## Reading the result
 
 Never quote a single hit as evidence. Every soft signal here appears in good

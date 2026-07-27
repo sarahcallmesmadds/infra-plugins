@@ -97,9 +97,30 @@ function formatTechnical(result, kind) {
     some: 'Some signs it was not reviewed closely.',
     little: 'Little sign of unreviewed work.',
   }[result.reading]);
+
+  // Reported apart, because it answers a different question. Work can be
+  // carefully reviewed and still take the long way round, and the reverse.
+  if (result.over && result.over.length) {
+    lines.push('');
+    lines.push(`Heavier than the problem: ${result.over.length} signal${result.over.length === 1 ? '' : 's'}.`);
+    for (const f of result.over) {
+      const detail = f.hits ? f.hits.join(', ')
+        : Object.entries(f).filter(([k]) => k !== 'name' && k !== 'over')
+            .map(([k, v]) => `${k}=${v}`).join(' ') || 'present';
+      lines.push(`  ${f.name}: ${detail}`);
+    }
+    lines.push('');
+    lines.push({
+      strong: 'Takes a much longer path than the problem needed.',
+      some: 'Somewhat heavier than the problem needed.',
+      little: 'Roughly proportionate to the problem.',
+    }[result.weight]);
+  }
+
   lines.push('');
   lines.push('This says nothing about who or what wrote it. It reports whether');
-  lines.push('someone who knew the subject appears to have looked at it.');
+  lines.push('someone who knew the subject appears to have looked at it, and');
+  lines.push('whether the solution is the size of the problem.');
 
   return lines.join('\n');
 }

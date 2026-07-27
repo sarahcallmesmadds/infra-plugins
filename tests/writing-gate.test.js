@@ -13,7 +13,7 @@ const path = require('path');
 
 const base = path.join(__dirname, '..', 'plugins', 'writing-gate', 'scripts');
 const { checkHard, checkAll } = require(path.join(base, 'tells.js'));
-const { checkCode, checkData, checkSpec, checkTechnical } = require(path.join(base, 'technical.js'));
+const { checkCode, checkData, checkSpec, checkTechnical, checkOverbuilt, checkOverplanned } = require(path.join(base, 'technical.js'));
 
 const EM = String.fromCharCode(0x2014);
 let failed = 0;
@@ -73,6 +73,42 @@ check('options WITH a recommendation are not',
 check('identical estimates are caught',
   checkSpec('Phase one 2 weeks. Phase two 2 weeks. Phase three 2 weeks.')
     .some((f) => f.name === 'every-estimate-identical'), true);
+
+console.log('\ntaking the long way round');
+check('hand-rolled stdlib is caught',
+  checkOverbuilt('function isEmpty(v) { return v === null; }')
+    .some((f) => f.name === 'rebuilt-what-the-language-provides'), true);
+check('async with nothing to await is caught',
+  checkOverbuilt('async function a() { return 1; }\nasync function b() { return 2; }\n')
+    .some((f) => f.name === 'async-with-nothing-to-await'), true);
+check('async that actually awaits is not',
+  checkOverbuilt('async function a() { await go(); }\nasync function b() { await go(); }\n')
+    .some((f) => f.name === 'async-with-nothing-to-await'), false);
+check('a plan that names no cut line is caught',
+  checkOverplanned('We will build the thing. The plan is to implement it across the team. '.repeat(12))
+    .some((f) => f.name === 'never-says-what-it-is-not-doing'), true);
+check('a plan that says what it is NOT doing is not',
+  checkOverplanned('We will build the thing. The plan is to implement it. Out of scope: everything else. '.repeat(12))
+    .some((f) => f.name === 'never-says-what-it-is-not-doing'), false);
+check('handing back the reader their own context is caught',
+  checkOverplanned('As you mentioned, this is manual. To recap, it is slow.')
+    .some((f) => f.name === 'restates-what-you-already-said'), true);
+
+console.log('\nthe two readings are separate');
+{
+  // Two signals is "somewhat heavier", not a verdict. Three stacks into one.
+  const light = checkTechnical(
+    'function isEmpty(v) { return !v; }\nfunction unique(l) { return l; }\n' +
+    'async function x() { return 1; }\nasync function y() { return 2; }\n', 'code');
+  check('two signals is only somewhat heavy', light.weight, 'some');
+
+  const heavy = checkTechnical(
+    'const UserFactory = {};\nconst UserManager = {};\nconst UserProvider = {};\n' +
+    'const UserRegistry = {};\nfunction isEmpty(v) { return !v; }\n' +
+    'async function x() { return 1; }\nasync function y() { return 2; }\n', 'code');
+  check('three or more reads heavy', heavy.weight, 'strong');
+  check('...but none of it reads as unreviewed', heavy.reading, 'little');
+}
 
 console.log('\nverdicts do not overreact');
 check('a single hard finding is not yet strong',

@@ -62,6 +62,27 @@ That last one is the most useful signal in the whole plugin. In a spec, the
 tell is not the prose. It is that the document decides nothing, which is the
 shape work takes when whatever produced it had no stake in the outcome.
 
+### Whether the solution is the size of the problem
+
+Reported separately, with its own reading, because it answers a different
+question. Work can be carefully reviewed and still take a much longer path
+than it needed, and the reverse is just as common.
+
+**In code:** layers that only forward calls, functions whose whole body
+delegates elsewhere, utilities rebuilt that the language already has, `async`
+with nothing to await, classes used only as namespaces, deep nesting
+throughout.
+
+**In a plan:** building a framework for a one-off, more phases than the work
+needs, more process than work, reaching for a scale nobody asked for
+("enterprise-grade", "fully scalable", "production-ready"), handing the reader
+back their own context before getting to the work, and **never saying what it
+is not doing**.
+
+That last check is the most useful question to ask of any proposal. A first
+version is defined by what it leaves out, so work that names no cut line has
+not been thought about, it has been enumerated.
+
 ## How to read a result
 
 Distinct categories, never a single hit. Every soft signal here appears in

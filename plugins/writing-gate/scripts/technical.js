@@ -102,6 +102,157 @@ function checkCode(text) {
   return found;
 }
 
+// --- taking the long way round ---------------------------------------------
+//
+// A separate failure from the ones above, and a more expensive one. The work
+// is reviewable, runs, and does the job, but by a far longer path than the
+// problem needed. It shows up as structure with nothing behind it: layers that
+// only forward calls, an abstraction with exactly one thing under it, a helper
+// that reimplements something the language already has.
+//
+// The honest framing is "this looks heavier than the problem". Some of these
+// are correct decisions in a codebase heading somewhere, which is exactly why
+// they are soft signals and why the counts matter more than any single hit.
+
+// Names that promise a layer. Two or three in a large codebase is ordinary.
+// Six in a two hundred line script is architecture nobody needed.
+const LAYER_WORDS = /\b\w*(Factory|Manager|Provider|Strategy|Adapter|Wrapper|Orchestrator|Coordinator|Dispatcher|Registry|Container|Builder|Facade|Delegate|Mediator)\b/g;
+
+// Utilities the standard library already provides. Hand-rolling one is the
+// clearest form of the long way round, because the short path is one call.
+const REINVENTED = [
+  { name: 'deep clone', re: /function\s+deepClone|const\s+deepClone\s*=|def\s+deep_clone/ },
+  { name: 'debounce', re: /function\s+debounce|const\s+debounce\s*=|def\s+debounce/ },
+  { name: 'group by', re: /function\s+groupBy|const\s+groupBy\s*=|def\s+group_by/ },
+  { name: 'chunk', re: /function\s+chunk|const\s+chunk\s*=|def\s+chunk\b/ },
+  { name: 'capitalise', re: /function\s+capitali[sz]e|const\s+capitali[sz]e\s*=|def\s+capitali[sz]e/ },
+  { name: 'is empty', re: /function\s+isEmpty|const\s+isEmpty\s*=|def\s+is_empty/ },
+  { name: 'unique', re: /function\s+unique|const\s+unique\s*=|def\s+unique\b/ },
+  { name: 'range', re: /function\s+range\b|def\s+my_range/ },
+];
+
+// A function whose whole body forwards to another call. One is a rename. Four
+// is a layer that exists to be a layer.
+function passThroughWrappers(code) {
+  const patterns = [
+    /function\s+\w+\s*\([^)]*\)\s*\{\s*return\s+\w+(?:\.\w+)*\([^)]*\);?\s*\}/g,
+    /const\s+\w+\s*=\s*\([^)]*\)\s*=>\s*\w+(?:\.\w+)*\([^)]*\);?/g,
+    /def\s+\w+\s*\([^)]*\):\s*\n\s*return\s+\w+(?:\.\w+)*\([^)]*\)\s*\n/g,
+  ];
+  return countMatches(code, patterns);
+}
+
+// async with nothing to wait for. The keyword was added because it looked
+// like the shape of the thing, not because anything is asynchronous.
+function asyncWithoutAwait(code) {
+  const fns = code.match(/async\s+(?:function\s+\w+|\w+\s*=>|def\s+\w+)[\s\S]{0,600}?(?=\n(?:async|function|def|const|class|\}|$))/g) || [];
+  return fns.filter((f) => !/\bawait\b/.test(f)).length;
+}
+
+// A class used only as a namespace. In most languages these are functions.
+function staticOnlyClass(code) {
+  const classes = code.match(/class\s+\w+[\s\S]{0,1200}?\n\}/g) || [];
+  return classes.filter((c) => {
+    const methods = c.match(/^\s{2,}(?:static\s+)?\w+\s*\(/gm) || [];
+    if (methods.length < 2) return false;
+    const statics = c.match(/^\s{2,}static\s+\w+\s*\(/gm) || [];
+    return statics.length === methods.length;
+  }).length;
+}
+
+// How deep the code goes before doing anything. Measured by indentation, which
+// is crude but survives every language here.
+function nestingDepth(code) {
+  const depths = code.split('\n')
+    .filter((l) => l.trim())
+    .map((l) => (l.match(/^[\t ]*/)[0].replace(/\t/g, '    ').length / 2) | 0);
+  if (depths.length < 30) return null;
+  const deep = depths.filter((d) => d >= 5).length;
+  const share = deep / depths.length;
+  return share > 0.15 ? { share: Number(share.toFixed(2)), lines: depths.length } : null;
+}
+
+function checkOverbuilt(text) {
+  const found = [];
+  const tag = (f) => ({ ...f, over: true });
+
+  const layers = [...new Set(text.match(LAYER_WORDS) || [])];
+  const lines = text.split('\n').filter((l) => l.trim()).length;
+  if (layers.length >= 3 && lines > 0 && layers.length / (lines / 100) >= 1.5) {
+    found.push(tag({ name: 'layers-for-their-own-sake', hits: layers, per100Lines: Number((layers.length / (lines / 100)).toFixed(1)) }));
+  }
+
+  const wrappers = passThroughWrappers(text);
+  if (wrappers >= 3) found.push(tag({ name: 'functions-that-only-forward', count: wrappers }));
+
+  const reinvented = REINVENTED.filter((r) => r.re.test(text)).map((r) => r.name);
+  if (reinvented.length) found.push(tag({ name: 'rebuilt-what-the-language-provides', hits: reinvented }));
+
+  const idleAsync = asyncWithoutAwait(text);
+  if (idleAsync >= 2) found.push(tag({ name: 'async-with-nothing-to-await', count: idleAsync }));
+
+  const statics = staticOnlyClass(text);
+  if (statics >= 1) found.push(tag({ name: 'class-used-only-as-a-namespace', count: statics }));
+
+  const nesting = nestingDepth(text);
+  if (nesting) found.push(tag({ name: 'deeply-nested-throughout', ...nesting }));
+
+  return found;
+}
+
+// The same failure in a plan rather than in code: a build heavier than the
+// thing being built.
+function checkOverplanned(text) {
+  const found = [];
+  const tag = (f) => ({ ...f, over: true });
+  const lower = text.toLowerCase();
+
+  const grandiose = ['framework', 'platform', 'engine', 'abstraction layer',
+    'pipeline architecture', 'plugin system', 'extensible system',
+    'future-proof', 'scalable foundation', 'generic solution'];
+  const hits = grandiose.filter((g) => lower.includes(g));
+  const phases = (text.match(/\bphase\s*\d/gi) || []).length;
+
+  if (hits.length >= 2 && text.length < 6000) {
+    found.push(tag({ name: 'building-a-framework-for-a-one-off', hits }));
+  }
+  if (phases >= 4 && text.length < 4000) {
+    found.push(tag({ name: 'more-phases-than-the-work-needs', phases }));
+  }
+
+  // Governance outweighing the work: lots of process nouns, little verb.
+  const process = (lower.match(/\b(governance|stakeholder|alignment|cadence|working group|steering|review board|sign-?off)\b/g) || []).length;
+  if (process >= 5) found.push(tag({ name: 'more-process-than-work', count: process }));
+
+  // Reaching for the finished version when the smallest one was wanted. The
+  // adjectives are the tell: nobody asking for a first cut describes it as
+  // enterprise-grade.
+  const goldPlating = ['production-ready', 'enterprise-grade', 'fully scalable',
+    'battle-tested', 'comprehensive solution', 'robust architecture',
+    'best practices', 'industry standard', 'fault-tolerant', 'highly available'];
+  const plated = goldPlating.filter((g) => lower.includes(g));
+  if (plated.length >= 2) found.push(tag({ name: 'built-for-a-scale-nobody-asked-for', hits: plated }));
+
+  // The single most useful question of a proposal: what is it NOT doing.
+  // Work that names no cut line has not been thought about, it has been
+  // enumerated. A first version is defined by what it leaves out.
+  const proposes = /\b(we (?:will|should|could)|the plan|approach|proposal|implement|build|deliverable)\b/i.test(text);
+  const namesACut = /\b(out of scope|not (?:doing|building|in scope)|v2|version 2|later|deferred|explicitly excluded|won'?t (?:do|build|include)|minimum|smallest|first (?:cut|version|pass)|mvp)\b/i.test(text);
+  if (proposes && !namesACut && text.length > 700) {
+    found.push(tag({ name: 'never-says-what-it-is-not-doing' }));
+  }
+
+  // Handing back the reader's own context before getting to the work.
+  const echoes = ['as you mentioned', 'as you noted', 'based on your request',
+    'as requested', 'you asked me to', 'to summarise your', 'to summarize your',
+    'to recap', 'in other words', 'as we discussed', 'per your request',
+    'it is worth restating', 'as previously stated'];
+  const echoed = echoes.filter((e) => lower.includes(e));
+  if (echoed.length >= 2) found.push(tag({ name: 'restates-what-you-already-said', hits: echoed }));
+
+  return found;
+}
+
 // --- data and charts -------------------------------------------------------
 
 // Real measurements are untidy. Fabricated ones are suspiciously regular:
@@ -213,15 +364,20 @@ function guessKind(filename, text) {
 }
 
 function checkTechnical(text, kind) {
-  const groups = { code: checkCode, data: checkData, spec: checkSpec };
+  const groups = {
+    code: (s) => [...checkCode(s), ...checkOverbuilt(s)],
+    data: checkData,
+    spec: (s) => [...checkSpec(s), ...checkOverplanned(s)],
+  };
   // A scope document can carry a table, and a README carries code. Run
   // everything and let the categories speak, rather than guessing once.
   const all = kind && groups[kind]
     ? groups[kind](text)
-    : [...checkCode(text), ...checkData(text), ...checkSpec(text)];
+    : [...checkCode(text), ...checkOverbuilt(text), ...checkData(text), ...checkSpec(text), ...checkOverplanned(text)];
 
   const hard = all.filter((f) => f.hard);
-  const soft = all.filter((f) => !f.hard);
+  const over = all.filter((f) => f.over);
+  const soft = all.filter((f) => !f.hard && !f.over);
 
   // One checkable problem is worth reporting but is not a verdict: a single
   // placeholder can be a genuine template, and one broad catch can be a
@@ -233,7 +389,12 @@ function checkTechnical(text, kind) {
         ? 'some'
         : 'little';
 
-  return { hard, soft, categories: all.length, reading };
+  // Two separate questions, so two separate readings. Work can be carefully
+  // reviewed and still take the long way round, and the reverse.
+  const weight =
+    over.length >= 3 ? 'strong' : over.length >= 2 ? 'some' : 'little';
+
+  return { hard, soft, over, categories: all.length, reading, weight };
 }
 
-module.exports = { checkTechnical, checkCode, checkData, checkSpec, guessKind };
+module.exports = { checkTechnical, checkCode, checkData, checkSpec, checkOverbuilt, checkOverplanned, guessKind };
