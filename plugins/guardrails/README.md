@@ -124,6 +124,32 @@ approving something you should not.
 
 Treat it as the seatbelt, not the airbag.
 
+## Upgrading to 0.2.2
+
+Two fixes, both found by running the guards rather than reading them.
+
+**The branch guard could check the wrong repository.** It worked out which repo
+a command targeted from the command text, handling `git -C <path>` and
+`cd <path> && git commit`, and otherwise fell back to its own process directory.
+A hook is a separate process spawned by the harness, so that directory is not
+reliably where the command runs. The Bash tool also keeps its working directory
+between calls, so changing directory in one call and committing in the next is
+ordinary, and only the hook event knows about the first call. It now reads the
+directory from the event, and an explicit `-C` still takes precedence.
+
+**`/private/tmp` was blocked while `/tmp` was allowed.** On macOS `/tmp` is a
+symlink to `/private/tmp`, so those are one directory with two spellings, and
+only one of them was on the disposable list. Any tool reporting a real path
+rather than the symlink hit the block every time, on directories that exist to
+be thrown away. Both spellings are now listed. This widens nothing, because it
+is the same directory that was already trusted under its other name.
+
+Still not covered: the per-user temp directory under `/var/folders` on macOS,
+which is what `os.tmpdir()` returns. It differs per machine so it cannot ship as
+a default. Add it to `safeDeletePaths` yourself if you delete there often.
+
+Nothing about your config changes. Run `/plugin update guardrails@smadds`.
+
 ## Upgrading to 0.2.1
 
 **If you are on 0.2.0 or earlier, none of the blocking worked.** The guards ran,

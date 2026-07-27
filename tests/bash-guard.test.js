@@ -26,15 +26,20 @@ const FAKE_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrails-home-'));
 
 // Runs the hook the way the harness does and returns its parsed stdout, or
 // null when it stays quiet, which is how a hook says "no objection".
-function runHook(command, cwd) {
+// `eventCwd` goes in the event, the way the harness reports where the command
+// will run. `processCwd` is where the hook process itself is spawned. Keeping
+// them separate is the whole point: they are frequently different, and the
+// guard used to read only the second one.
+function runHook(command, { eventCwd, processCwd } = {}) {
   const event = JSON.stringify({
     tool_name: 'Bash',
     tool_input: { command },
+    ...(eventCwd ? { cwd: eventCwd } : {}),
   });
   const stdout = execFileSync(process.execPath, [HOOK], {
     input: event,
     encoding: 'utf8',
-    cwd: cwd || __dirname,
+    cwd: processCwd || __dirname,
     env: { ...process.env, HOME: FAKE_HOME },
   }).trim();
   return stdout ? JSON.parse(stdout) : null;
@@ -123,7 +128,69 @@ check('committing on a feature branch is left alone', () => {
   fs.rmSync(repo, { recursive: true, force: true });
 });
 
+// --- the repository the guard reads ---------------------------------------
+//
+// A hook runs in its own process, spawned wherever the harness chose. That is
+// not necessarily where the command will run, and the Bash tool keeps its
+// working directory across calls, so `cd repo` in one call and a bare
+// `git commit` in the next is ordinary. Only the event knows about the first
+// call. These two pin that the event is what gets believed.
+
+check('a bare commit is judged against the event cwd, not the hook process cwd', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrails-repo-'));
+  execFileSync('git', ['init', '-b', 'main', repo], { stdio: 'ignore' });
+  const reason = assertDenies(
+    // No `-C` and no `cd`, so the only clue to the repository is the event.
+    // The hook process deliberately sits somewhere else entirely.
+    runHook('git commit -m "wip"', { eventCwd: repo, processCwd: os.homedir() }),
+    'bare commit with event cwd on main'
+  );
+  assert.ok(reason.includes('main'), `reason did not name the branch: ${reason}`);
+  fs.rmSync(repo, { recursive: true, force: true });
+});
+
+check('an explicit -C still wins over the event cwd', () => {
+  // Precedence matters: the command says where it acts, and it overrides the
+  // ambient directory. A feature branch named explicitly must not be blocked
+  // just because the session happens to be sitting on main.
+  const onMain = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrails-repo-'));
+  const onFeature = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrails-repo-'));
+  execFileSync('git', ['init', '-b', 'main', onMain], { stdio: 'ignore' });
+  execFileSync('git', ['init', '-b', 'some-feature', onFeature], { stdio: 'ignore' });
+  assert.strictEqual(
+    runHook(`git -C ${onFeature} commit -m "wip"`, { eventCwd: onMain }),
+    null,
+    'hook read the event cwd instead of the -C path'
+  );
+  fs.rmSync(onMain, { recursive: true, force: true });
+  fs.rmSync(onFeature, { recursive: true, force: true });
+});
+
+// --- disposable paths spelled either way ----------------------------------
+
+check('/private/tmp is as disposable as /tmp, being the same directory', () => {
+  // On macOS /tmp is a symlink to /private/tmp. Anything that reports a real
+  // path rather than the symlink produced the blocked spelling every time, so
+  // the guard fired constantly on genuinely throwaway directories, which is
+  // how a guard teaches people to click through it.
+  assert.strictEqual(
+    runHook('rm -rf /tmp/scratch-dir'),
+    null,
+    'hook objected to /tmp, which was already meant to be allowed'
+  );
+  assert.strictEqual(
+    runHook('rm -rf /private/tmp/scratch-dir'),
+    null,
+    'hook objected to /private/tmp while allowing the identical /tmp path'
+  );
+});
+
+check('a real path outside the disposable list is still denied', () => {
+  // The pair above widens one directory. It must not have widened the prefix.
+  assertDenies(runHook('rm -rf /private/etc/something'), '/private/etc/something');
+});
+
 fs.rmSync(FAKE_HOME, { recursive: true, force: true });
 
-console.log(`\n7 checks, ${failed} failed`);
+console.log(`\n11 checks, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

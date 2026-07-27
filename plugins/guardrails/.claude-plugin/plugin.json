@@ -1,6 +1,6 @@
 {
   "name": "guardrails",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Safety rails for people building with AI who aren't systems engineers. Blocks commits to protected branches and irreversible deletes, and flags prompt injection in content the model reads or writes.",
   "author": {
     "name": "Sarah Madden",

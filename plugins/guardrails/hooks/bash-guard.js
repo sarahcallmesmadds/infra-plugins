@@ -30,13 +30,21 @@ function targetRepoDir(command) {
   return null;
 }
 
-function currentBranch(command) {
+// `eventCwd` is the directory the Bash tool will actually run the command in,
+// and it is the one to trust. The hook is a separate process, so its own
+// process.cwd() is wherever the harness happened to spawn it, which is not
+// necessarily where the command lands. The Bash tool also keeps its working
+// directory between calls, so `cd repo` in one call and `git commit` in the
+// next is an ordinary sequence, and only the event knows about the first call.
+// Falling back to process.cwd() checked some other repository, or no repository
+// at all, and a branch guard that reads the wrong repo reads the wrong branch.
+function currentBranch(command, eventCwd) {
   const dir = targetRepoDir(command || '');
   try {
     return execSync('git symbolic-ref --short HEAD', {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
-      cwd: dir || process.cwd(),
+      cwd: dir || eventCwd || process.cwd(),
     }).trim();
   } catch (_) {
     return null; // not a git repository, bad path, or detached HEAD
@@ -74,7 +82,7 @@ readEvent((event) => {
 
   // 2. Protected branches.
   if (config.blockCommitToProtectedBranch) {
-    const branch = currentBranch(command);
+    const branch = currentBranch(command, event.cwd);
     if (branch && config.protectedBranches.includes(branch)) {
       block(
         `You are on "${branch}", which is a protected branch.\n\n` +
