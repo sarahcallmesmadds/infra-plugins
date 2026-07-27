@@ -124,6 +124,40 @@ approving something you should not.
 
 Treat it as the seatbelt, not the airbag.
 
+## Upgrading to 0.2.3
+
+**If you are on 0.2.2 or earlier, the scanner never looked at anything you
+read.** It reported clean on every file and every fetched page since the plugin
+shipped, because it was reporting on an empty string rather than on the content.
+
+The hook looked for the text at `tool_response`, `tool_response.content`, or an
+array under the same key. Claude Code puts it somewhere else: `Read` returns it
+at `tool_response.file.content`, and `WebFetch` at `tool_response.result`. None
+of the three matched, so the hook took the empty string as nothing to do and
+exited without writing anything. A scanner that is silent because it found
+nothing and one that is silent because it was handed nothing look identical from
+outside.
+
+This is the same failure as the block-shape bug in 0.2.1, one layer along. The
+detector was fine both times, its own tests passed both times, and the wiring
+between the harness and the detector was wrong both times. A detector tested on
+strings you hand it cannot tell you whether anything is ever handed to it.
+
+The scanner on content the model **writes** was never affected. It reads
+`tool_input`, which it had right.
+
+Both shapes are now taken from `PostToolUse` events captured off a live run and
+kept as fixtures under `tests/fixtures/`, so the tests describe the harness
+rather than describing the code. Two of them fail against 0.2.2.
+
+One limit worth knowing rather than discovering: for `WebFetch`, `result` is the
+processed answer for the page, not the raw HTML. An injection that never reaches
+that text is not visible to this hook. Instructions aimed at a model tend to
+survive being summarised, that being their whole purpose, but this is not the
+same coverage as scanning the page itself.
+
+Nothing about your config changes. Run `/plugin update guardrails@smadds`.
+
 ## Upgrading to 0.2.2
 
 Two fixes, both found by running the guards rather than reading them.
