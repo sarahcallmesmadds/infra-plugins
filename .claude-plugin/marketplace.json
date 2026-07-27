@@ -25,20 +25,22 @@
       ]
     },
     {
-      "name": "skill-loop",
-      "source": "./plugins/skill-loop",
-      "description": "Keep your own skills honest. Log what a skill got wrong the moment it happens, fix it from the queue with an approval gate, and know which other skills the fix puts at risk.",
-      "version": "0.1.0",
+      "name": "build-loop",
+      "source": "./plugins/build-loop",
+      "description": "Keep everything you build honest. Log what a skill, hook, command, plugin or script got wrong the moment it happens, fix it from the queue with an approval gate, know what else the fix puts at risk, and keep a to-build list that closes itself when the work actually ships.",
+      "version": "0.2.0",
       "author": {
         "name": "Sarah Madden"
       },
       "category": "productivity",
       "tags": [
         "skills",
+        "hooks",
         "maintenance",
         "quality",
         "feedback",
-        "queue"
+        "queue",
+        "backlog"
       ]
     },
     {

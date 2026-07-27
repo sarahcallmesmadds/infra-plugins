@@ -1,5 +1,5 @@
 ---
-name: skill-find
+name: find-skill
 type: human
 description: Skill discovery — tells you which skill to use for what you're trying to do. Invoke when you're not sure which command to reach for. Builds the routing table at runtime by reading every SKILL.md frontmatter, so newly-installed skills auto-appear.
 version: 2
@@ -7,7 +7,7 @@ last_updated: 2026-05-02
 correction_notes: 2026-05-02 — replaced a hardcoded skill table with a runtime scan of the installed skills, so newly created skills appear without editing this file.
 ---
 
-# /skill-find — skill discovery
+# /find-skill — skill discovery
 
 You are a skill router. The user has many installed skills and can't always remember which one fits what they are trying to do. Your job is to read what they want to accomplish, scan the installed-skills index at runtime, and point them to the best fit with a one-line explanation of why.
 
@@ -18,22 +18,27 @@ The scan only sees what is installed on this machine. Skills that live on anothe
 ## When invoked
 
 The user will say something like:
-- `/skill-find "I want to pull context on an account before a call"`
-- `/skill-find "how do I start a personal project"`
-- `/skill-find what skill should I use to end a session`
-- `skill-find — I want to log a contract renewal`
+- `/find-skill "I want to pull context on an account before a call"`
+- `/find-skill "how do I start a personal project"`
+- `/find-skill what skill should I use to end a session`
+- `find-skill — I want to log a contract renewal`
 
-The argument after `skill-find` (or `$ARGUMENTS`) is the intent. If empty, list the full installed-skills inventory grouped by category and ask the user what they are trying to do.
+The argument after `find-skill` (or `$ARGUMENTS`) is the intent. If empty, list the full installed-skills inventory grouped by category and ask the user what they are trying to do.
 
 ---
 
 ## Step 1 — Build the index at runtime
 
-Scan every configured root, the same set the rest of this plugin uses. Read
-`skillRoots` from `~/.claude/skill-loop.config.json`; if that file does not
-exist, use the single default root `{ "name": "personal", "path": "~/.claude/skills" }`.
+Scan the configured roots, the same set the rest of this plugin uses. Read
+`roots` from `~/.claude/build-loop.config.json`. A config holding `skillRoots`
+and no `roots` is read as roots of kind `skill`. If the file does not exist, use
+the default root `{ "name": "personal", "path": "~/.claude/skills", "kind": "skill" }`.
 
-For each root, scan both `<root.path>/*/SKILL.md` and
+**Only roots of kind `skill` are scanned here.** This skill routes between
+skills, and a hook root holds executable files with no frontmatter to read. The
+bug queue covers hooks and commands; routing does not.
+
+For each skill root, scan both `<root.path>/*/SKILL.md` and
 `<root.path>/*/*/SKILL.md`, so a repository that nests the definition one
 level deeper is still found. Routing to a skill that exists but sits in a
 second root is the whole reason the config has more than one entry.
@@ -50,12 +55,21 @@ Use this Bash + Python one-liner to load all frontmatter cleanly:
 python3 - <<'PY'
 import os, re, glob, json
 
-CONFIG = os.path.expanduser("~/.claude/skill-loop.config.json")
-DEFAULT = [{"name": "personal", "path": "~/.claude/skills"}]
+CONFIG = os.path.expanduser("~/.claude/build-loop.config.json")
+DEFAULT = [{"name": "personal", "path": "~/.claude/skills", "kind": "skill"}]
 try:
-    roots = json.load(open(CONFIG)).get("skillRoots") or DEFAULT
+    cfg = json.load(open(CONFIG))
+    # "roots" is the current key. "skillRoots" predates the schema change and
+    # carries no "kind", so every entry in it is a skill root by definition.
+    roots = cfg.get("roots") or [
+        dict(r, kind="skill") for r in cfg.get("skillRoots", [])
+    ] or DEFAULT
 except Exception:
     roots = DEFAULT
+
+# Only skill roots have a SKILL.md to read. A hook root would yield nothing and
+# a command root would yield files whose frontmatter means something different.
+roots = [r for r in roots if r.get("kind", "skill") == "skill"]
 
 seen, skills = set(), []
 for root in roots:
@@ -124,8 +138,8 @@ When listing the full inventory (no $ARGUMENTS) or when showing close-second opt
 
 - **Daily / personal HQ** — `request-create`, `daily-brief`, `daily-scratch`, `daily-reflect`, anything with "daily" or "morning" or "HQ" in name/description
 - **Personal projects + IP** — `project-create-or-update`, `register-ip`, `job-scanner` (a.k.a. `portfolio-ops-application`), anything with "project", "IP asset", "cover letter" in description
-- **Session management** — `wrap`, `pickup`, `skill-find`, anything with "handoff", "resume", "wrap up", "skill discovery"
-- **Skill loop (meta)** — `skill-flag-issue`, `skill-list-bugs`, `skill-apply-fix`, `skill-verify-fix`, `skill-revert-fix`, `skill-audit-deps`, `skill-summarize`, anything with "skill loop", "queue", "correction", "DEPS.json" in description
+- **Session management** — `wrap`, `pickup`, `find-skill`, anything with "handoff", "resume", "wrap up", "skill discovery"
+- **Build loop (meta)** — `flag-issue`, `list-bugs`, `apply-fix`, `verify-fix`, `revert-fix`, `audit-deps`, `whats-breaking`, `to-build`, `built-check`, `find-skill`, anything with "build loop", "queue", "correction", "to-build", "DEPS.json" in description
 - **Other** — anything that doesn't fit above
 
 If a skill spans two categories, pick the dominant one. If a skill is brand new and you can't classify it, put it under **Other** — that's also a signal the description could be sharper.
@@ -160,7 +174,7 @@ Installed skills on this device — what are you trying to do?
 ### Session management
 - ...
 
-### Skill loop (meta)
+### Build loop (meta)
 - ...
 
 ### Other

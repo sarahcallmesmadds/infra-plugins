@@ -1,0 +1,21 @@
+{
+  "name": "build-loop",
+  "version": "0.2.0",
+  "description": "Keep everything you build honest. Log what a skill, hook, command, plugin, or script got wrong the moment it happens, fix it from the queue with an approval gate, know what else the fix puts at risk, and keep a to-build list that closes itself when the work actually ships.",
+  "author": {
+    "name": "Sarah Madden",
+    "url": "https://github.com/sarahcallmesmadds"
+  },
+  "homepage": "https://github.com/sarahcallmesmadds/plugins/tree/main/plugins/build-loop",
+  "repository": "https://github.com/sarahcallmesmadds/plugins",
+  "license": "MIT",
+  "keywords": [
+    "skills",
+    "hooks",
+    "maintenance",
+    "quality",
+    "feedback",
+    "queue",
+    "backlog"
+  ]
+}

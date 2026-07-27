@@ -1,12 +1,12 @@
 ---
-name: skill-list-bugs
+name: list-bugs
 type: human
-description: Shows the skill loop bug queue as a plain-language table. Use when the user asks "what's in the queue", "what bugs are open", "show me the queue", "what did I capture", or explicitly invokes /skill-list-bugs. Supports optional status filter argument (open, all, resolved, wontfix). Default filter is Open + In Progress items only, sorted oldest first.
+description: Shows the build loop bug queue as a plain-language table. Use when the user asks "what's in the queue", "what bugs are open", "show me the queue", "what did I capture", or explicitly invokes /list-bugs. Supports optional status filter argument (open, all, resolved, wontfix). Default filter is Open + In Progress items only, sorted oldest first.
 argument-hint: "[optional filter: open | all | resolved | wontfix]"
 allowed-tools: Read, Bash(ls:*), Bash(cat:*)
 ---
 
-You are displaying the skill loop bug queue at `~/.claude/skill-loop/queue/`. This is a strictly read-only view — do not write, edit, or delete any queue entries from this skill.
+You are displaying the build loop bug queue at `~/.claude/build-loop/queue/`. This is a strictly read-only view — do not write, edit, or delete any queue entries from this skill.
 
 ### Step 1 — Parse the filter argument
 
@@ -33,13 +33,13 @@ Determine the human-readable `filter_label`:
 
 1. Check whether any JSON files exist in the queue directory:
    ```bash
-   ls ~/.claude/skill-loop/queue/*.json 2>/dev/null
+   ls ~/.claude/build-loop/queue/*.json 2>/dev/null
    ```
 2. If the `ls` returns nothing (no output, no files, or directory does not exist): print "Queue is empty — nothing to show." and stop. Do NOT error.
 3. For each `.json` file listed, read it with the Read tool.
 4. For each file, attempt to parse its contents as JSON:
-   - If parsing succeeds: extract `skill`, `what_happened`, `status`, `created_at`, `what_expected`, `skill_path`, `dedup_key`, `type` fields. For `type`, apply the read-time default: if the field is missing (Phase 1 v1 entries), treat the value as `"primary"`. This is per SCHEMA.md v2 changelog — never crash on missing type.
-   - If parsing fails for any reason: create a synthetic entry with `skill: "(malformed)"`, `what_happened: "file {filename} could not be parsed"`, `status: "(error)"`, `created_at: "?"`, `type: "(error)"`. Do not hide broken entries — the user needs to see them so they can fix them.
+   - If parsing succeeds: extract `target`, `target_kind`, `what_happened`, `status`, `created_at`, `what_expected`, `target_path`, `dedup_key`, `type` fields. Apply the read-time defaults from SCHEMA.md so an older entry never crashes this view: a missing `type` reads as `"primary"`, a missing `target` reads from `skill`, a missing `target_path` reads from `skill_path`, and a missing `target_kind` reads as `"skill"`.
+   - If parsing fails for any reason: create a synthetic entry with `target: "(malformed)"`, `target_kind: "(error)"`, `what_happened: "file {filename} could not be parsed"`, `status: "(error)"`, `created_at: "?"`, `type: "(error)"`. Do not hide broken entries — the user needs to see them so they can fix them.
 5. If a file read fails (permission denied, etc.): treat as a parse failure — list it as `(error)` with the filename and continue. Never stop processing remaining files.
 6. Apply the filter from Step 1. Drop entries whose status does not match.
 
@@ -60,21 +60,22 @@ If `N == 0`: print "No {filter_label} items in the queue." and skip to Step 5.
 If `N > 0`: produce a Markdown table with this exact header:
 
 ```
-## Skill loop queue — {filter_label} ({N} items)
+## Build loop queue — {filter_label} ({N} items)
 
-| Skill | What happened | Type | Status | Date |
-|-------|---------------|------|--------|------|
+| Target | Kind | What happened | Type | Status | Date |
+|--------|------|---------------|------|--------|------|
 ```
 
 Then add one row per entry (up to 20 rows):
-- **Skill column:** `skill` field value
+- **Target column:** `target` field value, falling back to the `skill` field for entries written before schema v5
+- **Kind column:** `target_kind` field value, or `skill` when the field is absent
 - **What happened column:** truncate `what_happened` to 60 characters; append `...` if truncated. Escape any literal `|` character as `\|` so the Markdown table doesn't break.
 - **Type column:** the value from the entry, defaulting to `"primary"` if missing (per Step 2 point 4). Show `"primary"` or `"dep-review"` or `"(error)"`. This column is display-only — it does NOT affect filtering or sort.
 - **Status column:** `status` field value
 - **Date column:** first 10 characters of `created_at` (format: `YYYY-MM-DD`). If `created_at` is `"?"`, show `?`.
 
 If `N > 20`: after the 20th row, print a summary line:
-`... and {N - 20} more. Run /skill-list-bugs all to see every item, or open ~/.claude/skill-loop/queue/ directly.`
+`... and {N - 20} more. Run /list-bugs all to see every item, or open ~/.claude/build-loop/queue/ directly.`
 
 ### Step 5 — Highlight the top urgent item
 
@@ -84,11 +85,11 @@ If at least one `Open` entry exists: find the oldest one (lowest `created_at`) a
 
 ```
 **Most urgent open item:**
-- Skill: {skill} {if type == "dep-review" append "  (dep-review — triggered by parent " + parent_id + ")"}
+- Target: {target} {if type == "dep-review" append "  (dep-review — triggered by parent " + parent_id + ")"}
 - What happened: {full what_happened, not truncated}
 - What expected: {full what_expected}
 - Logged: {created_at as YYYY-MM-DD} ({days-ago} days ago, where days-ago = today's date minus created_at date)
-- File: `~/.claude/skill-loop/queue/{filename}`
+- File: `~/.claude/build-loop/queue/{filename}`
 ```
 
 If there are zero `Open` entries (after filtering), skip this block entirely.
@@ -97,7 +98,7 @@ If there are zero `Open` entries (after filtering), skip this block entirely.
 
 Always end with this exact line, regardless of what was shown above:
 
-"Run `/skill-flag-issue` to log a new correction. Run `/skill-list-bugs all` to see every status. Dep-review entries are reviews triggered automatically — see SCHEMA.md Type enum for details."
+"Run `/flag-issue` to log a new correction. Run `/list-bugs all` to see every status. Dep-review entries are reviews triggered automatically — see SCHEMA.md Type enum for details."
 
 ### Failure handling
 
