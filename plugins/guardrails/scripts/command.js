@@ -8,15 +8,71 @@
 
 const path = require('path');
 
+// Commands that take a string and run it as shell code. When one of these is
+// present, text inside quotes IS code and has to stay visible to the checks
+// below, or `bash -c "rm -rf ~/live"` would walk straight through.
+const SHELL_INVOKERS = /(^|\s)(bash|sh|zsh|dash|ksh|fish|eval|ssh|xargs|watch)(\s|$)/;
+
+// Blank the inside of quoted strings, keeping every character position so
+// offsets still line up with the original text.
+//
+// Without this, any command that merely MENTIONS a delete is treated as one:
+// `claude -p "assess rm -rf ./tmp"` deletes nothing but matched the rm rule,
+// and the reported target became the rest of the English sentence. Passing a
+// string to another program is not executing it. If that program goes on to
+// run something destructive, it is caught then, by the guard on that call.
+// The mirror of maskQuoted, for lines that DO execute their quoted text. The
+// quote characters are replaced by spaces so the code inside them reads as
+// code. Without this, `bash -c "rm -rf ~/live"` slips past every rule here:
+// the rules anchor on whitespace, and the opening quote sits where the
+// whitespace before `rm` would be, so nothing matches.
+function unquote(line) {
+  return line.replace(/['"]/g, ' ');
+}
+
+function maskQuoted(line) {
+  let out = '';
+  let quote = null;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (quote) {
+      // A backslash escape inside double quotes hides two characters.
+      if (ch === '\\' && quote === '"' && i + 1 < line.length) { out += 'xx'; i += 1; continue; }
+      if (ch === quote) { quote = null; out += ch; continue; }
+      out += 'x';
+      continue;
+    }
+    if (ch === '"' || ch === "'") { quote = ch; out += ch; continue; }
+    out += ch;
+  }
+  return out;
+}
+
 // Split a command line into its separate commands. A safe-path decision must be
 // made against the delete target itself, never against the whole line: a command
 // like `cp x /tmp/y && rm -rf ~/live` mentions a disposable path but deletes
 // something else entirely.
-function segments(line) {
-  return String(line || '')
-    .split(/&&|\|\||[;&|]/)
-    .map((s) => s.trim())
-    .filter(Boolean);
+//
+// Splitting runs over the masked line, so an operator inside quotes no longer
+// splits a command in half. Each segment carries the original text alongside,
+// because the masked copy is for matching and the original is what gets shown.
+function segments(masked, original = masked) {
+  const bounds = [];
+  const operator = /&&|\|\||[;&|]/g;
+  let last = 0;
+  let hit;
+  while ((hit = operator.exec(masked)) !== null) {
+    bounds.push([last, hit.index]);
+    last = hit.index + hit[0].length;
+  }
+  bounds.push([last, masked.length]);
+
+  return bounds
+    .map(([from, to]) => ({
+      masked: masked.slice(from, to).trim(),
+      source: original.slice(from, to).trim(),
+    }))
+    .filter((s) => s.masked);
 }
 
 function firstLineOf(command) {
@@ -34,22 +90,34 @@ function isRecursiveForceDelete(segment) {
 
 // Every operand of an `rm` after its flags are stripped. `rm -rf a b` deletes two
 // things, and both have to clear the safe-path check.
-function deleteTargets(segment) {
-  const afterRm = segment.replace(/^.*?(^|\s)rm(\s|$)/, ' ');
-  const tokens = afterRm.split(/\s+/).map((t) => t.trim()).filter(Boolean);
-  const targets = [];
+//
+// Tokens are found in the masked copy and then read back out of the original, so
+// a quoted path containing spaces stays one target and is reported as it was
+// typed rather than as the mask.
+function deleteTargets(segment, source = segment) {
+  const tokens = [];
+  const word = /\S+/g;
+  let hit;
+  while ((hit = word.exec(segment)) !== null) {
+    tokens.push({ text: hit[0], start: hit.index, end: hit.index + hit[0].length });
+  }
 
-  for (let i = 0; i < tokens.length; i++) {
+  const rmAt = tokens.findIndex((t) => t.text === 'rm');
+  if (rmAt === -1) return [];
+
+  const targets = [];
+  for (let i = rmAt + 1; i < tokens.length; i++) {
     const token = tokens[i];
     // Flags are not targets.
-    if (token.startsWith('-')) continue;
+    if (token.text.startsWith('-')) continue;
     // A bare redirection operator consumes the filename that follows it.
-    if (/^\d*[<>]{1,2}$/.test(token)) { i += 1; continue; }
+    if (/^\d*[<>]{1,2}$/.test(token.text)) { i += 1; continue; }
     // An attached redirection such as `2>/dev/null` or `>out.log` is plumbing.
-    if (/^\d*[<>]/.test(token)) continue;
+    if (/^\d*[<>]/.test(token.text)) continue;
     // Strip a trailing attached redirection, e.g. `dir>out.log`.
-    const cut = token.search(/\d*[<>]/);
-    targets.push(cut > 0 ? token.slice(0, cut) : token);
+    const cut = token.text.search(/\d*[<>]/);
+    const end = cut > 0 ? token.start + cut : token.end;
+    targets.push(source.slice(token.start, end).replace(/^['"]|['"]$/g, ''));
   }
   return targets;
 }
@@ -81,10 +149,12 @@ const IRREVERSIBLE_GIT = [
 function checkCommand(command, config = {}) {
   const safePaths = config.safeDeletePaths || [];
   const line = firstLineOf(command);
+  // Quoted text is only inert when nothing on the line will execute it.
+  const masked = SHELL_INVOKERS.test(line) ? unquote(line) : maskQuoted(line);
 
-  for (const segment of segments(line)) {
+  for (const { masked: segment, source } of segments(masked, line)) {
     if (isRecursiveForceDelete(segment)) {
-      const targets = deleteTargets(segment);
+      const targets = deleteTargets(segment, source);
       // No parsable operand means we could not establish what is being deleted.
       // Ask rather than assume.
       const unsafe = targets.length === 0
@@ -110,7 +180,7 @@ function checkCommand(command, config = {}) {
       if (entry.re.test(segment)) {
         return {
           verdict: 'confirm',
-          target: segment,
+          target: source,
           reason:
             `${entry.what}.\n\nConfirm this is intended before running it. ` +
             `If you are recovering from a mistake, check \`git reflog\` first, ` +
@@ -123,4 +193,11 @@ function checkCommand(command, config = {}) {
   return { verdict: 'allow' };
 }
 
-module.exports = { checkCommand, isRecursiveForceDelete, deleteTargets, isDisposable };
+module.exports = {
+  checkCommand,
+  isRecursiveForceDelete,
+  deleteTargets,
+  isDisposable,
+  maskQuoted,
+  unquote,
+};
