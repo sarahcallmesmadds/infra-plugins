@@ -44,12 +44,12 @@ function formatReport(result) {
   } else {
     lines.push(`Softer tells: ${result.categories} categor${result.categories === 1 ? 'y' : 'ies'} present.`);
     for (const s of result.soft) {
-      if (s.hits) {
+      if (s.hits && s.hits.length && s.hits[0] && s.hits[0].phrase) {
         lines.push(`  ${s.name}: ${s.hits.map((h) => `"${h.phrase}"${h.count > 1 ? ` x${h.count}` : ''}`).join(', ')}`);
       } else if (s.name === 'uniform-rhythm') {
         lines.push(`  ${s.name}: ${s.sentences} sentences averaging ${s.mean} words, with unusually little variation`);
       } else {
-        lines.push(`  ${s.name}: ${s.count} occurrences`);
+        lines.push(`  ${s.name}: ${detailOf(s)}`);
       }
     }
   }
@@ -68,14 +68,28 @@ function formatReport(result) {
   return lines.join('\n');
 }
 
+// Findings carry whatever fields fit them: a list of hits, a count, a total, a
+// ratio. Printing one assumed shape is how `percentages-do-not-total-100`,
+// which has only a total, came out as "undefined occurrences" on the check the
+// README tells you to trust most.
+function detailOf(finding) {
+  if (finding.hits && finding.hits.length) return finding.hits.join(', ');
+  if (typeof finding.count === 'number') {
+    return `${finding.count} occurrence${finding.count === 1 ? '' : 's'}`;
+  }
+  const rest = Object.entries(finding)
+    .filter(([k]) => !['name', 'hard', 'over', 'hits', 'count'].includes(k))
+    .map(([k, v]) => `${k}=${v}`);
+  return rest.length ? rest.join(' ') : 'present';
+}
+
 function formatTechnical(result, kind) {
   const lines = [`Technical check (${kind}):`, ''];
 
   if (result.hard.length) {
     lines.push('Checkable problems, not matters of taste:');
     for (const f of result.hard) {
-      const detail = f.hits ? f.hits.join(', ') : `${f.count} occurrences`;
-      lines.push(`  ${f.name}: ${detail}`);
+      lines.push(`  ${f.name}: ${detailOf(f)}`);
     }
     lines.push('');
   }
@@ -85,9 +99,7 @@ function formatTechnical(result, kind) {
   } else {
     lines.push(`Signals of unreviewed work: ${result.soft.length} categor${result.soft.length === 1 ? 'y' : 'ies'}.`);
     for (const f of result.soft) {
-      const detail = f.hits ? f.hits.join(', ')
-        : Object.entries(f).filter(([k]) => k !== 'name').map(([k, v]) => `${k}=${v}`).join(' ');
-      lines.push(`  ${f.name}: ${detail}`);
+      lines.push(`  ${f.name}: ${detailOf(f)}`);
     }
   }
 
@@ -104,10 +116,7 @@ function formatTechnical(result, kind) {
     lines.push('');
     lines.push(`Heavier than the problem: ${result.over.length} signal${result.over.length === 1 ? '' : 's'}.`);
     for (const f of result.over) {
-      const detail = f.hits ? f.hits.join(', ')
-        : Object.entries(f).filter(([k]) => k !== 'name' && k !== 'over')
-            .map(([k, v]) => `${k}=${v}`).join(' ') || 'present';
-      lines.push(`  ${f.name}: ${detail}`);
+      lines.push(`  ${f.name}: ${detailOf(f)}`);
     }
     lines.push('');
     lines.push({

@@ -176,5 +176,23 @@ console.log('\none word cannot trip a category on its own');
       .some((f) => f.name === 'generic-vocabulary'), false);
 }
 
+
+console.log('\nevery finding renders a real detail');
+{
+  // percentages-do-not-total-100 carries only `total`, so a renderer that
+  // assumed `hits` or `count` printed "undefined occurrences" on the check
+  // the README tells you to trust most.
+  const { execFileSync } = require('child_process');
+  const os = require('os'), fsx = require('fs');
+  const tmp = path.join(os.tmpdir(), 'wg-render-check.md');
+  fsx.writeFileSync(tmp, 'Split: 30% one, 30% two, 25% three. Owner: nobody.\n');
+  const out = execFileSync('node',
+    [path.join(__dirname, '..', 'plugins', 'writing-gate', 'scripts', 'cli.js'),
+     'check', '--file', tmp, '--technical'], { encoding: 'utf8' });
+  fsx.unlinkSync(tmp);
+  check('no "undefined" in the rendered report', /undefined/.test(out), false);
+  check('the actual total is shown', /total=85/.test(out), true);
+}
+
 console.log(`\n${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);
