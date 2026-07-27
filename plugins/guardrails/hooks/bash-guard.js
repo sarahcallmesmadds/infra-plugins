@@ -14,15 +14,32 @@ const { readEvent, block } = require(path.join(ROOT, 'scripts', 'hook-io'));
 const { loadConfig } = require(path.join(ROOT, 'scripts', 'config'));
 const { checkCommand } = require(path.join(ROOT, 'scripts', 'command'));
 
+const IS_GIT_COMMIT = /\bgit\s+(?:-[^\s]+(?:\s+[^\s-][^\s]*)?\s+)*commit\b/;
+
 const CONVENTIONAL = /^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([^)]+\))?!?: .+/;
 
-function currentBranch() {
+// The repository a git command actually targets is not necessarily the hook's
+// own working directory. `git -C <path> commit` and `cd <path> && git commit`
+// both act somewhere else, and checking the wrong repo means checking the wrong
+// branch, which silently defeats the guard.
+function targetRepoDir(command) {
+  const dashC = command.match(/\bgit\s+(?:[^\s]+\s+)*?-C\s+(?:"([^"]+)"|'([^']+)'|([^\s]+))/);
+  if (dashC) return dashC[1] || dashC[2] || dashC[3];
+  const cd = command.match(/(?:^|[;&|]|&&)\s*cd\s+(?:"([^"]+)"|'([^']+)'|([^\s;&|]+))/);
+  if (cd) return cd[1] || cd[2] || cd[3];
+  return null;
+}
+
+function currentBranch(command) {
+  const dir = targetRepoDir(command || '');
   try {
-    return execSync('git symbolic-ref --short HEAD 2>/dev/null', {
+    return execSync('git symbolic-ref --short HEAD', {
       encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      cwd: dir || process.cwd(),
     }).trim();
   } catch (_) {
-    return null; // not a git repository, or detached HEAD
+    return null; // not a git repository, bad path, or detached HEAD
   }
 }
 
@@ -50,11 +67,14 @@ readEvent((event) => {
     }
   }
 
-  if (!/\bgit\s+commit\b/.test(command)) return;
+  // `git commit`, but also `git -C <path> commit`, `git --no-pager commit`, and
+  // any other option between the two words. Matching only the adjacent form is
+  // what let `git -C <path> commit` past the branch guard entirely.
+  if (!IS_GIT_COMMIT.test(command)) return;
 
   // 2. Protected branches.
   if (config.blockCommitToProtectedBranch) {
-    const branch = currentBranch();
+    const branch = currentBranch(command);
     if (branch && config.protectedBranches.includes(branch)) {
       block(
         `You are on "${branch}", which is a protected branch.\n\n` +

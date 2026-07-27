@@ -36,10 +36,22 @@ function isRecursiveForceDelete(segment) {
 // things, and both have to clear the safe-path check.
 function deleteTargets(segment) {
   const afterRm = segment.replace(/^.*?(^|\s)rm(\s|$)/, ' ');
-  return afterRm
-    .split(/\s+/)
-    .map((token) => token.trim())
-    .filter((token) => token && !token.startsWith('-'));
+  const tokens = afterRm.split(/\s+/).map((t) => t.trim()).filter(Boolean);
+  const targets = [];
+
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i];
+    // Flags are not targets.
+    if (token.startsWith('-')) continue;
+    // A bare redirection operator consumes the filename that follows it.
+    if (/^\d*[<>]{1,2}$/.test(token)) { i += 1; continue; }
+    // An attached redirection such as `2>/dev/null` or `>out.log` is plumbing.
+    if (/^\d*[<>]/.test(token)) continue;
+    // Strip a trailing attached redirection, e.g. `dir>out.log`.
+    const cut = token.search(/\d*[<>]/);
+    targets.push(cut > 0 ? token.slice(0, cut) : token);
+  }
+  return targets;
 }
 
 // A target is disposable if the configured path is a prefix of it, or appears as
