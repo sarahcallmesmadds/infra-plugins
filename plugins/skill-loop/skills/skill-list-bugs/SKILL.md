@@ -56,7 +56,7 @@ If `N == 0`: print "No {filter_label} items in the queue." and skip to Step 5.
 If `N > 0`: produce a Markdown table with this exact header:
 
 ```
-## Skill factory queue — {filter_label} ({N} items)
+## Skill loop queue — {filter_label} ({N} items)
 
 | Skill | What happened | Type | Status | Date |
 |-------|---------------|------|--------|------|

@@ -415,7 +415,7 @@ After appending, print: `hot-cache.md updated.`
 - **Dedup safety:** The `session_id || id` fallback is the only dedup rule. Do not introduce additional dedup (e.g., by what_happened similarity) — the design deliberately counts each /skill-flag-issue entry as its own data point.
 - **Update in place only:** There must never be two flag entries for the same skill. If Step 4 ever tries to append when an entry already exists, that is a bug — fix it and re-run.
 - **Atomic write is non-optional:** The `.tmp` + parse-check + `mv` pattern comes from Phase 2 and applies without exception to every JSON file this system writes. Never use a direct single-step write to pattern-flags.json.
-- **Slack is never hardcoded:** Channel is asked at post time. the user's DM is the default. Never assume a channel.
+- **Slack is never hardcoded:** Channel is asked at post time. The user's DM is the default. Never assume a channel.
 - **ISO week (not calendar week):** The filename logic uses the Thursday-anchor ISO 8601 method. At year boundaries (late December / early January) the ISO year can differ from the calendar year — always trust the ISO computation, not `new Date().getFullYear()`.
 - **Front-loading is intentional:** Pattern Flags appears BEFORE Fixes Applied and Still Open in the summary file. The session-start hook (SUMM-04, Plan 04-04) truncates at 2,000 chars and truncation cuts the tail. New patterns and critical opens must appear in the first ~800 characters.
 

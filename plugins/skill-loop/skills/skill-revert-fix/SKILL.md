@@ -1,7 +1,7 @@
 ---
 name: skill-revert-fix
 type: human
-description: Rolls back a committed skill fix. Reads the queue entry to find the commit hash, runs git revert in the correct repo (creates a new undo commit — does not delete or modify the original commit), resets the queue entry status back to Open, and stores the revert commit hash in notes. Works whether the commit has been pushed or not. the user does not need to know any git commands.
+description: Rolls back a committed skill fix. Reads the queue entry to find the commit hash, runs git revert in the correct repo (creates a new undo commit — does not delete or modify the original commit), resets the queue entry status back to Open, and stores the revert commit hash in notes. Works whether the commit has been pushed or not. The user does not need to know any git commands.
 argument-hint: "[queue-entry-id or skill-name]"
 allowed-tools: Read, Write, Bash(ls:*), Bash(cat:*), Bash(date:*), Bash(mv:*), Bash(node:*), Bash(git:*)
 ---
@@ -110,7 +110,7 @@ Via atomic write, update the queue entry:
 
 4. Atomic write sequence:
    - Write the updated JSON to `~/.claude/skill-loop/queue/{id}.json.tmp` using the Write tool.
-   - Run: `node -e "JSON.parse(require('fs').readFileSync('~/.claude/skill-loop/queue/{id}.json.tmp','utf8'))"`
+   - Run: `node -e "JSON.parse(require('fs').readFileSync(require('os').homedir() + '/.claude/skill-loop/queue/{id}.json.tmp','utf8'))"`
    - If parse succeeds: `mv ~/.claude/skill-loop/queue/{id}.json.tmp ~/.claude/skill-loop/queue/{id}.json`
    - If parse fails: report error, do not swap. Say "The queue entry update failed — the revert DID succeed (undo commit: {revert-hash}), but the queue file was not updated. Edit it manually at ~/.claude/skill-loop/queue/{id}.json"
 

@@ -45,7 +45,7 @@ Then check:
 
 **Set status to In Progress** via atomic write:
 1. Write the updated JSON (with `status: "In Progress"`) to `~/.claude/skill-loop/queue/{id}.json.tmp` using the Write tool.
-2. Run: `node -e "JSON.parse(require('fs').readFileSync('~/.claude/skill-loop/queue/{id}.json.tmp','utf8'))"`
+2. Run: `node -e "JSON.parse(require('fs').readFileSync(require('os').homedir() + '/.claude/skill-loop/queue/{id}.json.tmp','utf8'))"`
 3. If parse succeeds: `mv ~/.claude/skill-loop/queue/{id}.json.tmp ~/.claude/skill-loop/queue/{id}.json`
 4. If parse fails: report the error. Do not swap. Do not proceed.
 

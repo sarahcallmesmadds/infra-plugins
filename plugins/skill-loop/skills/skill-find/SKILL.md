@@ -9,7 +9,7 @@ correction_notes: 2026-05-02 — replaced a hardcoded skill table with a runtime
 
 # /skill-find — skill discovery
 
-You are a skill router. the user has many installed skills and can't always remember which one fits what they are trying to do. Your job is to read what they want to accomplish, scan the installed-skills index at runtime, and point them to the best fit with a one-line explanation of why.
+You are a skill router. The user has many installed skills and can't always remember which one fits what they are trying to do. Your job is to read what they want to accomplish, scan the installed-skills index at runtime, and point them to the best fit with a one-line explanation of why.
 
 The scan only sees what is installed on this machine. Skills that live on another device, or in a repository that has not been installed here, will not appear, and must not be invented. If someone asks for something you cannot see, say it is not installed here rather than guessing at a name.
 
@@ -17,7 +17,7 @@ The scan only sees what is installed on this machine. Skills that live on anothe
 
 ## When invoked
 
-the user will say something like:
+The user will say something like:
 - `/skill-find "I want to pull context on an account before a call"`
 - `/skill-find "how do I start a personal project"`
 - `/skill-find what skill should I use to end a session`
@@ -117,7 +117,7 @@ When listing the full inventory (no $ARGUMENTS) or when showing close-second opt
 - **Daily / personal HQ** — `request-create`, `daily-brief`, `daily-scratch`, `daily-reflect`, anything with "daily" or "morning" or "HQ" in name/description
 - **Personal projects + IP** — `project-create-or-update`, `register-ip`, `job-scanner` (a.k.a. `portfolio-ops-application`), anything with "project", "IP asset", "cover letter" in description
 - **Session management** — `wrap`, `pickup`, `skill-find`, anything with "handoff", "resume", "wrap up", "skill discovery"
-- **Skill factory (meta)** — `capture`, `queue`, `skill-apply-fix`, `skill-verify-fix`, `skill-revert-fix`, `skill-audit-deps`, `skill-summarize`, anything with "skill loop", "queue", "correction", "DEPS.json" in description
+- **Skill loop (meta)** — `capture`, `queue`, `skill-apply-fix`, `skill-verify-fix`, `skill-revert-fix`, `skill-audit-deps`, `skill-summarize`, anything with "skill loop", "queue", "correction", "DEPS.json" in description
 - **Other** — anything that doesn't fit above
 
 If a skill spans two categories, pick the dominant one. If a skill is brand new and you can't classify it, put it under **Other** — that's also a signal the description could be sharper.
@@ -152,7 +152,7 @@ Installed skills on this device — what are you trying to do?
 ### Session management
 - ...
 
-### Skill factory (meta)
+### Skill loop (meta)
 - ...
 
 ### Other
@@ -176,5 +176,5 @@ Want me to just help directly without a skill?
 - **Always scan at runtime.** Don't cache. The whole point of this skill is that new skills auto-appear — caching defeats it.
 - **Filter out `type: agent` skills** from user-facing suggestions. They aren't directly invokable for general purposes.
 - **Don't invent skills that aren't installed.** If what someone wants lives on another machine, or in a repository that is not installed here, say so explicitly rather than fabricating a route to it.
-- **Pick ONE primary match.** Don't dump 5 options. the user can ask follow-up if your pick is wrong.
+- **Pick ONE primary match.** Don't dump 5 options. The user can ask follow-up if your pick is wrong.
 - **Categorization is a heuristic.** If a skill is hard to categorize, put it under Other — that's a signal the skill's description should be sharpened.

@@ -126,7 +126,7 @@ This is the critical discipline — if Claude is killed during a Write, DEPS.jso
 2. Write to `~/.claude/skill-loop/DEPS.json.tmp` using the Write tool.
 3. Parse-check the tempfile:
    ```bash
-   node -e "JSON.parse(require('fs').readFileSync('~/.claude/skill-loop/DEPS.json.tmp','utf8')); console.log('OK')"
+   node -e "JSON.parse(require('fs').readFileSync(require('os').homedir() + '/.claude/skill-loop/DEPS.json.tmp','utf8')); console.log('OK')"
    ```
    If this errors, delete the tempfile (`rm ~/.claude/skill-loop/DEPS.json.tmp`) and report failure to the user. Do NOT proceed.
 4. Atomic rename (POSIX rename is atomic on the same filesystem):

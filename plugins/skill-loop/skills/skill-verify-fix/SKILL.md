@@ -100,7 +100,7 @@ Run atomic write on the queue entry:
 2. Set `status` to `"fix attempted / unresolved"`.
 3. Append to `notes` array: `{"ts": "{date -u +"%Y-%m-%dT%H:%M:%S.000Z"}", "text": "Verification failed: the user rejected diff. {retry instructions if given, else 'No reason given.'}"}`.
 4. Write updated JSON to `~/.claude/skill-loop/queue/{id}.json.tmp` using the Write tool.
-5. Run: `node -e "JSON.parse(require('fs').readFileSync('~/.claude/skill-loop/queue/{id}.json.tmp','utf8'))"`
+5. Run: `node -e "JSON.parse(require('fs').readFileSync(require('os').homedir() + '/.claude/skill-loop/queue/{id}.json.tmp','utf8'))"`
 6. If parse succeeds: `mv ~/.claude/skill-loop/queue/{id}.json.tmp ~/.claude/skill-loop/queue/{id}.json`
 7. If parse fails: report error, do not swap. The queue entry remains at its previous status.
 
