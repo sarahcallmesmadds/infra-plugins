@@ -22,7 +22,7 @@ Look at `$ARGUMENTS`:
 
 - **If it matches a queue entry ID format** (YYYY-MM-DDTHH-MM-SS-{target}, e.g. `2026-04-23T13-29-20-daily-brief`): read `~/.claude/build-loop/queue/{id}.json` directly using the Read tool.
 
-- **If it is a target name** (e.g. `daily-brief`): run `ls ~/.claude/build-loop/queue/` and scan all `.json` files. Find all entries where `target == $ARGUMENTS` AND `status == "fix applied, watching"`.
+- **If it is a target name** (e.g. `daily-brief`): run `ls ~/.claude/build-loop/queue/` and scan all `.json` files. Find all entries whose name equals `$ARGUMENTS`, reading `target` and falling back to `skill` when `target` is absent (SCHEMA.md read-time mapping), AND `status == "fix applied, watching"`.
   - If exactly one match: use it.
   - If multiple matches: list them (id, created_at, one-line of what_happened) and ask the user to pick. Do not proceed until they confirm one.
   - If no matches: say "No 'fix applied, watching' entries found for '{target}'. If the fix is in a different status, provide the full queue entry ID." Stop.

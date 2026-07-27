@@ -24,7 +24,7 @@ Read `$ARGUMENTS`:
 
 - **If $ARGUMENTS matches the pattern `YYYY-MM-DDTHH-MM-SS-{target}`** (a full queue entry ID): read `~/.claude/build-loop/queue/{id}.json` directly using the Read tool.
 
-- **If $ARGUMENTS is a target name or partial name** (e.g., `daily-brief`): run `ls ~/.claude/build-loop/queue/*.json 2>/dev/null`. Read each file and filter where `target == $ARGUMENTS` AND `type == "primary"` (or type field missing) AND `status` is `"Open"` or `"In Progress"`. Sort by `created_at` descending:
+- **If $ARGUMENTS is a target name or partial name** (e.g., `daily-brief`): run `ls ~/.claude/build-loop/queue/*.json 2>/dev/null`. Read each file and filter where the entry name equals `$ARGUMENTS`, reading `target` and falling back to `skill` when `target` is absent (per SCHEMA.md, entries written before v5 carry `skill`; matching on `target` alone makes every older entry invisible) AND `type == "primary"` (or type field missing) AND `status` is `"Open"` or `"In Progress"`. Sort by `created_at` descending:
   - If one match: use it.
   - If multiple matches: list them (id, created_at, what_happened summary) and ask the user to pick one. Do not proceed until they pick.
   - If no matches: say "No open queue entries found for '{$ARGUMENTS}'. Run /list-bugs to see what's available." Stop.
@@ -64,7 +64,9 @@ Read `~/.claude/build-loop/DEPS.json` using the Read tool.
 Compute the composite key `{repo}:{target}`, where `repo` is the root name
 recorded on the queue entry.
 
-Look up `DEPS.json.targets[key].dependents`:
+Read the map from `DEPS.json.targets`. **If that is absent and `DEPS.json.skills` is present, use `skills` instead**, treating each entry's `skill` field as `target`. That is a v1 map, per SCHEMA-DEPS.md. Reading only `targets` against a v1 map reports every dependency as absent, so the warning below never fires and a fix lands with no heads-up about what it might break.
+
+Look up `dependents` for the key:
 - If the key is not in DEPS.json, or if the dependents array is empty: proceed silently — this is the common case.
 - If dependents exist, show:
 

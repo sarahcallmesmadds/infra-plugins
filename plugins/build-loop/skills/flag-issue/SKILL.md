@@ -217,11 +217,13 @@ Read `~/.claude/build-loop/DEPS.json` using the Read tool.
 
 Build the composite key: `{repo}:{target}` where both values come from the primary entry you just wrote.
 
-**If the key is NOT in `DEPS.json.targets`:**
+Read the map from `DEPS.json.targets`. **If that key is absent and `DEPS.json.skills` is present, use `skills` instead**, treating each entry's `skill` field as `target` and a missing `kind` as `"skill"`. That is a v1 map, per SCHEMA-DEPS.md. Reading only `targets` against a v1 map finds nothing, reports every dependency as absent, and silently skips the dep-review flagging that is the whole point of this step.
+
+**If the key is NOT in the map:**
 > Print: "⚠ {target} not in DEPS.json — skipping dep-review flagging. Run /audit-deps to add it."
 > Jump to Step 4c with `dep_reviews_written: 0`.
 
-**If the key IS present**, look at `DEPS.json.targets[key].dependents`. If the array is empty, jump to Step 4c with `dep_reviews_written: 0` — there's nothing to flag, which is the common case.
+**If the key IS present**, look at its `dependents`. If the array is empty, jump to Step 4c with `dep_reviews_written: 0` — there's nothing to flag, which is the common case.
 
 ### For each dependent, write a dep-review entry
 
