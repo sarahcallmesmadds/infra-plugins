@@ -41,7 +41,7 @@ const PATTERNS = [
     re: /^\s*(system|assistant)\s*:\s*\S/im,
     note: 'line beginning with a role label' },
   { id: 'boundary-endof', category: 'fake-boundary',
-    re: /\bend of (document|context|file|input)\b[^.\n]{0,30}\b(new|now|begin)\b/i,
+    re: /\bend of (document|context|file|input)\b[^\n]{0,40}\b(new|now|begin|follow|instead)\b/i,
     note: 'false end-of-content marker followed by new directives' },
 
   // 4. Exfiltration, text asking for data to be sent somewhere.
