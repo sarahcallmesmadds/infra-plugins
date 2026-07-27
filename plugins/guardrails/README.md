@@ -124,6 +124,17 @@ approving something you should not.
 
 Treat it as the seatbelt, not the airbag.
 
+## Upgrading to 0.2.1
+
+**If you are on 0.2.0 or earlier, none of the blocking worked.** The guards ran,
+reached the right verdict and reported it, but they reported it in a shape that
+PreToolUse hooks no longer read, so Claude Code ignored the answer and ran the
+command. That covers all three blocking checks: recursive deletes, commits to a
+protected branch, and the commit message format. The injection scanners were
+never affected, because they only add a note and already used the current shape.
+
+Nothing about your config changes. Run `/plugin update guardrails@smadds`.
+
 ## Upgrading from 0.1.x
 
 The two skills were renamed in 0.2.0, because the old names described what they
