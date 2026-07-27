@@ -99,6 +99,20 @@ facts. "Uses the word robust" is an opinion. Those facts are marked hard and
 weigh more heavily, but one on its own still reads as "some" rather than a
 verdict, because a single placeholder can be a genuine template.
 
+## A known blind spot
+
+It cannot tell a document **about** these patterns from a document **exhibiting**
+them. Run it on a style guide, a linter config, a security checklist, a code
+review rubric, or a writing-rules file, and it will flag the examples those
+documents quote on purpose.
+
+This plugin fails its own check for exactly that reason. `patterns.js` is a list
+of machine-writing tells, so it reads as full of machine-writing tells. The
+README breaks the hard rules by writing `oaicite` while explaining that
+`oaicite` is a giveaway. The files that do the work come back clean.
+
+So: on a document whose subject is writing quality, ignore the result.
+
 ## Install
 
 ```
