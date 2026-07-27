@@ -259,7 +259,22 @@ For every `{ target: X, plugin: P, kind: K, repo: R, reason: Y, confidence?: low
 
 **`X` is bare and stays bare.** `P` is a separate field naming the plugin, and it is only there under a `plugin-repo` root. Use `{R}:{P}/{X}` when you need the edge's key in `DEPS.json`, and use `X` on its own everywhere the dep-review entry is concerned.
 
-Never write `{P}/{X}` into the entry's `target`, its `id`, or its filename. A queue entry's `target` is a name on disk that `/apply-fix` and `/list-bugs` later have to resolve to a file, and nothing on disk is called `guardrails/hook-io`. If an edge does carry a slashed `target`, which a map written before this rule may, split it: the part before the last `/` is `P` and the part after is `X`.
+**Never write `{P}/{X}` into the entry's `target`.** A queue entry's `target` is a name on disk that `/apply-fix` and `/list-bugs` later have to resolve to a file, and nothing on disk is called `guardrails/hook-io`. If an edge does carry a slashed `target`, which a map written before this rule may, split it: the part before the last `/` is `P` and the part after is `X`.
+
+**The `id`, the filename, and the `dedup_key` want the opposite.** Those exist to be unique, and a bare name is not. One fix to something that `guardrails/cli` and `slop-check/cli` both depend on produces two dependents with the same bare name, and then:
+
+- the same filename, so the second write overwrites the first
+- the same `dedup_key`, so the dedup check in step 3 skips the second
+
+Either way one review survives and the other disappears without a word, which is the failure this whole map exists to prevent, happening inside the thing meant to prevent it.
+
+So fold `P` in wherever the value is an identifier, and leave it out wherever the value is a name that has to resolve:
+
+| value | with a plugin | without |
+|---|---|---|
+| `target` | `{X}` | `{X}` |
+| `id` and filename | `{ts}-dep-review-{slug(P)}-{slug(X)}` | `{ts}-dep-review-{slug(X)}` |
+| `dedup_key` | `dep-review::{P}/{X}::{parent id}` | `dep-review::{X}::{parent id}` |
 
 1. **Compute urgency_hint** (Claude's judgment — this is NOT a rule engine):
    - Tight coupling signals: Y mentions "explicit call", "shared DB ID", or "schema reference" — OR the edge confidence is `"high"`.
@@ -267,14 +282,14 @@ Never write `{P}/{X}` into the entry's `target`, its `id`, or its filename. A qu
    - Tight → urgency_hint = same as the primary entry's urgency_hint
    - Loose → urgency_hint = one level lower: high→normal, normal→low, low stays low
 
-2. **Compute the dep-review dedup key**: `dep-review::{X}::{primary entry's id}`.
+2. **Compute the dep-review dedup key**: `dep-review::{P}/{X}::{primary entry's id}` when `P` is present, otherwise `dep-review::{X}::{primary entry's id}`. The plugin belongs here. Without it, two dependents called `cli` in different plugins produce one key, and the second is skipped as a duplicate of the first.
 
 3. **Dedup check**: run `ls ~/.claude/build-loop/queue/*.json 2>/dev/null`. Read each file. If any existing entry has the same `dedup_key`, skip this dependent and continue to the next. (Unlike primary dedup, dep-review dedup is NOT time-windowed — the same parent_id + dependent pair is one logical review, forever.)
 
 4. **Build the dep-review entry** (all fields per SCHEMA.md v5):
    ```
    $schema_version:  5
-   id:               {primary entry's timestamp}-dep-review-{slug(X)}
+   id:               {primary timestamp}-dep-review-{slug(P)}-{slug(X)}, or -dep-review-{slug(X)} where there is no P
    created_at:       {same as primary entry's created_at}
    status:           "Open"
    type:             "dep-review"
@@ -290,12 +305,12 @@ Never write `{P}/{X}` into the entry's `target`, its `id`, or its filename. A qu
    correct_example:  "(not applicable)"
    source:           "dep-review-auto"
    urgency_hint:     {computed above}
-   dedup_key:        dep-review::{X}::{primary entry's id}
+   dedup_key:        dep-review::{P}/{X}::{primary entry's id}, or dep-review::{X}::{...} where there is no P
    notes:            []
    resolution:       null
    ```
 
-5. **Write the entry**. Filename: `{primary timestamp}-dep-review-{slug(X)}.json`. Use the Write tool. Pretty-print with 2-space indentation.
+5. **Write the entry**. Filename: the `id` above with `.json` appended, so `{primary timestamp}-dep-review-{slug(P)}-{slug(X)}.json` where there is a plugin. It has to equal the `id` exactly, or the entry cannot be found by its own identifier. Use the Write tool. Pretty-print with 2-space indentation.
 
 6. Increment `dep_reviews_written`.
 

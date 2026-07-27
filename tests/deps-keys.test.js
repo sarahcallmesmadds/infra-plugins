@@ -214,6 +214,27 @@ check('an entry stores plugin as a field, so back-edges have it to read', () => 
   );
 });
 
+check('a dep-review id and dedup key carry the plugin, so two cli entries survive', () => {
+  // target and id want opposite things. target is a name that has to resolve to
+  // a file, so it stays bare. id, filename and dedup_key exist to be unique,
+  // and a bare name is not: one fix touching something both guardrails/cli and
+  // slop-check/cli depend on produced the same filename twice and the same
+  // dedup key twice, so one review overwrote the other or was skipped as a
+  // duplicate. The dependent in the other plugin then vanished with no message,
+  // inside the machinery built to stop exactly that.
+  const t = SKILLS['flag-issue'];
+  assert.ok(
+    /dep-review-\{slug\(P\)\}-\{slug\(X\)\}/.test(t),
+    'the dep-review id is built from the bare name, so two dependents sharing a '
+    + 'name across plugins collide on one filename'
+  );
+  assert.ok(
+    /dep-review::\{P\}\/\{X\}::/.test(t),
+    'the dedup key is built from the bare name, so the second dependent is '
+    + 'skipped as a duplicate of the first'
+  );
+});
+
 check('the dependents warning names the plugin, not just the bare name', () => {
   // Guidance said to show {plugin}/{target}; the template below it still said
   // {dep.target}. The template is the part that reaches the user.
@@ -273,5 +294,5 @@ check('plugin-qualified keys are unique across the whole repository', () => {
   }
 });
 
-console.log(`\n16 checks, ${failed} failed`);
+console.log(`\n17 checks, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);
