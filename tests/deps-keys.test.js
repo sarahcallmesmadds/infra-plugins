@@ -197,6 +197,34 @@ check('audit-deps writes plugin beside target, and carries it to back-edges', ()
   );
 });
 
+check('an entry stores plugin as a field, so back-edges have it to read', () => {
+  // The back-edge step reads A.plugin off an entry. If the plugin only lives
+  // inside the composite key, that read returns nothing and every dependent is
+  // written without one, which is the ambiguity this change removed from edges
+  // reappearing on the reverse direction.
+  assert.ok(
+    /\| `plugin` \| string \| no \| Which plugin inside a `plugin-repo` root holds this/.test(SCHEMA),
+    'the entry field table has no `plugin`, so A.plugin in the back-edge step '
+    + 'reads a field that does not exist'
+  );
+  assert.ok(
+    /`plugin` when the root is a\n  `plugin-repo`/.test(SKILLS['audit-deps'])
+      || /plus \*\*`plugin` when the root is a/.test(SKILLS['audit-deps']),
+    'audit-deps never writes plugin onto the entry it builds'
+  );
+});
+
+check('the dependents warning names the plugin, not just the bare name', () => {
+  // Guidance said to show {plugin}/{target}; the template below it still said
+  // {dep.target}. The template is the part that reaches the user.
+  const t = SKILLS['apply-fix'];
+  assert.ok(
+    /\{dep\.plugin\}\/\{dep\.target\}/.test(t),
+    'the warning template still shows a bare dependent name, so a fix can warn '
+    + 'about "cli" without saying which of the three it means'
+  );
+});
+
 // --- and the repository this rule exists for -------------------------------
 
 function targetsInRepo() {
@@ -245,5 +273,5 @@ check('plugin-qualified keys are unique across the whole repository', () => {
   }
 });
 
-console.log(`\n14 checks, ${failed} failed`);
+console.log(`\n16 checks, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

@@ -140,7 +140,11 @@ by name. A shared path is the signal. When a hook and a skill both name
 quietly weeks later.
 
 Build the candidate entry with:
-- `target, kind, repo, path` from the scan
+- `target, kind, repo, path` from the scan, plus **`plugin` when the root is a
+  `plugin-repo`**. `target` stays bare and `plugin` sits beside it, matching the
+  edge format. Storing the plugin only inside the composite key is not enough:
+  Step 6 builds back-edges by reading fields off an entry, and a field that only
+  exists in the key reads as nothing.
 - `depends_on`, inferred, may be empty. **Each edge carries a bare `target` plus
   a separate `plugin` field when the root is a `plugin-repo`**, per the
   Dependency Edge Format in SCHEMA-DEPS.md. Write `{"target": "hook-io",
@@ -193,7 +197,11 @@ For stale entries, only re-infer if the user confirms. Otherwise just bump the e
 After applying the approved additions/removals/changes:
 
 1. For every entry in the updated `targets` object, collect its `depends_on` edges.
-2. For each edge A → T, ensure `targets[T].dependents` includes `{ target: A.target, plugin: A.plugin, kind: A.kind, repo: A.repo, reason: edge.reason, confidence?: edge.confidence }`. Carry `plugin` through, and omit the field entirely rather than writing `null` when A is not inside a plugin. Resolve T to its entry using the ordered lookup in SCHEMA-DEPS.md rather than string-matching the key, so an edge written before v3 still finds its target.
+2. For each edge A → T, ensure `targets[T].dependents` includes `{ target: A.target, plugin: A.plugin, kind: A.kind, repo: A.repo, reason: edge.reason, confidence?: edge.confidence }`.
+
+   `A.plugin` is a field on the entry, written in Step 4. It is not derived here and it is not parsed out of A's key. If an older entry has no `plugin` but its key carries one, take the plugin from the key rather than dropping it, because a dependent with no plugin is ambiguous the moment two plugins share a name. Omit the field entirely, never `null`, when A genuinely is not inside a plugin.
+
+   Resolve T to its entry using the ordered lookup in SCHEMA-DEPS.md rather than string-matching the key, so an edge written before v3 still finds its target.
 3. Prune `dependents` entries that no longer have a matching `depends_on` edge in the source.
 4. Alphabetize the top-level `targets` keys so diffs stay clean.
 

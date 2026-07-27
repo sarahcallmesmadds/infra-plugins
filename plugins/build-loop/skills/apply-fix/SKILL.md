@@ -102,7 +102,11 @@ would not say which is at risk. Keep the two fields apart everywhere else.
 - If the key is not in DEPS.json, or if the dependents array is empty: proceed silently — this is the common case.
 - If dependents exist, show:
 
-  > "Heads up: {target} has dependents that may be affected by this fix: {for each dependent: '{dep.target}' — {dep.reason}}. Proceed with the fix?"
+  > "Heads up: {target} has dependents that may be affected by this fix: {for each dependent: '{dep.plugin}/{dep.target}' when dep.plugin is present, otherwise '{dep.target}' — {dep.reason}}. Proceed with the fix?"
+
+  The plugin belongs in this line. `cli`, `config`, `hook-io` and `patterns`
+  each exist in more than one plugin here, so a bare name in a warning about
+  what a fix might break is the one place ambiguity costs something.
 
   Wait for the user's explicit confirmation. If they say no: set status back to `"Open"` via atomic write (same 3-step pattern). Stop.
 

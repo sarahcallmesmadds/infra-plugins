@@ -109,6 +109,25 @@ A lookup that quietly finds nothing looks exactly like a target with no dependen
 
 ## Entry Shape
 
+An entry inside a `plugin-repo` root carries `plugin` beside `target`, for the
+same reason an edge does: the plugin has to be readable as a field, not only
+recoverable by parsing the key. Anything building an edge out of this entry
+reads `entry.plugin`, and if that only lives in the key it reads nothing.
+
+```json
+{
+  "target": "hook-io",
+  "plugin": "guardrails",
+  "kind": "script",
+  "repo": "plugins",
+  "path": "~/Projects/plugins/plugins/guardrails/scripts/hook-io.js",
+  "depends_on": [],
+  "dependents": []
+}
+```
+
+The general shape, outside a `plugin-repo` root:
+
 ```json
 {
   "target": "daily-brief",
@@ -136,7 +155,8 @@ A lookup that quietly finds nothing looks exactly like a target with no dependen
 
 | Field | Type | Required | Description | Notes |
 |-------|------|----------|-------------|-------|
-| `target` | string | yes | Name on disk. Matches the name portion of the composite key. | Called `skill` before v2. |
+| `target` | string | yes | Name on disk. Bare, matching the name portion of the composite key after any plugin segment. | Called `skill` before v2. |
+| `plugin` | string | no | Which plugin inside a `plugin-repo` root holds this. Required when `repo` names a `plugin-repo` root, absent otherwise. | Added in v3. Without it the plugin exists only inside the key, so anything building an edge from this entry has nothing to read. |
 | `kind` | string | yes | `skill`, `hook`, `command`, `plugin`, `script`, or `other`. | Same vocabulary as the queue's `target_kind`. Defaults to `"skill"` when absent, for v1 files. |
 | `repo` | string | yes | Which root owns this. | Matches the repo portion of the composite key. |
 | `path` | string | yes | Absolute path to the file a fix would edit. | Example: `~/.claude/hooks/style-lint.js`. Not always a `SKILL.md`. |
