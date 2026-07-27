@@ -128,6 +128,60 @@ check('remote delete targets the exact ref', () => {
     ['gh', 'api', '-X', 'DELETE', 'repos/sarahcallmesmadds/plugins/git/refs/heads/old']);
 });
 
+// ------------------------------------------------------- gh pagination ----
+//
+// `gh api --paginate --jq '[.[].name]'` applies the filter to each page
+// separately, so a repository with more than one page emits several complete
+// JSON arrays back to back. That is not parseable, and the natural `|| []`
+// fallback turns a repo full of branches into "nothing to clean up". A silent
+// false negative in a tool whose only job is noticing forgotten things.
+
+process.stdout.write('gh pagination\n');
+
+const collect = require(path.join(ROOT, 'scripts', 'collect.js'));
+
+check('multi-page scalar output splits into every value, not the first page only', () => {
+  // What `--jq '.[].name'` gives back across three pages.
+  const out = ['a', 'b', 'c'].join('\n') + '\n' + ['d', 'e'].join('\n');
+  assert.deepStrictEqual(collect.toLines(out), ['a', 'b', 'c', 'd', 'e']);
+});
+
+check('blank lines and stray whitespace between pages are dropped', () => {
+  assert.deepStrictEqual(collect.toLines('a\n\n  b  \n\n\nc\n'), ['a', 'b', 'c']);
+});
+
+check('a failed command stays null and never becomes an empty list', () => {
+  // This is the distinction the bug turned on. [] means "looked, found none".
+  // null means "could not look". Collapsing the second into the first reports a
+  // clean repository that was never actually read.
+  assert.strictEqual(collect.toLines(null), null);
+  assert.notDeepStrictEqual(collect.toLines(null), []);
+});
+
+check('no --paginate call wraps its jq filter in an array', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'scripts', 'collect.js'), 'utf8');
+  const paginated = src.split('\n').filter((l) => l.includes("'--paginate'"));
+  assert.ok(paginated.length > 0, 'expected at least one paginated call to check');
+  for (const line of paginated) {
+    assert.ok(!/\[\s*\.\[\]/.test(line),
+      `a --paginate call must request scalars, not an array, or pages concatenate into invalid JSON:\n  ${line.trim()}`);
+  }
+});
+
+check('branch and PR listings both ask for a full page size', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'scripts', 'collect.js'), 'utf8');
+  assert.ok(/branches\?per_page=100/.test(src), 'branch listing should request 100 per page');
+  assert.ok(/pulls\?state=open&per_page=100/.test(src), 'PR listing should request 100 per page');
+});
+
+check('an unreadable PR list keeps every branch rather than dropping the protection', () => {
+  // If the PR list cannot be read and is treated as empty, a merged branch with
+  // review still running would be offered as safe. It must fail the other way.
+  const src = fs.readFileSync(path.join(ROOT, 'scripts', 'collect.js'), 'utf8');
+  assert.ok(/prsUnknown \? true : openPR\.has\(name\)/.test(src),
+    'hasOpenPR must default to true when the PR list could not be read');
+});
+
 // ------------------------------------------------ the actual command ----
 //
 // Driving the CLI as a subprocess, because every real bug so far has been in a
