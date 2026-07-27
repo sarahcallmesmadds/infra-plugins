@@ -302,19 +302,27 @@ function checkData(text) {
   // Percentages that do not add up. This is arithmetic rather than taste, so
   // it is a hard finding: a set of shares that does not total 100 is wrong,
   // and no amount of context makes it right.
+  //
+  // Documents only. Percentages in source are widths, opacities, offsets and
+  // easing values. They are not shares of a whole and were never meant to sum
+  // to anything, so adding them up and calling the result an error is exactly
+  // the kind of confident wrong answer that makes a tool worth ignoring. This
+  // finding is marked hard, so a false one costs more than most.
   const percents = (text.match(/(\d+(?:\.\d+)?)\s*%/g) || []).map((p) => parseFloat(p));
-  if (percents.length >= 3 && percents.length <= 12) {
+  if (percents.length >= 3 && percents.length <= 12 && !looksLikeCode(text)) {
     const total = percents.reduce((a, b) => a + b, 0);
     if (Math.abs(total - 100) > 0.5 && Math.abs(total - 100) < 25) {
       found.push({ name: 'percentages-do-not-total-100', hard: true, total: Number(total.toFixed(1)) });
     }
   }
 
-  // Chart scaffolding nobody relabelled.
+  // Chart scaffolding nobody relabelled. Also documents only: `xlabel` and
+  // `ylabel` are the matplotlib API, so every plotting script in existence
+  // would otherwise be reported for using the library correctly.
   const defaults = ['Series 1', 'Series1', 'series_1', 'Column1', 'Untitled', 'Sheet1',
     'xlabel', 'ylabel', 'Category A', 'Category B', 'Label 1', 'Value 1'];
   const hits = defaults.filter((d) => text.includes(d));
-  if (hits.length) found.push({ name: 'default-chart-labels', hits });
+  if (hits.length && !looksLikeCode(text)) found.push({ name: 'default-chart-labels', hits });
 
   return found;
 }

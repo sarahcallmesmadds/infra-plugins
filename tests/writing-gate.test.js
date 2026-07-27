@@ -147,6 +147,17 @@ console.log('\nprecision is read from how numbers were written');
 console.log('\narithmetic is a hard finding');
 check('percentages that do not total 100 are hard',
   checkData('30% of one, 30% of two, 25% of three').some((f) => f.name === 'percentages-do-not-total-100' && f.hard), true);
+// Percentages in source are widths and opacities, not shares of a whole. A
+// false HARD finding costs more than a false soft one, so this must not fire.
+check('percentages in CSS are not an arithmetic error',
+  checkData('const s = { width: "20%", left: "30%", opacity: "40%" };\nfunction go() {}')
+    .some((f) => f.name === 'percentages-do-not-total-100'), false);
+check('matplotlib calls are not unlabelled charts',
+  checkData('import matplotlib\ndef plot():\n    plt.xlabel("Revenue")\n    plt.ylabel("Month")')
+    .some((f) => f.name === 'default-chart-labels'), false);
+check('...but a real chart with default labels still flags',
+  checkData('The chart plots Series 1 against Category A over the quarter.')
+    .some((f) => f.name === 'default-chart-labels'), true);
 
 console.log('\nconfig escape hatches work');
 check('choppyRunLimit 0 disables the rule rather than flagging everything',
