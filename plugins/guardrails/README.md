@@ -124,6 +124,69 @@ approving something you should not.
 
 Treat it as the seatbelt, not the airbag.
 
+## Upgrading to 0.2.4
+
+**If you are on 0.2.3 or earlier, the branch guard misses the most ordinary way
+to write a path.** This commits to `main` without a word:
+
+```
+cd ~/Projects/thing && git commit -m "wip"
+```
+
+`~` is expanded by your shell, so the guard only ever sees the four characters
+`~/Pr…` and looks for a directory literally named that. There isn't one, the
+lookup throws, and the commit is allowed. Writing the same path out in full was
+blocked correctly, so whether the guard worked came down to how the path
+happened to be typed.
+
+Tildes are now expanded before the lookup, for both `cd` and `git -C`.
+
+A relative path is resolved against the directory the command runs in, not
+against wherever the hook process happens to sit, so `cd subdir && git commit`
+is judged in the repository you actually mean.
+
+**A path only your shell can work out now falls back to the directory the
+command runs in.** Plenty of paths cannot be read out of the command text at
+all:
+
+```
+cd $REPO && git commit
+cd "$(git rev-parse --show-toplevel)" && git commit
+git clone https://example.com/x r && cd r && git commit
+```
+
+Refusing these was tried during development and it was wrong. It stopped
+ordinary work and told people to write out a path that is computed, which they
+cannot do.
+
+The fallback is not a consolation prize. `$(git rev-parse --show-toplevel)` is
+the repository the command already sits in, so the fallback answers it exactly.
+A path in a variable usually points at the repository you are working in, so it
+answers that often too.
+
+Two limits, stated rather than implied:
+
+**A commit aimed at a different repository named dynamically is not checked.**
+The fallback reads the directory you are standing in, so if the computed path
+points somewhere else, the answer is about the wrong repository. It is not
+guessed at.
+
+**The reverse also happens.** Clone into a subdirectory while standing in a
+repository that is on `main`, then commit into the clone, and the fallback
+answers `main` from the outer repository and stops you. Rare, and it errs
+toward interrupting rather than toward missing, which is the right way round
+for a guard. Name the path explicitly if you hit it.
+
+These stay quiet on purpose:
+
+| case | why it is left alone |
+|---|---|
+| directory exists, is not a repository | `git commit` fails on its own |
+| detached HEAD | a valid repository doing normal work |
+| nothing named, and nowhere is a repository | committing outside a repository is not a thing |
+
+Nothing about your config changes. Run `/plugin update guardrails@smadds`.
+
 ## Upgrading to 0.2.3
 
 **If you are on 0.2.2 or earlier, the scanner never looked at anything you

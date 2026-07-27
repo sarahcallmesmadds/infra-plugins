@@ -233,6 +233,220 @@ check('a missing cwd outside any repository stays silent rather than erroring', 
   );
 });
 
+// --- paths written the way people write them ------------------------------
+//
+// `~` is expanded by the shell, so a path taken out of the command text still
+// has it and there is nothing on disk by that name. The guard used to look,
+// fail to find it, and allow the commit without a word. `cd ~/repo && git
+// commit` is the ordinary way to write this, so whether the guard worked came
+// down to how the path happened to be typed.
+//
+// HOME is FAKE_HOME for these, so `~` resolves there and nothing touches the
+// real home directory.
+
+function repoIn(dir, branch) {
+  const repo = path.join(dir, `repo-${branch}`);
+  fs.mkdirSync(repo, { recursive: true });
+  execFileSync('git', ['init', '-b', branch, repo], { stdio: 'ignore' });
+  return repo;
+}
+
+check('a tilde path after cd is expanded before the branch is read', () => {
+  repoIn(FAKE_HOME, 'main');
+  const reason = assertDenies(
+    runHook('cd ~/repo-main && git commit -m "wip"', { processCwd: NOWHERE }),
+    'cd ~/repo-main'
+  );
+  assert.ok(reason.includes('main'), `reason did not name the branch: ${reason}`);
+});
+
+check('a tilde path after -C is expanded too', () => {
+  repoIn(FAKE_HOME, 'main');
+  assertDenies(
+    runHook('git -C ~/repo-main commit -m "wip"', { processCwd: NOWHERE }),
+    'git -C ~/repo-main'
+  );
+});
+
+check('a tilde path on a feature branch is still left alone', () => {
+  // The expansion must not turn into "block anything with a tilde in it".
+  repoIn(FAKE_HOME, 'some-feature');
+  assert.strictEqual(
+    runHook('cd ~/repo-some-feature && git commit -m "wip"', { processCwd: NOWHERE }),
+    null,
+    'hook objected to a commit on a feature branch'
+  );
+});
+
+// --- relative paths belong to the command, not to the hook -----------------
+//
+// `cd subdir && git commit` is ordinary. A relative path means relative to
+// where the command runs, which is the event directory, never this process's
+// own location. Resolving it against the hook points somewhere unrelated, so a
+// repository that is right there looks missing. Before the unresolved check
+// existed that only meant a silent miss; with it, the same mistake turns into
+// an interruption on a commit that was fine, which is worse.
+
+check('a relative path is resolved against the event directory', () => {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrails-parent-'));
+  execFileSync('git', ['init', '-b', 'main', path.join(parent, 'sub')], { stdio: 'ignore' });
+  const reason = assertDenies(
+    runHook('cd sub && git commit -m "wip"', { eventCwd: parent, processCwd: NOWHERE }),
+    'cd sub'
+  );
+  assert.ok(
+    reason.includes('main'),
+    `expected the branch name, got a different refusal: ${reason}`
+  );
+  fs.rmSync(parent, { recursive: true, force: true });
+});
+
+check('a relative path on a feature branch is left alone', () => {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrails-parent-'));
+  execFileSync('git', ['init', '-b', 'some-feature', path.join(parent, 'sub')], { stdio: 'ignore' });
+  assert.strictEqual(
+    runHook('cd sub && git commit -m "wip"', { eventCwd: parent, processCwd: NOWHERE }),
+    null,
+    'hook objected to a commit on a feature branch reached by a relative path'
+  );
+  fs.rmSync(parent, { recursive: true, force: true });
+});
+
+check('a relative path with .. is resolved too', () => {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrails-parent-'));
+  execFileSync('git', ['init', '-b', 'main', path.join(parent, 'sub')], { stdio: 'ignore' });
+  fs.mkdirSync(path.join(parent, 'other'));
+  const reason = assertDenies(
+    runHook('cd ../sub && git commit -m "wip"', {
+      eventCwd: path.join(parent, 'other'),
+      processCwd: NOWHERE,
+    }),
+    'cd ../sub'
+  );
+  // Asserting on the reason, not just on the deny. Resolved against the wrong
+  // base this path does not exist either, so it gets refused as unresolvable
+  // and a test that only checked "denied" would pass on the broken code.
+  assert.ok(
+    reason.includes('main'),
+    `expected the branch name, got the cannot-find refusal instead: ${reason}`
+  );
+  fs.rmSync(parent, { recursive: true, force: true });
+});
+
+// --- a path only the shell can resolve ------------------------------------
+//
+// The text after `cd` is often something this hook cannot turn into a path:
+// `$REPO`, `"$(git rev-parse --show-toplevel)"`, or a directory created
+// earlier on the same line. Refusing those was tried and it stopped real work,
+// while telling people to write out a path that is computed. The fallback is
+// the directory the command runs in, which answers the common shapes correctly
+// rather than as a consolation.
+
+check('a command substitution falls back to the directory the command runs in', () => {
+  // `$(git rev-parse --show-toplevel)` IS the repository already in play, so
+  // reading the event directory answers it exactly rather than approximately.
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrails-repo-'));
+  execFileSync('git', ['init', '-b', 'main', repo], { stdio: 'ignore' });
+  const reason = assertDenies(
+    runHook('cd "$(git rev-parse --show-toplevel)" && git commit -m "wip"', {
+      eventCwd: repo,
+      processCwd: NOWHERE,
+    }),
+    'cd "$(...)"'
+  );
+  assert.ok(reason.includes('main'), `reason did not name the branch: ${reason}`);
+  fs.rmSync(repo, { recursive: true, force: true });
+});
+
+check('a shell variable falls back the same way', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrails-repo-'));
+  execFileSync('git', ['init', '-b', 'main', repo], { stdio: 'ignore' });
+  const reason = assertDenies(
+    runHook('cd $REPO && git commit -m "wip"', { eventCwd: repo, processCwd: NOWHERE }),
+    'cd $REPO'
+  );
+  assert.ok(reason.includes('main'), `reason did not name the branch: ${reason}`);
+  fs.rmSync(repo, { recursive: true, force: true });
+});
+
+check('a directory created earlier in the same line is not refused', () => {
+  // `git clone x r && cd r && git commit`. `r` does not exist when this hook
+  // looks, and a fresh clone has no branch worth protecting yet. The parent is
+  // not a repository, so nothing fires and the work proceeds.
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrails-parent-'));
+  assert.strictEqual(
+    runHook('git clone https://example.com/x r && cd r && git commit -m "wip"', {
+      eventCwd: parent,
+      processCwd: NOWHERE,
+    }),
+    null,
+    'hook refused a commit into a directory the command itself creates'
+  );
+  fs.rmSync(parent, { recursive: true, force: true });
+});
+
+check('cloning inside a repo on main and committing into the clone is stopped', () => {
+  // The known cost of the fallback, pinned so it is a decision rather than a
+  // surprise. The commit is aimed at the clone, but the clone does not exist
+  // yet, so the answer comes from the outer repository, which is on main.
+  //
+  // Left as is on purpose. It errs toward interrupting rather than toward
+  // missing, which is the right way round for a guard, and the alternative is
+  // special-casing `git clone <url> <dir>` followed by `cd <dir>`, which is
+  // more moving parts than the workflow is worth.
+  const outer = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrails-outer-'));
+  execFileSync('git', ['init', '-b', 'main', outer], { stdio: 'ignore' });
+  const reason = assertDenies(
+    runHook('git clone https://example.com/x r && cd r && git commit -m "wip"', {
+      eventCwd: outer,
+      processCwd: NOWHERE,
+    }),
+    'clone inside a repo on main'
+  );
+  assert.ok(reason.includes('main'), `reason did not name the branch: ${reason}`);
+  fs.rmSync(outer, { recursive: true, force: true });
+});
+
+check('an unresolvable path outside any repository is left alone', () => {
+  assert.strictEqual(
+    runHook('cd $REPO && git commit -m "wip"', { eventCwd: NOWHERE, processCwd: NOWHERE }),
+    null,
+    'hook objected when neither the named path nor the fallback is a repository'
+  );
+});
+
+check('a directory that exists but is not a repository is left alone', () => {
+  // `git commit` fails on its own here, so there is nothing to protect and an
+  // interruption would be pure noise.
+  const plain = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrails-plain-'));
+  assert.strictEqual(
+    runHook(`cd ${plain} && git commit -m "wip"`, { processCwd: NOWHERE }),
+    null,
+    'hook objected in a directory that is not a repository'
+  );
+  fs.rmSync(plain, { recursive: true, force: true });
+});
+
+check('a detached HEAD is left alone rather than treated as unresolvable', () => {
+  // symbolic-ref fails on a detached HEAD in a perfectly valid repository
+  // doing perfectly normal work. That is not the guard being unable to tell.
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrails-repo-'));
+  execFileSync('git', ['init', '-b', 'main', repo], { stdio: 'ignore' });
+  execFileSync('git', ['-C', repo, 'config', 'user.email', 't@t.t'], { stdio: 'ignore' });
+  execFileSync('git', ['-C', repo, 'config', 'user.name', 't'], { stdio: 'ignore' });
+  fs.writeFileSync(path.join(repo, 'a.txt'), 'x');
+  execFileSync('git', ['-C', repo, 'add', '-A'], { stdio: 'ignore' });
+  execFileSync('git', ['-C', repo, 'commit', '-m', 'base'], { stdio: 'ignore' });
+  const sha = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+  execFileSync('git', ['-C', repo, 'checkout', sha], { stdio: 'ignore' });
+  assert.strictEqual(
+    runHook(`git -C ${repo} commit -m "wip"`, { processCwd: NOWHERE }),
+    null,
+    'hook treated a detached HEAD as a path it could not resolve'
+  );
+  fs.rmSync(repo, { recursive: true, force: true });
+});
+
 // --- disposable paths spelled either way ----------------------------------
 
 check('/private/tmp is as disposable as /tmp, being the same directory', () => {
@@ -260,5 +474,5 @@ check('a real path outside the disposable list is still denied', () => {
 fs.rmSync(FAKE_HOME, { recursive: true, force: true });
 fs.rmSync(NOWHERE, { recursive: true, force: true });
 
-console.log(`\n14 checks, ${failed} failed`);
+console.log(`\n27 checks, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);
