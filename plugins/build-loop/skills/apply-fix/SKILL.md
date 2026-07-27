@@ -260,6 +260,6 @@ Wait for the user's answer. If they say "leave them", they stay Open. Do not aut
 
 ```
 Fix committed. Queue entry {id} is now "fix applied, watching".
-Try it in a real session — when it works, run /list-bugs and update the entry to Resolved.
+Try it in a real session. When it works, run /list-bugs and update the entry to Resolved.
 Commit: {hash} ({repo})
 ```

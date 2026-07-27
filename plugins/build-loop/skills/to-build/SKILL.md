@@ -208,7 +208,7 @@ Count `N` after filtering. If `N` is zero, print "No {filter_label} items on the
 Otherwise:
 
 ```
-## To build — {filter_label} ({N} items)
+## To build: {filter_label} ({N} items)
 
 | Title | Kind | What | Status | Added |
 |-------|------|------|--------|-------|

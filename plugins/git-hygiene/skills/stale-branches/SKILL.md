@@ -65,7 +65,7 @@ For a sweep, lead with the totals and then break down by repository, listing onl
 {N} branches across {M} repositories.
 {S} are safe to delete. {K} still have work on them.
 
-{owner/repo}  — {s} safe, {k} to keep
+{owner/repo}  - {s} safe, {k} to keep
   safe:  {names}
   keep:  {name} ({reason})
 ```

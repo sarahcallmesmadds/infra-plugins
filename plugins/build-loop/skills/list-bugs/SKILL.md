@@ -60,7 +60,7 @@ If `N == 0`: print "No {filter_label} items in the queue." and skip to Step 5.
 If `N > 0`: produce a Markdown table with this exact header:
 
 ```
-## Build loop queue — {filter_label} ({N} items)
+## Build loop queue: {filter_label} ({N} items)
 
 | Target | Kind | What happened | Type | Status | Date |
 |--------|------|---------------|------|--------|------|

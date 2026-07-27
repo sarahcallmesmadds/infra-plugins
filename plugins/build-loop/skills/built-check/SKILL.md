@@ -165,11 +165,11 @@ Otherwise show this:
 Checked {N} open items against the last {days} days.
 
 Looks built:
-  1. {title} — {evidence}
-  2. {title} — {evidence}
+  1. {title} - {evidence}
+  2. {title} - {evidence}
 
 Started, not finished:
-  3. {title} — {evidence}
+  3. {title} - {evidence}
 
 No sign of it yet:
   - {title}

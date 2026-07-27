@@ -294,8 +294,8 @@ Pattern detection complete.
 - Resolved flags left untouched: <N>
 
 Flagged targets:
-- <target-1> — <session_count> sessions, status: <status>
-- <target-2> — <session_count> sessions, status: <status>
+- <target-1> - <session_count> sessions, status: <status>
+- <target-2> - <session_count> sessions, status: <status>
 ...
 ```
 
@@ -331,7 +331,7 @@ This outputs `YYYY-WW` (e.g. `2026-17`). The summary filename is `{YYYY-WW}.md`.
 **Build the report content** in this order (Pattern Flags FIRST — front-loading rule from 04-DESIGN.md Section 6):
 
 ```markdown
-# Build Loop — Week {WW}, {YYYY}
+# Build Loop: Week {WW}, {YYYY}
 
 **Generated:** {YYYY-MM-DD}
 
@@ -340,7 +340,7 @@ This outputs `YYYY-WW` (e.g. `2026-17`). The summary filename is `{YYYY-WW}.md`.
 ### New This Week
 - **{target}** ({repo}, {N} corrections across {M} sessions): {diagnosis} [status: pending-review]
 
-### Previously Flagged — Still Open
+### Previously Flagged: Still Open
 - **{target}** ({repo}, {N} corrections, status: {status}): {diagnosis}
 
 ### Resolved

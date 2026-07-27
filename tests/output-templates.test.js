@@ -9,23 +9,29 @@
 // and the model would rewrite it. Every time. Nobody noticed because the
 // rewrite succeeds and the answer still arrives.
 //
-// The distinction that matters, and the one that let this through: an em dash
-// in a step heading or in prose explaining behaviour never reaches anybody. One
-// inside a quoted string that the skill says to display does. This checks only
-// the second kind.
+// The distinction that matters: an em dash in prose explaining behaviour, or
+// in a SKILL.md section heading, never reaches anybody. One in text the skill
+// reproduces does. Prose and section headings stay as they are, since
+// rewriting them would churn a lot of files to fix nothing.
 //
-// Deliberately not checked: SKILL.md prose, `## Step 3 — ...` headings, and
-// frontmatter. Those are structure and explanation, and rewriting them would
-// churn a lot of files to fix nothing.
+// Two kinds of output are checked, because the first pass only looked at one
+// and the miss was not the harmless category the comment claimed.
 //
-// This is a floor, not an audit. It matches the shapes that clearly print a
-// message: a blockquote, a Display:, a Print:, a say. Fourteen of the
-// twenty-four fixed in this commit land in those shapes. The other ten are
-// values written into a file that is displayed later, such as a queue entry's
-// what_expected or a correction_notes line, and they have no syntax that marks
-// them as output. Widening the pattern to reach them would start flagging
-// prose, which is worse than missing some: a linter that cries wolf gets
-// switched off, and then it catches nothing at all.
+//   1. A quoted string on a line that says to print it.
+//   2. A fenced block that a skill reproduces verbatim.
+//
+// The second was originally excluded on the reasoning that a `##` heading is
+// structure. That is true of a SKILL.md section heading and false of a `##`
+// line inside a display template: `## Build loop queue — {filter_label}` is
+// printed exactly as written, every time /list-bugs runs. The same went for
+// the numbered findings in /built-check and the routing list in /find-skill.
+// So the previous version of this file passed while three commands still
+// tripped the hook on every invocation.
+//
+// Still not covered, and genuinely so this time: values written into a file
+// that gets displayed later, such as a queue entry's what_expected. Those have
+// no syntax marking them as output and reaching them means flagging prose. A
+// linter that cries wolf gets switched off, and then catches nothing at all.
 
 'use strict';
 
@@ -48,10 +54,24 @@ const SAYS = [
 // silencer, so it names the file and what the string actually is.
 const ALLOWED = [
   // A placeholder telling the author what belongs in the slot. The text inside
-  // the braces describes the content and is never printed as written.
+  // the braces describes the content and is substituted away, so the em dash
+  // is never printed.
   { file: 'build-loop/skills/verify-fix/SKILL.md', contains: 'verbatim old text from the target file' },
   { file: 'build-loop/skills/verify-fix/SKILL.md', contains: 'verbatim new text as it will appear' },
+  { file: 'build-loop/skills/verify-fix/SKILL.md', contains: 'the lines most likely changed' },
+  { file: 'build-loop/skills/apply-fix/SKILL.md', contains: 'verbatim or close paraphrase' },
+  // A fenced block describing the shape of a queue entry for the author's
+  // benefit. Field notes, not a template that gets reproduced.
+  { file: 'build-loop/skills/whats-breaking/SKILL.md', contains: 'the name of the thing corrected' },
+  { file: 'build-loop/skills/whats-breaking/SKILL.md', contains: 'may be empty string' },
+  { file: 'build-loop/skills/whats-breaking/SKILL.md', contains: 'free text' },
+  { file: 'build-loop/skills/whats-breaking/SKILL.md', contains: 'absolute path to the file a fix would edit' },
 ];
+
+// Fences holding text a skill reproduces. A `bash` or `json` fence is a command
+// or a data shape, and an em dash in either is a comment about the code rather
+// than something anybody sees.
+const DISPLAY_FENCE = new Set(['', 'text', 'markdown', 'md']);
 
 function skillFiles() {
   const out = [];
@@ -101,6 +121,32 @@ check('no skill tells the model to print an em dash', () => {
     offenders.length, 0,
     `these templates would be blocked by the slop-check Stop hook:\n        `
     + offenders.join('\n        ')
+  );
+});
+
+check('no fenced display block prints an em dash', () => {
+  // The category the first version of this file waved through. A `##` line in
+  // a display template is not a section heading, it is a line the model copies
+  // out verbatim.
+  const offenders = [];
+  for (const file of skillFiles()) {
+    const rel = file.slice(PLUGINS.length + 1);
+    let inFence = false;
+    let info = '';
+    fs.readFileSync(file, 'utf8').split('\n').forEach((line, i) => {
+      const fence = line.match(/^\s*```(\S*)/);
+      if (fence) {
+        if (!inFence) { inFence = true; info = fence[1]; } else { inFence = false; }
+        return;
+      }
+      if (!inFence || !DISPLAY_FENCE.has(info) || !line.includes('—')) return;
+      const excused = ALLOWED.some((a) => a.file === rel && line.includes(a.contains));
+      if (!excused) offenders.push(`${rel}:${i + 1}  ${line.trim().slice(0, 80)}`);
+    });
+  }
+  assert.strictEqual(
+    offenders.length, 0,
+    `these lines are printed verbatim and would be blocked:\n        ` + offenders.join('\n        ')
   );
 });
 
@@ -160,5 +206,5 @@ check('the check would actually catch one', () => {
   );
 });
 
-console.log(`\n4 checks, ${failed} failed`);
+console.log(`\n5 checks, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

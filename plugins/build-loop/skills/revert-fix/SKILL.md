@@ -64,7 +64,7 @@ Show this message:
 ```
 I'll run: git revert {hash} --no-edit in {repo_root}
 
-This creates a NEW undo commit — it does not delete or modify the original commit.
+This creates a NEW undo commit. It does not delete or modify the original commit.
 The fix for {target} will be reversed.
 The queue entry will go back to Open.
 

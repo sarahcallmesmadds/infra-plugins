@@ -138,6 +138,20 @@ how you end up believing a repository is tidy.
 Nothing about age can ever move a branch into the safe list. There is no setting
 for that and there is not meant to be.
 
+## Upgrading to 0.1.1
+
+One line. The per-repository summary in `/stale-branches` printed an em dash
+between the repository name and its counts, and `slop-check` ships a Stop hook
+that blocks em dashes in the assistant's own writing. So the command produced
+its output, the hook blocked it, and the model rewrote it. Every run that
+covered more than one repository.
+
+Nothing noticed because the rewrite succeeds and the answer still arrives, a
+round trip later. It is now a plain hyphen, which the hook does not touch.
+
+Only relevant if you also have `slop-check` installed. The output is otherwise
+identical.
+
 ## Codex
 
 Codex plugins cannot register hooks, so on Codex you get `/stale-branches` and
