@@ -56,9 +56,20 @@ function countMatches(text, regexes) {
   return n;
 }
 
+// Looks like source rather than prose. Needed because every group now runs on
+// every input: a markdown heading starts with "#", which would otherwise be
+// counted as a comment and make any well-structured document look
+// over-commented.
+function looksLikeCode(text) {
+  return /(^|\n)\s*(function\s+\w+|def\s+\w+|class\s+\w+|const\s+\w+\s*=|let\s+\w+\s*=|var\s+\w+\s*=|import\s+|from\s+\w+\s+import|#include|package\s+\w+)/.test(text);
+}
+
 function commentRatio(code) {
+  if (!looksLikeCode(code)) return null;
   const lines = code.split('\n').map((l) => l.trim()).filter(Boolean);
   if (lines.length < 20) return null;
+  // Markdown headings are "# " with a space; a shell or Python comment is too,
+  // so this only runs on text already established as source.
   const comments = lines.filter((l) => /^(\/\/|#|\*|\/\*)/.test(l)).length;
   return { ratio: Number((comments / lines.length).toFixed(2)), lines: lines.length };
 }
@@ -260,8 +271,17 @@ function checkOverplanned(text) {
 function checkData(text) {
   const found = [];
 
-  const numbers = (text.match(/-?\d+(?:\.\d+)?/g) || []).map(Number).filter((n) => Number.isFinite(n));
-  if (numbers.length >= 12) {
+  // Keep the source strings. Precision is a property of how a number was
+  // WRITTEN, not of its value, and parsing destroys exactly that: Number("2.00")
+  // is 2, and Number("1.50") is 1.5. Measuring after conversion made the check
+  // blind to the tidy trailing-zero formatting it exists to catch.
+  const written = text.match(/-?\d+(?:\.\d+)?/g) || [];
+  const numbers = written.map(Number).filter((n) => Number.isFinite(n));
+
+  // Regularity analysis is meaningless over source. Array indices, thresholds,
+  // status codes and buffer sizes are round because programmers choose round
+  // numbers, not because anyone fabricated a measurement.
+  if (numbers.length >= 12 && !looksLikeCode(text)) {
     const round = numbers.filter((n) => Number.isInteger(n) && (n % 10 === 0 || n % 5 === 0));
     const share = round.length / numbers.length;
     if (share > 0.6) {
@@ -270,8 +290,8 @@ function checkData(text) {
 
     // Every decimal carried to exactly the same place. Real data collected by
     // different instruments or people does not do this.
-    const decimals = numbers
-      .map((n) => (String(n).split('.')[1] || '').length)
+    const decimals = written
+      .map((s) => (s.split('.')[1] || '').length)
       .filter((d) => d > 0);
     if (decimals.length >= 8) {
       const uniform = decimals.every((d) => d === decimals[0]);
@@ -279,12 +299,14 @@ function checkData(text) {
     }
   }
 
-  // Percentages that do not add up. Cheap to check, and damning when it fails.
+  // Percentages that do not add up. This is arithmetic rather than taste, so
+  // it is a hard finding: a set of shares that does not total 100 is wrong,
+  // and no amount of context makes it right.
   const percents = (text.match(/(\d+(?:\.\d+)?)\s*%/g) || []).map((p) => parseFloat(p));
   if (percents.length >= 3 && percents.length <= 12) {
     const total = percents.reduce((a, b) => a + b, 0);
     if (Math.abs(total - 100) > 0.5 && Math.abs(total - 100) < 25) {
-      found.push({ name: 'percentages-do-not-total-100', total: Number(total.toFixed(1)) });
+      found.push({ name: 'percentages-do-not-total-100', hard: true, total: Number(total.toFixed(1)) });
     }
   }
 
@@ -339,9 +361,13 @@ function checkSpec(text) {
   }
 
   // Nobody's name on it, and no date. Unowned work is unreviewed work.
+  //
+  // Documents only. Every group runs on every input now, and source files
+  // never carry an owner field, so without this guard it fired on all of them
+  // and said nothing.
   const hasOwner = /\b(owner|dri|accountable|assigned to|author|lead)\b\s*[:\-]/i.test(text);
   const hasDate = /\b(20\d\d-\d\d-\d\d|\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+\d{1,2})/i.test(text);
-  if (text.length > 800 && !hasOwner && !hasDate) {
+  if (text.length > 800 && !hasOwner && !hasDate && !looksLikeCode(text)) {
     found.push({ name: 'no-owner-and-no-date' });
   }
 
@@ -364,16 +390,22 @@ function guessKind(filename, text) {
 }
 
 function checkTechnical(text, kind) {
-  const groups = {
-    code: (s) => [...checkCode(s), ...checkOverbuilt(s)],
-    data: checkData,
-    spec: (s) => [...checkSpec(s), ...checkOverplanned(s)],
-  };
-  // A scope document can carry a table, and a README carries code. Run
-  // everything and let the categories speak, rather than guessing once.
-  const all = kind && groups[kind]
-    ? groups[kind](text)
-    : [...checkCode(text), ...checkOverbuilt(text), ...checkData(text), ...checkSpec(text), ...checkOverplanned(text)];
+  // Every group, every time. An earlier version picked one group from a
+  // guessed kind, which quietly defeated the whole design: guessKind returns
+  // "data" for anything holding a table or a percentage, so a spec with one
+  // percent figure never reached checkSpec, and the headline signal, options
+  // laid out with no recommendation, could not fire on exactly the documents
+  // most likely to contain it.
+  //
+  // `kind` is now only a label for the report. Real documents are mixtures: a
+  // spec carries a table, a README carries code, a plan carries both.
+  const all = [
+    ...checkCode(text),
+    ...checkOverbuilt(text),
+    ...checkData(text),
+    ...checkSpec(text),
+    ...checkOverplanned(text),
+  ];
 
   const hard = all.filter((f) => f.hard);
   const over = all.filter((f) => f.over);

@@ -5,40 +5,53 @@
 // Only the hard rules are enforced here. The soft signals in tells.js are
 // aggregate evidence about a body of text, and blocking a turn on a single
 // "leverage" would be both wrong and infuriating.
+//
+// Fails open throughout. A guard that breaks a session is worse than a guard
+// that misses something, so every error path exits quietly.
 
 'use strict';
 
 const fs = require('fs');
 const path = require('path');
 
+const { readEvent, block } = require(path.join(__dirname, '..', 'scripts', 'hook-io.js'));
 const { checkHard } = require(path.join(__dirname, '..', 'scripts', 'tells.js'));
 const { loadConfig } = require(path.join(__dirname, '..', 'scripts', 'config.js'));
 
-(async () => {
-  let raw = '';
-  for await (const chunk of process.stdin) raw += chunk;
+// What to tell the model, matched to what was actually found. An artefact left
+// in the text needs deleting, not rephrasing, so the em dash advice would be
+// nonsense for it.
+function remedyFor(violations) {
+  const names = new Set(violations.map((v) => v.name));
+  const parts = [];
 
-  let payload = {};
-  try {
-    payload = JSON.parse(raw);
-  } catch {
-    process.exit(0);
+  if (names.has('em-dash')) {
+    parts.push('Replace each em dash with a comma, a period, parentheses, or a restructured clause.');
   }
+  if (names.has('choppy-run')) {
+    parts.push('Break up the run of very short sentences by joining or expanding them, and vary the lengths.');
+  }
+  if (names.has('tool-artefact')) {
+    parts.push('Delete the leftover generation artefacts. They are not prose and should never have been in the output.');
+  }
+  return parts.join(' ');
+}
 
+readEvent((payload) => {
   // Already inside a forced continuation. Blocking again would loop forever.
-  if (payload.stop_hook_active) process.exit(0);
+  if (payload.stop_hook_active) return;
 
   const config = loadConfig();
-  if (config.enforce === false) process.exit(0);
+  if (config.enforce === false) return;
 
   const transcript = payload.transcript_path;
-  if (!transcript || !fs.existsSync(transcript)) process.exit(0);
+  if (!transcript || !fs.existsSync(transcript)) return;
 
   let lines;
   try {
     lines = fs.readFileSync(transcript, 'utf8').trim().split('\n');
   } catch {
-    process.exit(0);
+    return;
   }
 
   // Walk back to the most recent assistant message that actually said
@@ -63,20 +76,24 @@ const { loadConfig } = require(path.join(__dirname, '..', 'scripts', 'config.js'
     }
   }
 
-  if (!latest) process.exit(0);
+  if (!latest) return;
 
-  const { ok, violations } = checkHard(latest, config);
-  if (ok) process.exit(0);
+  // Guarded: this is pure string work, but a guard that is supposed to never
+  // break a session must not be the thing that throws.
+  let result;
+  try {
+    result = checkHard(latest, config);
+  } catch {
+    return;
+  }
 
-  const found = violations.map((v) => v.what).join(', and ');
-  const reason =
+  if (result.ok) return;
+
+  const found = result.violations.map((v) => v.what).join(', and ');
+  block(
     `Style violation in the response just written: ${found}. ` +
-    `Em dashes and runs of very short sentences are banned outright here. ` +
-    `Rewrite the response now. Replace each em dash with a comma, a period, ` +
-    `parentheses, or a restructured clause, and vary the sentence lengths. ` +
+    `Rewrite the response now. ${remedyFor(result.violations)} ` +
     `Acknowledge it in at most one short line, then give the corrected response. ` +
-    `Do not apologise at length or explain the rule.`;
-
-  process.stdout.write(JSON.stringify({ decision: 'block', reason }));
-  process.exit(0);
-})();
+    `Do not apologise at length or explain the rule.`
+  );
+});

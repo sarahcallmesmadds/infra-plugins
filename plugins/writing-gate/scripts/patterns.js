@@ -13,19 +13,23 @@
 
 // Words that spiked in machine prose. Grouped by the era they became a tell,
 // because the set moves and a stale list quietly stops working.
+// Matching is by substring, so only the shortest form of each word belongs
+// here. Listing both "underscore" and "underscores" made a single word score
+// twice, which let one word trip a category on its own and quietly defeated
+// the whole point of requiring signals to stack.
 const VOCABULARY = [
   // 2023 to mid-2024
   'delve', 'tapestry', 'testament', 'boasts', 'bolstered', 'meticulous',
-  'meticulously', 'intricate', 'intricacies', 'interplay', 'pivotal',
-  'vibrant', 'garner', 'enduring', 'underscore', 'underscores', 'crucial',
+  'intricate', 'interplay', 'pivotal', 'vibrant', 'garner', 'enduring',
+  'underscore', 'crucial',
   // mid-2024 onward
-  'align with', 'aligns with', 'enhance', 'enhances', 'fostering', 'foster',
-  'highlighting', 'showcasing', 'showcase', 'landscape', 'ecosystem',
+  'align with', 'enhance', 'foster', 'highlighting', 'showcase', 'landscape',
+  'ecosystem',
   // the business-casual register
   'leverage', 'robust', 'streamline', 'seamless', 'holistic', 'synergy',
   'utilize', 'facilitate', 'myriad', 'plethora', 'nuanced', 'comprehensive',
   'foundational', 'game-changer', 'cutting-edge', 'best-in-class',
-  'actionable insights', 'unlock', 'unlocking',
+  'actionable insights', 'unlock',
 ];
 
 // Replacing plain "is" and "has" with something that sounds weightier. One of
@@ -37,7 +41,7 @@ const COPULA_AVOIDANCE = [
 
 // Inflating the importance of whatever is being described.
 const SIGNIFICANCE = [
-  'is a testament to', 'a testament to', 'underscores the importance',
+  'a testament to', 'underscores the importance',
   'plays a crucial role', 'plays a pivotal role', 'plays a vital role',
   'marking a pivotal', 'represents a shift', 'key turning point',
   'reflects broader', 'stands as a reminder', 'serves as a reminder',

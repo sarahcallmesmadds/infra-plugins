@@ -50,6 +50,10 @@ function emDashes(text) {
 }
 
 function choppyRun(text, limit) {
+  // Zero or below turns the rule off. Without this, `worst >= 0` is always
+  // true and setting the limit to zero would flag every piece of text, which
+  // is the exact opposite of what someone setting it to zero wants.
+  if (!(limit > 0)) return null;
   const sentences = sentencesOf(proseOf(text));
   let run = 0;
   let worst = 0;
@@ -117,7 +121,9 @@ function uniformRhythm(prose) {
 
 // Hard tells only. This is what the hook enforces.
 function checkHard(text, config = {}) {
-  const limit = config.choppyRunLimit || 3;
+  // `??` rather than `||`, so a configured 0 means "turn this rule off"
+  // instead of silently falling back to the default.
+  const limit = config.choppyRunLimit ?? 3;
   const violations = [];
 
   if (config.allowEmDash !== true) {

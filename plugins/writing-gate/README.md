@@ -94,8 +94,10 @@ score strong. Adding nine new soft categories did not move the false-positive
 rate at all.
 
 The checkable problems are worth much more than the stylistic ones. A shipped
-`your-api-key`, percentages that do not add up, or a spec with no owner are
-facts. "Uses the word robust" is an opinion.
+`your-api-key`, percentages that do not add up, or a left-in `oaicite` are
+facts. "Uses the word robust" is an opinion. Those facts are marked hard and
+weigh more heavily, but one on its own still reads as "some" rather than a
+verdict, because a single placeholder can be a genuine template.
 
 ## Install
 

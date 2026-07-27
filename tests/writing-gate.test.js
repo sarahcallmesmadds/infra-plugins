@@ -114,5 +114,56 @@ console.log('\nverdicts do not overreact');
 check('a single hard finding is not yet strong',
   checkTechnical('const KEY = "your-api-key";', 'code').reading, 'some');
 
+// --- regressions, all found by review rather than by use --------------------
+
+console.log('\nevery group runs regardless of the guessed kind');
+{
+  // A spec holding one percentage used to be classified as "data", and its
+  // spec checks never ran, so the headline signal could not fire on exactly
+  // the documents most likely to contain it.
+  const spec = 'Option 1 is this. Option 2 is that. Option 3 is the other. Adoption is at 40%.';
+  check('options with no recommendation still fire in a doc with a percentage',
+    checkTechnical(spec, 'data').hard.concat(checkTechnical(spec, 'data').soft)
+      .some((f) => f.name === 'options-with-no-recommendation'), true);
+  check('and in one with a markdown table',
+    checkTechnical('| a | b |\n| --- | --- |\nOption 1 here. Option 2 there.', 'data')
+      .soft.some((f) => f.name === 'options-with-no-recommendation'), true);
+}
+
+console.log('\nprose is not mistaken for over-commented code');
+{
+  const doc = Array.from({ length: 30 }, (_, i) => `# Heading ${i}\n\nSome ordinary prose.`).join('\n');
+  check('markdown headings do not count as comments',
+    checkTechnical(doc, 'spec').soft.some((f) => f.name === 'over-commented'), false);
+}
+
+console.log('\nprecision is read from how numbers were written');
+{
+  const written = 'Values: 1.50, 2.00, 3.10, 4.20, 5.30, 6.40, 7.50, 8.60, 9.70, 10.80, 11.90, 12.30';
+  check('trailing zeros are not lost before measuring',
+    checkData(written).some((f) => f.name === 'uniform-decimal-precision'), true);
+}
+
+console.log('\narithmetic is a hard finding');
+check('percentages that do not total 100 are hard',
+  checkData('30% of one, 30% of two, 25% of three').some((f) => f.name === 'percentages-do-not-total-100' && f.hard), true);
+
+console.log('\nconfig escape hatches work');
+check('choppyRunLimit 0 disables the rule rather than flagging everything',
+  checkHard('Yes. It works. All done.', { choppyRunLimit: 0 }).ok, true);
+check('choppyRunLimit 0 does not disable the em dash rule too',
+  checkHard(`a sentence ${EM} here`, { choppyRunLimit: 0 }).ok, false);
+
+console.log('\none word cannot trip a category on its own');
+{
+  const P = require(path.join(base, 'patterns.js'));
+  const overlapping = P.VOCABULARY.filter((a) =>
+    P.VOCABULARY.some((b) => b !== a && (a.includes(b) || b.includes(a))));
+  check('no vocabulary entry contains another', overlapping.length, 0);
+  check('one inflected buzzword is still only one hit',
+    checkAll('This underscores the point and nothing else.').soft
+      .some((f) => f.name === 'generic-vocabulary'), false);
+}
+
 console.log(`\n${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

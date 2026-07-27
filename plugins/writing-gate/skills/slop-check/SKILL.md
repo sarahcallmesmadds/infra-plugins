@@ -81,8 +81,9 @@ from the user's own repositories, none scored strong, so a strong reading is
 signal rather than noise.
 
 The checkable problems are worth far more than the stylistic ones. A shipped
-`your-api-key`, percentages that do not add up, or a spec with no owner are
-facts you can point at. "Uses the word robust" is not.
+`your-api-key`, percentages that do not add up, or a left-in `oaicite` are
+facts you can point at. "Uses the word robust" is not. They are marked hard and
+weigh more, but report one on its own as a finding rather than as a verdict.
 
 ## How to report it
 
