@@ -219,14 +219,14 @@ check('a document full of its own leftovers still flags',
     .some((f) => f.name === 'open-placeholders-in-a-finished-doc'), true);
 
 // ---------------------------------------------------------------------------
-// Config loading across the writing-gate to slop-check rename.
+// Config loading.
 //
-// The failure this guards against is silent and one-directional: someone who
-// set `enforce: false` on purpose has the hook switched back on by an upgrade,
-// with nothing to tell them. Defaults returning is indistinguishable from a
-// config that happens to match the defaults.
+// The failure these guard against is silent: a config that fails to load falls
+// back to defaults, and defaults returning is indistinguishable from a config
+// that happens to match them. So a broken or unreadable file must never take
+// the checks offline without saying so.
 
-console.log('\nconfig survives the rename');
+console.log('\nconfig loading');
 {
   const os = require('os');
   const fs = require('fs');
@@ -257,17 +257,8 @@ console.log('\nconfig survives the rename');
   check('no config file at all gives the working defaults',
     loadWith({}).enforce, true);
 
-  check('a config at the old writing-gate path is still honoured',
-    loadWith({ 'writing-gate.config.json': '{"enforce":false}' }).enforce, false);
-
-  check('a config at the new path is honoured',
+  check('a config file is honoured',
     loadWith({ 'slop-check.config.json': '{"enforce":false}' }).enforce, false);
-
-  check('the new path wins when both exist',
-    loadWith({
-      'slop-check.config.json': '{"choppyRunLimit":9}',
-      'writing-gate.config.json': '{"choppyRunLimit":2}',
-    }).choppyRunLimit, 9);
 
   check('one key set does not reset the others',
     loadWith({ 'slop-check.config.json': '{"choppyRunLimit":5}' }).enforce, true);

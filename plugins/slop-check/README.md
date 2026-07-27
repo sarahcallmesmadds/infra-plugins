@@ -145,11 +145,6 @@ a time, so setting one does not reset the others.
 Set `enforce` to false to keep the skill and turn the hook off, for when you
 are deliberately drafting something that needs the forbidden shapes.
 
-This plugin was called `writing-gate` until July 2026. A config still sitting at
-`~/.claude/writing-gate.config.json` is read as a fallback, so the rename cannot
-quietly put your settings back to the defaults. That file is never written to
-and never deleted; if you rename it yourself, the new path wins.
-
 ## What this is not
 
 **It does not detect AI authorship**, and should never be described as though
