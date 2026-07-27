@@ -6,7 +6,7 @@ argument-hint: "[queue-entry-id or skill-name]"
 allowed-tools: Read, Write, Bash(ls:*), Bash(cat:*), Bash(date:*), Bash(mkdir:*), Bash(mv:*), Bash(rm:*), Bash(node:*), Bash(git:*), Bash(grep:*), Bash(wc:*)
 ---
 
-You are applying a correction from the skill factory bug queue to an actual skill file. The schema is at `reference/SCHEMA.md` in this plugin's directory and the dependency map is at `~/.claude/skill-loop/DEPS.json`.
+You are applying a correction from the skill loop bug queue to an actual skill file. The schema is at `reference/SCHEMA.md` in this plugin's directory and the dependency map is at `~/.claude/skill-loop/DEPS.json`.
 
 Eight steps. Do not reorder or skip steps. The diff gate (Step 6) must come before the write (Step 7). No silent writes. Ever.
 

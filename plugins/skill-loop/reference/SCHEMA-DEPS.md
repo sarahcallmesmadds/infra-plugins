@@ -2,16 +2,16 @@
 
 ## Purpose
 
-This document is the single source of truth for the `DEPS.json` file format. Every component in the skill factory that reads or writes `DEPS.json` — including `/capture`, `/update-deps`, and Phase 3's `/apply-fixes` — consults this schema. When adding a field, bump `$schema_version` in `DEPS.json` and update this document in the same commit.
+This document is the single source of truth for the `DEPS.json` file format. Every component in the skill loop that reads or writes `DEPS.json` — including `/capture`, `/update-deps`, and Phase 3's `/apply-fixes` — consults this schema. When adding a field, bump `$schema_version` in `DEPS.json` and update this document in the same commit.
 
 ---
 
 ## File Location
 
-There is exactly ONE `DEPS.json` for the entire skill factory — not one per repo.
+There is exactly ONE `DEPS.json` for the entire skill loop — not one per repo.
 
 ```
-~/.claude/skill-factory/DEPS.json
+~/.claude/skill-loop/DEPS.json
 ```
 
 ---
@@ -24,7 +24,7 @@ There is exactly ONE `DEPS.json` for the entire skill factory — not one per re
   "last_updated": "2026-04-23T14:30:00.000Z",
   "skills": {
     "personal:capture": { "...entry..." },
-    "fermat-gtm:action-pipeline-standup-prep": { "...entry..." }
+    "<root name>:action-pipeline-standup-prep": { "...entry..." }
   }
 }
 ```
@@ -43,7 +43,7 @@ Top-level fields:
 
 Keys in the `skills` object use the format `"{repo}:{skill-directory-name}"`.
 
-- The `repo` portion is always `personal` or `fermat-gtm` — lowercase, no spaces.
+- The `repo` portion is always `personal` or `<root name>` — lowercase, no spaces.
 - The skill portion is the **directory name on disk**, not the frontmatter `name` field.
 
 Example keys:
@@ -51,13 +51,13 @@ Example keys:
 ```
 personal:capture
 personal:log-plugin
-fermat-gtm:log-plugin
-fermat-gtm:action-pipeline-standup-prep
+<root name>:log-plugin
+<root name>:action-pipeline-standup-prep
 ```
 
 **Why composite keys?** Five skill names exist in both repos. Using skill name alone would cause collisions:
 
-| Skill | Exists in personal? | Exists in fermat-gtm? |
+| Skill | Exists in personal? | Exists in <root name>? |
 |-------|---------------------|-----------------------|
 | `log-plugin` | Yes | Yes |
 | `new-project` | Yes | Yes |
@@ -77,7 +77,7 @@ A full example of one skill entry:
 {
   "skill": "daily-brief",
   "repo": "personal",
-  "path": "/Users/fermat/.claude/skills/daily-brief/SKILL.md",
+  "path": "~/.claude/skills/daily-brief/SKILL.md",
   "depends_on": [
     {
       "skill": "customer-context",
@@ -99,8 +99,8 @@ A full example of one skill entry:
 | Field | Type | Required | Description | Notes |
 |-------|------|----------|-------------|-------|
 | `skill` | string | ✓ | Directory name of this skill on disk. | Matches the directory-name portion of the composite key. |
-| `repo` | string | ✓ | Which repo owns this skill. | `"personal"` or `"fermat-gtm"` — matches the repo portion of the composite key. |
-| `path` | string | ✓ | Absolute path to this skill's SKILL.md file. | Example: `/Users/fermat/.claude/skills/daily-brief/SKILL.md` |
+| `repo` | string | ✓ | Which repo owns this skill. | `"personal"` or `"<root name>"` — matches the repo portion of the composite key. |
+| `path` | string | ✓ | Absolute path to this skill's SKILL.md file. | Example: `~/.claude/skills/daily-brief/SKILL.md` |
 | `depends_on` | array | ✓ | Skills that this skill depends on. Empty array `[]` if none. | See Dependency Edge Format below. |
 | `dependents` | array | ✓ | Skills that depend on this skill. Empty array `[]` if none. | See Dependency Edge Format below. |
 | `confidence` | string | ✓ | Overall confidence in the accuracy of this skill's dependency map. | `"high"` \| `"medium"` \| `"low"` — see Confidence Levels below. |
@@ -125,7 +125,7 @@ Each item in `depends_on` and `dependents` is an object with this shape:
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `skill` | string | ✓ | Directory name of the related skill. |
-| `repo` | string | ✓ | Repo that owns the related skill. `"personal"` or `"fermat-gtm"`. |
+| `repo` | string | ✓ | Repo that owns the related skill. `"personal"` or `"<root name>"`. |
 | `reason` | string | ✓ | One-sentence plain-language explanation of the relationship. |
 | `confidence` | string | - | Optional. Include only when flagging an uncertain relationship. Value: `"low"`. |
 
@@ -152,7 +152,7 @@ A dependency relationship exists between skill A and skill B when any of the fol
 The following are **NOT** valid `depends_on` entries:
 
 - `SCHEMA.md` — this is a format document, not a skill
-- `~/.claude/skill-factory/queue/` — this is the queue directory, not a skill
+- `~/.claude/skill-loop/queue/` — this is the queue directory, not a skill
 - Notion DBs — data sources, not skills
 - MCP servers — infrastructure, not skills
 - `~/.claude/settings.json` — hook configuration, not a skill
@@ -167,7 +167,7 @@ When a skill depends on infrastructure (e.g., it reads from a specific Notion DB
 |-------|---------|
 | `high` | Explicit call or verified shared hardcoded value (Notion DB ID, absolute file path) confirmed in SKILL.md content. |
 | `medium` | Probable dependency but not literal — skills share semantics, similar outputs, or overlapping documentation, but no verified shared value. |
-| `low` | Uncertain. The relationship looks plausible but could not be confirmed by reading the skills. Flagged for Sarah to review manually before Phase 3 acts on it. |
+| `low` | Uncertain. The relationship looks plausible but could not be confirmed by reading the skills. Flagged for the user to review manually before Phase 3 acts on it. |
 
 ---
 

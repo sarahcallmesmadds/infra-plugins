@@ -1,12 +1,12 @@
 ---
 name: skill-list-bugs
 type: human
-description: Shows the skill factory bug queue as a plain-language table. Use when the user asks "what's in the queue", "what bugs are open", "show me the queue", "what did I capture", or explicitly invokes /skill-list-bugs. Supports optional status filter argument (open, all, resolved, wontfix). Default filter is Open + In Progress items only, sorted oldest first.
+description: Shows the skill loop bug queue as a plain-language table. Use when the user asks "what's in the queue", "what bugs are open", "show me the queue", "what did I capture", or explicitly invokes /skill-list-bugs. Supports optional status filter argument (open, all, resolved, wontfix). Default filter is Open + In Progress items only, sorted oldest first.
 argument-hint: "[optional filter: open | all | resolved | wontfix]"
 allowed-tools: Read, Bash(ls:*), Bash(cat:*)
 ---
 
-You are displaying the skill factory bug queue at `~/.claude/skill-loop/queue/`. This is a strictly read-only view — do not write, edit, or delete any queue entries from this skill.
+You are displaying the skill loop bug queue at `~/.claude/skill-loop/queue/`. This is a strictly read-only view — do not write, edit, or delete any queue entries from this skill.
 
 ### Step 1 — Parse the filter argument
 

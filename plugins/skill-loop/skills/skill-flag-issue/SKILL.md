@@ -6,7 +6,7 @@ argument-hint: "[optional skill name]"
 allowed-tools: Read, Write, Bash(ls:*), Bash(cat:*), Bash(date:*), Bash(mkdir:*)
 ---
 
-You are logging a correction to the skill factory bug queue at `~/.claude/skill-loop/queue/`. The schema is at `reference/SCHEMA.md` in this plugin's directory — read it if you haven't already in this session.
+You are logging a correction to the skill loop bug queue at `~/.claude/skill-loop/queue/`. The schema is at `reference/SCHEMA.md` in this plugin's directory — read it if you haven't already in this session.
 
 ## Session context guard
 

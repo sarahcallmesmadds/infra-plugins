@@ -29,7 +29,16 @@ The argument after `skill-find` (or `$ARGUMENTS`) is the intent. If empty, list 
 
 ## Step 1 — Build the index at runtime
 
-Scan `~/.claude/skills/*/SKILL.md`. For each file, extract from the YAML frontmatter:
+Scan every configured root, the same set the rest of this plugin uses. Read
+`skillRoots` from `~/.claude/skill-loop.config.json`; if that file does not
+exist, use the single default root `{ "name": "personal", "path": "~/.claude/skills" }`.
+
+For each root, scan both `<root.path>/*/SKILL.md` and
+`<root.path>/*/*/SKILL.md`, so a repository that nests the definition one
+level deeper is still found. Routing to a skill that exists but sits in a
+second root is the whole reason the config has more than one entry.
+
+For each file, extract from the YAML frontmatter:
 
 - `name` — the skill name (matches the directory)
 - `description` — the one-liner describing when to use it
@@ -40,22 +49,42 @@ Use this Bash + Python one-liner to load all frontmatter cleanly:
 ```bash
 python3 - <<'PY'
 import os, re, glob, json
-skills = []
-for path in sorted(glob.glob(os.path.expanduser("~/.claude/skills/*/SKILL.md"))):
-    with open(path) as f:
-        text = f.read()
-    m = re.match(r"^---\n(.*?)\n---", text, re.DOTALL)
-    if not m: continue
-    fm = {}
-    for line in m.group(1).splitlines():
-        if ":" in line and not line.startswith(" "):
-            k, _, v = line.partition(":")
-            fm[k.strip()] = v.strip().strip('"').strip("'")
-    skills.append({
-        "name": fm.get("name", os.path.basename(os.path.dirname(path))),
-        "description": fm.get("description", ""),
-        "type": fm.get("type", "human"),
-    })
+
+CONFIG = os.path.expanduser("~/.claude/skill-loop.config.json")
+DEFAULT = [{"name": "personal", "path": "~/.claude/skills"}]
+try:
+    roots = json.load(open(CONFIG)).get("skillRoots") or DEFAULT
+except Exception:
+    roots = DEFAULT
+
+seen, skills = set(), []
+for root in roots:
+    base = os.path.expanduser(root["path"])
+    # Both layouts: <root>/<skill>/SKILL.md and <root>/<skill>/skill/SKILL.md
+    for pattern in ("*/SKILL.md", "*/*/SKILL.md"):
+        for path in sorted(glob.glob(os.path.join(base, pattern))):
+            if path in seen:
+                continue
+            seen.add(path)
+            with open(path) as f:
+                text = f.read()
+            m = re.match(r"^---\n(.*?)\n---", text, re.DOTALL)
+            if not m:
+                continue
+            fm = {}
+            for line in m.group(1).splitlines():
+                if ":" in line and not line.startswith(" "):
+                    k, _, v = line.partition(":")
+                    fm[k.strip()] = v.strip().strip('"').strip("'")
+            # The skill name is the first directory below the root, so the
+            # nested layout does not report every skill as "skill".
+            rel = os.path.relpath(path, base).split(os.sep)[0]
+            skills.append({
+                "name": fm.get("name", rel),
+                "description": fm.get("description", ""),
+                "type": fm.get("type", "human"),
+                "root": root["name"],
+            })
 print(json.dumps(skills, indent=2))
 PY
 ```
@@ -88,7 +117,7 @@ When listing the full inventory (no $ARGUMENTS) or when showing close-second opt
 - **Daily / personal HQ** — `request-create`, `daily-brief`, `daily-scratch`, `daily-reflect`, anything with "daily" or "morning" or "HQ" in name/description
 - **Personal projects + IP** — `project-create-or-update`, `register-ip`, `job-scanner` (a.k.a. `portfolio-ops-application`), anything with "project", "IP asset", "cover letter" in description
 - **Session management** — `wrap`, `pickup`, `skill-find`, anything with "handoff", "resume", "wrap up", "skill discovery"
-- **Skill factory (meta)** — `capture`, `queue`, `skill-apply-fix`, `skill-verify-fix`, `skill-revert-fix`, `skill-audit-deps`, `skill-summarize`, anything with "skill factory", "queue", "correction", "DEPS.json" in description
+- **Skill factory (meta)** — `capture`, `queue`, `skill-apply-fix`, `skill-verify-fix`, `skill-revert-fix`, `skill-audit-deps`, `skill-summarize`, anything with "skill loop", "queue", "correction", "DEPS.json" in description
 - **Other** — anything that doesn't fit above
 
 If a skill spans two categories, pick the dominant one. If a skill is brand new and you can't classify it, put it under **Other** — that's also a signal the description could be sharper.

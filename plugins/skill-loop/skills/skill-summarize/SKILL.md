@@ -3,7 +3,7 @@ name: skill-summarize
 type: agent
 version: 3
 last_updated: 2026-04-26
-description: Weekly skill factory summary — pattern detection, fix recap, queue status, summary report to summaries/YYYY-WW.md, optional Slack post
+description: Weekly skill loop summary — pattern detection, fix recap, queue status, summary report to summaries/YYYY-WW.md, optional Slack post
 allowed-tools: [Read, Write, Bash, mcp__slack__*]
 correction_notes: "2026-04-26 — added Runtime Requirements section + replaced Claude Desktop New Task UI scheduling guidance with local launchd/cron path [queue:2026-04-24T22-07-34-skill-summary]"
 ---
@@ -34,18 +34,18 @@ To run on a schedule, use a local-only mechanism:
 
 ## Overview
 
-This skill is the weekly rhythm for the skill factory. It reads the correction queue, detects structural patterns (skills that have been corrected 3+ times across 3+ sessions), writes a pattern-flags.json file for Tomas co-development review, generates a weekly summary report at `~/.claude/skill-loop/summaries/YYYY-WW.md`, and optionally posts that summary to Slack.
+This skill is the weekly rhythm for the skill loop. It reads the correction queue, detects structural patterns (skills that have been corrected 3+ times across 3+ sessions), writes a pattern-flags.json file for the maintainer co-development review, generates a weekly summary report at `~/.claude/skill-loop/summaries/YYYY-WW.md`, and optionally posts that summary to Slack.
 
 **When to invoke:** Manually any time you want a fresh read of the queue, or automatically via a local `launchd` or terminal `cron` job that opens a Claude Code session (NOT Claude Desktop's "New Task" UI — see Runtime Requirements above; that path runs in Cowork and silently does nothing).
 
 **Plan 04-02 implemented Steps 1–6 (pattern detection + pattern-flags.json).**
 **Plan 04-03 adds Steps 7–10 (summary report generation, file write to `summaries/YYYY-WW.md`, optional Slack post, hot-cache.md update).**
 
-**Load-bearing context from Phase 4 design (see `.planning/phases/04-intelligence-layer/04-DESIGN.md` in the skill-factory project if you need the full spec):**
+**Load-bearing context from Phase 4 design (see `.planning/phases/04-intelligence-layer/04-DESIGN.md` in the skill loop project if you need the full spec):**
 - "Same type" for pattern flagging = skill-level grouping. 3+ closed primary corrections for the same skill name across 3+ unique sessions = structural flag. No semantic classification.
 - Pattern detection runs ONLY inside this skill. Not on every queue close. Not as a standalone hook. Weekly cadence is correct at current volume.
 - One flag entry per skill in pattern-flags.json, forever. Updates are always in-place — never create a second flag for the same skill.
-- Structural fixes from pattern flags are NEVER auto-applied. PATT-03 requires Tomas co-development review. The flag surfaces the problem; it does not trigger changes. Status stays `pending-review` until Tomas and the user change it manually.
+- Structural fixes from pattern flags are NEVER auto-applied. PATT-03 requires the maintainer co-development review. The flag surfaces the problem; it does not trigger changes. Status stays `pending-review` until the maintainer and the user change it manually.
 - Summary file front-loads Pattern Flags before Fixes Applied and Still Open — the session-start hook truncates at 2,000 chars and truncation cuts the tail.
 
 ---
@@ -145,7 +145,7 @@ Read all the `what_happened` strings from qualifying entries for that skill. Syn
 
 **Hard cap: 500 characters.** This cap exists so the diagnosis fits in the summary file without blowing the 9,000-char session-start context cap downstream.
 
-**What the diagnosis is NOT:** It is not a fix prescription. It names the problem and hypothesizes the structural cause. Fix design is Tomas's domain (PATT-03). Do NOT propose fixes in the diagnosis. Do NOT include action items. Describe the pattern, name the likely structural cause, stop.
+**What the diagnosis is NOT:** It is not a fix prescription. It names the problem and hypothesizes the structural cause. Fix design is the maintainer's domain (PATT-03). Do NOT propose fixes in the diagnosis. Do NOT include action items. Describe the pattern, name the likely structural cause, stop.
 
 Also collect for each flagged skill:
 - `correction_count` = total number of qualifying entries for this skill (not deduped)
@@ -205,10 +205,10 @@ Update the existing flag entry in place:
 **Preserve on update (never overwrite):**
 - `flagged_at` (original flag timestamp — never changes)
 - `status` (if it's `"in-review"`, do NOT reset to `"pending-review"` — preserve manual state)
-- `notes[]` (append-only, owned by Tomas and the user for co-dev notes)
+- `notes[]` (append-only, owned by the maintainer and the user for co-dev notes)
 
 **Case C — Existing flag for this skill with status `"resolved"`:**
-Leave the flag entry exactly as-is. Resolved flags are archived records. Do not re-flag a resolved skill even if new corrections appear — that is Tomas's decision to reopen, not this skill's.
+Leave the flag entry exactly as-is. Resolved flags are archived records. Do not re-flag a resolved skill even if new corrections appear — that is the maintainer's decision to reopen, not this skill's.
 
 **One entry per skill, forever.** Never append a second entry for a skill that already has one. All updates are in-place.
 
@@ -237,7 +237,7 @@ The pattern: write to a `.tmp` file, parse-check it, then `mv` to the final path
 3. Parse-check the .tmp file by running:
 
 ```bash
-node -e "JSON.parse(require('fs').readFileSync(require('os').homedir() + '/.claude/skill-factory/pattern-flags.json.tmp', 'utf8'))" && echo "PARSE_OK"
+node -e "JSON.parse(require('fs').readFileSync(require('os').homedir() + '/.claude/skill-loop/pattern-flags.json.tmp', 'utf8'))" && echo "PARSE_OK"
 ```
 
 If the parse-check fails (no `PARSE_OK` output OR node returns non-zero), STOP. Do NOT proceed to the swap. Print the error to the session and exit the skill. The existing pattern-flags.json (if any) is untouched — the system is in a safe state.
@@ -305,7 +305,7 @@ This outputs `YYYY-WW` (e.g. `2026-17`). The summary filename is `{YYYY-WW}.md`.
 **Build the report content** in this order (Pattern Flags FIRST — front-loading rule from 04-DESIGN.md Section 6):
 
 ```markdown
-# Skill Factory — Week {WW}, {YYYY}
+# Skill Loop — Week {WW}, {YYYY}
 
 **Generated:** {YYYY-MM-DD}
 
@@ -396,7 +396,7 @@ Append a one-line status to `~/.claude/hot-cache.md` so session-start context ha
 Use this append pattern:
 
 ```bash
-echo "Skill Factory week {YYYY-WW}: {N} fixes applied, {M} open, {K} pattern flags. See ~/.claude/skill-loop/summaries/{YYYY-WW}.md" >> ~/.claude/hot-cache.md
+echo "Skill Loop week {YYYY-WW}: {N} fixes applied, {M} open, {K} pattern flags. See ~/.claude/skill-loop/summaries/{YYYY-WW}.md" >> ~/.claude/hot-cache.md
 ```
 
 Substitute the actual counts and filename from Steps 6-8.
@@ -409,7 +409,7 @@ After appending, print: `hot-cache.md updated.`
 
 ## Notes
 
-- **PATT-03 gate (non-negotiable):** Never auto-apply structural fixes from pattern flags. Flags are information for Tomas co-development review. `"pending-review"` status means no automatic action is taken. Status transitions (`pending-review` → `in-review` → `resolved`) are made manually by Tomas and the user, not by this skill.
+- **PATT-03 gate (non-negotiable):** Never auto-apply structural fixes from pattern flags. Flags are information for the maintainer co-development review. `"pending-review"` status means no automatic action is taken. Status transitions (`pending-review` → `in-review` → `resolved`) are made manually by the maintainer and the user, not by this skill.
 - **Empty queue:** If no .json files exist in `~/.claude/skill-loop/queue/`, that's fine — write pattern-flags.json with empty flags array, write the summary with "No fixes applied this week" / "No open items in the queue", and continue through Steps 9-10 normally.
 - **Malformed queue entries:** Skip silently. Count them. Note the count in Step 6 output. Never throw.
 - **Dedup safety:** The `session_id || id` fallback is the only dedup rule. Do not introduce additional dedup (e.g., by what_happened similarity) — the design deliberately counts each /skill-flag-issue entry as its own data point.
@@ -426,4 +426,4 @@ After appending, print: `hot-cache.md updated.`
 Plan 04-04 will add:
 - Session-start hook extension (SUMM-04) that reads the most recent `summaries/YYYY-WW.md` and surfaces it in new sessions (2,000-char budget, 14-day staleness cutoff, silent try/catch so it never blocks session start)
 
-A local `launchd` plist named `skill-factory-weekly` that runs this skill automatically is created in Plan 04-03 alongside these Steps 7-10. (Earlier planning called for Claude Desktop's "New Task" UI — that approach was retired because it runs in Cowork and cannot access local paths. See Runtime Requirements at the top of this file.)
+A local `launchd` plist named `skill-loop-weekly` that runs this skill automatically is created in Plan 04-03 alongside these Steps 7-10. (Earlier planning called for Claude Desktop's "New Task" UI — that approach was retired because it runs in Cowork and cannot access local paths. See Runtime Requirements at the top of this file.)

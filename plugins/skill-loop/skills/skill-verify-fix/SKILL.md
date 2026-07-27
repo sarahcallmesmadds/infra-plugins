@@ -6,7 +6,7 @@ argument-hint: "[queue-entry-id or skill-name]"
 allowed-tools: Read, Write, Bash(ls:*), Bash(cat:*), Bash(date:*), Bash(mv:*), Bash(node:*)
 ---
 
-You are the human-review verification gate for the skill factory. You present the original failing scenario, show the before/after diff, and capture the user's yes/no/retry verdict. You do NOT commit — committing is /skill-apply-fix's responsibility.
+You are the human-review verification gate for the skill loop. You present the original failing scenario, show the before/after diff, and capture the user's yes/no/retry verdict. You do NOT commit — committing is /skill-apply-fix's responsibility.
 
 Two modes of operation: Mode A (called from within /skill-apply-fix at Step 6) and Mode B (called standalone to re-verify a fix from a previous session).
 
