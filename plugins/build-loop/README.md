@@ -166,6 +166,38 @@ answer, not its conclusion.
 opinion about whether something is any good, and it will not rewrite anything
 you did not complain about.
 
+## Upgrading to 0.2.3
+
+0.2.2 gave the composite key a plugin segment and stopped there. The
+**dependency edges** that point at those keys were left as they were, and they
+have no way to name a plugin.
+
+An edge is `{target, kind, repo, reason}`. Under a `plugin-repo` root that is
+ambiguous, because `cli`, `config`, `hook-io` and `patterns` each exist in more
+than one plugin, so an edge naming `cli` cannot say which one is at risk. That is
+the same ambiguity the composite key was introduced to remove, still present one
+field along.
+
+Edges now carry `plugin` as a **separate field**, with `target` staying bare:
+
+```json
+{ "target": "hook-io", "plugin": "guardrails", "kind": "script", "repo": "plugins" }
+```
+
+**Folding the plugin into `target` looks equivalent and is not.** `/flag-issue`
+copies an edge's `target` verbatim into the `target` field of the dep-review
+entry it writes, and a queue entry's `target` is a name on disk that
+`/apply-fix` later has to resolve to a file. An edge saying
+`"target": "guardrails/hook-io"` produces a queue entry for something called
+`guardrails/hook-io`, and nothing on disk is called that.
+
+So the edge needs both halves, because two readers want different things from
+it: the key wants the plugin, and the queue entry must not have it.
+
+An existing map keeps working. An edge with no `plugin` resolves through the
+same ordered lookup as a key, and one with a slashed `target` is split on the
+last `/`. Run `/audit-deps` to rewrite them properly.
+
 ## Upgrading to 0.2.2
 
 Two faults, both found the first time `/audit-deps` was run against a real

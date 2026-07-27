@@ -152,6 +152,51 @@ check('an ambiguous match is reported rather than guessed at', () => {
   }
 });
 
+// --- edges point at a key without becoming one -----------------------------
+//
+// The key carries the plugin. An edge has to reach the same key, and it also
+// feeds /flag-issue, which copies an edge's `target` verbatim into a queue
+// entry. A queue entry's target is a name on disk. So the plugin has to travel
+// beside `target`, not inside it: fold it in and every dep-review entry names
+// something like `guardrails/hook-io`, which no search will ever resolve.
+
+check('the edge format carries plugin as its own field', () => {
+  assert.ok(
+    /\| `plugin` \| string \| no \|/.test(SCHEMA),
+    'the edge field table has no `plugin`, so an edge inside a plugin-repo root '
+    + 'cannot say which plugin it means'
+  );
+  assert.ok(
+    /\*\*Bare, never `plugin\/name`\.\*\*/.test(SCHEMA),
+    'nothing says the edge target stays bare, which is the half that breaks quietly'
+  );
+});
+
+check('flag-issue keeps the edge target bare in the entry it writes', () => {
+  const t = SKILLS['flag-issue'];
+  assert.ok(
+    /plugin: P/.test(t),
+    'flag-issue does not read the edge plugin field'
+  );
+  assert.ok(
+    /Never write `\{P\}\/\{X\}` into the entry's `target`/.test(t),
+    'flag-issue does not forbid writing a slashed name into a queue entry, '
+    + 'which produces an entry that cannot resolve to a file'
+  );
+});
+
+check('audit-deps writes plugin beside target, and carries it to back-edges', () => {
+  const t = SKILLS['audit-deps'];
+  assert.ok(
+    /never `\{"target": "guardrails\/hook-io"\}`/.test(t),
+    'audit-deps does not say to keep the edge target bare'
+  );
+  assert.ok(
+    /plugin: A\.plugin/.test(t),
+    'the back-edge step drops plugin, so dependents lose it while depends_on keeps it'
+  );
+});
+
 // --- and the repository this rule exists for -------------------------------
 
 function targetsInRepo() {
@@ -200,5 +245,5 @@ check('plugin-qualified keys are unique across the whole repository', () => {
   }
 });
 
-console.log(`\n11 checks, ${failed} failed`);
+console.log(`\n14 checks, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

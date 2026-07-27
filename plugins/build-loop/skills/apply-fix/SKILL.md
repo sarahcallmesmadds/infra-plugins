@@ -94,7 +94,11 @@ here, and only one of them means it is safe to proceed.
 
 Read the map from `DEPS.json.targets`. **If that is absent and `DEPS.json.skills` is present, use `skills` instead**, treating each entry's `skill` field as `target`. That is a v1 map, per SCHEMA-DEPS.md. Reading only `targets` against a v1 map reports every dependency as absent, so the warning below never fires and a fix lands with no heads-up about what it might break.
 
-Look up `dependents` for the key:
+Look up `dependents` for the key. Each edge carries a bare `target` and, inside a
+`plugin-repo` root, a separate `plugin` field. Show `{plugin}/{target}` when
+naming one to the user, since three plugins here ship a `cli` and the bare name
+would not say which is at risk. Keep the two fields apart everywhere else.
+
 - If the key is not in DEPS.json, or if the dependents array is empty: proceed silently — this is the common case.
 - If dependents exist, show:
 

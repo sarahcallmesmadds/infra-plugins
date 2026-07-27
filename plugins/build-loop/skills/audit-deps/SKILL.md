@@ -141,7 +141,14 @@ quietly weeks later.
 
 Build the candidate entry with:
 - `target, kind, repo, path` from the scan
-- `depends_on`, inferred, may be empty
+- `depends_on`, inferred, may be empty. **Each edge carries a bare `target` plus
+  a separate `plugin` field when the root is a `plugin-repo`**, per the
+  Dependency Edge Format in SCHEMA-DEPS.md. Write `{"target": "hook-io",
+  "plugin": "guardrails", ...}` and never `{"target": "guardrails/hook-io"}`.
+  Both halves are needed and they are needed by different readers: the key wants
+  the plugin, and `/flag-issue` copies `target` straight into a queue entry,
+  where it has to be a name that resolves to a file on disk. Nothing on disk is
+  called `guardrails/hook-io`.
 - `dependents: []`, recomputed in Step 6
 - `confidence`, default `medium`, `high` on strong signals, `low` when uncertain
 - `last_updated`, current UTC ISO-8601
@@ -186,7 +193,7 @@ For stale entries, only re-infer if the user confirms. Otherwise just bump the e
 After applying the approved additions/removals/changes:
 
 1. For every entry in the updated `targets` object, collect its `depends_on` edges.
-2. For each edge A → T, ensure `targets[T].dependents` includes `{ target: A.target, kind: A.kind, repo: A.repo, reason: edge.reason, confidence?: edge.confidence }`.
+2. For each edge A → T, ensure `targets[T].dependents` includes `{ target: A.target, plugin: A.plugin, kind: A.kind, repo: A.repo, reason: edge.reason, confidence?: edge.confidence }`. Carry `plugin` through, and omit the field entirely rather than writing `null` when A is not inside a plugin. Resolve T to its entry using the ordered lookup in SCHEMA-DEPS.md rather than string-matching the key, so an edge written before v3 still finds its target.
 3. Prune `dependents` entries that no longer have a matching `depends_on` edge in the source.
 4. Alphabetize the top-level `targets` keys so diffs stay clean.
 

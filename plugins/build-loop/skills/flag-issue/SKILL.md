@@ -255,7 +255,11 @@ A pre-v3 map is the file where `plugins:cli` meant three different things, so th
 
 ### For each dependent, write a dep-review entry
 
-For every `{ target: X, kind: K, repo: R, reason: Y, confidence?: low }` in the dependents array. An edge written before schema v5 carries `skill` instead of `target` and has no `kind`, so read `X` from `target` if present and `skill` otherwise, and default `K` to `skill`:
+For every `{ target: X, plugin: P, kind: K, repo: R, reason: Y, confidence?: low }` in the dependents array. An edge written before schema v5 carries `skill` instead of `target` and has no `kind`, so read `X` from `target` if present and `skill` otherwise, and default `K` to `skill`:
+
+**`X` is bare and stays bare.** `P` is a separate field naming the plugin, and it is only there under a `plugin-repo` root. Use `{R}:{P}/{X}` when you need the edge's key in `DEPS.json`, and use `X` on its own everywhere the dep-review entry is concerned.
+
+Never write `{P}/{X}` into the entry's `target`, its `id`, or its filename. A queue entry's `target` is a name on disk that `/apply-fix` and `/list-bugs` later have to resolve to a file, and nothing on disk is called `guardrails/hook-io`. If an edge does carry a slashed `target`, which a map written before this rule may, split it: the part before the last `/` is `P` and the part after is `X`.
 
 1. **Compute urgency_hint** (Claude's judgment — this is NOT a rule engine):
    - Tight coupling signals: Y mentions "explicit call", "shared DB ID", or "schema reference" — OR the edge confidence is `"high"`.
@@ -275,7 +279,7 @@ For every `{ target: X, kind: K, repo: R, reason: Y, confidence?: low }` in the 
    status:           "Open"
    type:             "dep-review"
    parent_id:        {primary entry's id}
-   target:           {X}
+   target:           {X}          <- bare. Never {P}/{X}.
    target_kind:      {K}
    target_path:      {DEPS.json entry's path value}
    repo:             {R}

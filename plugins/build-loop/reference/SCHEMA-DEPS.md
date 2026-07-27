@@ -162,15 +162,36 @@ Each item in `depends_on` and `dependents`:
 }
 ```
 
+Inside a `plugin-repo` root, an edge also carries `plugin`:
+
+```json
+{
+  "target": "hook-io",
+  "plugin": "guardrails",
+  "kind": "script",
+  "repo": "plugins",
+  "reason": "bash-guard requires readEvent and block from scripts/hook-io.js"
+}
+```
+
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `target` | string | yes | Name of the related thing. Called `skill` before v2. |
+| `target` | string | yes | Name of the related thing. **Bare, never `plugin/name`.** Called `skill` before v2. |
+| `plugin` | string | no | Which plugin inside a `plugin-repo` root holds it. Required when `repo` names a `plugin-repo` root, absent otherwise. |
 | `kind` | string | yes | What sort of thing it is. Defaults to `"skill"` when absent. |
 | `repo` | string | yes | Root that owns it. |
 | `reason` | string | yes | One sentence, plain language, on what the relationship is. |
 | `confidence` | string | no | Include only when flagging an uncertain relationship. Value: `"low"`. |
 
+**`plugin` is a separate field and `target` stays bare.** The composite key an edge points at is rebuilt as `{repo}:{plugin}/{target}`, or `{repo}:{target}` where there is no `plugin`.
+
+Folding the plugin into `target` looks equivalent and is not. `/flag-issue` copies an edge's `target` verbatim into the `target` field of the dep-review entry it writes, and a queue entry's `target` is a bare name on disk that later has to resolve to a file. An edge saying `"target": "guardrails/hook-io"` produces a queue entry for something called `guardrails/hook-io`, which no search will ever find.
+
+Leaving `plugin` out entirely is equally wrong in the other direction. `cli`, `config`, `hook-io` and `patterns` each exist in more than one plugin, so a bare edge naming `cli` cannot say which one it means, and that ambiguity is the exact thing the composite key was introduced to remove. The edge needs both halves because it feeds two different consumers: the key, which wants the plugin, and the queue entry, which must not have it.
+
 **Edge-level `confidence` is optional** and marks one uncertain relationship. The entry-level `confidence` is required and describes overall map accuracy for that entry. Two different fields, related purposes, do not conflate them.
+
+**Reading an edge with no `plugin` under a `plugin-repo` root.** That is a map written before v3, or one written by hand. Resolve it with the same ordered lookup used for keys: exact, then bare, then a unique `/{target}` suffix match, and report an ambiguous name rather than choosing.
 
 ---
 
