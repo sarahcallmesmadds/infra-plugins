@@ -180,7 +180,7 @@ Same three response types as Step V3:
 
 - **"no"** (FAIL in standalone mode):
   Follow Step V4 fail path (set `"fix attempted / unresolved"`, append failure note).
-  Additionally display: "Should I help restore the target file to its pre-fix state? To check what the file looked like before: git -C {repo_root} log --oneline -5, then find the commit with [queue:{id}] in the message, then run /revert-fix {id} to undo it."
+  Additionally display: "Should I help restore the target file to its pre-fix state? To check what the file looked like before: git -C {repo_root} log --oneline -5, find the commit with [queue:{id}] in the message, then run /revert-fix {id} to undo it."
 
 - **"retry: {instructions}"** (REVISE in standalone mode):
   "To revise this fix, run /apply-fix {id}. It will pick up the In Progress entry and you can guide it with your instructions."

@@ -104,6 +104,35 @@ check('no skill tells the model to print an em dash', () => {
   );
 });
 
+check('no output template repeats a conjunction', () => {
+  // Swapping an em dash for punctuation is mechanical and the grammar is not.
+  // One substitution produced "failed, but the revert DID succeed …, but the
+  // queue file was not updated", two `but` clauses in a row, in the message
+  // someone reads at the exact moment something has gone wrong.
+  //
+  // This will not catch every clumsy sentence. It catches the one shape that a
+  // find-and-replace reliably creates: a joining word that now appears twice in
+  // a sentence that only ever wanted it once.
+  const JOINERS = ['but', 'then', 'however', 'although', 'because'];
+  const offenders = [];
+  for (const file of skillFiles()) {
+    const rel = file.slice(PLUGINS.length + 1);
+    fs.readFileSync(file, 'utf8').split('\n').forEach((line, i) => {
+      if (!SAYS.some((re) => re.test(line))) return;
+      for (const span of (line.match(/"[^"]*"/g) || [])) {
+        for (const word of JOINERS) {
+          const hits = (span.match(new RegExp(`(^|[\\s,;(])${word}\\b`, 'gi')) || []).length;
+          if (hits > 1) offenders.push(`${rel}:${i + 1}  "${word}" ${hits}x  ${span.slice(0, 80)}`);
+        }
+      }
+    });
+  }
+  assert.strictEqual(
+    offenders.length, 0,
+    `a joining word repeats inside one displayed message:\n        ` + offenders.join('\n        ')
+  );
+});
+
 check('the exception list still describes strings that exist', () => {
   // An allowlist that has drifted off its target silences a real finding
   // without anybody noticing, which is the failure mode of allowlists.
@@ -131,5 +160,5 @@ check('the check would actually catch one', () => {
   );
 });
 
-console.log(`\n3 checks, ${failed} failed`);
+console.log(`\n4 checks, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

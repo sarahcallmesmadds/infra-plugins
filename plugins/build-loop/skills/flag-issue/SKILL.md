@@ -301,7 +301,7 @@ So fold `P` in wherever the value is an identifier, and leave it out wherever th
    session_id:       {same as primary entry's session_id}
    session_cwd:      {same as primary entry's session_cwd}
    what_happened:    "Review: {X} may be affected by fix to {primary target}. Reason: {Y}"
-   what_expected:    "(not applicable, this is a dependency review)"
+   what_expected:    "(not applicable: this is a dependency review)"
    correct_example:  "(not applicable)"
    source:           "dep-review-auto"
    urgency_hint:     {computed above}
@@ -331,7 +331,7 @@ Pluralization: use "entry" when `dep_reviews_written == 1`, "entries" otherwise.
 ### Failure handling inside Step 4b
 
 If ANY dep-review write fails (Write tool error, tempfile issue), continue with the remaining dependents and note the failure in the confirmation:
-> "Flagged {K} of {total} dep-reviews, {total - K} failed to write. Check queue directory manually."
+> "Flagged {K} of {total} dep-reviews. {total - K} failed to write. Check the queue directory manually."
 
 The primary entry write is never rolled back because a dep-review write failed. The primary is the source of truth; dep-reviews are convenience.
 
@@ -343,5 +343,5 @@ The primary entry write is never rolled back because a dep-review write failed. 
 - If the user declines to answer a clarifying question, record the missing field as `"(not provided)"` and still write the entry — a partial entry is better than a lost correction. Flag this in the confirmation message:
   > "Logged with missing {field}. You can edit the file later at `{path}`."
 - If `repo` ends up as `"unknown"`, add a note in the `notes` array:
-  `{"ts": "{created_at}", "text": "repo unknown, target_path {target_path} is outside both known roots. Resolve before Phase 3 can apply the fix."}`
+  `{"ts": "{created_at}", "text": "repo unknown: target_path {target_path} is outside both known roots. Resolve before Phase 3 can apply the fix."}`
 - If DEPS.json cannot be read in Step 4b, NEVER block the primary confirmation. The primary entry is the source of truth. Dep-review is best-effort.

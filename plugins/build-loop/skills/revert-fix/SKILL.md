@@ -121,7 +121,7 @@ Via atomic write, update the queue entry:
    - Write the updated JSON to `~/.claude/build-loop/queue/{id}.json.tmp` using the Write tool.
    - Run: `node -e "JSON.parse(require('fs').readFileSync(require('os').homedir() + '/.claude/build-loop/queue/{id}.json.tmp','utf8'))"`
    - If parse succeeds: `mv ~/.claude/build-loop/queue/{id}.json.tmp ~/.claude/build-loop/queue/{id}.json`
-   - If parse fails: report error, do not swap. Say "The queue entry update failed, but the revert DID succeed (undo commit: {revert-hash}), but the queue file was not updated. Edit it manually at ~/.claude/build-loop/queue/{id}.json"
+   - If parse fails: report error, do not swap. Say "The queue entry update failed. The revert DID succeed (undo commit: {revert-hash}), but the queue file was not updated. Edit it manually at ~/.claude/build-loop/queue/{id}.json"
 
 Show closing message:
 
