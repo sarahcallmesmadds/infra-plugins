@@ -42,8 +42,21 @@ const BUDGET_MS = 1500;
 const STDIN_WAIT_MS = 1000;
 const MIN_TO_MENTION = 3;
 
+// SessionStart fires for more than starting a session. `resume` continues a
+// conversation that already exists and `compact` happens in the middle of one,
+// so speaking on either re-injects the same notice into a session that has
+// already had it. `startup` and `clear` are the two that genuinely begin a
+// fresh context, which is what "once at the start of a session" means.
+//
+// An absent source is treated as a start, so this still behaves when invoked by
+// hand or by a runtime that does not send the field.
+const START_SOURCES = ['startup', 'clear'];
+
 function main(event, deadline) {
   const cwd = (event && event.cwd) || process.cwd();
+
+  const source = event && event.source;
+  if (source && !START_SOURCES.includes(source)) return;
 
   const collect = require(path.join(__dirname, '..', 'scripts', 'collect.js'));
   const { classify } = require(path.join(__dirname, '..', 'scripts', 'classify.js'));
@@ -59,20 +72,29 @@ function main(event, deadline) {
   // is honest, and /stale-branches gives the full answer with no time limit.
   if (truncated) return;
 
+  // Merged AND old. This is the one place `staleAfterDays` decides anything.
+  //
+  // A branch merged ten minutes ago is safe to delete and is not worth a line
+  // at the top of your next session; you were there when it merged. One from
+  // March is exactly what this is for. Filtering on age here is also why the
+  // setting exists at all: /stale-branches deliberately shows every branch
+  // whatever its age, because when you ask directly you want the whole answer.
   const { safe } = classify(branches, {}, Date.now());
-  if (safe.length < MIN_TO_MENTION) return;
+  const worthMentioning = safe.filter((b) => b.stale);
+  if (worthMentioning.length < MIN_TO_MENTION) return;
 
-  const names = safe.slice(0, 5).map((b) => b.name).join(', ');
-  const more = safe.length > 5 ? `, and ${safe.length - 5} more` : '';
+  const names = worthMentioning.slice(0, 5).map((b) => b.name).join(', ');
+  const more = worthMentioning.length > 5 ? `, and ${worthMentioning.length - 5} more` : '';
 
   process.stdout.write(JSON.stringify({
     hookSpecificOutput: {
       hookEventName: 'SessionStart',
       additionalContext:
-        `${safe.length} branches in this repository are fully merged into ${defaultBranch} `
-        + `and can be deleted without losing anything: ${names}${more}. `
-        + 'Run /stale-branches to review and clean them up. '
-        + 'This count excludes branches that still hold unmerged commits.',
+        `${worthMentioning.length} branches in this repository have been sitting fully merged `
+        + `into ${defaultBranch} for a while, and can be deleted without losing anything: `
+        + `${names}${more}. `
+        + 'Run /stale-branches to review and clean them up. It shows every branch, including '
+        + 'recently merged ones and any still holding unmerged commits, which this count leaves out.',
     },
   }));
 }

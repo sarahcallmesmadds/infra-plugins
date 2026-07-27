@@ -250,6 +250,81 @@ check('the hook says nothing at all rather than reporting a partial count', () =
     'the deadline must be measured from process start, so a slow stdin wait cannot extend the work');
 });
 
+// ------------------------------------------- what staleAfterDays governs ----
+//
+// It decides one thing: whether the session notice bothers mentioning a merged
+// branch. It must never filter the command's own listing, and must never make
+// anything deletable. A knob documented as doing something it does not do is a
+// trap, and a cleanup command that silently hides rows is worse than one that
+// shows too many.
+
+process.stdout.write('what staleAfterDays governs\n');
+
+check('a recently merged branch is safe but not stale', () => {
+  const r = classify([{ name: 'just-merged', lastCommitDate: d(1), aheadBy: 0, isDefault: false }], {}, NOW);
+  assert.strictEqual(r.all[0].safeToDelete, true);
+  assert.strictEqual(r.all[0].stale, false, 'one day old is not stale at the default threshold');
+});
+
+check('raising the threshold never changes what is safe', () => {
+  const branch = { name: 'merged-old', lastCommitDate: d(140), aheadBy: 0, isDefault: false };
+  const tight = classify([branch], { staleAfterDays: 1 }, NOW);
+  const loose = classify([branch], { staleAfterDays: 9999 }, NOW);
+  assert.strictEqual(tight.safe.length, 1);
+  assert.strictEqual(loose.safe.length, 1, 'age must not gate deletability at any threshold');
+  assert.strictEqual(tight.all[0].stale, true);
+  assert.strictEqual(loose.all[0].stale, false);
+});
+
+check('the listing shows recently merged branches, whatever the threshold', () => {
+  const snap = {
+    where: 'example/repo',
+    branches: [
+      { name: 'main', lastCommitDate: d(0), aheadBy: 0, isDefault: true },
+      { name: 'merged-yesterday', lastCommitDate: d(1), aheadBy: 0, isDefault: false },
+    ],
+  };
+  const f = path.join(os.tmpdir(), `stale-filter-${process.pid}.json`);
+  fs.writeFileSync(f, JSON.stringify(snap));
+  const out = execFileSync('node', [CLI, '--input', f, '--now', '2026-07-27', '--stale-after', '365'], { encoding: 'utf8' });
+  assert.ok(/Safe to delete \(1\)/.test(out),
+    `a branch merged yesterday must still be listed and offered:\n${out}`);
+  assert.ok(/merged-yesterday/.test(out));
+  fs.unlinkSync(f);
+});
+
+check('the session notice ignores merged branches that are not yet stale', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'hooks', 'session-notice.js'), 'utf8');
+  assert.ok(/safe\.filter\(\(b\) => b\.stale\)/.test(src),
+    'the notice must filter on stale, or it nags about branches merged minutes ago');
+});
+
+check('the notice only speaks when a session actually starts', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'hooks', 'session-notice.js'), 'utf8');
+  assert.ok(/START_SOURCES/.test(src) && /'startup'/.test(src) && /'clear'/.test(src),
+    'resume and compact happen inside a session that already had the notice');
+  assert.ok(/if \(source && !START_SOURCES\.includes\(source\)\) return;/.test(src),
+    'an absent source should still be treated as a start');
+});
+
+check('the notice stays silent on resume and on compact', () => {
+  const HOOK = path.join(ROOT, 'hooks', 'session-notice.js');
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'gh-source-'));
+  execFileSync('git', ['init', '-q', '-b', 'main', repo], { stdio: 'ignore' });
+  const g = (...a) => execFileSync('git', ['-C', repo, '-c', 'user.email=t@t', '-c', 'user.name=t', ...a], { stdio: 'ignore' });
+  g('commit', '-q', '--allow-empty', '-m', 'base');
+  for (const b of ['x', 'y', 'z']) {
+    g('checkout', '-qb', `m-${b}`); g('commit', '-q', '--allow-empty', '-m', b);
+    g('checkout', '-q', 'main'); g('merge', '-q', '--no-ff', `m-${b}`, '-m', `merge ${b}`);
+  }
+  const fire = (source) => execFileSync('node', [HOOK], {
+    input: JSON.stringify({ cwd: repo, source }), encoding: 'utf8',
+  });
+  assert.strictEqual(fire('resume').trim(), '', 'resume must not re-inject the notice');
+  assert.strictEqual(fire('compact').trim(), '', 'compact happens mid-session');
+  fs.rmSync(repo, { recursive: true, force: true });
+});
+
 // ------------------------------------------------ the actual command ----
 //
 // Driving the CLI as a subprocess, because every real bug so far has been in a

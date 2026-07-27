@@ -6,8 +6,15 @@
 //   cli.js --repo owner/name      classify branches on GitHub instead
 //   cli.js --json                 machine-readable output
 //   cli.js --input file.json      classify a saved snapshot (used by the tests)
-//   cli.js --stale-after 60       age in days before something is called stale
+//   cli.js --stale-after 60       age in days at which a branch is marked stale
 //   cli.js --now 2026-07-27       fix "today", so output is reproducible
+//
+// --stale-after sets the `stale` flag in --json output and nothing else. It does
+// NOT filter what is listed and it does NOT affect what is safe to delete. Every
+// branch is always listed with its age, because a cleanup command that silently
+// hides branches is how a repository comes to look tidier than it is. The flag
+// exists because the session hook uses the same threshold to decide what is
+// worth mentioning at startup.
 //
 // This file is what the skill runs and what the tests run. Every bug the
 // plugin has shipped so far lived in a printing path that no test executed,

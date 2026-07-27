@@ -82,12 +82,25 @@ necessarily accurate when you answer it.
 
 ## The session notice
 
-In a git repository, it mentions once at the start of a session when three or
-more branches are fully merged and still sitting there. It never mentions
-branches holding work, because a notice you cannot safely act on is noise, and
-noise at the top of every session is how a plugin gets uninstalled.
+In a git repository, it mentions once when a session starts that three or more
+branches are both fully merged **and** have been sitting there a while.
 
-It never blocks anything, and it stays silent if there is nothing to say.
+Three separate things keep it quiet, and all three matter:
+
+- **It never mentions branches holding work.** A notice you cannot safely act on
+  is noise, and noise at the top of every session is how a plugin gets
+  uninstalled.
+- **It never mentions branches merged recently.** You were there when it merged.
+  "A while" means `staleAfterDays`, 30 days by default, and this is the only
+  place that setting decides anything.
+- **It only speaks when a session actually starts.** `SessionStart` also fires
+  on resume and on compaction, which happen inside a session that has already
+  had the notice. Those are skipped.
+
+If it cannot finish counting inside its time budget it says nothing at all,
+rather than reporting a number that is only partly true.
+
+It never blocks anything.
 
 ## Install
 
@@ -105,16 +118,25 @@ checkout does not.
 
 ## Configuration
 
-None needed. If you want to change what counts as protected or how old is old,
-the defaults are at the top of `scripts/classify.js`:
+None needed. The defaults are at the top of `scripts/classify.js`:
 
 ```js
 protectedBranches: ['main', 'master', 'develop', 'release'],
 staleAfterDays: 30,
 ```
 
-`staleAfterDays` only changes what gets called old. It has no effect on what is
-safe to delete, which is deliberate and not configurable.
+**`protectedBranches`** are never offered for deletion, whatever their merge
+state.
+
+**`staleAfterDays` changes one thing only: how long a merged branch has to sit
+there before the session notice will mention it.** It has no effect on what is
+safe to delete, and no effect on `/stale-branches`, which always lists every
+branch whatever its age. That is deliberate. When you ask directly you want the
+whole answer, and a filter that quietly hides branches from a cleanup command is
+how you end up believing a repository is tidy.
+
+Nothing about age can ever move a branch into the safe list. There is no setting
+for that and there is not meant to be.
 
 ## Codex
 

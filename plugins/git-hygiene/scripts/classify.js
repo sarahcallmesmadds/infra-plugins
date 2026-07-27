@@ -15,7 +15,12 @@ const DEFAULTS = {
   // Never offered for deletion, whatever their merge state.
   protectedBranches: ['main', 'master', 'develop', 'release'],
 
-  // A branch older than this is worth surfacing. It does NOT make it deletable.
+  // How long a merged branch sits before the session notice will mention it.
+  //
+  // This is the ONLY thing this setting decides. It does not make anything
+  // deletable, and it does not filter what /stale-branches lists. Every branch
+  // is always shown with its age, because a cleanup command that hides rows is
+  // worse than one that shows too many.
   staleAfterDays: 30,
 };
 
