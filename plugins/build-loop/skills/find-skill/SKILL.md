@@ -153,19 +153,19 @@ For a single best-fit match:
 ```
 For [what they want to do], use:
 
-**`/skill-name`** — [one sentence on why this is the right one]
+**`/skill-name`** - [one sentence on why this is the right one]
 
 [If there's a close second worth knowing about:]
-Also consider: **`/other-skill`** — [when you'd use this instead]
+Also consider: **`/other-skill`** - [when you'd use this instead]
 ```
 
 For an empty `$ARGUMENTS` (full inventory listing):
 
 ```
-Installed skills on this device — what are you trying to do?
+Installed skills on this device. What are you trying to do?
 
 ### Daily / personal HQ
-- **`/skill-name`** — [first sentence of description]
+- **`/skill-name`** - [first sentence of description]
 - ...
 
 ### Personal projects + IP
@@ -185,8 +185,8 @@ If nothing matches well, say so honestly:
 
 ```
 Nothing in your installed skills matches that closely. Closest options:
-- **`/foo`** — [why it's close]
-- **`/bar`** — [why it's close]
+- **`/foo`** - [why it's close]
+- **`/bar`** - [why it's close]
 
 Want me to just help directly without a skill?
 ```

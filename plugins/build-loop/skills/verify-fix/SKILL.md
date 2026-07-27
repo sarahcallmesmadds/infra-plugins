@@ -50,7 +50,7 @@ Use plain language. Quote the queue entry's fields directly without paraphrasing
 Compute new frontmatter values before displaying:
 - Run `date -u +"%Y-%m-%dT%H:%M:%S.000Z"` to get the current timestamp.
 - Determine new version: if `version` is missing from frontmatter, new version is `2`; if present, increment by 1.
-- Determine new correction_notes: if missing, new value is `"{YYYY-MM-DD} — {one-line fix description} [queue:{id}]"`; if present, append with `"; "` separator.
+- Determine new correction_notes: if missing, new value is `"{YYYY-MM-DD}: {one-line fix description} [queue:{id}]"`; if present, append with `"; "` separator.
 
 Display the diff in this exact format:
 
@@ -84,7 +84,7 @@ Rules for the diff:
 **STOP after Step V2.** Wait for the user's response before doing anything else.
 
 - **"yes"** (or any clear affirmative): Signal PASS.
-  Display: "Got it — writing and committing the fix."
+  Display: "Got it, writing and committing the fix."
   Return control to /apply-fix Step 7 to write the file and Step 8 to handle the commit and queue update. /verify-fix does NOT write or commit.
 
 - **"no"** (or any negative without retry instructions): Signal FAIL.
@@ -174,16 +174,16 @@ Note: In standalone mode, the "BEFORE" state (pre-fix content) may not be availa
 Same three response types as Step V3:
 
 - **"yes"** (PASS in standalone mode):
-  "Noted — the fix looks correct. Updating the queue entry to record your approval."
+  "Noted, the fix looks correct. Updating the queue entry to record your approval."
   Via atomic write: if status was `"In Progress"`, set to `"fix applied, watching"`. Append note: `{"ts": "{now}", "text": "Standalone verify: the user confirmed fix looks correct."}`.
-  Display: "Queue entry {id} is now 'fix applied, watching'. Try it in a real session — when it works, you can close this to Resolved."
+  Display: "Queue entry {id} is now 'fix applied, watching'. Try it in a real session. When it works, you can close this to Resolved."
 
 - **"no"** (FAIL in standalone mode):
   Follow Step V4 fail path (set `"fix attempted / unresolved"`, append failure note).
-  Additionally display: "Should I help restore the target file to its pre-fix state? To check what the file looked like before: git -C {repo_root} log --oneline -5 — find the commit with [queue:{id}] in the message, then run /revert-fix {id} to undo it."
+  Additionally display: "Should I help restore the target file to its pre-fix state? To check what the file looked like before: git -C {repo_root} log --oneline -5, find the commit with [queue:{id}] in the message, then run /revert-fix {id} to undo it."
 
 - **"retry: {instructions}"** (REVISE in standalone mode):
-  "To revise this fix, run /apply-fix {id} — it will pick up the In Progress entry and you can guide it with your instructions."
+  "To revise this fix, run /apply-fix {id}. It will pick up the In Progress entry and you can guide it with your instructions."
   Do NOT change queue status. Stop.
 
 ---

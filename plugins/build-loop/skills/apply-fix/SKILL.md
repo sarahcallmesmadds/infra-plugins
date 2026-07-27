@@ -146,7 +146,7 @@ Wait for the user's answer, incorporate it, then continue. Do not ask a second c
 When the file DOES have frontmatter, compute the new values first:
 - Run `date -u +"%Y-%m-%dT%H:%M:%S.000Z"` to get the current timestamp.
 - Determine new version: if `version` is missing from frontmatter, new version is `2`; if present, increment by 1.
-- Determine new correction_notes: if missing, new value is `"{YYYY-MM-DD} — {one-line fix description} [queue:{id}]"`; if present, append with `"; "` separator.
+- Determine new correction_notes: if missing, new value is `"{YYYY-MM-DD}: {one-line fix description} [queue:{id}]"`; if present, append with `"; "` separator.
 
 Display the diff in this exact format:
 
@@ -197,7 +197,7 @@ Build the complete updated file content:
 Use the **Write tool** to write the full file to `{target_path}`. Do NOT use the Edit tool or incremental patches — Write is atomic at the OS level; Edit can fail partway through leaving the file in a partial state.
 
 **If Write tool errors:**
-> "The write failed: {error}. The target file is untouched — Write is all-or-nothing. Updating queue entry to 'fix attempted / unresolved'."
+> "The write failed: {error}. The target file is untouched, since Write is all-or-nothing. Updating queue entry to 'fix attempted / unresolved'."
 
 Run atomic write to set status to `"fix attempted / unresolved"` with note `{"ts": "{now}", "text": "Write tool failed: {error}"}`. Stop.
 
@@ -260,6 +260,6 @@ Wait for the user's answer. If they say "leave them", they stay Open. Do not aut
 
 ```
 Fix committed. Queue entry {id} is now "fix applied, watching".
-Try it in a real session — when it works, run /list-bugs and update the entry to Resolved.
+Try it in a real session. When it works, run /list-bugs and update the entry to Resolved.
 Commit: {hash} ({repo})
 ```

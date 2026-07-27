@@ -166,15 +166,15 @@ Present the draft in this format (mirror /flag-issue Step 2 — same tone):
 Changes I'd make to DEPS.json:
 
 Missing (N):
-  + personal:{target} — {one-line reason or "standalone"}
+  + personal:{target} - {one-line reason or "standalone"}
     depends_on: [{brief list}]  (confidence: {level})
 
 Orphaned (M):
-  - {composite_key} — in map but no file found at {path}
+  - {composite_key} - in map but no file found at {path}
     (renamed? deleted? moved? Tell me to remove or leave.)
 
 Stale (K):
-  ~ {composite_key} — the file mtime is newer than last_updated
+  ~ {composite_key} - the file mtime is newer than last_updated
     Current depends_on: [{list}]
     Re-read the file to check for new deps? (y/no)
 
@@ -184,7 +184,7 @@ Write these changes to DEPS.json? (y / edit / skip)
 On the user's response:
 - `y`, `yes`, `sure`, `go` — proceed to Step 6
 - `edit` or specific change requests — update the draft and re-ask
-- `skip`, `no` — respond "Skipped — nothing written." and stop
+- `skip`, `no` — respond "Skipped, nothing written." and stop
 
 **Never silent writes.** Ever.
 

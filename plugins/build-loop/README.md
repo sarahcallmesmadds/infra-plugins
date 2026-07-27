@@ -166,6 +166,41 @@ answer, not its conclusion.
 opinion about whether something is any good, and it will not rewrite anything
 you did not complain about.
 
+## Upgrading to 0.2.4
+
+Twenty-four output templates across seven skills told the model to print an em
+dash. `slop-check` ships a Stop hook that blocks exactly that, so a skill would
+produce its message, the hook would block it, and the model would rewrite it.
+Every single time.
+
+Nobody noticed because the rewrite succeeds and the answer still arrives, just
+after an extra round trip. The plugins were failing a rule their sibling plugin
+enforces.
+
+Two kinds of place had them.
+
+**Quoted messages**, in `flag-issue`, `apply-fix`, `verify-fix`, `revert-fix`,
+`list-bugs` and `audit-deps`. The messages say the same things now with a comma
+or a full stop.
+
+**Display templates**, the fenced blocks a skill reproduces line for line. These
+were missed on the first pass, on the reasoning that a `##` line is a heading
+and headings are structure. True of a section heading in a SKILL.md, false
+inside a display template: `/list-bugs` printed its table header verbatim on
+every single run, and so did `/to-build`. `/built-check` did the same with its
+numbered findings, `/find-skill` with its routing list, `/whats-breaking` with
+its weekly report, and `/stale-branches` with its per-repository line. Those are
+now a plain hyphen or a colon, which the hook does not touch since it blocks
+only the em dash character itself.
+
+Prose and section headings keep theirs. Those reach nobody, and rewriting them
+would churn a lot of files to fix nothing.
+
+`tests/output-templates.test.js` keeps new ones out, checking both kinds. It is
+still not exhaustive: a value written into a file that gets displayed later,
+such as a queue entry's `what_expected`, has no syntax marking it as output, and
+reaching those means flagging prose. A linter that cries wolf gets switched off.
+
 ## Upgrading to 0.2.3
 
 0.2.2 gave the composite key a plugin segment and stopped there. The
