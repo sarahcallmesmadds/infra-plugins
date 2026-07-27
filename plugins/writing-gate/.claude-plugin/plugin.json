@@ -1,0 +1,19 @@
+{
+  "name": "writing-gate",
+  "version": "0.1.0",
+  "description": "Catch the habits that mean nobody edited it. Blocks em dashes and choppy sentence runs in the assistant's own writing, and checks any draft, document, pull request, chart or spec for the signs that it shipped unreviewed.",
+  "author": {
+    "name": "Sarah Madden",
+    "url": "https://github.com/sarahcallmesmadds"
+  },
+  "homepage": "https://github.com/sarahcallmesmadds/plugins/tree/main/plugins/writing-gate",
+  "repository": "https://github.com/sarahcallmesmadds/plugins",
+  "license": "MIT",
+  "keywords": [
+    "writing",
+    "editing",
+    "style",
+    "review",
+    "quality"
+  ]
+}
