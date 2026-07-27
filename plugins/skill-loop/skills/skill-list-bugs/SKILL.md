@@ -11,7 +11,11 @@ You are displaying the skill loop bug queue at `~/.claude/skill-loop/queue/`. Th
 ### Step 1 — Parse the filter argument
 
 Check `$ARGUMENTS`. It may be empty or contain one of these values (case-insensitive):
-- Empty or `open` → filter = `open-and-in-progress` (show entries with status `Open` OR `In Progress`)
+- Empty → filter = `open-and-in-progress` (status `Open` OR `In Progress`). This is the
+  default because the everyday question is "what is outstanding", and something already
+  being worked on is still outstanding.
+- `open` → only `Open`. Asking for open explicitly means open, not open-ish. Use it to see
+  what has not been started.
 - `all` → no filter, show every status
 - `in progress` → only `In Progress`
 - `resolved` → only `Resolved`

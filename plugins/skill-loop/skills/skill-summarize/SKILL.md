@@ -8,6 +8,12 @@ allowed-tools: [Read, Write, Bash, mcp__slack__*]
 correction_notes: "2026-04-26 — added Runtime Requirements section + replaced Claude Desktop New Task UI scheduling guidance with local launchd/cron path [queue:2026-04-24T22-07-34-skill-summary]"
 ---
 
+
+> **Paths in this file are written with `~` for readability.** The Write tool and
+> Node's `fs` both take it literally, so expand it to the absolute home path
+> before using it. A literal `~` creates a directory called `~` next to wherever
+> you happen to be, and every check that follows then reads the wrong place.
+
 ## Runtime Requirements
 
 This skill MUST run on the user's local Mac. It reads from local-only paths:
@@ -232,7 +238,7 @@ The pattern: write to a `.tmp` file, parse-check it, then `mv` to the final path
 }
 ```
 
-2. Use the Write tool (expand `~` to the absolute home path first, the tool does not do it for you) to write the pretty-printed JSON (2-space indent) to `~/.claude/skill-loop/pattern-flags.json.tmp`.
+2. Use the Write tool to write the pretty-printed JSON (2-space indent) to `~/.claude/skill-loop/pattern-flags.json.tmp`.
 
 3. Parse-check the .tmp file by running:
 
@@ -414,7 +420,7 @@ After appending, print: `hot-cache.md updated.`
 - **Malformed queue entries:** Skip silently. Count them. Note the count in Step 6 output. Never throw.
 - **Dedup safety:** The `session_id || id` fallback is the only dedup rule. Do not introduce additional dedup (e.g., by what_happened similarity) — the design deliberately counts each /skill-flag-issue entry as its own data point.
 - **Update in place only:** There must never be two flag entries for the same skill. If Step 4 ever tries to append when an entry already exists, that is a bug — fix it and re-run.
-- **Atomic write is non-optional:** The `.tmp` + parse-check + `mv` pattern comes from Phase 2 and applies without exception to every JSON file this system writes. Never use a direct single-step write to pattern-flags.json.
+- **Atomic write is non-optional here.** The `.tmp` + parse-check + `mv` pattern applies to every JSON write that REPLACES an existing file. The one exception is `skill-flag-issue`, which only ever creates new entries and says so in its own header. Never use a direct single-step write to pattern-flags.json.
 - **Slack is never hardcoded:** Channel is asked at post time. The user's DM is the default. Never assume a channel.
 - **ISO week (not calendar week):** The filename logic uses the Thursday-anchor ISO 8601 method. At year boundaries (late December / early January) the ISO year can differ from the calendar year — always trust the ISO computation, not `new Date().getFullYear()`.
 - **Front-loading is intentional:** Pattern Flags appears BEFORE Fixes Applied and Still Open in the summary file. The session-start hook (SUMM-04, Plan 04-04) truncates at 2,000 chars and truncation cuts the tail. New patterns and critical opens must appear in the first ~800 characters.

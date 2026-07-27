@@ -8,6 +8,12 @@ allowed-tools: Read, Write, Bash(ls:*), Bash(cat:*), Bash(date:*), Bash(mv:*), B
 
 You are rolling back a committed skill fix. The goal: undo a bad fix commit without rewriting history, and put the queue entry back to Open so another attempt can be made.
 
+
+> **Paths in this file are written with `~` for readability.** The Write tool and
+> Node's `fs` both take it literally, so expand it to the absolute home path
+> before using it. A literal `~` creates a directory called `~` next to wherever
+> you happen to be, and every check that follows then reads the wrong place.
+
 ---
 
 ## Step 1 — Locate the queue entry

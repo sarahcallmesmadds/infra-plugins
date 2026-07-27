@@ -217,7 +217,7 @@ Skill-level grouping: 3+ closed primary corrections for the same skill name, acr
 
 ### Atomic write rule
 
-`pattern-flags.json` writes use the same `.tmp` + node parse-check + `mv` pattern as all other JSON writes in this project (established in Phase 2, applies without exception).
+`pattern-flags.json` writes use the same `.tmp` + node parse-check + `mv` pattern as every other JSON write that REPLACES an existing file. Creating a brand-new queue entry is the one case that does not need it, because there is no existing file to lose; `skill-flag-issue` documents that in its own header.
 
 ---
 

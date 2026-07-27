@@ -8,6 +8,27 @@ allowed-tools: Read, Write, Bash(ls:*), Bash(cat:*), Bash(date:*), Bash(mkdir:*)
 
 You are logging a correction to the skill loop bug queue at `~/.claude/skill-loop/queue/`. The schema is at `reference/SCHEMA.md` in this plugin's directory — read it if you haven't already in this session.
 
+
+> **Paths in this file are written with `~` for readability.** The Write tool and
+> Node's `fs` both take it literally, so expand it to the absolute home path
+> before using it. A literal `~` creates a directory called `~` next to wherever
+> you happen to be, and every check that follows then reads the wrong place.
+
+> **This skill writes directly, on purpose.** Every other skill here writes JSON
+> through the `.tmp` plus parse-check plus `mv` sequence, and says that rule has
+> no exceptions. This one is the exception, which is why `allowed-tools` above
+> grants no `node` or `mv`.
+>
+> The reason is what the pattern protects against. It exists so a half-written
+> file cannot replace a good one. This skill only ever creates brand-new queue
+> entries under a fresh timestamped filename, so there is no good file to lose.
+> The worst case is one unparseable new entry, and `skill-list-bugs` already
+> renders those as `(malformed)` rather than failing, so it is visible and
+> deletable.
+>
+> If this skill is ever changed to update an existing entry, that rule stops
+> applying and the atomic sequence becomes mandatory.
+
 ## Session context guard
 
 If there is no session history (brand new session, /skill-flag-issue run immediately with no prior exchanges), open with:
@@ -129,7 +150,7 @@ Then:
 2. Build the filename: `{YYYY-MM-DDTHH-MM-SS}-{slug(skill)}.json`
    The `id` field MUST equal the filename stem (everything before `.json`).
 3. Ensure the queue directory exists: `mkdir -p ~/.claude/skill-loop/queue`
-4. Use the Write tool (expand `~` to the absolute home path first, the tool does not do it for you) to write the JSON file to `~/.claude/skill-loop/queue/{filename}`.
+4. Use the Write tool to write the JSON file to `~/.claude/skill-loop/queue/{filename}`.
    Pretty-print with 2-space indentation (human-readable).
 5. Count open items: `ls ~/.claude/skill-loop/queue/*.json 2>/dev/null | wc -l`
 6. Do NOT confirm here — proceed directly to Step 4b (dep-review flagging). Confirmation happens in Step 4c after flagging completes.

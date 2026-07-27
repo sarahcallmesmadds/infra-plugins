@@ -10,6 +10,12 @@ You are the human-review verification gate for the skill loop. You present the o
 
 Two modes of operation: Mode A (called from within /skill-apply-fix at Step 6) and Mode B (called standalone to re-verify a fix from a previous session).
 
+
+> **Paths in this file are written with `~` for readability.** The Write tool and
+> Node's `fs` both take it literally, so expand it to the absolute home path
+> before using it. A literal `~` creates a directory called `~` next to wherever
+> you happen to be, and every check that follows then reads the wrong place.
+
 ---
 
 ## Mode A: Called from within /skill-apply-fix (Step 6)

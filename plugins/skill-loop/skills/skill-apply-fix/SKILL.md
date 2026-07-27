@@ -10,6 +10,12 @@ You are applying a correction from the skill loop bug queue to an actual skill f
 
 Eight steps. Do not reorder or skip steps. The diff gate (Step 6) must come before the write (Step 7). No silent writes. Ever.
 
+
+> **Paths in this file are written with `~` for readability.** The Write tool and
+> Node's `fs` both take it literally, so expand it to the absolute home path
+> before using it. A literal `~` creates a directory called `~` next to wherever
+> you happen to be, and every check that follows then reads the wrong place.
+
 ---
 
 ## Step 1 — Parse argument and locate queue entry

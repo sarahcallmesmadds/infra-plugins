@@ -8,6 +8,12 @@ allowed-tools: Read, Write, Bash(ls:*), Bash(cat:*), Bash(date:*), Bash(stat:*),
 
 You are maintaining the skill dependency map at `~/.claude/skill-loop/DEPS.json`. The schema is documented at `reference/SCHEMA-DEPS.md` in this plugin's directory — read it if you haven't already in this session. Never silent-write; always show a draft and confirm first.
 
+
+> **Paths in this file are written with `~` for readability.** The Write tool and
+> Node's `fs` both take it literally, so expand it to the absolute home path
+> before using it. A literal `~` creates a directory called `~` next to wherever
+> you happen to be, and every check that follows then reads the wrong place.
+
 ## Step 1 — Scan every configured root for skills on disk
 
 Skills can live in more than one place: the ones installed for daily use, and a
