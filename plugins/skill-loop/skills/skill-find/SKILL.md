@@ -71,11 +71,19 @@ for root in roots:
             m = re.match(r"^---\n(.*?)\n---", text, re.DOTALL)
             if not m:
                 continue
-            fm = {}
+            # Folded and block scalars matter here: a description written as
+            # "description: >" with the text indented underneath would
+            # otherwise be read as empty, and description is what routing
+            # matches on. Indented lines continue the key above them.
+            fm, key = {}, None
             for line in m.group(1).splitlines():
-                if ":" in line and not line.startswith(" "):
+                if line[:1] in (" ", "\t") and key:
+                    fm[key] = (fm[key] + " " + line.strip()).strip()
+                elif ":" in line and not line.startswith(" "):
                     k, _, v = line.partition(":")
-                    fm[k.strip()] = v.strip().strip('"').strip("'")
+                    key = k.strip()
+                    v = v.strip()
+                    fm[key] = "" if v in (">", "|", ">-", "|-") else v.strip('"').strip("'")
             # The skill name is the first directory below the root, so the
             # nested layout does not report every skill as "skill".
             rel = os.path.relpath(path, base).split(os.sep)[0]
@@ -117,7 +125,7 @@ When listing the full inventory (no $ARGUMENTS) or when showing close-second opt
 - **Daily / personal HQ** — `request-create`, `daily-brief`, `daily-scratch`, `daily-reflect`, anything with "daily" or "morning" or "HQ" in name/description
 - **Personal projects + IP** — `project-create-or-update`, `register-ip`, `job-scanner` (a.k.a. `portfolio-ops-application`), anything with "project", "IP asset", "cover letter" in description
 - **Session management** — `wrap`, `pickup`, `skill-find`, anything with "handoff", "resume", "wrap up", "skill discovery"
-- **Skill loop (meta)** — `capture`, `queue`, `skill-apply-fix`, `skill-verify-fix`, `skill-revert-fix`, `skill-audit-deps`, `skill-summarize`, anything with "skill loop", "queue", "correction", "DEPS.json" in description
+- **Skill loop (meta)** — `skill-flag-issue`, `skill-list-bugs`, `skill-apply-fix`, `skill-verify-fix`, `skill-revert-fix`, `skill-audit-deps`, `skill-summarize`, anything with "skill loop", "queue", "correction", "DEPS.json" in description
 - **Other** — anything that doesn't fit above
 
 If a skill spans two categories, pick the dominant one. If a skill is brand new and you can't classify it, put it under **Other** — that's also a signal the description could be sharper.

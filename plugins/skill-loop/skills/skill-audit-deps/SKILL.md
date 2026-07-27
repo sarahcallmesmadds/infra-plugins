@@ -35,7 +35,13 @@ For each path, derive the composite key:
   `<root>/tool-renewal/skill/SKILL.md` yields skill = `tool-renewal`, not `skill`
 - A path under none of the configured roots is `repo: "unknown"`. Do not guess.
 
-Record the SKILL.md file's modification time (Unix epoch seconds): `stat -f %m <path>` on macOS.
+Record the SKILL.md file's modification time in Unix epoch seconds. The two
+`stat` implementations disagree, and using the wrong one silently returns
+filesystem information rather than a timestamp:
+
+```bash
+stat -f %m <path> 2>/dev/null || stat -c %Y <path>   # BSD/macOS, then GNU/Linux
+```
 
 ## Step 2 — Load the current DEPS.json
 

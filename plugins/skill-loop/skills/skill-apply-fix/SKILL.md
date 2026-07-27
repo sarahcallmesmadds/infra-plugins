@@ -165,6 +165,9 @@ If the output is `0` or the file is missing, report an error immediately and do 
 
 Run the commit command for the correct repo. Derive `{skill-dir-name}` from `skill_path` — it is the directory name immediately containing SKILL.md.
 
+Read the roots from `~/.claude/skill-loop.config.json`. If that file does not
+exist, there is one root: `{ "name": "personal", "path": "~/.claude/skills" }`.
+
 Look up the entry's `repo` in `skillRoots` to get that root's path, and commit
 the SKILL.md relative to it:
 

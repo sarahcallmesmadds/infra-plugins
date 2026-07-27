@@ -17,6 +17,7 @@ Then install what you want:
 
 ```
 /plugin install guardrails@smadds
+/plugin install skill-loop@smadds
 ```
 
 Add the marketplace **by repository**, as above. Adding it by pasting a direct
@@ -28,6 +29,7 @@ never arrive and installs fail.
 | Plugin | What it does |
 |---|---|
 | [`guardrails`](plugins/guardrails) | Blocks commits to protected branches and irreversible deletes. Flags prompt injection in content the model reads or writes. |
+| [`skill-loop`](plugins/skill-loop) | Keeps your own skills honest. Log what a skill got wrong, fix it from the queue behind an approval gate, and see which other skills a fix puts at risk. |
 
 More on the way. Each one ships when it is genuinely useful rather than when it
 is merely finished.

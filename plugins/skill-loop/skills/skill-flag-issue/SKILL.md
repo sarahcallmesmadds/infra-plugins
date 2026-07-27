@@ -129,7 +129,7 @@ Then:
 2. Build the filename: `{YYYY-MM-DDTHH-MM-SS}-{slug(skill)}.json`
    The `id` field MUST equal the filename stem (everything before `.json`).
 3. Ensure the queue directory exists: `mkdir -p ~/.claude/skill-loop/queue`
-4. Use the Write tool to write the JSON file to `~/.claude/skill-loop/queue/{filename}`.
+4. Use the Write tool (expand `~` to the absolute home path first, the tool does not do it for you) to write the JSON file to `~/.claude/skill-loop/queue/{filename}`.
    Pretty-print with 2-space indentation (human-readable).
 5. Count open items: `ls ~/.claude/skill-loop/queue/*.json 2>/dev/null | wc -l`
 6. Do NOT confirm here — proceed directly to Step 4b (dep-review flagging). Confirmation happens in Step 4c after flagging completes.

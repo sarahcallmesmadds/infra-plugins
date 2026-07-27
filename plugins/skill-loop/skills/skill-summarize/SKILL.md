@@ -232,7 +232,7 @@ The pattern: write to a `.tmp` file, parse-check it, then `mv` to the final path
 }
 ```
 
-2. Use the Write tool to write the pretty-printed JSON (2-space indent) to `~/.claude/skill-loop/pattern-flags.json.tmp`.
+2. Use the Write tool (expand `~` to the absolute home path first, the tool does not do it for you) to write the pretty-printed JSON (2-space indent) to `~/.claude/skill-loop/pattern-flags.json.tmp`.
 
 3. Parse-check the .tmp file by running:
 
