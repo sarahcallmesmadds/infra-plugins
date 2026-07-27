@@ -1,4 +1,4 @@
-# writing-gate
+# slop-check
 
 Catch the habits that mean nobody edited it.
 
@@ -117,7 +117,7 @@ So: on a document whose subject is writing quality, ignore the result.
 
 ```
 /plugin marketplace add sarahcallmesmadds/plugins
-/plugin install writing-gate@smadds
+/plugin install slop-check@smadds
 ```
 
 Add the marketplace **by repository**, as above. Adding it by pasting a direct
@@ -131,7 +131,7 @@ error.
 ## Configuration
 
 Works with no configuration. To change something, create
-`~/.claude/writing-gate.config.json`. Keys are merged over the defaults one at
+`~/.claude/slop-check.config.json`. Keys are merged over the defaults one at
 a time, so setting one does not reset the others.
 
 ```json
@@ -144,6 +144,11 @@ a time, so setting one does not reset the others.
 
 Set `enforce` to false to keep the skill and turn the hook off, for when you
 are deliberately drafting something that needs the forbidden shapes.
+
+This plugin was called `writing-gate` until July 2026. A config still sitting at
+`~/.claude/writing-gate.config.json` is read as a fallback, so the rename cannot
+quietly put your settings back to the defaults. That file is never written to
+and never deleted; if you rename it yourself, the new path wins.
 
 ## What this is not
 
