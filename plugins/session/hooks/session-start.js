@@ -141,7 +141,25 @@ function gitActivityLine(cwd, deadline) {
     const { notable, complete } = ga.scan({ cwd, config: config.gitActivity, deadline });
 
     const elsewhere = notable.filter((r) => r.repo !== here);
-    if (!elsewhere.length) return '';
+
+    // Nothing found is two answers, and only one of them is good news.
+    //
+    // This returned '' the moment the list was empty, without ever consulting
+    // `complete`, so a scan the deadline cut short reported exactly what a
+    // clean machine reports. That is the failure this module's own header
+    // warns about, in the one place that reads it, and `parallelLine` sitting
+    // directly above already handles the same case correctly.
+    //
+    // Sixth instance of this shape in this plugin. It is not carelessness about
+    // the logic; the flag was computed, threaded through, and documented. It is
+    // that the early return is written before the caveat, and an early return
+    // is easy to read as "nothing to say" when it means "nothing found so far".
+    if (!elsewhere.length) {
+      if (complete) return '';
+      return 'Some repositories could not be checked before the session-start budget ran out, '
+        + 'so whether anything was left uncommitted elsewhere is unknown. '
+        + 'Run /sessions or check by hand if that matters.';
+    }
 
     const described = elsewhere.slice(0, 3).map((r) => {
       const bits = [];

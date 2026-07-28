@@ -295,5 +295,124 @@ check('a commit subject containing a pipe survives parsing', () => {
   assert.strictEqual(row.commits[0].subject, 'fix a || b handling');
 });
 
+// -------------------------------------------------- the bounds actually bind ----
+//
+// `discover` advertised a bounded walk and performed an unbounded one whenever
+// a caller left the bounds out.
+//
+// `{ ...DEFAULTS, roots, depth, maxRepos }` reads like a fallback and is the
+// opposite: object shorthand always sets the key, so an omitted argument
+// arrives as `undefined` and overwrites the default. `undefined < 0` and
+// `undefined === 0` are both false and `undefined - 1` is NaN, so the depth
+// limit never fired; `slice(0, undefined)` returned everything.
+//
+// The production path always passed concrete values, so nothing showed it. The
+// tests above called `discover({ roots, depth, home })` with no cap and passed
+// because their trees were tiny. These call it the way that was broken.
+
+check('an omitted depth falls back to the default instead of removing the limit', () => {
+  const home = tmp();
+  let deep = path.join(home, 'Projects');
+  for (let i = 0; i < 8; i += 1) deep = path.join(deep, `lvl${i}`);
+  repoAt(deep);
+  const { repos } = ga.discover({ roots: ['~/Projects'], home });
+  assert.deepStrictEqual(repos, [], 'the walk went past the default depth');
+});
+
+check('an omitted maxRepos falls back to the default instead of removing the cap', () => {
+  const home = tmp();
+  for (let i = 0; i < 30; i += 1) repoAt(path.join(home, 'Projects', `r${i}`));
+  const { repos, complete } = ga.discover({ roots: ['~/Projects'], home });
+  assert.strictEqual(repos.length, ga.DEFAULTS.maxRepos);
+  assert.strictEqual(complete, false, 'a capped walk claimed to be complete');
+});
+
+check('discover with no arguments at all still applies every default', () => {
+  const cfg = ga.DEFAULTS;
+  assert.ok(cfg.depth > 0 && cfg.maxRepos > 0 && cfg.roots.length,
+    'the defaults themselves must be usable, since they are now the fallback');
+});
+
+check('an explicit override still wins over the default', () => {
+  const home = tmp();
+  for (let i = 0; i < 5; i += 1) repoAt(path.join(home, 'Projects', `r${i}`));
+  assert.strictEqual(ga.discover({ roots: ['~/Projects'], maxRepos: 2, home }).repos.length, 2);
+});
+
+check('the deadline is checked between git calls, not only between repositories', () => {
+  // Checking only between repositories bounds the loop and not the work: three
+  // calls can each start just inside the deadline and finish well past it.
+  let calls = 0;
+  const row = ga.inspect('/fake', {
+    deadline: Date.now() - 1,
+    exec: () => { calls += 1; return ''; },
+  });
+  assert.strictEqual(calls, 0, `ran ${calls} git calls after the deadline had passed`);
+  assert.strictEqual(row.changed, null);
+  assert.strictEqual(row.commits, null);
+});
+
+check('a repository reached before the deadline is still inspected', () => {
+  let calls = 0;
+  ga.inspect('/fake', { deadline: Date.now() + 10000, exec: () => { calls += 1; return ''; } });
+  assert.ok(calls > 0, 'the deadline check swallowed a repository that had time');
+});
+
+// -------------------------------------------- saying so when it did not finish ----
+//
+// Driven through the real hook as a subprocess with HOME overridden, because
+// the line reads its own config and expands `~` against the real home
+// directory. Calling the exported function directly scanned the actual machine
+// and passed or failed depending on what happened to be lying around in
+// ~/Projects, which is not a test.
+
+const SESSION_START = path.join(ROOT, 'hooks', 'session-start.js');
+
+function runSessionStart(home, cwd) {
+  const out = spawnSync(process.execPath, [SESSION_START], {
+    input: JSON.stringify({ session_id: 'test-abc', cwd, source: 'startup' }),
+    encoding: 'utf8',
+    env: { ...process.env, HOME: home },
+  }).stdout;
+  try {
+    return JSON.parse(out).hookSpecificOutput.additionalContext;
+  } catch (_) {
+    return '';
+  }
+}
+
+check('a complete scan that found nothing says nothing about repositories', () => {
+  // If the incompleteness notice fired on a clean machine it would appear at
+  // the top of every session, and a notice you cannot act on is the fastest
+  // way to get a plugin uninstalled.
+  const home = tmp();
+  fs.mkdirSync(path.join(home, 'Projects'), { recursive: true });
+  const ctxOut = runSessionStart(home, home);
+  assert.doesNotMatch(ctxOut, /repositor/i, ctxOut);
+  assert.match(ctxOut, /Today is/, 'the date line should still be there');
+});
+
+check('work left in another repository is reported', () => {
+  const home = tmp();
+  const repo = path.join(home, 'Projects', 'leftovers');
+  fs.mkdirSync(repo, { recursive: true });
+  spawnSync('git', ['init', '-q', repo]);
+  fs.writeFileSync(path.join(repo, 'wip.txt'), 'half finished');
+  const out = runSessionStart(home, home);
+  assert.match(out, /leftovers/, out);
+  assert.match(out, /uncommitted/, out);
+});
+
+check('the repository you are standing in is not reported back to you', () => {
+  // You can see it. Saying so every session is noise.
+  const home = tmp();
+  const repo = path.join(home, 'Projects', 'current');
+  fs.mkdirSync(repo, { recursive: true });
+  spawnSync('git', ['init', '-q', repo]);
+  fs.writeFileSync(path.join(repo, 'wip.txt'), 'mine');
+  const out = runSessionStart(home, repo);
+  assert.doesNotMatch(out, /current.*uncommitted/, out);
+});
+
 process.stdout.write(`\n${failures === 0 ? 'all passed' : `${failures} failed`}\n`);
 process.exit(failures === 0 ? 0 : 1);

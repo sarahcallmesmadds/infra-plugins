@@ -38,7 +38,12 @@ const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 
-const GIT_TIMEOUT_MS = 1200;
+// Per git call. `git status --porcelain` on an ordinary repository is a few
+// milliseconds, so this is not a budget, it is a bound on something having gone
+// wrong: a network filesystem, an index lock, a repository mid-gc. Anything
+// that takes longer than this is not going to be worth waiting for at session
+// start.
+const GIT_TIMEOUT_MS = 400;
 
 const DEFAULTS = {
   // How far back counts as recent. Long enough to span a morning and an
@@ -53,7 +58,12 @@ const DEFAULTS = {
   depth: 2,
 
   // Never scan more than this many repositories, whatever discovery finds.
-  maxRepos: 25,
+  //
+  // Each one costs up to three git calls, and this runs in front of the first
+  // prompt of every session. Twelve is enough to cover the repositories anybody
+  // is realistically moving between in a day, and small enough that the worst
+  // case is still bounded by the deadline rather than by this number.
+  maxRepos: 12,
 
   // Uncommitted files before it is worth mentioning. One stray file is noise;
   // several mean somebody was in the middle of something.
@@ -91,8 +101,27 @@ function isRepo(dir) {
 // deadline cut the walk short, and a caller must not present a quiet result
 // from an incomplete walk as an all-clear. Same contract as the session scan,
 // for the same reason, and it has been got wrong there twice.
-function discover({ roots, depth, maxRepos, home = os.homedir(), deadline, extra = [] } = {}) {
-  const cfg = { ...DEFAULTS, roots, depth, maxRepos };
+function discover(opts = {}) {
+  const { home = os.homedir(), deadline, extra = [] } = opts;
+
+  // Written out rather than spread, and that is the point.
+  //
+  // `{ ...DEFAULTS, roots, depth, maxRepos }` looks like it falls back to the
+  // defaults and does the opposite: shorthand always sets the key, so an
+  // omitted argument arrives as `undefined` and overwrites the default with it.
+  // `discover({ roots })` therefore ran with `depth: undefined`, and since
+  // `undefined < 0` and `undefined === 0` are both false while `undefined - 1`
+  // is NaN, the walk had no depth limit at all. `maxRepos: undefined` removed
+  // the cap in the same breath, and `slice(0, undefined)` returned everything.
+  //
+  // So a function advertising a bounded walk performed an unbounded one, on
+  // exactly the call shape its own tests used. The production path passed
+  // concrete values and was never affected, which is why nothing showed it.
+  const cfg = {
+    roots: opts.roots === undefined ? DEFAULTS.roots : opts.roots,
+    depth: opts.depth === undefined ? DEFAULTS.depth : opts.depth,
+    maxRepos: opts.maxRepos === undefined ? DEFAULTS.maxRepos : opts.maxRepos,
+  };
   const found = [];
   const seen = new Set();
   let complete = true;
@@ -134,10 +163,18 @@ function discover({ roots, depth, maxRepos, home = os.homedir(), deadline, extra
 }
 
 // Uncommitted files and recent commits in one repository.
-function inspect(repo, { recentHours = DEFAULTS.recentHours, exec = execFileSync } = {}) {
-  const branch = (git(repo, ['branch', '--show-current'], exec) || '').trim() || null;
+// The deadline is checked between the git calls, not only between repositories.
+//
+// Checking only between repositories bounds the loop and not the work: three
+// calls each capped at their own timeout can start just under the deadline and
+// run well past it together. Every call here is preceded by a check, so the
+// overrun is one call rather than all of them.
+function inspect(repo, { recentHours = DEFAULTS.recentHours, exec = execFileSync, deadline } = {}) {
+  const expired = () => deadline != null && Date.now() >= deadline;
 
-  const status = git(repo, ['status', '--porcelain'], exec);
+  const branch = expired() ? null : (git(repo, ['branch', '--show-current'], exec) || '').trim() || null;
+
+  const status = expired() ? null : git(repo, ['status', '--porcelain'], exec);
   // null means the command failed, which is not the same as a clean tree. Left
   // as null so the caller can tell them apart rather than reporting a repo we
   // could not read as tidy.
@@ -145,7 +182,7 @@ function inspect(repo, { recentHours = DEFAULTS.recentHours, exec = execFileSync
     ? null
     : status.split('\n').filter((l) => l.trim()).length;
 
-  const log = git(repo, [
+  const log = expired() ? null : git(repo, [
     'log', `--since=${recentHours}.hours.ago`, '--pretty=format:%h|%ar|%s', '-10',
   ], exec);
   const commits = log == null ? null : log.split('\n').filter(Boolean).map((line) => {
@@ -181,7 +218,7 @@ function scan({
   let scanned = true;
   for (const repo of repos) {
     if (deadline != null && Date.now() >= deadline) { scanned = false; break; }
-    rows.push(inspect(repo, { recentHours: cfg.recentHours, exec }));
+    rows.push(inspect(repo, { recentHours: cfg.recentHours, exec, deadline }));
   }
 
   const notable = rows.filter((r) => (r.changed != null && r.changed >= cfg.minChanges)
