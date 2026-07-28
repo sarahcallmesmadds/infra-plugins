@@ -18,6 +18,22 @@ const { expandHome, githubToken } = require('./config');
 
 const GITHUB_API = 'https://api.github.com';
 
+// One spelling for a plugin name, so the three places that hold one can be
+// compared.
+//
+// The name arrives from three sources that agree only by luck: a Notion `Name`
+// typed by a person, a directory name in the plugin cache, and the part before
+// the `@` in a settings.json key. A row recorded as `Build-Loop` against a
+// directory called `build-loop` looked exactly like a plugin that was not
+// installed, and the report said so, quietly, in the reassuring direction.
+//
+// The unrecorded-plugin check already lowercased for its own comparison and the
+// installed and enabled lookups did not, so the same file disagreed with itself
+// about what counts as the same name.
+function pluginKey(name) {
+  return String(name == null ? '' : name).trim().toLowerCase();
+}
+
 // --- GitHub -----------------------------------------------------------------
 
 function resolveGithubToken(config) {
@@ -58,11 +74,30 @@ async function githubGet(urlPath, token) {
 async function repoFacts(owner, name, token) {
   const { status, body } = await githubGet(`/repos/${owner}/${name}`, token);
 
-  if (status === 404) return { checked: true, exists: false };
+  // A 404 means "deleted" only when something was allowed to look.
+  //
+  // GitHub answers 404, not 403, for a private repository on an unauthenticated
+  // request. It does not admit the repository exists, because saying "forbidden"
+  // would confirm it to anyone who asked. So without a token the two cases are
+  // the same response, and the 401/403 branch below, which was written for
+  // exactly this and says so, never fires on the case it describes.
+  //
+  // The contract in the README and in ip-audit is that a repository is reported
+  // missing only when GitHub answers 404 with a token attached. This is where
+  // that gets to be true. Without one the check is not run, it is skipped, and
+  // the report says so.
+  if (status === 404) {
+    if (!token) {
+      return {
+        checked: false,
+        reason: 'GitHub returned 404 with no token attached, and a private repository answers 404 the same way a deleted one does',
+      };
+    }
+    return { checked: true, exists: false };
+  }
   if (status === 401 || status === 403) {
-    // Unauthenticated requests cannot see private repositories, and a private
-    // repository is indistinguishable from a deleted one without a token. Say
-    // so rather than reporting it as missing.
+    // Reached when a token is present and cannot see this repository, which is
+    // a real answer: the token is wrong, expired, or scoped too narrowly.
     return { checked: false, reason: `GitHub returned ${status}; a token is required to see private repositories` };
   }
   if (status !== 200 || !body) {
@@ -152,7 +187,7 @@ function installedPlugins(config) {
       }
       if (!versions.length) continue;
       const version = versions[versions.length - 1];
-      found.set(plugin.name, {
+      found.set(pluginKey(plugin.name), {
         marketplace: marketplace.name,
         version,
         versionsOnDisk: versions,
@@ -185,7 +220,7 @@ function enabledPlugins(config) {
     return enabled;
   }
   for (const [key, value] of Object.entries(settings.enabledPlugins || {})) {
-    enabled.set(key.split('@')[0], value === true);
+    enabled.set(pluginKey(key.split('@')[0]), value === true);
   }
   return enabled;
 }
@@ -243,6 +278,7 @@ async function gather(rows, config, options = {}) {
 
 module.exports = {
   gather,
+  pluginKey,
   repoFacts,
   repoTree,
   parseRepoUrl,

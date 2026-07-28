@@ -22,12 +22,17 @@
 'use strict';
 
 const assert = require('assert');
+const fs = require('fs');
+const os = require('os');
 const path = require('path');
 
 const ROOT = path.join(__dirname, '..', 'plugins', 'ip-inventory');
 const { toRow } = require(path.join(ROOT, 'scripts', 'notion'));
 const { DEFAULTS } = require(path.join(ROOT, 'scripts', 'config'));
 const { classify } = require(path.join(ROOT, 'scripts', 'diff'));
+const {
+  repoFacts, pluginKey, installedPlugins, enabledPlugins,
+} = require(path.join(ROOT, 'scripts', 'reality'));
 
 const fixture = require('./fixtures/ip-inventory-rows.json');
 const config = { ...DEFAULTS };
@@ -64,9 +69,14 @@ function checksOn(rows, realityObject, name) {
 }
 
 let failed = 0;
+// Counted rather than written down. The summary line said "16 checks" as a
+// literal, so adding one made the count wrong and nothing said so, which is a
+// small version of the thing this whole file is testing for.
+let passed = 0;
 function check(what, fn) {
   try {
     fn();
+    passed += 1;
     console.log(`  ok    ${what}`);
   } catch (error) {
     failed += 1;
@@ -277,5 +287,104 @@ check('a plugin installed but absent from the inventory is surfaced', () => {
   assert.strictEqual(found.rowId, null, 'there is no row, so there is no row id');
 });
 
-console.log(`\n16 checks, ${failed} failed`);
-process.exit(failed === 0 ? 0 : 1);
+// --------------------------------------------------- a 404 without a token ----
+//
+// GitHub answers 404, not 403, for a private repository on an unauthenticated
+// request: saying "forbidden" would confirm the repository exists to anyone who
+// asked. So without a token, deleted and private are the same response.
+//
+// repoFacts mapped every 404 to exists: false. The 401/403 branch that would
+// have caught this was written for exactly this case, and says so in its own
+// comment, and cannot fire on it. The report then said, in one document, that
+// repository checks were skipped for lack of a token AND that those same
+// repositories were missing.
+//
+// The contract in the README and in ip-audit is that a repository is reported
+// missing only when GitHub answers 404 with a token attached.
+
+const withFetch = async (status, body, fn) => {
+  const original = globalThis.fetch;
+  globalThis.fetch = async () => ({ status, json: async () => body });
+  try {
+    return await fn();
+  } finally {
+    globalThis.fetch = original;
+  }
+};
+
+async function checkAsync(what, fn) {
+  try {
+    await fn();
+    passed += 1;
+    console.log(`  ok    ${what}`);
+  } catch (err) {
+    failed += 1;
+    console.log(`  FAIL  ${what}\n          ${err.message}`);
+  }
+}
+
+// A row can only be reported missing by a check that ran, so this is the
+// classify half of the same contract.
+check('a repository that was not checked produces no missing finding', () => {
+  const target = row('sarahcallmesmadds/plugins');
+  const state = reality({
+    hasGithubToken: false,
+    repos: new Map([[target.repo, { checked: false, reason: 'no token' }]]),
+  });
+  const out = classify([target], state, config);
+  assert.deepStrictEqual(
+    out.findings.filter((f) => f.check === 'repo-missing'),
+    [],
+    'an unchecked repository must not be reported as gone',
+  );
+  assert.ok(out.skipped.length > 0, 'and it has to be listed as skipped rather than dropped');
+});
+
+// ------------------------------------------------------- name normalisation ----
+
+check('a plugin name has one spelling for comparison', () => {
+  assert.strictEqual(pluginKey(' Build-Loop '), 'build-loop');
+  assert.strictEqual(pluginKey('build-loop'), 'build-loop');
+  assert.strictEqual(pluginKey(null), '');
+});
+
+check('the installed map is keyed so a differently cased row still matches', () => {
+  // The directory on disk is whatever the marketplace called it. The Notion row
+  // is whatever a person typed. These met only by luck.
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ip-installed-'));
+  fs.mkdirSync(path.join(home, 'cache', 'smadds', 'Build-Loop', '0.1.0'), { recursive: true });
+  const found = installedPlugins({ ...DEFAULTS, pluginCacheDir: path.join(home, 'cache') });
+  assert.ok(found.has('build-loop'), `keys were ${[...found.keys()].join(', ')}`);
+});
+
+check('the enabled map is keyed the same way', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ip-enabled-'));
+  const settings = path.join(home, 'settings.json');
+  fs.writeFileSync(settings, JSON.stringify({ enabledPlugins: { 'Build-Loop@smadds': true } }));
+  const found = enabledPlugins({ ...DEFAULTS, settingsPath: settings });
+  assert.strictEqual(found.get('build-loop'), true, `keys were ${[...found.keys()].join(', ')}`);
+});
+
+(async () => {
+  await checkAsync('a 404 with no token is not a deletion', async () => {
+    const facts = await withFetch(404, null, () => repoFacts('o', 'r', null));
+    assert.strictEqual(facts.checked, false, 'without a token this check did not run');
+    assert.notStrictEqual(facts.exists, false, 'and it must not claim the repository is gone');
+    assert.match(facts.reason, /private/i);
+  });
+
+  await checkAsync('a 404 with a token is a deletion', async () => {
+    // The check the tool exists for still has to work.
+    const facts = await withFetch(404, null, () => repoFacts('o', 'r', 'ghp_token'));
+    assert.strictEqual(facts.checked, true);
+    assert.strictEqual(facts.exists, false);
+  });
+
+  await checkAsync('a 403 with a token is still an unrun check', async () => {
+    const facts = await withFetch(403, null, () => repoFacts('o', 'r', 'ghp_token'));
+    assert.strictEqual(facts.checked, false);
+  });
+
+  console.log(`\n${passed + failed} checks, ${failed} failed`);
+  process.exit(failed === 0 ? 0 : 1);
+})();

@@ -18,6 +18,11 @@
 
 'use strict';
 
+// The one definition of how a plugin name is spelled for comparison. Imported
+// rather than repeated, because two copies of a normalisation rule drifting
+// apart is the bug this is here to fix.
+const { pluginKey } = require('./reality');
+
 // Every check this file can perform, with its bucket. Keeping them in one table
 // means the report can say which checks ran even when they all pass.
 const CHECKS = {
@@ -199,7 +204,7 @@ function classify(rows, reality, config) {
     // --- installed plugin state ---------------------------------------------
     const plugin = nearestPlugin(row, byId);
     if (plugin) {
-      const installed = reality.installed.get(plugin.name);
+      const installed = reality.installed.get(pluginKey(plugin.name));
       const newest = installed
         ? `the newest copy of "${plugin.name}" on disk is ${installed.version}`
         : '';
@@ -251,7 +256,7 @@ function classify(rows, reality, config) {
             detail: `"${plugin.name}" ${installed.version} is in the plugin cache.`,
           }));
         }
-        const isEnabled = reality.enabled.get(plugin.name);
+        const isEnabled = reality.enabled.get(pluginKey(plugin.name));
         if (installed && isEnabled !== undefined && row.enabled !== isEnabled) {
           findings.push(finding(row, 'enabled-changed', {
             field: config.properties.enabled,
