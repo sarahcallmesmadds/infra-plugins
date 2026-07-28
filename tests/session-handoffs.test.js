@@ -380,6 +380,96 @@ check('a dry run reports the prune without performing it', () => {
   assert.ok(handoffs.readIndex(home).dry, 'a dry run edited the index');
 });
 
+check('an entry whose directory cannot be read is kept, not pruned', () => {
+  // The unmounted volume. Project handoffs live next to their work and work
+  // lives on external disks and network shares, where existsSync says false
+  // for something that is merely offline. The index holds the one location
+  // that cannot be reconstructed, so pruning on that answer loses the ability
+  // to find a document that is still perfectly there.
+  const home = tmpHome();
+  const volume = path.join(home, 'Volumes', 'work');
+  const repo = path.join(volume, 'offsite');
+  roundTrip(repo, home);
+  assert.ok(handoffs.readIndex(home).offsite, 'setup');
+
+  fs.rmSync(volume, { recursive: true, force: true });   // the disk goes away
+
+  const out = cli(['archive', '--json'], home);
+  assert.deepStrictEqual(out.pruned, [], 'an offline handoff was pruned');
+  assert.deepStrictEqual(out.unreachable.map((u) => u.slug), ['offsite']);
+  assert.ok(handoffs.readIndex(home).offsite, 'the only pointer to that handoff was destroyed');
+});
+
+check('the entry comes back to life when the volume returns', () => {
+  const home = tmpHome();
+  const volume = path.join(home, 'Volumes', 'work');
+  const repo = path.join(volume, 'offsite');
+  const { target } = roundTrip(repo, home);
+  const body = fs.readFileSync(target.path, 'utf8');
+
+  fs.rmSync(volume, { recursive: true, force: true });
+  cli(['archive', '--json'], home);
+  assert.strictEqual(cli(['find', 'offsite', '--json'], home).match, null, 'found while offline');
+
+  fs.mkdirSync(repo, { recursive: true });               // remounted
+  fs.writeFileSync(target.path, body);
+  const found = cli(['find', 'offsite', '--json'], home);
+  assert.ok(found.match, 'the handoff is back but pickup can no longer find it by name');
+  assert.strictEqual(found.match.path, target.path);
+});
+
+check('a file missing from a directory that is right there is still pruned', () => {
+  // The other side of it. Conservatism that never prunes anything would make
+  // the sweep pointless, and this is the case that prompted the command.
+  const home = tmpHome();
+  const repo = path.join(home, 'code', 'really-deleted');
+  roundTrip(repo, home);
+  fs.rmSync(path.join(repo, 'HANDOFF.md'));              // directory stays
+
+  const out = cli(['archive', '--json'], home);
+  assert.deepStrictEqual(out.pruned.map((p) => p.slug), ['really-deleted']);
+  assert.deepStrictEqual(out.unreachable, []);
+});
+
+check('a dry run previews the repoints as well as the moves', () => {
+  // A preview that omits one of the three things the sweep does is not a
+  // preview of the sweep.
+  const home = tmpHome();
+  const t = cli(['target', 'previewed', '--cwd', home, '--json'], home);
+  fs.writeFileSync(t.path, 'old');
+  AGE(t.path, 60);
+
+  const out = cli(['archive', '--dry-run', '--json'], home);
+  assert.deepStrictEqual(out.moved, ['previewed']);
+  assert.deepStrictEqual(out.repointed.map((r) => r.slug), ['previewed'], 'the repoint was not previewed');
+  assert.strictEqual(handoffs.readIndex(home).previewed.kind, 'central', 'a dry run edited the index');
+  assert.ok(fs.existsSync(t.path), 'a dry run moved a file');
+});
+
+check('an index that could not be written is not reported as changed', () => {
+  // writeIndex swallows its errors on purpose, so it must never be treated as
+  // having succeeded. Reporting work that did not reach the disk is the exact
+  // shape this plugin keeps catching in itself.
+  const home = tmpHome();
+  const repo = path.join(home, 'code', 'unwritable');
+  roundTrip(repo, home);
+  fs.rmSync(path.join(repo, 'HANDOFF.md'));
+
+  const root = handoffs.handoffRoot(home);
+  fs.chmodSync(root, 0o500);                             // readable, not writable
+  try {
+    const out = cli(['archive', '--json'], home);
+    assert.deepStrictEqual(out.pruned.map((p) => p.slug), ['unwritable']);
+    assert.strictEqual(out.indexWritten, false, 'a failed write was reported as a completed prune');
+    assert.ok(handoffs.readIndex(home).unwritable, 'setup: the entry should still be on disk');
+
+    const human = cli(['archive'], home);
+    assert.match(human.raw, /could not be written/i, human.raw);
+  } finally {
+    fs.chmodSync(root, 0o700);
+  }
+});
+
 check('the sweep says out loud that it touched the index', () => {
   const home = tmpHome();
   const repo = path.join(home, 'code', 'quietly');

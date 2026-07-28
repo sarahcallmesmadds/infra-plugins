@@ -187,20 +187,62 @@ function forgetHandoff(slug, home = os.homedir()) {
 // entry, and the file only grows.
 //
 // Never touches an entry whose file is present, so this cannot lose a handoff.
+// Absent and unreachable are different answers, and only one of them is
+// evidence of anything.
+//
+// A missing file is not proof the handoff is gone. Project handoffs live next
+// to their work, and work lives on external disks, network shares and mounts
+// that are not always up. `existsSync` returns false for all of it, so a prune
+// that trusts it deletes the entry for a handoff that is merely offline.
+//
+// That is the worst thing this file could do. The index holds the one location
+// that cannot be reconstructed: a project handoff can be anywhere, the guessed
+// paths only cover ~/Projects/<slug>, and the writer is the only thing that
+// ever knew where the file went. Losing the entry does not lose the document,
+// it loses the ability to find it by name, which is the entire point.
+//
+// So the file is only treated as gone when the directory that would contain it
+// is right there and the file is not in it. If the directory is missing too,
+// nothing here can tell a deleted project from an unmounted volume, and the
+// entry stays. The cost is that a genuinely deleted project keeps its entry,
+// which `forget` exists to clear and which costs nothing until then, because
+// every lookup verifies the file anyway.
+function entryState(entry) {
+  const target = entry && entry.path;
+  if (!target) return 'gone';
+  try {
+    if (fs.existsSync(target)) return 'present';
+    return fs.existsSync(path.dirname(target)) ? 'gone' : 'unreachable';
+  } catch (_) {
+    // A path that cannot even be tested is the clearest case of not knowing.
+    return 'unreachable';
+  }
+}
+
 function pruneIndex({ home = os.homedir(), dryRun = false } = {}) {
   const handoffs = readIndex(home);
   const dropped = [];
+  const unreachable = [];
   const kept = {};
 
   for (const [key, entry] of Object.entries(handoffs)) {
-    let present = false;
-    try { present = !!(entry && entry.path) && fs.existsSync(entry.path); } catch (_) { present = false; }
-    if (present) kept[key] = entry;
-    else dropped.push({ slug: key, path: entry && entry.path });
+    const state = entryState(entry);
+    if (state === 'gone') {
+      dropped.push({ slug: key, path: entry && entry.path });
+      continue;
+    }
+    kept[key] = entry;
+    if (state === 'unreachable') unreachable.push({ slug: key, path: entry.path });
   }
 
-  if (dropped.length && !dryRun) writeIndex(kept, home);
-  return { dropped };
+  // Whether the write succeeded, so the caller can say what happened rather
+  // than what was attempted. `writeIndex` swallows its errors on purpose, and
+  // reporting a drop that never reached the disk is the exact shape of bug
+  // this plugin keeps finding in itself.
+  let written = true;
+  if (dropped.length && !dryRun) written = writeIndex(kept, home) !== null;
+
+  return { dropped, unreachable, written };
 }
 
 function slugify(text) {
@@ -279,7 +321,7 @@ function archiveStale({ days = DEFAULT_STALE_DAYS, home = os.homedir(), now = Da
     // No handoffs directory yet. Nothing to sweep, and creating one here would
     // be a side effect nobody asked for.
     return {
-      moved, root, skipped: true, repointed: [], pruned: [],
+      moved, root, skipped: true, repointed: [], pruned: [], unreachable: [], indexWritten: true,
     };
   }
 
@@ -314,8 +356,15 @@ function archiveStale({ days = DEFAULT_STALE_DAYS, home = os.homedir(), now = Da
   //
   // The kind changes with the move, so `pickup` can still open with the note
   // that this handoff was archived.
+  // Worked out on a dry run too, rather than skipped.
+  //
+  // A preview that omits one of the three things the sweep does is not a
+  // preview of the sweep. The gate used to cover the whole block, so a dry run
+  // reported moves and prunes and stayed silent about the index entries it
+  // would rewrite. Only the write is conditional now.
   const repointed = [];
-  if (!dryRun && relocations.length) {
+  let repointWritten = true;
+  if (relocations.length) {
     const handoffs = readIndex(home);
     let touched = false;
     for (const [key, entry] of Object.entries(handoffs)) {
@@ -325,13 +374,21 @@ function archiveStale({ days = DEFAULT_STALE_DAYS, home = os.homedir(), now = Da
       repointed.push({ slug: key, from: hit.from, to: hit.to });
       touched = true;
     }
-    if (touched) writeIndex(handoffs, home);
+    if (touched && !dryRun) repointWritten = writeIndex(handoffs, home) !== null;
   }
 
-  const { dropped } = pruneIndex({ home, dryRun });
+  const { dropped, unreachable, written } = pruneIndex({ home, dryRun });
 
   return {
-    moved, root, skipped: false, repointed, pruned: dropped,
+    moved,
+    root,
+    skipped: false,
+    repointed,
+    pruned: dropped,
+    unreachable,
+    // False when the index could not be written, so the printed summary can
+    // say the change did not land instead of reporting it as done.
+    indexWritten: repointWritten && written,
   };
 }
 

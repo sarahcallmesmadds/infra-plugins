@@ -152,14 +152,29 @@ const COMMANDS = {
     // Said out loud rather than done quietly. The sweep now edits the index as
     // well as the folder, and a command that changes something it does not
     // mention is the shape of every bug in this plugin so far.
+    const plural = (n) => (n === 1 ? 'entry' : 'entries');
+
     if (result.repointed.length) {
-      lines.push(`Repointed ${result.repointed.length} index ${result.repointed.length === 1 ? 'entry' : 'entries'} to the archive: `
+      const verb2 = opts.dryRun ? 'Would repoint' : 'Repointed';
+      lines.push(`${verb2} ${result.repointed.length} index ${plural(result.repointed.length)} to the archive: `
         + result.repointed.map((r) => r.slug).join(', '));
     }
     if (result.pruned.length) {
       const would = opts.dryRun ? 'Would drop' : 'Dropped';
-      lines.push(`${would} ${result.pruned.length} index ${result.pruned.length === 1 ? 'entry' : 'entries'} pointing at files that are gone: `
+      lines.push(`${would} ${result.pruned.length} index ${plural(result.pruned.length)} pointing at files that are gone: `
         + result.pruned.map((p) => p.slug).join(', '));
+    }
+    // Kept, and worth saying. Silence here reads as "everything was checked",
+    // when in fact one of these is a handoff whose disk was not mounted.
+    if (result.unreachable.length) {
+      const it = result.unreachable.length === 1 ? 'it' : 'them';
+      lines.push(`Left ${result.unreachable.length} index ${plural(result.unreachable.length)} alone, `
+        + `because the directory holding ${it} could not be read: ${result.unreachable.map((u) => u.slug).join(', ')}`);
+    }
+    // Last, and unmissable. Everything above this describes what was worked
+    // out; this is whether any of it reached the disk.
+    if (!result.indexWritten) {
+      lines.push('', 'The index could not be written, so none of the index changes above actually happened.');
     }
     emit(opts, result, lines);
   },
