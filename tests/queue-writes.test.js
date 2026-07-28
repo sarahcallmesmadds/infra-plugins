@@ -57,8 +57,32 @@ function region(text, from, to) {
 const READS = /read the current queue entry/i;
 const APPENDS = /append to (the )?(existing )?`?notes`?/i;
 
+// Phrasings that tell the model to skip the read it was just told to do. These
+// are the reason the two checks above are not enough on their own: revert-fix
+// said "Read the current queue entry JSON (already loaded — use what you have)"
+// and passed both, because the words the checks look for were all present and
+// the parenthetical that cancelled them was not looked at.
+//
+// Matched against the whole file rather than a region. There is no place in an
+// updater where reusing a copy read earlier is correct: the point of the read
+// is that the file may have changed since.
+const CANCELS_THE_READ = [
+  /already loaded/i,
+  /use what you have/i,
+  /from (memory|what you (already )?read)/i,
+  /no need to re-?read/i,
+];
+
+// Counted as they run and then compared, rather than computed from the shape of
+// the loop. This line said `UPDATERS.length * 2 + 4`, which looks derived and is
+// not: adding a third check per updater left it reporting 10 while 13 ran. A
+// formula that has to be re-derived by hand is a literal wearing a disguise.
+const EXPECTED_CHECKS = 13;
+
 let failed = 0;
+let ran = 0;
 function check(what, fn) {
+  ran += 1;
   try {
     fn();
     console.log(`  ok    ${what}`);
@@ -83,6 +107,22 @@ for (const name of UPDATERS) {
       `${name} no longer says to append to the notes array. Notes are the audit trail, `
       + 'and they are read at exactly the moment something has gone wrong.'
     );
+  });
+
+  check(`${name} does not then excuse the model from the read`, () => {
+    const text = skill(name);
+    for (const pattern of CANCELS_THE_READ) {
+      // The prose explaining why this phrasing was wrong necessarily quotes it,
+      // so a line that also says the words were wrong is not an offence.
+      const offending = text.split('\n').filter((line) =>
+        pattern.test(line) && !/used to say|was wrong|which is an instruction/i.test(line));
+      assert.deepStrictEqual(
+        offending, [],
+        `${name} tells the model it can skip re-reading the entry:\n        `
+        + offending.join('\n        ')
+        + '\n        The read exists because the file may have changed since.'
+      );
+    }
   });
 }
 
@@ -120,5 +160,14 @@ check('the checks would actually catch one', () => {
   assert.match(fixed, APPENDS, 'the append pattern misses the wording the skills actually use');
 });
 
-console.log(`\n${UPDATERS.length * 2 + 4} checks, ${failed} failed`);
+if (ran !== EXPECTED_CHECKS) {
+  failed += 1;
+  console.log(
+    `  FAIL  the file runs the number of checks it expects to\n`
+    + `        ran ${ran}, expected ${EXPECTED_CHECKS}. If you added or removed a `
+    + `check, move EXPECTED_CHECKS. If you did not, one has gone missing.`
+  );
+}
+
+console.log(`\n${ran} checks, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);
