@@ -42,8 +42,23 @@ const SKILLS = {
   'built-check': read(BUILD_LOOP, 'skills', 'built-check', 'SKILL.md'),
 };
 
+// The number of checks this file is expected to run. It is asserted at the
+// bottom rather than printed from a literal, because on 2026-07-28 three checks
+// were added here and the hardcoded tally was left at 17, so the suite ran 20
+// and said 17. That is the failure this repository keeps finding: the value was
+// right, the sentence printed beside it was not.
+//
+// Counting as they run fixes the wrong number. It does not fix the other half,
+// which is why the literal was here at all: a check that quietly disappears
+// should be noticed. So the count is derived AND compared, and this constant
+// has to move when a check is added or removed. Forgetting now fails the suite
+// instead of printing a smaller number nobody reads.
+const EXPECTED_CHECKS = 20;
+
 let failed = 0;
+let ran = 0;
 function check(what, fn) {
+  ran += 1;
   try {
     fn();
     console.log(`  ok    ${what}`);
@@ -333,5 +348,14 @@ check('plugin-qualified keys are unique across the whole repository', () => {
   }
 });
 
-console.log(`\n17 checks, ${failed} failed`);
+if (ran !== EXPECTED_CHECKS) {
+  failed += 1;
+  console.log(
+    `  FAIL  the file runs the number of checks it expects to\n`
+    + `        ran ${ran}, expected ${EXPECTED_CHECKS}. If you added or removed a `
+    + `check, move EXPECTED_CHECKS. If you did not, one has gone missing.`
+  );
+}
+
+console.log(`\n${ran} checks, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);
