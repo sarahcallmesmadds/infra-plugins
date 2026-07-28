@@ -73,6 +73,102 @@ check('an empty topic still produces a writable path', () => {
   assert.match(t.path, /HANDOFF-session\.md$/);
 });
 
+// ----------------------------------------------------------- round trip ----
+//
+// The bug these exist for: wrap wrote a project handoff next to the work, and
+// pickup looked for it only under ~/Projects/<slug>. Anyone whose repositories
+// live anywhere else got a wrap that reported success and a pickup that
+// reported the handoff did not exist. Both were behaving exactly as written.
+//
+// The reason it survived a passing suite is the shape of the old tests. One
+// asserted where writeTarget puts the file. Another asserted what findHandoff
+// locates. Neither ever handed the output of the first to the second, so the
+// gap between them was the one thing nothing looked at.
+//
+// So these drive the CLI end to end, in the order a real wrap does it: ask
+// where to write, write there, then look it up by the slug that was printed.
+
+const { spawnSync } = require('child_process');
+const CLI = path.join(ROOT, 'scripts', 'cli.js');
+
+function cli(args, home) {
+  const run = spawnSync(process.execPath, [CLI, ...args, '--home', home], { encoding: 'utf8' });
+  try { return JSON.parse(run.stdout); } catch (_) { return { raw: run.stdout, err: run.stderr }; }
+}
+
+function roundTrip(repoPath, home) {
+  fs.mkdirSync(path.join(repoPath, '.git'), { recursive: true });
+  const target = cli(['target', 'anything', '--cwd', repoPath, '--json'], home);
+  fs.writeFileSync(target.path, '# Session Handoff\n');
+  return { target, found: cli(['find', target.slug, '--json'], home) };
+}
+
+check('a project outside ~/Projects can be written and then found again', () => {
+  const home = tmpHome();
+  const repo = path.join(home, 'code', 'elsewhere', 'my-app');
+  const { target, found } = roundTrip(repo, home);
+  assert.strictEqual(target.path, path.join(repo, 'HANDOFF.md'));
+  assert.ok(found.match, `wrap wrote ${target.path} and pickup could not find it`);
+  assert.strictEqual(found.match.path, target.path);
+});
+
+check('a project at an absolute path far from home round trips', () => {
+  const home = tmpHome();
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'faraway-'));
+  const { target, found } = roundTrip(repo, home);
+  assert.ok(found.match, `could not find a handoff at ${target.path}`);
+  assert.strictEqual(found.match.path, target.path);
+});
+
+check('a directory name with punctuation round trips', () => {
+  // writeTarget used to return the raw basename while findHandoff slugified
+  // whatever it was given, so `My.Repo` printed a pickup line that then
+  // searched for something else entirely.
+  const home = tmpHome();
+  const repo = path.join(home, 'code', 'My.Repo');
+  const { target, found } = roundTrip(repo, home);
+  assert.strictEqual(target.slug, 'my-repo');
+  assert.ok(found.match, 'the printed slug did not resolve back to the file');
+});
+
+check('a central handoff still round trips', () => {
+  const home = tmpHome();
+  const target = cli(['target', 'session plugin', '--cwd', home, '--json'], home);
+  fs.mkdirSync(path.dirname(target.path), { recursive: true });
+  fs.writeFileSync(target.path, '# x');
+  const found = cli(['find', target.slug, '--json'], home);
+  assert.ok(found.match);
+  assert.strictEqual(found.match.kind, 'central');
+});
+
+check('a recorded handoff whose file was deleted reports not found', () => {
+  // The index is a convenience, never an authority. A stale entry must degrade
+  // to "not found" rather than to a confident path that resolves to nothing.
+  const home = tmpHome();
+  const repo = path.join(home, 'code', 'gone');
+  const { target } = roundTrip(repo, home);
+  fs.rmSync(target.path);
+  assert.strictEqual(cli(['find', target.slug, '--json'], home).match, null);
+});
+
+check('a project handoff appears in the menu shown for a bare pickup', () => {
+  // Built from the central folder alone, that list showed only the handoffs
+  // that were already easy to find by name.
+  const home = tmpHome();
+  const repo = path.join(home, 'code', 'listed-app');
+  roundTrip(repo, home);
+  const recent = cli(['recent', '--json'], home);
+  assert.ok(recent.handoffs.some((h) => h.slug === 'listed-app'), JSON.stringify(recent));
+});
+
+check('recording is skippable, so asking where to write changes nothing', () => {
+  const home = tmpHome();
+  const repo = path.join(home, 'code', 'unrecorded');
+  fs.mkdirSync(path.join(repo, '.git'), { recursive: true });
+  cli(['target', 'x', '--cwd', repo, '--no-record', '--json'], home);
+  assert.deepStrictEqual(handoffs.readIndex(home), {});
+});
+
 // --------------------------------------------------------------- lookup ----
 
 check('the central handoff is preferred over the archived copy', () => {

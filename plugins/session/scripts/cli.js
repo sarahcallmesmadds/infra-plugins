@@ -33,7 +33,7 @@ const configMod = require(path.join(__dirname, 'config.js'));
 
 function parseArgs(argv) {
   const out = {
-    command: null, rest: [], json: false, dryRun: false, self: null,
+    command: null, rest: [], json: false, dryRun: false, self: null, noRecord: false,
     days: handoffs.DEFAULT_STALE_DAYS, cwd: process.cwd(), home: os.homedir(),
   };
   for (let i = 0; i < argv.length; i += 1) {
@@ -44,6 +44,7 @@ function parseArgs(argv) {
     else if (a === '--cwd') out.cwd = argv[++i];
     else if (a === '--home') out.home = argv[++i];
     else if (a === '--self') out.self = argv[++i];
+    else if (a === '--no-record') out.noRecord = true;
     else if (!out.command) out.command = a;
     else out.rest.push(a);
   }
@@ -141,8 +142,22 @@ const COMMANDS = {
     }));
   },
 
+  // Where wrap should write, and a note of it so pickup can find it later.
+  //
+  // The recording happens here, before the file exists, because this is the
+  // only moment anything knows both the slug and the path. A project handoff
+  // goes next to the work and the work can be anywhere, so nothing downstream
+  // can reconstruct that path from the slug. The previous version guessed
+  // `~/Projects/<slug>` and silently failed for every repository kept
+  // somewhere else.
+  //
+  // Recording an intent that is never fulfilled is harmless: every lookup
+  // checks the file is actually there.
   target(opts) {
     const t = handoffs.writeTarget(opts.cwd, opts.rest.join(' '), opts.home);
+    if (!opts.noRecord) {
+      handoffs.recordHandoff({ slug: t.slug, target: t.path, kind: t.kind, home: opts.home });
+    }
     if (opts.json) return emit(opts, t, []);
     emit(opts, {}, [t.path, `  kind: ${t.kind}, pickup slug: ${t.slug}`]);
   },

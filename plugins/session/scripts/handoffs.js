@@ -69,10 +69,70 @@ function writeTarget(cwd, topicSlug, home = os.homedir()) {
       });
 
   if (isProjectRoot) {
-    return { path: path.join(cwd, 'HANDOFF.md'), slug: path.basename(cwd), kind: 'project' };
+    // Slugified, not the raw basename. `pickup` runs whatever it is given
+    // through slugify before looking, so a directory named `My.Repo` printed a
+    // pickup line of `/pickup My.Repo` that then searched for `my-repo` and
+    // found nothing. The two have to agree, so only one of them decides.
+    return { path: path.join(cwd, 'HANDOFF.md'), slug: slugify(path.basename(cwd)), kind: 'project' };
   }
   const slug = slugify(topicSlug) || 'session';
   return { path: path.join(handoffRoot(home), `HANDOFF-${slug}.md`), slug, kind: 'central' };
+}
+
+// ---------------------------------------------------------------------------
+// The index, and why guessing cannot replace it.
+//
+// A central handoff is findable by name because this decides its filename. A
+// project handoff is not: it goes next to the work, and the work can be
+// anywhere. Reconstructing that path from a slug means guessing the parent
+// directory, and the first version guessed `~/Projects`, which meant the
+// headline loop silently failed for anyone whose repositories live somewhere
+// else. Wrap wrote the file and reported success, pickup looked in one place
+// and reported that nothing existed. Both were working as written.
+//
+// No amount of adding candidate directories fixes that, it just moves the line
+// between people it works for and people it does not. The writer is the only
+// thing that knows where the file went, so the writer records it.
+//
+// The index is a convenience, never an authority. Every lookup checks the file
+// is still there, so a moved or deleted project degrades to "not found"
+// instead of to a confident path that resolves to nothing.
+
+function indexPath(home = os.homedir()) {
+  return path.join(handoffRoot(home), 'index.json');
+}
+
+function readIndex(home = os.homedir()) {
+  try {
+    const raw = JSON.parse(fs.readFileSync(indexPath(home), 'utf8'));
+    return raw && typeof raw.handoffs === 'object' && raw.handoffs ? raw.handoffs : {};
+  } catch (_) {
+    return {};
+  }
+}
+
+// Record where a handoff went, so it can be found by name later.
+//
+// Called with the intended path, before the file necessarily exists. That is
+// deliberate: an entry pointing at a file that was never written costs nothing,
+// because every read verifies existence, whereas an entry that was never
+// written costs the whole lookup.
+function recordHandoff({ slug, target, kind, home = os.homedir(), now = Date.now() }) {
+  if (!slug || !target) return null;
+  const handoffs = readIndex(home);
+  handoffs[slugify(slug)] = { path: target, kind: kind || 'project', recorded_at: new Date(now).toISOString() };
+  try {
+    fs.mkdirSync(handoffRoot(home), { recursive: true });
+    const file = indexPath(home);
+    const tmp = `${file}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, `${JSON.stringify({ version: 1, handoffs }, null, 2)}\n`);
+    fs.renameSync(tmp, file);
+    return handoffs;
+  } catch (_) {
+    // Losing the index entry degrades pickup to the guessed locations below.
+    // It must never take the wrap down, since the handoff itself is the point.
+    return null;
+  }
 }
 
 function slugify(text) {
@@ -99,6 +159,27 @@ function searchPaths(slug, home = os.homedir()) {
 }
 
 function findHandoff(slug, home = os.homedir()) {
+  // The index first, because it holds the one location that cannot be guessed:
+  // a project handoff sitting next to work that lives anywhere on the disk.
+  //
+  // Still verified rather than trusted. A recorded path whose file has since
+  // been moved or deleted falls through to the candidates below, which is the
+  // same outcome as never having recorded it. The index can only help.
+  const recorded = readIndex(home)[slugify(slug)];
+  if (recorded && recorded.path) {
+    try {
+      if (fs.existsSync(recorded.path)) {
+        return {
+          path: recorded.path,
+          kind: recorded.kind || 'project',
+          mtime: fs.statSync(recorded.path).mtimeMs,
+        };
+      }
+    } catch (_) {
+      // Fall through to the guessed locations.
+    }
+  }
+
   for (const candidate of searchPaths(slug, home)) {
     try {
       if (fs.existsSync(candidate.path)) {
@@ -155,6 +236,8 @@ function archiveStale({ days = DEFAULT_STALE_DAYS, home = os.homedir(), now = Da
 // The newest handoffs, for the menu `pickup` shows when given no slug.
 function recentHandoffs({ home = os.homedir(), limit = 5 } = {}) {
   const out = [];
+  const seen = new Set();
+
   for (const dir of [handoffRoot(home), archiveRoot(home)]) {
     let names;
     try { names = fs.readdirSync(dir); } catch (_) { continue; }
@@ -168,9 +251,24 @@ function recentHandoffs({ home = os.homedir(), limit = 5 } = {}) {
           mtime: fs.statSync(full).mtimeMs,
           archived: dir === archiveRoot(home),
         });
+        seen.add(full);
       } catch (_) { /* skip */ }
     }
   }
+
+  // Project handoffs live next to their work rather than in this folder, so a
+  // listing built only from the folder shows none of them. That made the menu
+  // shown for a bare `/pickup` a list of exactly the handoffs that were already
+  // easy to find by name, and none of the ones that were not.
+  for (const [slug, entry] of Object.entries(readIndex(home))) {
+    if (!entry || !entry.path || seen.has(entry.path)) continue;
+    try {
+      out.push({ slug, path: entry.path, mtime: fs.statSync(entry.path).mtimeMs, archived: false });
+    } catch (_) {
+      // Recorded but gone. Not shown, and not an error.
+    }
+  }
+
   return out.sort((a, b) => b.mtime - a.mtime).slice(0, limit);
 }
 
@@ -178,6 +276,9 @@ module.exports = {
   DEFAULT_STALE_DAYS,
   handoffRoot,
   archiveRoot,
+  indexPath,
+  readIndex,
+  recordHandoff,
   memoryDir,
   writeTarget,
   slugify,
