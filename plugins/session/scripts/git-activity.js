@@ -182,12 +182,23 @@ function inspect(repo, { recentHours = DEFAULTS.recentHours, exec = execFileSync
     ? null
     : status.split('\n').filter((l) => l.trim()).length;
 
+  // `%at` rides along with `%ar` because the two answer different questions.
+  // `%ar` is what gets printed, "2 hours ago", and it cannot be compared. `%at`
+  // is a unix timestamp and is what the ordering in `scan` sorts on. Asking for
+  // the relative form alone is why the "newest first" claim in that header was
+  // never true: nothing in the row could be put in order.
   const log = expired() ? null : git(repo, [
-    'log', `--since=${recentHours}.hours.ago`, '--pretty=format:%h|%ar|%s', '-10',
+    'log', `--since=${recentHours}.hours.ago`, '--pretty=format:%h|%at|%ar|%s', '-10',
   ], exec);
   const commits = log == null ? null : log.split('\n').filter(Boolean).map((line) => {
-    const [hash, when, ...rest] = line.split('|');
-    return { hash, when, subject: rest.join('|') };
+    const [hash, at, when, ...rest] = line.split('|');
+    const seconds = Number(at);
+    return {
+      hash,
+      at: Number.isFinite(seconds) ? seconds : null,
+      when,
+      subject: rest.join('|'),
+    };
   });
 
   return {
@@ -200,7 +211,22 @@ function inspect(repo, { recentHours = DEFAULTS.recentHours, exec = execFileSync
   };
 }
 
-// Repositories worth mentioning, newest activity first.
+// Repositories worth mentioning, ordered so that truncating the list keeps the
+// entries most likely to matter.
+//
+// `notable` used to come back in whatever order the directory walk produced,
+// under a header claiming newest activity first. The caller names three and
+// says "and N more", so on a machine with four or more active repositories the
+// three it named were decided by filesystem order. The claim was not almost
+// true, it was unimplemented, and nothing in a row could have implemented it
+// because the only date was git's relative form.
+//
+// Uncommitted work sorts above committed work rather than by time, which is
+// not what the old header said and is what the notice is for. A commit is
+// saved. Uncommitted changes are the thing that gets lost when a window
+// closes, which is the case this whole check exists to catch. Within each
+// group, newest commit first, and repositories with neither keep discovery
+// order.
 function scan({
   cwd, config = {}, home = os.homedir(), deadline, exec = execFileSync,
 } = {}) {
@@ -223,6 +249,17 @@ function scan({
 
   const notable = rows.filter((r) => (r.changed != null && r.changed >= cfg.minChanges)
     || (r.commits != null && r.commits.length > 0));
+
+  const newestCommit = (r) => (r.commits || [])
+    .reduce((newest, c) => (c.at != null && c.at > newest ? c.at : newest), 0);
+
+  // A stable sort, so repositories that tie keep discovery order rather than
+  // shuffling between runs for no reason a reader could explain.
+  notable.sort((a, b) => {
+    const dirty = (r) => (r.changed != null && r.changed > 0 ? 1 : 0);
+    if (dirty(a) !== dirty(b)) return dirty(b) - dirty(a);
+    return newestCommit(b) - newestCommit(a);
+  });
 
   return { repos: rows, notable, complete: complete && scanned };
 }

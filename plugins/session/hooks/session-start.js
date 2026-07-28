@@ -175,11 +175,20 @@ function gitActivityLine(cwd, deadline) {
     // the logic; the flag was computed, threaded through, and documented. It is
     // that the early return is written before the caveat, and an early return
     // is easy to read as "nothing to say" when it means "nothing found so far".
+    // No command is named here on purpose. This said "Run /sessions", and there
+    // is no such skill in this plugin or anywhere else. There is a `sessions`
+    // subcommand on the CLI, which is presumably where the name came from, but
+    // the model has no path to it and cannot invoke a subcommand as a slash
+    // command. So the one actionable sentence in the notice pointed at nothing.
+    //
+    // A notice that ends in an instruction that fails is worse than one that
+    // ends without an instruction, because the failure is what gets remembered
+    // about the notice.
     if (!elsewhere.length) {
       if (complete) return '';
       return 'Some repositories could not be checked before the session-start budget ran out, '
         + 'so whether anything was left uncommitted elsewhere is unknown. '
-        + 'Run /sessions or check by hand if that matters.';
+        + 'Check by hand if that matters.';
     }
 
     const described = elsewhere.slice(0, 3).map((r) => {

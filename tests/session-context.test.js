@@ -278,7 +278,7 @@ check('uncommitted files and recent commits are both counted', () => {
     exec: (cmd, args) => {
       if (args.includes('--show-current')) return 'main\n';
       if (args.includes('--porcelain')) return ' M a.js\n?? b.js\n';
-      if (args.includes('log')) return 'abc123|2 hours ago|did a thing\n';
+      if (args.includes('log')) return 'abc123|1753600000|2 hours ago|did a thing\n';
       return '';
     },
   });
@@ -286,13 +286,34 @@ check('uncommitted files and recent commits are both counted', () => {
   assert.strictEqual(row.changed, 2);
   assert.strictEqual(row.commits.length, 1);
   assert.strictEqual(row.commits[0].subject, 'did a thing');
+  assert.strictEqual(row.commits[0].when, '2 hours ago');
 });
 
 check('a commit subject containing a pipe survives parsing', () => {
   const row = ga.inspect('/fake', {
-    exec: (cmd, args) => (args.includes('log') ? 'abc|1 hour ago|fix a || b handling\n' : ''),
+    exec: (cmd, args) => (args.includes('log') ? 'abc|1753600000|1 hour ago|fix a || b handling\n' : ''),
   });
   assert.strictEqual(row.commits[0].subject, 'fix a || b handling');
+});
+
+check('a commit carries a sortable timestamp as well as the printable one', () => {
+  // `%ar` is what gets shown and cannot be compared. `%at` is what the ordering
+  // sorts on. Asking for only the relative form is why the "newest first" claim
+  // in scan's header was never implemented.
+  const row = ga.inspect('/fake', {
+    exec: (cmd, args) => (args.includes('log') ? 'abc|1753600000|1 hour ago|a subject\n' : ''),
+  });
+  assert.strictEqual(row.commits[0].at, 1753600000);
+  assert.strictEqual(row.commits[0].when, '1 hour ago');
+});
+
+check('an unparseable timestamp is null rather than NaN', () => {
+  // NaN sorts unpredictably and compares false against itself, so a row git
+  // returned something odd for would move around between runs.
+  const row = ga.inspect('/fake', {
+    exec: (cmd, args) => (args.includes('log') ? 'abc|nonsense|1 hour ago|a subject\n' : ''),
+  });
+  assert.strictEqual(row.commits[0].at, null);
 });
 
 // -------------------------------------------------- the bounds actually bind ----
@@ -470,6 +491,83 @@ check('an exhausted deadline still reports incomplete rather than clean', () => 
   const out = ga.scan({ cwd: process.cwd(), config: {}, deadline: Date.now() - 1 });
   assert.strictEqual(out.complete, false, 'an expired deadline is not a complete scan');
   assert.strictEqual(out.repos.length, 0);
+});
+
+// ------------------------------------------- what the notice tells you to do ----
+
+check('the notice never names a command that does not exist', () => {
+  // It said "Run /sessions". There is no such skill, here or anywhere. There is
+  // a `sessions` subcommand on the CLI, presumably where the name came from,
+  // which the model has no path to and could not invoke as a slash command
+  // anyway. The one actionable sentence in the notice pointed at nothing.
+  //
+  // Comment lines come out before the literals are matched, and the order
+  // matters. An apostrophe in prose, "git's relative form", opens a quote that
+  // closes at the next apostrophe several lines later, and everything between
+  // reads as a string. The first version of this check failed on the comment
+  // explaining the fix, which is a lint that fails when you document why.
+  const code = SESSION_START_SRC
+    .split('\n')
+    .filter((line) => !line.trim().startsWith('//'))
+    .join('\n');
+  const skills = new Set(fs.readdirSync(path.join(ROOT, 'skills')));
+  const literals = code.match(/'([^'\\]*(?:\\.[^'\\]*)*)'/g) || [];
+  const named = new Set();
+  for (const literal of literals) {
+    for (const hit of literal.match(/\/[a-z][a-z-]{2,}/g) || []) named.add(hit.slice(1));
+  }
+  const invented = [...named].filter((name) => !skills.has(name));
+  assert.deepStrictEqual(invented, [], `notice names ${invented.join(', ')}, which is not a skill`);
+});
+
+// --------------------------------------------------- the order of the list ----
+//
+// The caller names three repositories and says "and N more", so which three it
+// names is a decision whether or not anyone made it. It was filesystem walk
+// order under a header claiming newest activity first.
+
+const orderedScan = () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ga-order-'));
+  const make = (name) => { fs.mkdirSync(path.join(dir, name, '.git'), { recursive: true }); };
+  ['a-recent-commit', 'b-dirty', 'c-older-commit'].forEach(make);
+
+  const exec = (cmd, args) => {
+    const repo = args[1];
+    const name = path.basename(repo);
+    if (args.includes('--show-current')) return 'main\n';
+    if (args.includes('--porcelain')) return name === 'b-dirty' ? ' M wip.js\n' : '';
+    if (args.includes('log')) {
+      if (name === 'a-recent-commit') return 'aaa|1753600000|1 hour ago|recent\n';
+      if (name === 'c-older-commit') return 'ccc|1753500000|9 hours ago|older\n';
+      return '';
+    }
+    return '';
+  };
+
+  return ga.scan({ cwd: null, config: { roots: [dir] }, exec }).notable.map((r) => r.name);
+};
+
+check('uncommitted work is named before committed work', () => {
+  // A commit is saved. Uncommitted changes are what gets lost when a window
+  // closes, which is the case this check exists for, so it takes the first slot
+  // even though its repository has no recent commit at all.
+  assert.strictEqual(orderedScan()[0], 'b-dirty', orderedScan().join(', '));
+});
+
+check('within a group, the newest commit comes first', () => {
+  const order = orderedScan();
+  assert.ok(
+    order.indexOf('a-recent-commit') < order.indexOf('c-older-commit'),
+    `expected the 1-hour-old commit before the 9-hour-old one, got ${order.join(', ')}`,
+  );
+});
+
+check('the order does not depend on the order the walk found them', () => {
+  // The regression, stated directly: run it twice and the answer is the same,
+  // and it is the same answer as the rule above rather than whatever the
+  // filesystem returned.
+  assert.deepStrictEqual(orderedScan(), orderedScan());
+  assert.deepStrictEqual(orderedScan(), ['b-dirty', 'a-recent-commit', 'c-older-commit']);
 });
 
 process.stdout.write(`\n${failures === 0 ? 'all passed' : `${failures} failed`}\n`);
