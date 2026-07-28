@@ -64,6 +64,14 @@ const DEFAULTS = {
   // paths from another machine, so anywhere else it checked six directories
   // that did not exist and reported nothing, which is indistinguishable from
   // all clear.
+  //
+  // `enabled: false` switches it off, and it is worth saying plainly what is
+  // being switched: this walks `roots` and runs git at every session start, on
+  // a machine where somebody installed a plugin rather than wrote one. Bounded
+  // at 12 repositories, depth 2, 400ms per git call and the session-start
+  // budget, so the cost is small, but small and expected are different things.
+  // Anyone who would rather it did not read their disk should be able to find
+  // the switch, which means here and in the README rather than only in code.
   gitActivity: {},
 
   // Word budgets for the memory directory, checked by /wrap.

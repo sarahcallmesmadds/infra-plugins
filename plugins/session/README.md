@@ -130,6 +130,24 @@ absolute paths from one machine, so anywhere else it checked six directories
 that did not exist, found nothing, and said nothing, which reads exactly like an
 all clear.
 
+**This is on by default, and it reads your disk.** At every session start it
+walks `roots`, which defaults to `~/Projects`, and runs git in each repository
+it finds. That is bounded at 12 repositories, two directories deep, 400ms per
+git call and the overall session-start budget, so it costs on the order of a
+tenth of a second. The cost is not the point. Something that spawns git and
+reads a directory on your machine every time you open a session should be a
+thing you agreed to, so it is written here rather than left to be discovered.
+
+To switch it off:
+
+```json
+{
+  "gitActivity": { "enabled": false }
+}
+```
+
+To keep it and point it somewhere else:
+
 ```json
 {
   "gitActivity": { "roots": ["~/Projects"], "depth": 2, "recentHours": 6 },
