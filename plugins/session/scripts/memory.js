@@ -78,11 +78,31 @@ function words(text) {
 // An unreadable type is not guessed. Guessing would apply the tight live-state
 // budget to a durable file and produce a complaint about the wrong thing, and a
 // check that complains about the wrong thing gets switched off.
+//
+// Real files nest it under `metadata:`, so the key is matched with leading
+// whitespace allowed. Verified against the live directory rather than assumed:
+// all ten files classify, and the check fires on the ones that should trip it.
+//
+//   ---
+//   name: handoff
+//   metadata:
+//     node_type: memory
+//     type: project
+//   ---
+//
+// `node_type` must not match, and does not: `^\s*` allows only whitespace
+// before the key, so `node_type:` cannot satisfy it.
+//
+// Quotes are stripped because `type: "project"` would otherwise capture the
+// quotation marks and match none of the known kinds, which would silently drop
+// the file into the permissive budget. That failure is invisible: nothing
+// errors, the file is simply never flagged again.
 function declaredType(text) {
   const fm = String(text).match(FRONTMATTER);
   if (!fm) return null;
-  const m = fm[1].match(/^\s*type:\s*(\S+)\s*$/m);
-  return m ? m[1].toLowerCase() : null;
+  const m = fm[1].match(/^\s*type:\s*(.+?)\s*$/m);
+  if (!m) return null;
+  return m[1].replace(/^["']|["']$/g, '').toLowerCase() || null;
 }
 
 function linksIn(text) {
@@ -188,10 +208,25 @@ function audit({ dir, config = {} } = {}) {
   // inventory useless: entries pointing at things that no longer exist, and
   // things that exist with no entry pointing at them.
   if (index) {
+    // Both link styles are accepted, and that is not tidiness.
+    //
+    // The index is written by hand as markdown links, `- [Title](file.md)`,
+    // which is what the live one uses. The body files link each other with
+    // wiki-links, `[[slug]]`. If an index were ever written in the other style,
+    // reading only one of them would find no links at all and flag every single
+    // file as unlisted at once.
+    //
+    // A check that fires on everything is worse than one that fires on nothing,
+    // because the second is ignored and the first is switched off. Reading both
+    // costs one extra pass and removes the whole failure mode.
+    const indexText = fs.readFileSync(path.join(dir, 'MEMORY.md'), 'utf8');
     const linked = new Set();
-    for (const m of (index.words ? fs.readFileSync(path.join(dir, 'MEMORY.md'), 'utf8') : '')
-      .matchAll(/\]\(([^)]+\.md)\)/g)) {
+    for (const m of indexText.matchAll(/\]\(([^)]+\.md)\)/g)) {
       linked.add(path.basename(m[1]).toLowerCase());
+    }
+    for (const slug of linksIn(indexText)) {
+      const hit = files.find((f) => f.slug.toLowerCase() === slug.toLowerCase());
+      if (hit) linked.add(hit.name.toLowerCase());
     }
     for (const f of body) {
       if (!linked.has(f.name.toLowerCase())) {

@@ -266,6 +266,88 @@ check('the count is right when there is no index at all', () => {
   assert.strictEqual(r.files.length, 1);
 });
 
+check('one file reads as "1 file", not "1 files"', () => {
+  // Every other count in this CLI guards its plural. This one did not, in the
+  // component whose stated purpose is that the printed sentence matches what is
+  // true.
+  const home = homeWithMemory('/p', { 'a.md': file('project', 10) });
+  const out = cli(home, '/p');
+  assert.match(out, /across 1 file,/, out);
+  assert.doesNotMatch(out, /1 files/);
+});
+
+check('more than one file still reads as "files"', () => {
+  const home = homeWithMemory('/p', { 'a.md': file('project', 10), 'b.md': file('project', 10) });
+  assert.match(cli(home, '/p'), /across 2 files,/);
+});
+
+// ------------------------------------------------------ format assumptions ----
+//
+// Both of these were verified against the live memory directory before being
+// hardened: real files nest `type:` under `metadata:` and all ten classify, and
+// the real index uses markdown links. Neither was broken.
+//
+// They are pinned anyway because the failure mode of getting either wrong is
+// silence, and silence in opposite directions. A type that stops resolving
+// drops every file into the permissive budget and the check never fires again.
+// An index format that stops resolving flags every file at once. One is ignored
+// and the other is switched off, and both end with nobody measuring anything.
+
+check('a type nested under metadata is read', () => {
+  const dir = dirWith({
+    'a.md': '---\nname: x\nmetadata:\n  node_type: memory\n  type: project\n---\n\n' + 'word '.repeat(2000),
+  });
+  assert.ok(kinds(memory.audit({ dir })).includes('oversize-live'));
+});
+
+check('node_type is not mistaken for type', () => {
+  // If it were, a durable file declaring `node_type: memory` would be judged
+  // against the live budget.
+  assert.strictEqual(memory.declaredType('---\nmetadata:\n  node_type: memory\n---\n'), null);
+});
+
+check('a quoted type still resolves', () => {
+  // `type: "project"` would otherwise capture the quotes, match no known kind,
+  // and silently drop the file into the permissive budget forever.
+  for (const raw of ['"project"', "'project'", 'project']) {
+    assert.strictEqual(memory.declaredType(`---\nmetadata:\n  type: ${raw}\n---\n`), 'project');
+  }
+});
+
+check('an index written with wiki-links does not flag every file at once', () => {
+  // The live index uses markdown links. If one were ever written the other way,
+  // reading only markdown would find no links and report every file as
+  // unlisted. A check that fires on everything gets switched off.
+  const dir = dirWith({
+    'MEMORY.md': '- [[alpha]] the first\n- [[beta]] the second\n',
+    'alpha.md': file('project', 10),
+    'beta.md': file('reference', 10),
+  });
+  assert.ok(!kinds(memory.audit({ dir })).includes('unlisted'), 'wiki-link index flagged everything');
+});
+
+check('a mixed-style index resolves both kinds', () => {
+  const dir = dirWith({
+    'MEMORY.md': '- [Alpha](alpha.md) one\n- [[beta]] two\n',
+    'alpha.md': file('project', 10),
+    'beta.md': file('reference', 10),
+  });
+  assert.ok(!kinds(memory.audit({ dir })).includes('unlisted'));
+});
+
+check('a genuinely unlisted file is still caught with either style', () => {
+  // The other direction, so accepting both formats cannot have quietly turned
+  // the check off.
+  const dir = dirWith({
+    'MEMORY.md': '- [[alpha]] one\n',
+    'alpha.md': file('project', 10),
+    'orphan.md': file('project', 10),
+  });
+  const f = memory.audit({ dir }).findings.find((x) => x.kind === 'unlisted');
+  assert.ok(f, 'an orphan survived a wiki-link index');
+  assert.strictEqual(f.file, 'orphan.md');
+});
+
 check('a finding is printed with the file and the numbers', () => {
   const home = homeWithMemory('/p', { 'HANDOFF.md': file('project', 2000) });
   const out = cli(home, '/p');
