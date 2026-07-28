@@ -1,0 +1,39 @@
+{
+  "name": "session",
+  "version": "0.1.0",
+  "description": "Make sessions continuous. Wrap one up into a handoff the next one loads, keep today's real date in front of the model, warn when another session is already working in the same directory, and put cost, context and connected tool health in the status line.",
+  "author": {
+    "name": "Sarah Madden",
+    "url": "https://github.com/sarahcallmesmadds"
+  },
+  "homepage": "https://github.com/sarahcallmesmadds/plugins/tree/main/plugins/session",
+  "repository": "https://github.com/sarahcallmesmadds/plugins",
+  "license": "MIT",
+  "keywords": [
+    "session",
+    "handoff",
+    "context",
+    "statusline",
+    "continuity",
+    "mcp"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Session",
+    "shortDescription": "End one session so the next one starts with context",
+    "longDescription": "Every session ends one of two ways: you close the window and lose the thread, or you write yourself a note somewhere you will never look again. Session turns the pair of moves into a habit. Wrap writes down what was decided, what was built and what is next, separating what was actually verified from what was merely intended. Pickup loads it back and stops there, surfacing the summary without opening every file it mentions, because bulk-loading those files is the largest avoidable context cost at the start of a session. Alongside that it keeps today's real date in front of the model, which otherwise answers from its training data with complete confidence, and it warns when another session is already live in the same directory before the two of them overwrite each other.",
+    "developerName": "Sarah Madden",
+    "category": "Productivity",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Wrap up this session.",
+      "Pick up where I left off.",
+      "Is another session running in this folder?",
+      "Which of my connected tools need signing in again?"
+    ]
+  }
+}
