@@ -166,6 +166,34 @@ answer, not its conclusion.
 opinion about whether something is any good, and it will not rewrite anything
 you did not complain about.
 
+## Upgrading to 0.3.0
+
+The first hook in this plugin. `skill-md-check` runs after any Write or Edit,
+and when the file is a `SKILL.md` it checks four things and reports back into
+the conversation. It never blocks and it never writes.
+
+| Checked | Why |
+|---|---|
+| Frontmatter is present and closed | Without it the file is markdown, not a skill, and nothing loads it |
+| `name:` is set | Required by the loader |
+| `name:` matches its directory | The failure this plugin already works around |
+| `description:` is set | This is the discovery surface; an undescribed skill never triggers |
+| `type:` is `human` or `agent`, **when present** | Validated, not required |
+
+The name-versus-directory check is the reason the hook is worth having. The
+directory name is what `/audit-deps` keys on and what `/flag-issue` resolves to
+a file. The frontmatter name is what the model reads. While the two disagree
+both are correct and neither resolves, so a fix filed against one silently
+misses the other. `/audit-deps` carries a `notes` field to record this after the
+fact; the hook catches it at the moment of writing instead.
+
+`type:` is checked rather than required on purpose. Seven of the twenty skills
+here do not set it, and reporting seven files that are fine is how a check
+teaches you to ignore it.
+
+Nothing to do on upgrade. The hook registers itself and stays quiet on a
+well-formed file.
+
 ## Upgrading to 0.2.6
 
 The other half of the window bug from 0.2.1. That release gave the cutoff a time
