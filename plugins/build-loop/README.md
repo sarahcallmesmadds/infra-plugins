@@ -166,6 +166,32 @@ answer, not its conclusion.
 opinion about whether something is any good, and it will not rewrite anything
 you did not complain about.
 
+## Upgrading to 0.2.6
+
+The other half of the window bug from 0.2.1. That release gave the cutoff a time
+so git would stop filling in the current hour. It still had no timezone, and
+git reads an unzoned timestamp as **local time** while the cutoff is computed
+with `date -u`.
+
+Measured on a machine at UTC-4, at 19:53 local:
+
+```
+--since="2026-07-27 21:53:54"    ->  0 commits   the UTC string, read as local, still in the future
+--since="2026-07-27 17:53:54"    -> 13 commits   the same instant written in local time
+--since="2026-07-27T21:53:54Z"   -> 13 commits   the same instant, said unambiguously
+```
+
+So the window started four hours late here, and would start early east of UTC.
+Every count it produced was plausible.
+
+The cutoff is now `YYYY-MM-DDT00:00:00Z`, which also matches the `created_at`
+written on every queue and to-build item, so the cutoff and the thing it gets
+compared against are finally in the same units.
+
+Found by `/built-check` noticing mid-run that its own window had come back
+empty and correcting for the offset by hand. It reported the discrepancy in its
+own output.
+
 ## Upgrading to 0.2.5
 
 `/built-check` decided where to look on disk purely from an item's `kind`, and
