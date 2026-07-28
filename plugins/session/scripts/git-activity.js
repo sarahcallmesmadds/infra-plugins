@@ -170,7 +170,21 @@ function discover(opts = {}) {
 // run well past it together. Every call here is preceded by a check, so the
 // overrun is one call rather than all of them.
 function inspect(repo, { recentHours = DEFAULTS.recentHours, exec = execFileSync, deadline } = {}) {
-  const expired = () => deadline != null && Date.now() >= deadline;
+  // `cut` is the difference between "this repository is clean" and "this
+  // repository was never finished". Both produce a row with nulls in it, and
+  // only one of them is safe to stay quiet about.
+  //
+  // Without it, a repository whose inspect started just under the deadline came
+  // back all nulls, got dropped by the notable filter, and left `complete`
+  // true, because the loop in `scan` only learned about an overrun from the
+  // next iteration's check. On the last repository there is no next iteration.
+  // So the one case where a repository is silently dropped was also the one
+  // where nothing recorded that it had been.
+  let cut = false;
+  const expired = () => {
+    if (deadline != null && Date.now() >= deadline) { cut = true; return true; }
+    return false;
+  };
 
   const branch = expired() ? null : (git(repo, ['branch', '--show-current'], exec) || '').trim() || null;
 
@@ -208,6 +222,7 @@ function inspect(repo, { recentHours = DEFAULTS.recentHours, exec = execFileSync
     changed,
     commits,
     readable: status != null || log != null,
+    cut,
   };
 }
 
@@ -244,7 +259,24 @@ function scan({
   let scanned = true;
   for (const repo of repos) {
     if (deadline != null && Date.now() >= deadline) { scanned = false; break; }
-    rows.push(inspect(repo, { recentHours: cfg.recentHours, exec, deadline }));
+    const row = inspect(repo, { recentHours: cfg.recentHours, exec, deadline });
+    // Asking the row rather than waiting for the next iteration to notice. The
+    // loop check alone cannot see an overrun in the last repository, and the
+    // last repository is the one with nothing after it to speak up.
+    //
+    // `!readable` is in here too, which goes past the timeout that prompted
+    // this. A repository git could not read produces the same all-null row for
+    // a different reason, is dropped by the same filter, and left `complete`
+    // saying everything was checked. The header of this file says the point is
+    // to tell "nothing found" apart from "nowhere looked", and a directory
+    // nobody managed to read is the second one whatever the cause.
+    //
+    // The cost is that a permanently broken repository under a root shows the
+    // caveat every session rather than once. That is the correct direction to
+    // be wrong in: the caveat is one sentence, and the alternative is a quiet
+    // all-clear covering a directory that was never inspected.
+    if (row.cut || !row.readable) scanned = false;
+    rows.push(row);
   }
 
   const notable = rows.filter((r) => (r.changed != null && r.changed >= cfg.minChanges)

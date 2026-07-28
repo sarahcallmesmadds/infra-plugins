@@ -570,5 +570,92 @@ check('the order does not depend on the order the walk found them', () => {
   assert.deepStrictEqual(orderedScan(), ['b-dirty', 'a-recent-commit', 'c-older-commit']);
 });
 
+// ------------------------------------- an overrun in the last repository ----
+//
+// `scanned` was only ever set false by the next iteration's top-of-loop check.
+// The last repository has no next iteration, so an inspect that ran past the
+// deadline there produced an all-null row, which the notable filter dropped,
+// while `complete` still said everything had been checked.
+//
+// That is the exact failure this module was written to prevent, reached by a
+// different route: uncommitted work in that repository would be omitted from a
+// notice claiming nothing was left anywhere.
+
+const scanWith = (repoNames, execFor, deadline) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ga-cut-'));
+  repoNames.forEach((n) => fs.mkdirSync(path.join(dir, n, '.git'), { recursive: true }));
+  return ga.scan({ cwd: null, config: { roots: [dir] }, exec: execFor, deadline });
+};
+
+check('inspect reports that it was cut short, not just that it found nothing', () => {
+  // The row already knew. Nothing carried it out.
+  const row = ga.inspect('/fake', { deadline: Date.now() - 1, exec: () => '' });
+  assert.strictEqual(row.cut, true);
+  assert.strictEqual(row.changed, null);
+});
+
+check('a normal inspect is not marked as cut', () => {
+  const row = ga.inspect('/fake', {
+    deadline: Date.now() + 10000,
+    exec: (cmd, args) => (args.includes('--porcelain') ? ' M a.js\n' : ''),
+  });
+  assert.strictEqual(row.cut, false);
+  assert.strictEqual(row.changed, 1);
+});
+
+check('running out of time inside the last repository is not reported as complete', () => {
+  // The reported bug, and it has to expire DURING the inspect to reproduce it.
+  //
+  // An already-expired deadline is caught by the top-of-loop check and proves
+  // nothing: that path always worked. The failure needs the loop check to pass
+  // and the budget to run out between git calls, on a repository with no next
+  // iteration behind it to notice.
+  //
+  // So the first call outlives the remaining budget. branch returns, status and
+  // log are skipped, and the row comes back all nulls, which the notable filter
+  // drops. Before the fix, `complete` still said true.
+  const burn = (ms) => { const until = Date.now() + ms; while (Date.now() < until); };
+  const slowFirstCall = (cmd, args) => {
+    if (args.includes('--show-current')) { burn(30); return 'main\n'; }
+    return ' M wip.js\n';
+  };
+  const out = scanWith(['only'], slowFirstCall, Date.now() + 15);
+
+  assert.deepStrictEqual(out.notable, [], 'the row should have been dropped, as it was in the report');
+  assert.strictEqual(out.complete, false, 'a scan cut short must not claim to be complete');
+});
+
+check('a repository git cannot be read leaves the scan incomplete', () => {
+  // Same all-null row, different cause, same silent all-clear.
+  const out = scanWith(['broken'], () => { throw new Error('nope'); });
+  assert.strictEqual(out.complete, false);
+  assert.deepStrictEqual(out.notable, []);
+});
+
+check('a clean readable scan is still complete', () => {
+  // The check has to stay quiet when there is genuinely nothing to say, or the
+  // caveat becomes the thing people learn to ignore.
+  const out = scanWith(['tidy'], (cmd, args) => (args.includes('--show-current') ? 'main\n' : ''));
+  assert.strictEqual(out.complete, true);
+  assert.deepStrictEqual(out.notable, []);
+});
+
+check('the caveat reaches the notice, not just the flag', () => {
+  // End to end through the real hook, because the value being right and the
+  // sentence being right are different things and that gap is most of why this
+  // file exists.
+  //
+  // Goes through the unreadable path rather than the timeout, since BUDGET_MS
+  // is a module constant with no way in from a test. A directory holding an
+  // empty .git looks like a repository to discover and fails every git command,
+  // which produces the same all-null row the timeout produces. What is pinned
+  // is that an incomplete scan reaches the notice. That the timeout produces an
+  // incomplete scan is pinned separately above.
+  const home = tmp();
+  fs.mkdirSync(path.join(home, 'Projects', 'notarepo', '.git'), { recursive: true });
+  const out = runSessionStart(home, home);
+  assert.match(out, /could not be checked/, `expected the caveat, got: ${out}`);
+});
+
 process.stdout.write(`\n${failures === 0 ? 'all passed' : `${failures} failed`}\n`);
 process.exit(failures === 0 ? 0 : 1);
