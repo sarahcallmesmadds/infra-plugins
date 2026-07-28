@@ -1,9 +1,6 @@
 ---
 name: wrap
 description: End-of-session wrap. Writes down what was decided, what was built and what is next, into a handoff document the next session can load. Use at the end of a working session, or when the user says "wrap", "let's wrap", "wrap up", "wrap this session", "close out", or invokes /wrap. Pairs with /pickup, which reads what this writes.
-version: 2
-last_updated: 2026-07-28T03:12:51.000Z
-correction_notes: "2026-07-28: verify the handoff file exists before Step 4 claims it was saved [queue:2026-07-28T03-06-19-wrap]"
 ---
 
 # Wrap
