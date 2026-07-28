@@ -109,9 +109,12 @@ This is the new undo commit's hash — it will be different from the original fi
 
 Via atomic write, update the queue entry:
 
-1. Read the current queue entry JSON (already loaded — use what you have).
-2. Set `status` to `"Open"`.
-3. Append to `notes[]`:
+1. Read the current queue entry JSON from disk. Do not compose it from what is
+   on screen or from what you remember reading earlier. A revert has happened
+   since Step 1, the session may have run for hours, and another session may
+   have written to the same entry in between.
+2. Set `status` to `"Open"`. Change nothing else.
+3. Append to the existing `notes[]`, keeping every note already there:
    ```json
    {"ts": "{current UTC time}", "text": "Reverted: {revert-commit-hash}"}
    ```
@@ -122,6 +125,13 @@ Via atomic write, update the queue entry:
    - Run: `node -e "JSON.parse(require('fs').readFileSync(require('os').homedir() + '/.claude/build-loop/queue/{id}.json.tmp','utf8'))"`
    - If parse succeeds: `mv ~/.claude/build-loop/queue/{id}.json.tmp ~/.claude/build-loop/queue/{id}.json`
    - If parse fails: report error, do not swap. Say "The queue entry update failed. The revert DID succeed (undo commit: {revert-hash}), but the queue file was not updated. Edit it manually at ~/.claude/build-loop/queue/{id}.json"
+
+**Write the entry back, do not rebuild it.** The Write tool replaces the whole
+file, so anything not carried across is gone with no error and no warning. This
+step used to say the entry was "already loaded, use what you have", which is an
+instruction to trust a copy read before the revert ran. `apply-fix` carried the
+same phrasing and did drop notes because of it. `notes` is the field that
+suffers, because it is the one that grows.
 
 Show closing message:
 
