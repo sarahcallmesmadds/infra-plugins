@@ -42,7 +42,7 @@ Read the queue entry JSON using the Read tool (not Bash cat). Display:
 Then check:
 
 - If `status` is `"Resolved"`, `"Won't Fix"`, or `"fix applied, watching"`: say "This entry is already {status}. Nothing to fix." Stop.
-- If `status` is `"fix attempted / unresolved"`: say "This entry was previously attempted but not resolved. Proceeding with a new attempt." Continue.
+- If `status` is `"fix attempted / unresolved"`: that status was retired in 0.3.1 and nothing writes it any more, so this entry predates the change. Treat it as `"Open"`, say "This entry was attempted in an earlier version and left unresolved. Proceeding with a new attempt." Continue. Read this even though nothing produces it: an entry written before 0.3.1 is otherwise stuck, because no other branch here handles the value.
 - If `status` is `"In Progress"` from a previous session (no commit hash in notes): say "This entry is already marked In Progress from a previous session. The last session may have been interrupted before the fix was committed. Should I start fresh (re-read the target file and propose the fix again), or check whether the file was already written?" Wait for the user's answer:
   - "start fresh" → set status to "Open" via atomic write (see below), then continue from Step 1.
   - "check if written" → read the current target file and compare to the before/after description in the queue entry. If the fix appears already applied, show a summary and ask whether to commit it or revert.
@@ -210,9 +210,12 @@ Build the complete updated file content:
 Use the **Write tool** to write the full file to `{target_path}`. Do NOT use the Edit tool or incremental patches — Write is atomic at the OS level; Edit can fail partway through leaving the file in a partial state.
 
 **If Write tool errors:**
-> "The write failed: {error}. The target file is untouched, since Write is all-or-nothing. Updating queue entry to 'fix attempted / unresolved'."
+> "The write failed: {error}. The target file is untouched, since Write is all-or-nothing. The queue entry stays Open, with a note recording the failure."
 
-Run atomic write to set status to `"fix attempted / unresolved"` with note `{"ts": "{now}", "text": "Write tool failed: {error}"}`. Stop.
+Run atomic write to set status to `"Open"` with note `{"ts": "{now}", "text": "Write tool failed, target file untouched: {error}"}`. Stop.
+
+The entry stays Open for the same reason a rejected verification does: a fix that
+did not land is an open bug, and a status no view lists is a bug you cannot find.
 
 After successful write, verify the file exists and is not empty:
 ```bash

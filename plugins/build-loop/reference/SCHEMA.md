@@ -246,7 +246,7 @@ Writers always emit the v5 field names. An old entry that gets its status update
 | `Resolved` | Fix applied AND verified. |
 | `Won't Fix` | The user explicitly deferred or declined this correction. |
 | `fix applied, watching` | The user approved the diff and the fix was committed. Live but not yet confirmed in a real session. The user closes this to `Resolved` after using the thing. |
-| `fix attempted / unresolved` | The user rejected the diff, or the write failed mid-fix. The target file is unchanged. |
+| `fix attempted / unresolved` | **Retired in 0.3.1. Do not write this.** Readers still accept it, because entries written earlier carry it. A rejected diff or a failed write now leaves the entry `Open` and records the attempt in `notes`. The status was removed rather than added to `/list-bugs`, because it described a bug that was still open while making it invisible to every filter that lists open work. |
 
 ---
 
@@ -380,3 +380,4 @@ Group by `target`. Three or more closed primary corrections for the same target,
 | v3 | 2026-04-23 | Added `fix applied, watching` and `fix attempted / unresolved` to the status enum. Notes now carry commit hashes. |
 | v4 | 2026-04-24 | Added the pattern-flags.json schema. Queue entry schema unchanged. |
 | v5 | 2026-07-27 | The queue covers anything you build, not only skills. `skill` becomes `target`, `skill_path` becomes `target_path`, and `target_kind` is added. The roots config gains a `kind`, plus two default roots for hooks and commands. Readers map the old field names at read time, so no migration runs and pre-v5 entries keep working. pattern-flags.json goes to v2 for the same rename. |
+| v5 | 2026-07-28 | `fix attempted / unresolved` retired from the writers. Added in v3 and never reachable by any `/list-bugs` filter, so rejecting a fix removed the entry from the only view that lists open work. A rejected diff or a failed write now leaves the entry `Open` with the attempt in `notes`. **No version bump:** readers still accept the old value, and a pre-0.3.1 reader handles `Open` because `Open` is v1. Compatible in both directions, so bumping would signal a migration that does not exist. |
