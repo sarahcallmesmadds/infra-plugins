@@ -92,7 +92,7 @@ check('empty and garbage input yield no sessions rather than throwing', () => {
 // reads the environment, so it reads two variables rather than betting the
 // whole answer on one name staying the same.
 
-const { liveSessions } = require(path.join(ROOT, 'scripts', 'sessions.js'));
+const { liveSessions, ancestorPids } = require(path.join(ROOT, 'scripts', 'sessions.js'));
 const psExec = (cmd) => (cmd === 'ps' ? REAL_PS : null);
 
 check('the caller is excluded by session id', () => {
@@ -106,10 +106,35 @@ check('the caller is excluded by session id', () => {
 check('the caller is excluded by pid when the id is unavailable', () => {
   // The second signal. The pid is in the process table already, so it needs no
   // agreement about formats, and it covers a renamed id variable.
-  const r = liveSessions({ selfPid: '66141', exec: psExec, now: NOW });
+  const r = liveSessions({ selfPids: ['66141'], exec: psExec, now: NOW });
   assert.strictEqual(r.sessions.length, 1);
   assert.ok(!r.sessions.some((s) => s.pid === 66141));
   assert.strictEqual(r.identifiedSelf, true);
+});
+
+check('an ancestor pid identifies the caller with no environment at all', () => {
+  // The signal that survives anything being renamed. A command is spawned by a
+  // shell that was spawned by Claude Code, so the session is always up the
+  // chain.
+  const r = liveSessions({ selfPids: [999, 66141, 4], exec: psExec, now: NOW });
+  assert.ok(!r.sessions.some((s) => s.pid === 66141));
+  assert.strictEqual(r.identifiedSelf, true);
+});
+
+check('the ancestor walk stops at the root rather than looping', () => {
+  const tree = { 500: 400, 400: 300, 300: 1 };
+  const walked = ancestorPids(500, (cmd, args) => String(tree[args[args.length - 1]] ?? ''));
+  assert.deepStrictEqual(walked, [400, 300]);
+});
+
+check('a cycle in the process table cannot hang the walk', () => {
+  const tree = { 10: 20, 20: 10 };
+  const walked = ancestorPids(10, (cmd, args) => String(tree[args[args.length - 1]] ?? ''));
+  assert.ok(walked.length <= 2, `walked ${walked}`);
+});
+
+check('a ps that will not answer ends the walk rather than throwing', () => {
+  assert.deepStrictEqual(ancestorPids(500, () => null), []);
 });
 
 check('a session id in a different case still excludes the caller', () => {
@@ -129,7 +154,7 @@ check('when neither signal identifies the caller, that is reported', () => {
 
 check('a nonsense pid does not accidentally exclude a real session', () => {
   for (const bad of ['', 'abc', '0', '-1', null, undefined]) {
-    const r = liveSessions({ selfPid: bad, exec: psExec, now: NOW });
+    const r = liveSessions({ selfPids: [bad], exec: psExec, now: NOW });
     assert.strictEqual(r.sessions.length, 2, `pid ${JSON.stringify(bad)} excluded something`);
     assert.strictEqual(r.identifiedSelf, false);
   }
@@ -218,6 +243,43 @@ check('an overlap found during an incomplete scan is still reported as one', () 
     sessions: [sess('/a/b'), sess(null)], complete: false,
   }, deps);
   assert.match(line, /already live in this working directory/);
+});
+
+// ------------------------------------------------ the all-clear, in print ----
+//
+// An empty list is two answers: nothing is running, or we could not look. The
+// CLI printed a flat "No other Claude Code sessions are running." the moment
+// the list came back empty, without consulting `complete`, so a failed process
+// table read was reported as a definite all-clear.
+//
+// That is the third time in this plugin that the data layer kept a distinction
+// and the sentence a person reads threw it away, so this drives the printed
+// output rather than the function behind it.
+
+const { spawnSync } = require('child_process');
+const CLI = path.join(ROOT, 'scripts', 'cli.js');
+
+function runCli(env) {
+  return spawnSync(process.execPath, [CLI, 'sessions'], {
+    encoding: 'utf8',
+    env: { ...process.env, ...env },
+  }).stdout;
+}
+
+check('a working scan with nothing running prints an all-clear', () => {
+  // PATH emptied would break the scan, so this one runs normally and simply
+  // asserts the good case still reads as good.
+  const out = runCli({});
+  assert.ok(/No other Claude Code sessions are running\.|session/.test(out), out);
+});
+
+check('a scan that could not run never prints an all-clear', () => {
+  // With no PATH there is no `ps`, so the scan fails outright. Previously this
+  // printed "No other Claude Code sessions are running."
+  const out = runCli({ PATH: '/nonexistent' });
+  assert.doesNotMatch(out, /No other Claude Code sessions are running/,
+    'a failed scan was reported as a definite all-clear');
+  assert.match(out, /unknown/, `expected an honest answer, got: ${out}`);
 });
 
 process.stdout.write(`\n${failures === 0 ? 'all passed' : `${failures} failed`}\n`);

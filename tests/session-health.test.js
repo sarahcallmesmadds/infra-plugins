@@ -78,6 +78,56 @@ check('needs-authentication is distinguished from unreachable', () => {
   assert.strictEqual(health.classifyStatus('✗ Failed to connect'), 'down');
 });
 
+// Local (stdio) servers are reported with a command where a remote one has a
+// URL. Both real lines below were captured from `claude mcp list` after adding
+// two throwaway stdio servers.
+//
+// The previous parser dropped both: it captured the target as `(\S+)` so a
+// command containing a space did not match, and it additionally required the
+// target to look like a URL, which `node` does not. They did not show as
+// broken, they did not show at all, so a coreTools entry pointing at one was
+// reported as a name matching nothing.
+
+const REAL_STDIO = [
+  'demo-stdio: node /tmp/nonexistent-server.js - \u2718 Failed to connect \u2014 -32000: MCP error -32000: Connection closed',
+  'bare-cmd: node  - \u2718 Failed to connect \u2014 MCP server "bare-cmd" connection timed out after 30000ms',
+].join('\n');
+
+check('a stdio server whose command contains a space is not dropped', () => {
+  const servers = health.parseMcpList(REAL_STDIO);
+  const s = servers.find((x) => x.name === 'demo-stdio');
+  assert.ok(s, `dropped: ${JSON.stringify(servers.map((x) => x.name))}`);
+  assert.strictEqual(s.url, 'node /tmp/nonexistent-server.js');
+  assert.strictEqual(s.status, 'down');
+});
+
+check('a stdio server whose command has no slash at all is not dropped', () => {
+  const s = health.parseMcpList(REAL_STDIO).find((x) => x.name === 'bare-cmd');
+  assert.ok(s, 'a bare command was dropped');
+  assert.strictEqual(s.url, 'node');
+  assert.strictEqual(s.status, 'down');
+});
+
+check('a timed-out server is down rather than unrecognised', () => {
+  assert.strictEqual(health.classifyStatus('connection timed out after 30000ms'), 'down');
+});
+
+check('"Disconnected" is not read as connected', () => {
+  // It contains the word. Asking about "connected" before asking about failure
+  // classified a dead server as healthy, which is the one thing this segment
+  // exists to notice, shown green.
+  assert.strictEqual(health.classifyStatus('Disconnected'), 'down');
+  assert.strictEqual(health.classifyStatus('\u2718 Failed to connect'), 'down');
+  assert.strictEqual(health.classifyStatus('Connection closed'), 'down');
+});
+
+check('a genuinely connected server still reads as connected', () => {
+  // The other direction, so the failure-first ordering above cannot have
+  // quietly turned everything into an outage.
+  assert.strictEqual(health.classifyStatus('\u2714 Connected'), 'connected');
+  assert.strictEqual(health.classifyStatus('! Needs authentication'), 'needs_auth');
+});
+
 check('parsing empty or garbage output yields no servers rather than throwing', () => {
   assert.deepStrictEqual(health.parseMcpList(''), []);
   assert.deepStrictEqual(health.parseMcpList(null), []);

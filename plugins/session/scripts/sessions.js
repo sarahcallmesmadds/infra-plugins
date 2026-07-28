@@ -113,17 +113,50 @@ function parsePs(text, now = Date.now()) {
   return out;
 }
 
+// Walk up the process tree, collecting every ancestor pid.
+//
+// This is the signal that needs nothing to be true except that processes have
+// parents. A command run from a skill was spawned by a shell that was spawned
+// by Claude Code, so the session that launched it is always somewhere up this
+// chain and is recognised without agreeing on an environment variable name, an
+// id format, or anything else that a future release could rename.
+//
+// Bounded rather than looped to the root, since a cycle in a process table
+// should not be able to hang a status command.
+function ancestorPids(pid = process.pid, exec = run, limit = 12) {
+  const out = [];
+  let current = Number(pid);
+  for (let i = 0; i < limit; i += 1) {
+    if (!Number.isInteger(current) || current <= 1) break;
+    const raw = exec('ps', ['-o', 'ppid=', '-p', String(current)], PS_TIMEOUT_MS);
+    if (!raw) break;
+    const parent = parseInt(String(raw).trim(), 10);
+    if (!Number.isInteger(parent) || parent <= 1 || out.includes(parent)) break;
+    out.push(parent);
+    current = parent;
+  }
+  return out;
+}
+
 // Every live session except the one asking.
 //
-// `selfSessionId` comes from the hook event, so the caller is excluded by
-// identity rather than by pid. That matters: the hook is a child process, so
-// its own pid never appears in this list and comparing pids would exclude
-// nothing while looking like it worked.
+// The caller says who it is, one of two ways. A hook passes `selfSessionId`
+// from its own event, which is exact. A command has no event and passes
+// `selfPids` instead, the chain of processes above it, since the session that
+// spawned it is always somewhere in that chain.
 //
-// Returns `{ sessions, complete }`. `complete` is false when the deadline ran
-// out before every working directory was resolved, and the caller must not read
-// an empty overlap list as "nothing overlaps" in that case. It is not the same
-// answer. See the note on the deadline below.
+// Returns `{ sessions, complete, identifiedSelf }`.
+//
+// `complete` is false when the deadline ran out before every working directory
+// was resolved, or when the process table could not be read at all. The caller
+// must not read an empty list as "nothing is running" in that case, and must
+// not read an empty overlap list as "nothing overlaps". Those are different
+// answers and only one of them is good news. Every consumer of this function
+// has got that wrong at least once, so it is worth restating: check `complete`
+// before saying anything reassuring.
+//
+// `identifiedSelf` is false when neither signal matched anything, meaning the
+// list probably includes the caller and must not be described as "others".
 //
 // ---------------------------------------------------------------------------
 // On the deadline, which is where the cost actually is.
@@ -138,30 +171,35 @@ function parsePs(text, now = Date.now()) {
 // loop for as long as the child runs, so a timer cannot interrupt work already
 // underway; it can only stop the next one from starting.
 function liveSessions({
-  selfSessionId, selfPid, now = Date.now(), exec = run, deadline,
+  selfSessionId, selfPids, now = Date.now(), exec = run, deadline,
 } = {}) {
   const ps = exec('ps', ['-eo', 'pid,lstart,command'], PS_TIMEOUT_MS);
   if (!ps) return { sessions: [], complete: false, identifiedSelf: false };
 
-  // Two independent ways to recognise the caller, because getting this wrong
-  // produces the one answer guaranteed to be useless: "another session is live
-  // in this directory", about itself.
+  // Getting this wrong produces the one answer guaranteed to be useless:
+  // "another session is live in this directory", about itself. So there is
+  // more than one way to be recognised, and they fail independently.
   //
-  // The hook has the session id from its event, which is exact. A command run
-  // from a skill has no event, so it reads the environment, and depending on a
-  // single environment variable name is a thin thread to hang the whole answer
-  // on. The pid of the Claude process is exported alongside it and appears
-  // directly in the process table, so either one alone is enough.
+  //   The hook passes the session id from its own event. Exact, and free.
+  //   A command has no event, so the caller passes pids instead: the process
+  //   tree above it, which is true regardless of what anything is named.
   //
-  // `identifiedSelf` reports whether anything matched. When nothing did, the
-  // caller has to say the list may include the current session rather than
-  // presenting it as a list of other people's.
+  // An earlier version relied on a single environment variable. The name was
+  // right, and checked, but it was still one rename away from silently
+  // reporting the current session as a parallel one.
+  //
+  // `identifiedSelf` reports whether anything matched at all. When nothing
+  // did, the caller must say the list may include the current session rather
+  // than presenting it as a list of other people's.
   const self = selfSessionId ? String(selfSessionId).toLowerCase() : null;
-  const selfPidNum = Number(selfPid);
-  const hasPid = Number.isInteger(selfPidNum) && selfPidNum > 0;
+  const pids = new Set(
+    (Array.isArray(selfPids) ? selfPids : [selfPids])
+      .map(Number)
+      .filter((n) => Number.isInteger(n) && n > 1),
+  );
 
   const all = parsePs(ps, now);
-  const found = all.filter((s) => s.sessionId !== self && !(hasPid && s.pid === selfPidNum));
+  const found = all.filter((s) => s.sessionId !== self && !pids.has(s.pid));
   const identifiedSelf = found.length < all.length;
 
   const sessions = [];
@@ -198,4 +236,4 @@ function overlaps(cwd, other) {
   return a.startsWith(`${b}/`) || b.startsWith(`${a}/`);
 }
 
-module.exports = { parsePs, liveSessions, cwdOf, overlaps, SESSION_RE };
+module.exports = { parsePs, liveSessions, cwdOf, overlaps, ancestorPids, SESSION_RE };

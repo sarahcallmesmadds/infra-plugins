@@ -68,18 +68,22 @@ const COMMANDS = {
   sessions(opts) {
     // Without this the command reports the session that ran it, which reads as
     // "another session is live here" and is the one answer guaranteed to be
-    // wrong. The hook gets the id from its event; there is no event here, so it
-    // comes from the environment.
+    // wrong. The hook is handed an exact id by its event. There is no event
+    // here, so the caller has to work it out.
     //
-    // Both variables were checked in a node subprocess spawned the same way
-    // this one is, rather than assumed from their names. Two are read because
-    // one variable name is a thin thread to hang the whole answer on, and the
-    // pid appears directly in the process table so it needs no agreement about
-    // formats. If a future release renames either, the other still works, and
-    // if it renames both the output says so instead of quietly lying.
+    // The process tree is the signal that carries the weight. This command was
+    // spawned by a shell that was spawned by Claude Code, so the session that
+    // launched it is always an ancestor, and finding it that way depends on
+    // nothing being named anything in particular.
+    //
+    // The environment variables are kept as a cheap first answer. They were
+    // checked in a node subprocess spawned exactly the way this one is, rather
+    // than assumed from their names, but a variable name is still one release
+    // away from changing, and the earlier version of this line rested the whole
+    // answer on one.
     const { sessions, complete, identifiedSelf } = sessionsMod.liveSessions({
       selfSessionId: opts.self || process.env.CLAUDE_CODE_SESSION_ID,
-      selfPid: process.env.CLAUDE_PID,
+      selfPids: [process.env.CLAUDE_PID, ...sessionsMod.ancestorPids()],
       deadline: Date.now() + 4000,
     });
     const rows = sessions.map((s) => ({
@@ -89,8 +93,23 @@ const COMMANDS = {
 
     if (opts.json) return emit(opts, { sessions: rows, complete, identifiedSelf }, []);
 
+    // An empty list is two different answers and only one of them is good news.
+    //
+    // `liveSessions` returns no sessions both when nothing is running and when
+    // reading the process table failed, and it sets `complete` to tell them
+    // apart. The hook honours that. This branch did not: it printed a flat
+    // all-clear the moment the list was empty, so a failed scan told someone
+    // nothing else was running in a directory where something might well be.
+    //
+    // Third time this exact shape has been found in this plugin. The data
+    // layer kept the distinction, the comment explaining it was accurate, and
+    // the sentence a person actually reads threw it away. Checking that the
+    // logic is right is not the same as checking that the output says what the
+    // logic knows.
     if (!rows.length) {
-      return emit(opts, {}, ['No other Claude Code sessions are running.']);
+      return emit(opts, {}, complete
+        ? ['No other Claude Code sessions are running.']
+        : ['Could not read the process table, so whether anything else is running is unknown.']);
     }
     const lines = rows.map((s) => {
       const where = s.cwd || 'working directory unknown';

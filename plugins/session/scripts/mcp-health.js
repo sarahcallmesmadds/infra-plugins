@@ -41,25 +41,42 @@ function cachePath(home = os.homedir()) {
   return path.join(home, '.cache', 'session', 'mcp-health.json');
 }
 
-// One line of `claude mcp list` output. The shape is:
+// One line of `claude mcp list` output. The shape is `name: target - status`:
 //
 //   claude.ai Gmail: https://gmailmcp.googleapis.com/mcp/v1 - ✔ Connected
 //   claude.ai Mercury: https://mcp.mercury.com/mcp - ! Needs authentication
+//   demo-stdio: node /path/to/server.js - ✘ Failed to connect
+//   bare-cmd: node - ✘ Failed to connect
 //
-// Parsed with a regex rather than by splitting, because the server name may
-// contain both spaces and a dot, the URL contains colons and slashes, and the
-// status text contains a space. Splitting on any single one of those gets a
-// different set of lines wrong.
-const LINE_RE = /^(.+?):\s+(\S+)\s+-\s+(.+)$/;
+// Parsed with a regex rather than by splitting, because the name may contain
+// spaces and a dot, a URL target contains colons and slashes, a command target
+// contains spaces and may contain neither, and the status text contains spaces
+// too. Every single-character split gets some row wrong.
+//
+// The third and fourth rows above are why the target is `(.+?)` and why there
+// is no check that it looks like a URL. An earlier version captured `(\S+)`
+// and additionally required the target to be a URL or at least contain a
+// slash, which dropped every locally-run server on the floor: one because its
+// command had a space in it, the other because `node` has neither. They did
+// not appear as broken, they did not appear at all, so a coreTools entry
+// pointing at one was reported as a name matching nothing.
+const LINE_RE = /^(.+?):\s+(.+?)\s+-\s+(\S.*)$/;
 
+// Failure words are checked first, and the order is the whole point.
+//
+// "Disconnected" contains "connected". A version of this that asked about
+// "connected" first classified a dead server as healthy, which is the single
+// worst answer available here: the segment exists to notice exactly that, and
+// it would have shown green.
 function classifyStatus(text) {
   const t = String(text).toLowerCase();
-  if (t.includes('connected')) return 'connected';
+  if (/fail|error|refused|timed out|timeout|disconnect|unreachable|closed/.test(t)) return 'down';
   if (t.includes('auth')) return 'needs_auth';
-  // Anything else is a server that answered badly or not at all. Deliberately
-  // not folded into needs_auth: the fix for one is signing in and the fix for
-  // the other is not, so telling someone to re-authenticate a server that is
-  // simply down sends them somewhere useless.
+  if (t.includes('connected')) return 'connected';
+  // Anything unrecognised is treated as a server that answered badly.
+  // Deliberately not folded into needs_auth: the fix for one is signing in and
+  // the fix for the other is not, so telling someone to re-authenticate a
+  // server that is simply down sends them somewhere useless.
   return 'down';
 }
 
@@ -73,11 +90,13 @@ function parseMcpList(text) {
     // MCP server health…".
     const m = line.match(LINE_RE);
     if (!m) continue;
-    const [, name, url, statusText] = m;
-    if (!/^https?:\/\//.test(url) && !url.includes('/')) continue;
+    const [, name, target, statusText] = m;
     servers.push({
       name: name.trim(),
-      url,
+      // A URL for a remote server, a command for a local one. Kept under the
+      // same key because nothing downstream cares which it is, and renaming it
+      // per row would push that distinction onto every reader.
+      url: target.trim(),
       status: classifyStatus(statusText),
       statusText: statusText.trim(),
     });
