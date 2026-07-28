@@ -1,0 +1,170 @@
+---
+name: wrap
+description: End-of-session wrap. Writes down what was decided, what was built and what is next, into a handoff document the next session can load. Use at the end of a working session, or when the user says "wrap", "let's wrap", "wrap up", "wrap this session", "close out", or invokes /wrap. Pairs with /pickup, which reads what this writes.
+---
+
+# Wrap
+
+Close the loop before closing the laptop. Your job is to make sure nothing from
+this session is lost, and that the next one starts with context instead of
+starting from scratch.
+
+The output is one handoff document. Write it for a reader who was not here.
+
+---
+
+## Step 0: Sweep old handoffs out of the way
+
+```bash
+"${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js archive
+```
+
+This moves handoffs untouched for 30 days into an `archived/` folder. It moves,
+never deletes, and `/pickup` still finds archived documents by name.
+
+If it reports moving anything, mention it in the Step 4 summary under "Filed
+away". If it reports nothing, say nothing about it.
+
+---
+
+## Step 1: Review the session
+
+Read back over the whole conversation and pull out:
+
+1. **What was worked on.** The actual subject, not the list of tools used.
+2. **Decisions made.** Anything settled that constrains future work: a name, a
+   format, an approach chosen over another. Record why, because the why is what
+   stops the decision being reopened next week.
+3. **Files created or changed**, with paths and one line each on what they do.
+4. **Open loops.** Raised and not resolved, deferred on purpose, or asked and
+   never answered.
+5. **Next actions.** Concrete enough to start on without rereading anything.
+
+**Prefer what was verified over what was intended.** A version number, a
+manifest and a passing manifest entry all report intent. Only running something
+reports behaviour. Where the two differ in this session, write down which is
+which. That distinction is the single most useful thing a handoff carries, and
+it is the first thing lost when the session is summarized casually.
+
+---
+
+## Step 2: Write the handoff
+
+Ask where it goes:
+
+```bash
+"${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js target "<short topic>" --json
+```
+
+It returns the path, the kind, and the slug `/pickup` will need. A directory
+with its own work scope gets `HANDOFF.md` alongside the work. Anywhere else,
+including the home directory, gets a topic-named file in the central handoffs
+folder, so that separate threads of work do not overwrite each other.
+
+Write this, filling every section that has content and dropping any that does
+not:
+
+```markdown
+# Session Handoff
+**Date:** [today's date, from the session start note]
+**Working directory:** [path]
+
+## What was worked on
+[Two or three sentences. The subject, not the activity.]
+
+## Decisions made
+- [Decision, and why]
+
+## Files created or changed
+| File | What it does |
+|---|---|
+| [path] | [one line] |
+
+## Verified vs assumed
+- [Claim, and how it was checked. Say plainly which claims were not.]
+
+## Open loops
+- [Unfinished or deferred, with enough detail to pick up cold]
+
+## Next actions
+1. [First concrete step]
+
+## Context to reload
+[Specific files or notes worth opening next time. Name them, do not attach them.]
+```
+
+Do not invent content to fill a section. An empty section is information. A
+padded one is noise that costs tokens at every future pickup.
+
+---
+
+## Step 3: Update the durable notes, if this project has them
+
+```bash
+"${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js memory --json
+```
+
+If that returns a directory, this project keeps notes that load at the start of
+every session. Update them with anything from today that stays true beyond this
+week, and only that.
+
+Rules, because this file is read every session and grows forever if nobody
+guards it:
+
+- Read what is there before writing. You are editing, not appending.
+- Only touch entries related to this session's work.
+- Do not remove earlier entries unless they are now resolved or wrong.
+- Never rewrite the whole thing.
+- Prefer replacing a stale line to adding a second line beside it. Two entries
+  that disagree cost more than either one alone, and the reader cannot tell
+  which is current.
+
+If it returns nothing, skip this step. Do not create the directory. It belongs
+to the harness, not to this plugin.
+
+**Skip this step entirely if the session was empty.** An empty session must
+never overwrite durable notes.
+
+---
+
+## Step 4: Show the summary
+
+```
+## Session wrapped
+
+### What we did
+- [bullet]
+
+### Decisions captured
+- [bullet]
+
+### Files written
+- [path], [what it is]
+
+### Next time
+1. [first next action]
+
+### Filed away
+[Only if Step 0 moved something. List the slugs. Otherwise omit the heading.]
+
+Handoff saved to [path].
+
+/pickup [slug]
+```
+
+The `/pickup [slug]` line goes last, always, on its own. It gets copied straight
+into the next session, so anything printed after it has to be scrolled past.
+
+---
+
+## Notes
+
+**Small sessions still get wrapped.** One decision in twenty minutes is still
+the thing the next session needs.
+
+**If asked for a "quick wrap":** write the files, confirm the path, skip the
+summary.
+
+**If there is genuinely nothing to capture**, a fresh session with nothing
+discussed, say "Nothing to wrap, the session was empty" and write nothing at
+all. Do not touch the durable notes.
