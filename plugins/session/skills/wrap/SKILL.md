@@ -193,16 +193,20 @@ them was simply mislabelled.
 
 ### Filed away
 [Only if Step 0 moved something. List the slugs. Otherwise omit the heading.]
+```
 
+How that ends depends on the check at the end of Step 2, and there is no
+version of it that does not.
+
+**Where the check returned a match**, close with:
+
+```
 Handoff saved to [path].
 
 /pickup [slug]
 ```
 
-**Print those last two lines only when the check at the end of Step 2 returned a
-match.** They are a claim about a file on disk, so they need the file on disk.
-
-When it returned nothing, say this instead and stop:
+**Where it returned nothing**, close with this instead and stop:
 
 ```
 Handoff was NOT written to [path]. Nothing to pick up.
@@ -212,8 +216,17 @@ Do not print the `/pickup` line in that case. A slug that resolves to no file
 sends the next session looking for something that was never there, and the one
 after that starts from nothing with no sign anything went wrong.
 
-The `/pickup [slug]` line goes last, always, on its own. It gets copied straight
-into the next session, so anything printed after it has to be scrolled past.
+The two endings are kept out of the template above on purpose. An earlier
+version of this step had the saved line and the `/pickup` line sitting inside
+it, with the condition written underneath as prose. That is the same shape as
+the bug this step exists to prevent: the part read first states the good
+outcome plainly, and the qualification arrives afterwards, where it is easy to
+skim past. A template that cannot be copied without deciding is better than a
+correct sentence below one that can.
+
+Where the handoff was saved, the `/pickup [slug]` line goes last, always, on
+its own. It gets copied straight into the next session, so anything printed
+after it has to be scrolled past.
 
 ---
 
