@@ -19,9 +19,9 @@ A queue entry records that something you built did the wrong thing. That somethi
 | `command` | A slash command file | By convention, in a root of kind `command` |
 | `plugin` | A whole plugin, where the fault is not in one file | No convention. The user supplies the path. |
 | `script` | A loose script anywhere on disk | No convention. The user supplies the path. |
-| `other` | Anything else | No convention. The user supplies the path. |
+| `other` | Anything else | No convention to guess from. The path comes from the user, or from a path named in the entry's own text. |
 
-The first three resolve automatically. The last three always ask, because there is no layout to guess from and a guessed path sends a commit to the wrong repository.
+The first three resolve automatically. The last three always ask, because there is no layout to guess from and a guessed path sends a commit to the wrong repository. "No convention" means there is no layout to guess from, not that a path is unreachable: a path written into the entry's own text is one the author already supplied, and `/built-check` Step 3b uses exactly that when looking for disk evidence on an item of kind `other`.
 
 ---
 

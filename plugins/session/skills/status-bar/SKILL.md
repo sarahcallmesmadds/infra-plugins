@@ -1,0 +1,120 @@
+---
+name: status-bar
+description: Set up the Claude Code status line that shows the model, folder, GitHub owner, session cost, rolling 30 day spend, context used, and connected tool health. Use when the user says "set up the status bar", "install the status line", "show me my context usage", "add the usage bar", or invokes /status-bar. Also use when the status line has stopped rendering or is showing an old version.
+---
+
+# Status bar
+
+Set up the one line at the bottom of the terminal that answers "which model,
+which folder, how much have I spent, how full is the context".
+
+---
+
+## What it shows
+
+```
+Claude 4.8 │ my-project ⎇ owner │ $0.42 · 30d $81.20 est ████░░░░░░ 41% │ Core tools 5/5
+```
+
+Every segment is optional and disappears rather than erroring when its data is
+missing.
+
+| Segment | Meaning |
+|---|---|
+| `Claude 4.8` | Model in use this session |
+| `my-project` | Current folder, so you can see where a change will land |
+| `⎇ owner` | GitHub owner from the git remote. Useful when pushing under more than one account |
+| `$0.42` | Session cost so far |
+| `30d $81.20 est` | Local rolling 30 day estimate, summed from sessions that rendered this line |
+| `████░░ 41%` | Context used, green through red as it fills |
+| `Core tools 5/5` | Connected tools still signed in. Off until configured, see `/core-tools` |
+
+---
+
+## Step 1: Explain the one manual step, then do it
+
+A plugin cannot switch a status line on. Claude Code reads `statusLine` from
+`settings.json` and from nowhere else, so one line has to go in that file. This
+skill writes everything else and shows the line for approval.
+
+Run:
+
+```bash
+"${CLAUDE_PLUGIN_ROOT}"/statusline/install.js
+```
+
+This writes a small resolver to `~/.claude/statusline.js` and prints the exact
+settings fragment to add.
+
+**Why the setting does not point at the plugin.** The plugin installs to a path
+with its version in it. Updating it creates a new directory and leaves the old
+one behind, so a setting pointing at the old path keeps resolving, keeps
+rendering, and keeps rendering the version you replaced. Nothing errors. The
+resolver at the fixed path finds the newest installed copy on every render, so
+this is set up once and never touched again.
+
+---
+
+## Step 2: Add the setting
+
+Show the fragment the installer printed and ask before editing `settings.json`.
+That file holds permissions and enabled plugins, so it does not get written
+without a yes.
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "node \"/Users/you/.claude/statusline.js\""
+  }
+}
+```
+
+Merge it into the existing file. Do not replace the file.
+
+---
+
+## Step 3: Say what happens next
+
+The line renders from the next session. Tell them to restart, because a running
+session will not pick it up, and a status line that has not appeared yet looks
+identical to one that is broken.
+
+---
+
+## Optional settings
+
+**A spend cap.** With this set, the spend segment shows a percentage and turns
+yellow, orange then red as it fills.
+
+```bash
+export CLAUDE_30D_SPEND_LIMIT_USD=200
+```
+
+**Connected tool health.** Off until tools are chosen. Run `/core-tools`.
+
+---
+
+## If it has stopped working
+
+Check in this order and stop at the first thing that is wrong.
+
+1. **Is the setting there.** No `statusLine` key means it was never switched on.
+2. **Does the resolver exist.** `ls ~/.claude/statusline.js`.
+3. **Is a copy installed.** `"${CLAUDE_PLUGIN_ROOT}"/statusline/install.js --dry-run`
+   reports the versions it can see. An empty list means the plugin is present as
+   source but not installed from a marketplace, so there is nothing to resolve.
+4. **Feed it a payload by hand.** The line is a command that reads JSON on
+   stdin, so it can be run directly:
+
+   ```bash
+   echo '{"model":{"display_name":"Claude"},"workspace":{"current_dir":"'"$PWD"'"}}' \
+     | node ~/.claude/statusline.js
+   ```
+
+   Output means the line works and the setting is the problem. No output means
+   the opposite.
+
+Never report it as fixed without running step 4. A status line that fails
+renders nothing, which looks exactly the same as a status line that has not been
+restarted yet.
