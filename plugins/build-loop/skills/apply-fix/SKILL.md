@@ -117,7 +117,6 @@ would not say which is at risk. Keep the two fields apart everywhere else.
 Read the file at `{target_path}` in full using the Read tool. Read the entire file — not just the section you plan to change. You need the full content to:
 - Understand the surrounding context
 - Write the complete updated file back in Step 7 (full-file Write, not patch)
-- Know the current frontmatter version and correction_notes values
 
 If the file is not found: say "Can't find the target file at {target_path}. Is this path correct?" Stop.
 
@@ -141,12 +140,19 @@ Wait for the user's answer, incorporate it, then continue. Do not ask a second c
 
 ## Step 6 — Show the diff and wait for approval
 
-**Only a file with YAML frontmatter gets version bookkeeping.** That means a `SKILL.md`, or a command file that already has a frontmatter block. A hook, a script, or any file whose first line is not `---` gets the surgical change and nothing else. Do not add a frontmatter block to a file that never had one, and do not write a version comment in its place. A JavaScript hook with three lines of YAML pasted on top of it is a broken hook.
+**Change only what the fix requires.** Frontmatter is not touched, and no
+`version`, `last_updated` or `correction_notes` field is added or updated.
 
-When the file DOES have frontmatter, compute the new values first:
-- Run `date -u +"%Y-%m-%dT%H:%M:%S.000Z"` to get the current timestamp.
-- Determine new version: if `version` is missing from frontmatter, new version is `2`; if present, increment by 1.
-- Determine new correction_notes: if missing, new value is `"{YYYY-MM-DD}: {one-line fix description} [queue:{id}]"`; if present, append with `"; "` separator.
+This skill used to write those three fields into any target that had a
+frontmatter block. They came off on 2026-07-28 because git records the same
+thing and cannot drift, while the fields could and did. `whats-breaking`
+reached `version: 4`, meaning three corrections, carrying a `correction_notes`
+that mentioned one of them. A field that quietly stops accumulating is worse
+than no field, because it still reads as a complete record.
+
+The commit is the record. Step 8 puts the queue id in the commit message, so
+`git log --grep` finds a fix from its bug report, and the diff shows what
+changed rather than a sentence summarizing it.
 
 Display the diff in this exact format:
 
@@ -163,18 +169,15 @@ AFTER:
   "{verbatim new text as it will appear}"
 
 What else changes:
-  - frontmatter: version bumped from {old} to {new}, last_updated set to {timestamp}, correction_notes updated
   - {any other changes, or "Nothing else was touched"}
 
 Does this look right? Reply yes, no, or retry: [your instructions]
 ```
 
-For a file with no frontmatter, the "What else changes" line reads `Nothing else was touched. This file has no frontmatter, so there is no version to bump.`
-
 Rules for the diff display:
 - Use plain language only. No code symbols, no programming jargon.
 - Quote the actual text verbatim in BEFORE and AFTER blocks. Do not paraphrase old or new text.
-- Always list frontmatter changes in "What else changes." Never omit it.
+- "What else changes" lists everything outside the BEFORE and AFTER blocks. Where there is nothing, say `Nothing else was touched.` rather than dropping the line, so a silent extra edit cannot hide in an omission.
 - If the change is an addition (new text, not a replacement), show BEFORE as the location context ("After step 3...") and AFTER as the new text being inserted.
 - If multiple distinct blocks change, show multiple BEFORE/AFTER pairs.
 
@@ -191,8 +194,7 @@ Response handling:
 
 Build the complete updated file content:
 - Apply the surgical change (the specific before → after from Step 6).
-- If, and only if, the file already opens with a YAML frontmatter block: add or update `version`, `last_updated`, and `correction_notes` immediately before the closing `---`. Do NOT reorder existing fields. Do NOT add blank lines between existing fields and the new ones. If the file has no frontmatter, skip this entirely and do not create one.
-- All content outside the fixed section and frontmatter must be identical to what was read in Step 4.
+- All content outside the fixed section must be identical to what was read in Step 4, frontmatter included.
 
 Use the **Write tool** to write the full file to `{target_path}`. Do NOT use the Edit tool or incremental patches — Write is atomic at the OS level; Edit can fail partway through leaving the file in a partial state.
 

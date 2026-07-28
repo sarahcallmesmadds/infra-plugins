@@ -1,11 +1,8 @@
 ---
 name: whats-breaking
 type: human
-version: 4
-last_updated: 2026-07-27
 description: A weekly report on what broke, what got fixed, and what keeps coming back. Reads the bug queue, finds the things corrected three or more times across three or more sessions, writes the report to ~/.claude/build-loop/summaries/YYYY-WW.md, and offers to post it to Slack. Use when the user asks "what keeps breaking", "what's breaking", "what did I fix this week", "show me the patterns", or explicitly invokes /whats-breaking. Runs on a local machine only, never in a cloud runtime.
 allowed-tools: [Read, Write, Bash, mcp__slack__*]
-correction_notes: "2026-04-26 — added Runtime Requirements section + replaced Claude Desktop New Task UI scheduling guidance with local launchd/cron path [queue:2026-04-24T22-07-34-skill-summary]"
 ---
 
 

@@ -2,9 +2,6 @@
 name: find-skill
 type: human
 description: Skill discovery — tells you which skill to use for what you're trying to do. Invoke when you're not sure which command to reach for. Builds the routing table at runtime by reading every SKILL.md frontmatter, so newly-installed skills auto-appear.
-version: 2
-last_updated: 2026-05-02
-correction_notes: 2026-05-02 — replaced a hardcoded skill table with a runtime scan of the installed skills, so newly created skills appear without editing this file.
 ---
 
 # /find-skill — skill discovery

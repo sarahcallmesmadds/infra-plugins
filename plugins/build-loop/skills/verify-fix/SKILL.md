@@ -47,10 +47,9 @@ Use plain language. Quote the queue entry's fields directly without paraphrasing
 
 ### Step V2 — Show the diff
 
-Compute new frontmatter values before displaying:
-- Run `date -u +"%Y-%m-%dT%H:%M:%S.000Z"` to get the current timestamp.
-- Determine new version: if `version` is missing from frontmatter, new version is `2`; if present, increment by 1.
-- Determine new correction_notes: if missing, new value is `"{YYYY-MM-DD}: {one-line fix description} [queue:{id}]"`; if present, append with `"; "` separator.
+Frontmatter is not touched. See the note in `/apply-fix` Step 6: the `version`,
+`last_updated` and `correction_notes` fields came off on 2026-07-28, because git
+records the same thing and cannot drift.
 
 Display the diff in this exact format:
 
@@ -64,8 +63,7 @@ AFTER:
   "{verbatim new text as it will appear in the file — exact characters}"
 
 What else changes:
-  - frontmatter: version bumped from {old} to {new}, last_updated set to {timestamp}, correction_notes updated
-  - {or "Nothing else was touched"}
+  - {any other changes, or "Nothing else was touched"}
 
 Does this look right? Reply yes, no, or retry: [your instructions]
 ```
@@ -73,7 +71,7 @@ Does this look right? Reply yes, no, or retry: [your instructions]
 Rules for the diff:
 - Use plain language only. No code symbols, no programming jargon.
 - Quote the actual text verbatim in BEFORE and AFTER blocks. Never paraphrase old or new text.
-- Always list frontmatter changes in "What else changes." Never omit it.
+- "What else changes" lists everything outside the BEFORE and AFTER blocks. Where there is nothing, say `Nothing else was touched.` rather than dropping the line, so a silent extra edit cannot hide in an omission.
 - If the change is an addition (new text, not a replacement), show BEFORE as location context ("After step 3...") and AFTER as the new text being inserted.
 - If multiple distinct blocks change, show multiple BEFORE/AFTER pairs.
 
@@ -132,7 +130,7 @@ When /verify-fix is invoked directly (not from within /apply-fix), it works inde
 
 Check the loaded entry's status:
 
-- **"fix applied, watching"**: The fix was already approved and committed. Say: "This fix was already committed at {commit-hash from notes}. Do you want to review the change retroactively? I can show you what changed based on the correction_notes." Wait for confirmation before proceeding.
+- **"fix applied, watching"**: The fix was already approved and committed. Say: "This fix was already committed at {commit-hash from notes}. Do you want to review the change retroactively? I can show you the diff from that commit." Wait for confirmation before proceeding.
 - **"In Progress"**: The fix was started but not committed (session may have been interrupted). Proceed to Step S2.
 - **"Open"**: Say "This entry hasn't had a fix proposed yet. Run /apply-fix {id} to start the fix process." Stop.
 - Any other status: Say "This entry is {status}. Nothing to verify." Stop.
