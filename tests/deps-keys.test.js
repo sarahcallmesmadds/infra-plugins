@@ -68,6 +68,45 @@ check('every skill that searches a plugin-repo root also searches scripts/', () 
   }
 });
 
+// --- the statusline/ and tests/ gaps ---------------------------------------
+
+// Same drift as scripts/, found by diffing the repository against DEPS.json on
+// 2026-07-28: 19 test files and 2 statusline files, none of them reachable by
+// any search. The statusline pair was in the map only because someone added it
+// by hand, which is the state that looks fixed and is not.
+check('every skill that searches a plugin-repo root also searches statusline/', () => {
+  for (const [name, text] of Object.entries(SKILLS)) {
+    if (!/plugins\/\*\//.test(text)) continue;
+    assert.ok(
+      /plugins\/\*\/statusline\//.test(text),
+      `${name} searches a plugin-repo root but never looks in statusline/, `
+      + 'a fourth place a plugin keeps executable code'
+    );
+  }
+});
+
+check('every skill that searches a plugin-repo root also searches tests/', () => {
+  // This one cannot be fixed by adding another subdirectory to the plugins/*/
+  // glob. tests/ is a sibling of plugins/, not a child, so the search has to
+  // reach outside the pattern that finds everything else.
+  for (const [name, text] of Object.entries(SKILLS)) {
+    if (!/plugins\/\*\//.test(text)) continue;
+    assert.ok(
+      /<root\.path>\/tests\//.test(text),
+      `${name} searches a plugin-repo root but never looks in tests/, which `
+      + 'sits at the repository root and inside no plugin'
+    );
+  }
+});
+
+check('a test target keeps a key that cannot collide with a plugin target', () => {
+  assert.ok(
+    /built-check\.test/.test(SKILLS['audit-deps']),
+    'audit-deps does not say what key a test file gets, so built-check.test.js '
+    + "and the build-loop skill called built-check can land on the same key"
+  );
+});
+
 check('a script target is no longer sent straight to a manual ask', () => {
   assert.ok(
     !/If `target_kind` is `script` or `other` and nothing above matched/.test(SKILLS['flag-issue']),
