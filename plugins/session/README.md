@@ -89,6 +89,35 @@ number is as fresh as the cache and no fresher, which is why it starts showing
 its age once it gets old, and why it shows nothing at all rather than `0/5`
 before the first refresh finishes.
 
+## The memory budget
+
+Notes that load into a session are cheap to write and need a decision to delete,
+so nothing ever deletes them. One real directory reached 14,637 words across
+eleven files before anyone measured it, and half of that was two files: a
+session log nobody had removed anything from, and a status document that had
+quietly become the only home for some durable engineering notes. Asking a
+question about working style pulled the whole status document.
+
+`/wrap` measures the directory after writing to it and reports what it finds. It
+changes nothing and deletes nothing.
+
+The budget depends on what a file declares itself to be, because the kinds have
+genuinely different shapes. A `project` file is live state, meant to be replaced
+rather than grown, so a long one means nothing has been taken out since it was
+written. A `reference` file accumulates slowly and legitimately and is read far
+more often than it is written. Holding both to one number would either nag about
+a good reference file or stay quiet while a status document turned into a log.
+
+It also checks the index in both directions: files nothing points at, and
+entries pointing at files that are not there. That is the failure that makes an
+inventory useless, and it happens silently.
+
+```json
+{
+  "memoryBudget": { "liveFileWords": 900, "durableFileWords": 2500, "totalWords": 10000 }
+}
+```
+
 ## Where handoffs go
 
 A directory with its own work scope gets `HANDOFF.md` alongside the work, so it
