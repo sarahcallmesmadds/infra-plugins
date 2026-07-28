@@ -1,6 +1,9 @@
 ---
 name: wrap
 description: End-of-session wrap. Writes down what was decided, what was built and what is next, into a handoff document the next session can load. Use at the end of a working session, or when the user says "wrap", "let's wrap", "wrap up", "wrap this session", "close out", or invokes /wrap. Pairs with /pickup, which reads what this writes.
+version: 2
+last_updated: 2026-07-28T03:12:51.000Z
+correction_notes: "2026-07-28: verify the handoff file exists before Step 4 claims it was saved [queue:2026-07-28T03-06-19-wrap]"
 ---
 
 # Wrap
@@ -96,6 +99,23 @@ not:
 Do not invent content to fill a section. An empty section is information. A
 padded one is noise that costs tokens at every future pickup.
 
+### Then confirm it is actually there
+
+```bash
+"${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js find "<slug>" --json
+```
+
+Writing the file and recording where it went are two different things, and
+`cli.js target` does the second before the first. It notes the intended path so
+`/pickup` can find it later, and that note survives whether or not anything was
+ever written there.
+
+So the index saying a handoff exists is not evidence that it does. This command
+checks the file itself, and a null match means nothing was written, whatever the
+step above reported.
+
+Carry the result into Step 4. It decides what that step is allowed to say.
+
 ---
 
 ## Step 3: Update the durable notes, if this project has them
@@ -181,6 +201,19 @@ Handoff saved to [path].
 
 /pickup [slug]
 ```
+
+**Print those last two lines only when the check at the end of Step 2 returned a
+match.** They are a claim about a file on disk, so they need the file on disk.
+
+When it returned nothing, say this instead and stop:
+
+```
+Handoff was NOT written to [path]. Nothing to pick up.
+```
+
+Do not print the `/pickup` line in that case. A slug that resolves to no file
+sends the next session looking for something that was never there, and the one
+after that starts from nothing with no sign anything went wrong.
 
 The `/pickup [slug]` line goes last, always, on its own. It gets copied straight
 into the next session, so anything printed after it has to be scrolled past.
