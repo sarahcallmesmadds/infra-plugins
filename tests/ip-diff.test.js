@@ -342,6 +342,39 @@ check('a repository that was not checked produces no missing finding', () => {
 
 // ------------------------------------------------------- name normalisation ----
 
+check('a recorded plugin whose name has stray whitespace is not called unrecorded', () => {
+  // The half-done version of the previous fix. installed was keyed through
+  // pluginKey, which trims, and the recorded set was still on a bare
+  // toLowerCase, which does not. So a row titled with a trailing space did not
+  // match its own installed copy and was reported as a plugin nobody recorded,
+  // sending somebody to investigate drift that was not there.
+  const rows = [{ id: 'p1', kind: 'Plugin', name: 'build-loop ', parent: [] }];
+  const state = reality({
+    installed: new Map([['build-loop', { version: '0.2.7', versionsOnDisk: ['0.2.7'], path: '/x' }]]),
+  });
+  const out = classify(rows, state, config);
+  assert.deepStrictEqual(
+    out.findings.filter((f) => f.check === 'unrecorded-plugin'),
+    [],
+    'the row is recorded, it just has a space in it',
+  );
+});
+
+check('name comparison in diff.js goes through pluginKey and nothing else', () => {
+  // The rule only held where it was applied, and "everywhere else" is not a
+  // place anybody checks. This makes the next bare toLowerCase fail here rather
+  // than in somebody's report.
+  //
+  // Comments are stripped first, so the one above explaining the fix can say
+  // the word.
+  const src = fs.readFileSync(path.join(ROOT, 'scripts', 'diff.js'), 'utf8')
+    .split('\n')
+    .filter((line) => !line.trim().startsWith('//'))
+    .join('\n');
+  assert.doesNotMatch(src, /\.toLowerCase\(/,
+    'normalise names through pluginKey, or the two sides drift apart again');
+});
+
 check('a plugin name has one spelling for comparison', () => {
   assert.strictEqual(pluginKey(' Build-Loop '), 'build-loop');
   assert.strictEqual(pluginKey('build-loop'), 'build-loop');

@@ -289,11 +289,21 @@ function classify(rows, reality, config) {
   }
 
   // --- plugins on disk with no row ------------------------------------------
+  //
+  // Through pluginKey like everywhere else. This was the one call site left on
+  // a bare toLowerCase after pluginKey was introduced, which meant a row titled
+  // "build-loop " with a trailing space did not match its own installed copy
+  // and was reported as a plugin nobody had recorded.
+  //
+  // Worth naming, since pluginKey exists specifically to stop two places
+  // disagreeing about the same name and this was two places disagreeing about
+  // the same name. A rule only holds where it is applied, and "everywhere else"
+  // is not a place anyone checks.
   const recorded = new Set(
-    rows.filter((row) => row.kind === 'Plugin').map((row) => String(row.name).toLowerCase())
+    rows.filter((row) => row.kind === 'Plugin').map((row) => pluginKey(row.name))
   );
   for (const [name, installed] of reality.installed) {
-    if (recorded.has(name.toLowerCase())) continue;
+    if (recorded.has(pluginKey(name))) continue;
     findings.push({
       rowId: null,
       rowUrl: null,
