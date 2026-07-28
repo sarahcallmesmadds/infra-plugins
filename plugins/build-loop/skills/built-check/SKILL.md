@@ -4,9 +4,6 @@ type: human
 description: Cross-checks the to-build list at ~/.claude/build-loop/to-build/ against what has actually been built, and offers to close the finished items in one step. Looks for evidence in the git log of every configured root, on disk, and in the current session. Use at the end of a session, when wrapping up, or when the user asks "what did I ship", "did I build any of this", "close the ones I've done", "is anything on the list done", or explicitly invokes /built-check. Shows the evidence for each item and closes nothing without an explicit yes.
 argument-hint: "[optional: number of days back to look, default 90]"
 allowed-tools: Read, Write, Bash(ls:*), Bash(cat:*), Bash(date:*), Bash(mv:*), Bash(rm:*), Bash(node:*), Bash(git:*), Bash(find:*), Bash(stat:*)
-version: 2
-last_updated: 2026-07-27T23:13:01.000Z
-correction_notes: "2026-07-27: Step 3b reads a path named in the item's own text before falling back to the kind conventions [queue:2026-07-27T23-01-50-built-check]"
 ---
 
 You are reconciling the to-build list against reality. The schema is at `${CLAUDE_PLUGIN_ROOT}/reference/SCHEMA-BUILD.md`. Read it if you have not already in this session.
