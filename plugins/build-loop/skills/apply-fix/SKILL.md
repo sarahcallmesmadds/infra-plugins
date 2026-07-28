@@ -50,10 +50,21 @@ Then check:
 **Repo guard:** If `repo == "unknown"`: say "This entry has repo: unknown. I can't commit without knowing which repo this belongs to. Check DEPS.json or update the queue entry's repo field manually, then try again." Stop. Do not change status.
 
 **Set status to In Progress** via atomic write:
-1. Write the updated JSON (with `status: "In Progress"`) to `~/.claude/build-loop/queue/{id}.json.tmp` using the Write tool.
-2. Run: `node -e "JSON.parse(require('fs').readFileSync(require('os').homedir() + '/.claude/build-loop/queue/{id}.json.tmp','utf8'))"`
-3. If parse succeeds: `mv ~/.claude/build-loop/queue/{id}.json.tmp ~/.claude/build-loop/queue/{id}.json`
-4. If parse fails: report the error. Do not swap. Do not proceed.
+1. Read the current queue entry JSON from disk. Do not compose it from what is
+   on screen or from what you remember reading earlier.
+2. Set `status` to `"In Progress"`. Change nothing else.
+3. Write the whole entry back, every field it already had, to
+   `~/.claude/build-loop/queue/{id}.json.tmp` using the Write tool.
+4. Run: `node -e "JSON.parse(require('fs').readFileSync(require('os').homedir() + '/.claude/build-loop/queue/{id}.json.tmp','utf8'))"`
+5. If parse succeeds: `mv ~/.claude/build-loop/queue/{id}.json.tmp ~/.claude/build-loop/queue/{id}.json`
+6. If parse fails: report the error. Do not swap. Do not proceed.
+
+**Write the entry back, do not rebuild it.** The Write tool replaces the whole
+file, so anything not carried across is gone with no error and no warning. This
+step used to say only "write the updated JSON", which reads as an instruction to
+produce a correct-looking entry rather than to preserve the one already there,
+and notes recorded by earlier sessions were dropped. `notes` is the field that
+suffers, because it is the one that grows.
 
 ---
 
@@ -247,10 +258,29 @@ git -C {repo_root} rev-parse HEAD
 ```
 Where `{repo_root}` is the `path` of the root named by the entry's `repo` field.
 
-**Update the queue entry** — run atomic write to set status to `"fix applied, watching"` and append note:
-```json
-{"ts": "{ISO-8601 now}", "text": "Committed: {commit-hash} to {repo}"}
-```
+**Update the queue entry** via atomic write:
+1. Read the current queue entry JSON from disk. It has changed since Step 2, and
+   it may carry notes this session never saw.
+2. Set `status` to `"fix applied, watching"`.
+3. Append to the existing `notes` array:
+   ```json
+   {"ts": "{ISO-8601 now}", "text": "Committed: {commit-hash} to {repo}"}
+   ```
+   Append, never rebuild. The array must come back one longer than it went in.
+   Get the timestamp with `date -u +"%Y-%m-%dT%H:%M:%S.000Z"`.
+4. Write the whole entry back, every field it already had, to
+   `~/.claude/build-loop/queue/{id}.json.tmp` using the Write tool.
+5. Run: `node -e "JSON.parse(require('fs').readFileSync(require('os').homedir() + '/.claude/build-loop/queue/{id}.json.tmp','utf8'))"`
+6. If parse succeeds: `mv ~/.claude/build-loop/queue/{id}.json.tmp ~/.claude/build-loop/queue/{id}.json`
+7. If parse fails: report the error. Do not swap. Say "The fix is committed
+   ({commit-hash}), and the queue entry was not updated. Edit it by hand at
+   `~/.claude/build-loop/queue/{id}.json`"
+
+Notes are the audit trail on a queue entry: a repo unknown warning, the reason a
+dep-review was raised, a record that an earlier attempt was abandoned. They are
+read at exactly the moment something has gone wrong, which is when they are
+least affordable to lose. An entry that arrives here with one note leaves with
+three, the original plus the Committed note plus any commentary. Never two.
 
 **Surface dep-review entries** — run `ls ~/.claude/build-loop/queue/*.json 2>/dev/null`. Read each file and find any entries where `parent_id == this entry's id` AND `status == "Open"`. If any exist:
 
