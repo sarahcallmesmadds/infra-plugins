@@ -68,11 +68,32 @@ check('the cutoff says which zone it is in', () => {
 });
 
 check('git really does read an unzoned timestamp as local time', () => {
-  // The reason the Z is needed, measured rather than asserted. If git ever
-  // changes this, the explanation in the skill stops being true and we find
-  // out here instead of from a wrong answer.
+  // The reason the Z is needed, measured rather than asserted.
+  //
+  // The claim is that the same digits mean a different instant depending on
+  // whether a zone is given. It is tempting to test that by checking the
+  // unzoned form finds fewer commits, and that only holds west of UTC. East of
+  // it the unzoned form resolves EARLIER and finds more, so a direction-based
+  // assertion fails on correct code in half the world.
+  //
+  // Writing `D` for the cutoff digits read as UTC and `off` for
+  // getTimezoneOffset() in minutes, positive west of UTC, git resolves the
+  // unzoned form to `D + off`. So a commit placed halfway between `D` and
+  // `D + off` falls inside exactly one of the two windows, whichever side of
+  // UTC the machine is on. Which one flips with the sign; that they differ
+  // does not, and that is the actual claim.
+  const off = new Date().getTimezoneOffset();
+  if (Math.abs(off) < 2) {
+    console.log('        (skipped, this machine is within two minutes of UTC so the'
+      + ' two forms mean the same instant)');
+    return;
+  }
+
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'built-check-tz-'));
-  const stamp = new Date(Date.now() - 2 * 3600 * 1000).toISOString().replace(/\.\d+Z$/, 'Z');
+  const cutoffUtc = new Date(Date.now() - 12 * 3600 * 1000);
+  const commitAt = new Date(cutoffUtc.getTime() + (off / 2) * 60 * 1000);
+  const stamp = commitAt.toISOString().replace(/\.\d+Z$/, 'Z');
+
   execFileSync('git', ['init', '-b', 'main', repo], { stdio: 'ignore' });
   const git = (...a) => execFileSync('git', ['-C', repo, ...a], {
     encoding: 'utf8',
@@ -82,29 +103,31 @@ check('git really does read an unzoned timestamp as local time', () => {
   git('config', 'user.name', 't');
   fs.writeFileSync(path.join(repo, 'a.txt'), 'x');
   git('add', '-A');
-  git('commit', '-m', 'two hours ago');
+  git('commit', '-m', 'halfway between the two readings of one cutoff');
 
   const count = (since) =>
     execFileSync('git', ['-C', repo, 'log', `--since=${since}`, '--oneline'], { encoding: 'utf8' })
       .trim().split('\n').filter(Boolean).length;
 
-  // One hour before the commit, expressed three ways.
-  const t = new Date(Date.now() - 3 * 3600 * 1000);
-  const iso = t.toISOString().replace(/\.\d+Z$/, 'Z');
-  const bareUtc = iso.replace('T', ' ').replace('Z', '');
+  const zoned = cutoffUtc.toISOString().replace(/\.\d+Z$/, 'Z');
+  const unzoned = zoned.replace('T', ' ').replace('Z', '');
 
-  assert.strictEqual(count(iso), 1, 'a zoned UTC cutoff did not find a commit inside the window');
+  assert.notStrictEqual(
+    count(zoned), count(unzoned),
+    'the same digits with and without a zone selected the same commits, so git now '
+    + 'reads an unzoned timestamp as UTC. The Z is no longer load-bearing and the '
+    + 'explanation in built-check SKILL.md is out of date.'
+  );
 
-  const offsetMinutes = t.getTimezoneOffset();
-  if (offsetMinutes === 0) {
-    console.log('        (skipped the unzoned half, this machine runs on UTC)');
+  // And the direction, which is what makes it a hazard rather than a curiosity.
+  if (off > 0) {
+    assert.strictEqual(count(zoned), 1, 'west of UTC the zoned window should hold the commit');
+    assert.strictEqual(count(unzoned), 0, 'west of UTC the unzoned window starts late and should miss it');
   } else {
-    assert.notStrictEqual(
-      count(bareUtc), 1,
-      'git now reads an unzoned timestamp as UTC. The Z is no longer load-bearing '
-      + 'and the explanation in built-check SKILL.md is out of date.'
-    );
+    assert.strictEqual(count(zoned), 0, 'east of UTC the zoned window starts after the commit');
+    assert.strictEqual(count(unzoned), 1, 'east of UTC the unzoned window starts early and picks it up');
   }
+
   fs.rmSync(repo, { recursive: true, force: true });
 });
 
