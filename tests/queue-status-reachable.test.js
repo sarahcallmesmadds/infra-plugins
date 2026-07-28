@@ -48,7 +48,7 @@ const TERMINAL = ['Resolved', "Won't Fix", 'fix applied, watching'];
 const RETIRED = 'fix attempted / unresolved';
 
 // See deps-keys.test.js for why this is compared rather than printed.
-const EXPECTED_CHECKS = 9;
+const EXPECTED_CHECKS = 11;
 
 let failed = 0;
 let ran = 0;
@@ -72,10 +72,33 @@ function statusesWrittenBy(text) {
   return found;
 }
 
-const WRITERS = {
-  'verify-fix': VERIFY_FIX,
-  'apply-fix': APPLY_FIX,
-};
+// Discovered, not listed by hand.
+//
+// The first version of this file named verify-fix and apply-fix and called
+// itself a general rule. revert-fix also writes queue statuses, `Open` and
+// `Won't Fix`, and was silently outside the rule it claimed to enforce. Both
+// values happen to be allowed, so nothing failed and nothing would have.
+//
+// A hand-kept list of writers is the same shape as run-all's hand-kept list of
+// suites: correct the day it is written and quietly behind from then on. So the
+// scope is derived from the file instead.
+//
+// The discriminator is which store a skill writes to, because that is what
+// decides which status enum applies. built-check sets `status` to `"Built"`,
+// which is valid in SCHEMA-BUILD.md and meaningless here, and it is the only
+// skill that touches to-build/ rather than queue/. Excluding it by that fact
+// rather than by name means a second to-build skill is excluded automatically
+// and a second queue skill is included automatically.
+const SKILLS_DIR = path.join(BUILD_LOOP, 'skills');
+const WRITERS = {};
+for (const name of fs.readdirSync(SKILLS_DIR)) {
+  const file = path.join(SKILLS_DIR, name, 'SKILL.md');
+  if (!fs.existsSync(file)) continue;
+  const text = fs.readFileSync(file, 'utf8');
+  if (!text.includes('build-loop/queue')) continue;      // not a queue writer
+  if (statusesWrittenBy(text).size === 0) continue;      // reads only
+  WRITERS[name] = text;
+}
 
 // --- the general rule ------------------------------------------------------
 
@@ -99,6 +122,30 @@ check('the writers actually write something, so the regex has not gone stale', (
       `found no status writes in ${name}; the extraction regex no longer matches `
       + 'the phrasing, so the rule above is checking nothing');
   }
+});
+
+check('discovery finds every queue-status writer, not a subset', () => {
+  // The gap this replaced: a hand-kept list held two of the three.
+  const found = Object.keys(WRITERS).sort();
+  for (const expected of ['apply-fix', 'revert-fix', 'verify-fix']) {
+    assert.ok(found.includes(expected),
+      `${expected} writes queue statuses and discovery missed it. Found: ${found.join(', ')}`);
+  }
+});
+
+check('built-check is excluded, and for the right reason', () => {
+  // It sets status to "Built", which is SCHEMA-BUILD.md's enum, not this one.
+  // Excluded because it writes to-build/ rather than queue/, so a second
+  // to-build skill drops out automatically and is not another name to maintain.
+  assert.ok(!Object.keys(WRITERS).includes('built-check'),
+    'built-check is in scope; its "Built" status belongs to the to-build schema '
+    + 'and would fail a rule about queue statuses');
+  const builtCheck = read('skills', 'built-check', 'SKILL.md');
+  assert.ok(statusesWrittenBy(builtCheck).size > 0,
+    'built-check no longer writes a status, so this exclusion is now testing nothing');
+  assert.ok(!builtCheck.includes('build-loop/queue'),
+    'built-check now references the queue, so the discriminator no longer separates '
+    + 'the two schemas and the exclusion is accidental rather than principled');
 });
 
 check('the default /list-bugs filter is still Open plus In Progress', () => {
