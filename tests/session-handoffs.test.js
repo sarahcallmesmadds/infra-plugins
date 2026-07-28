@@ -395,5 +395,54 @@ check('installing with no version on disk yet is reported, not treated as an err
   assert.deepStrictEqual(install.install({ home }).installedVersions, []);
 });
 
+// ------------------------------------------------ the wrap summary step ----
+//
+// Wrap reported a handoff it had never written, because Step 4 carried
+// "Handoff saved to [path]" as fixed text with nothing checking the file
+// first. Step 2 now ends by running `cli.js find`, and Step 4 may only claim
+// success when that returned a match.
+//
+// The first version of that fix left both lines inside the template block and
+// put the condition underneath as prose, which is the same shape as the bug:
+// the part read first states the good outcome plainly, and the qualification
+// arrives afterwards where it is easy to skim. So the template must not
+// contain the success lines at all. They live below it, under a stated
+// condition, alongside the failure ending.
+//
+// Source assertions, because the thing being pinned is what the instructions
+// say. Whether a model follows them is what the live run is for.
+
+const WRAP = fs.readFileSync(path.join(ROOT, 'skills', 'wrap', 'SKILL.md'), 'utf8');
+const STEP_4 = WRAP.slice(WRAP.indexOf('## Step 4: Show the summary'));
+
+check('step 2 ends by checking the file, not the index', () => {
+  const step2 = WRAP.slice(WRAP.indexOf('## Step 2: Write the handoff'), WRAP.indexOf('## Step 3'));
+  assert.match(step2, /cli\.js find/, 'Step 2 must verify the write landed');
+});
+
+check('the summary template does not carry the success lines', () => {
+  // The regression: both lines sitting in the block that gets copied.
+  const firstBlock = STEP_4.slice(STEP_4.indexOf('```'), STEP_4.indexOf('```', STEP_4.indexOf('```') + 3));
+  assert.doesNotMatch(firstBlock, /Handoff saved to/,
+    'the saved line must not be inside the template, or it gets printed unconditionally');
+  assert.doesNotMatch(firstBlock, /\/pickup \[slug\]/,
+    'the pickup line must not be inside the template either');
+});
+
+check('the success ending is stated as conditional before it appears', () => {
+  const cond = STEP_4.indexOf('returned a match');
+  const saved = STEP_4.indexOf('Handoff saved to');
+  assert.ok(cond !== -1, 'the match condition should be stated');
+  assert.ok(saved !== -1, 'the saved ending should still exist');
+  assert.ok(cond < saved, 'the condition must come before the line it governs');
+});
+
+check('the failure ending exists and does not offer a pickup slug', () => {
+  assert.match(STEP_4, /Handoff was NOT written to/);
+  const failing = STEP_4.slice(STEP_4.indexOf('Handoff was NOT written to'));
+  assert.match(failing, /Do not print the `\/pickup` line/,
+    'a slug pointing at no file sends the next session looking for nothing');
+});
+
 process.stdout.write(`\n${failures === 0 ? 'all passed' : `${failures} failed`}\n`);
 process.exit(failures === 0 ? 0 : 1);

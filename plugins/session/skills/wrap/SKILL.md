@@ -96,6 +96,23 @@ not:
 Do not invent content to fill a section. An empty section is information. A
 padded one is noise that costs tokens at every future pickup.
 
+### Then confirm it is actually there
+
+```bash
+"${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js find "<slug>" --json
+```
+
+Writing the file and recording where it went are two different things, and
+`cli.js target` does the second before the first. It notes the intended path so
+`/pickup` can find it later, and that note survives whether or not anything was
+ever written there.
+
+So the index saying a handoff exists is not evidence that it does. This command
+checks the file itself, and a null match means nothing was written, whatever the
+step above reported.
+
+Carry the result into Step 4. It decides what that step is allowed to say.
+
 ---
 
 ## Step 3: Update the durable notes, if this project has them
@@ -176,14 +193,40 @@ them was simply mislabelled.
 
 ### Filed away
 [Only if Step 0 moved something. List the slugs. Otherwise omit the heading.]
+```
 
+How that ends depends on the check at the end of Step 2, and there is no
+version of it that does not.
+
+**Where the check returned a match**, close with:
+
+```
 Handoff saved to [path].
 
 /pickup [slug]
 ```
 
-The `/pickup [slug]` line goes last, always, on its own. It gets copied straight
-into the next session, so anything printed after it has to be scrolled past.
+**Where it returned nothing**, close with this instead and stop:
+
+```
+Handoff was NOT written to [path]. Nothing to pick up.
+```
+
+Do not print the `/pickup` line in that case. A slug that resolves to no file
+sends the next session looking for something that was never there, and the one
+after that starts from nothing with no sign anything went wrong.
+
+The two endings are kept out of the template above on purpose. An earlier
+version of this step had the saved line and the `/pickup` line sitting inside
+it, with the condition written underneath as prose. That is the same shape as
+the bug this step exists to prevent: the part read first states the good
+outcome plainly, and the qualification arrives afterwards, where it is easy to
+skim past. A template that cannot be copied without deciding is better than a
+correct sentence below one that can.
+
+Where the handoff was saved, the `/pickup [slug]` line goes last, always, on
+its own. It gets copied straight into the next session, so anything printed
+after it has to be scrolled past.
 
 ---
 
