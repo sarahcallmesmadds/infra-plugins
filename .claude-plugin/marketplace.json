@@ -94,6 +94,23 @@
         "continuity",
         "mcp"
       ]
+    },
+    {
+      "name": "ip-inventory",
+      "source": "./plugins/ip-inventory",
+      "description": "Checks a record of what you have built against GitHub and your disk, reports what has drifted, and turns the result into the schedule of prior IP you attach to an employment agreement.",
+      "version": "0.1.0",
+      "author": {
+        "name": "Sarah Madden"
+      },
+      "category": "productivity",
+      "tags": [
+        "ip",
+        "inventory",
+        "notion",
+        "audit",
+        "provenance"
+      ]
     }
   ]
 }

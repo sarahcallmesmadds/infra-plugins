@@ -1,0 +1,19 @@
+{
+  "name": "ip-inventory",
+  "version": "0.1.0",
+  "description": "Keeps a record of what you have built honest enough to stand behind. Checks every entry against GitHub and your disk, reports what has drifted, and turns the result into the schedule of prior IP you attach to an employment agreement.",
+  "author": {
+    "name": "Sarah Madden",
+    "url": "https://github.com/sarahcallmesmadds"
+  },
+  "homepage": "https://github.com/sarahcallmesmadds/plugins/tree/main/plugins/ip-inventory",
+  "repository": "https://github.com/sarahcallmesmadds/plugins",
+  "license": "MIT",
+  "keywords": [
+    "ip",
+    "inventory",
+    "notion",
+    "audit",
+    "provenance"
+  ]
+}
