@@ -33,18 +33,60 @@ function isThirdParty(row, config) {
 // Top-level entries, plus anything whose parent is a repository, since a
 // repository is a container rather than a work in its own right. Components
 // are excluded, and so is anything third-party.
+//
+// A repository is a container only where it actually contains something.
+//
+// The rule above was written and then not applied to repositories themselves.
+// A top-level repository has no parent, so the empty-parent branch returned it
+// as a work, and it appeared in the exhibit beside the plugins inside it. The
+// same authorship was then claimed twice, once as the repository and once for
+// each thing it holds, which is the padding this tool warns about elsewhere
+// and which weakens the entries that are sound.
+//
+// Dropping every repository instead would be wrong in the other direction. A
+// repository with nothing registered under it is not a container of anything,
+// it is the only record of that work, and removing it takes real IP off the
+// schedule with nothing left pointing at it. Of the two failures that one is
+// worse, because a padded exhibit can be argued down and a missing entry
+// cannot be argued back.
+//
+// So: a repository is excluded where at least one thing beneath it is listed
+// as a work in its own right, and kept where nothing is.
 function exhibitRows(rows, config) {
   const byId = new Map(rows.map((row) => [row.id, row]));
-  return rows.filter((row) => {
-    if (isThirdParty(row, config)) return false;
-    if (COMPONENT_KINDS.has(row.kind)) return false;
-    const parents = Array.isArray(row.parent) ? row.parent : [];
+  const parentsOf = (row) => (Array.isArray(row.parent) ? row.parent : []);
+
+  const eligible = (row) => !isThirdParty(row, config) && !COMPONENT_KINDS.has(row.kind);
+
+  // Everything that stands on its own, leaving the repository question aside.
+  const standalone = rows.filter((row) => {
+    if (!eligible(row) || row.kind === 'Repo') return false;
+    const parents = parentsOf(row);
     if (parents.length === 0) return true;
     return parents.every((id) => {
       const parent = byId.get(id);
       return !parent || parent.kind === 'Repo';
     });
   });
+
+  // Repositories that something above is standing in for. Computed from the
+  // promoted set rather than from the raw children, because a repository whose
+  // only children are components has nothing representing it on the exhibit and
+  // still has to speak for itself.
+  const represented = new Set();
+  for (const row of standalone) {
+    for (const id of parentsOf(row)) {
+      const parent = byId.get(id);
+      if (parent && parent.kind === 'Repo') represented.add(parent.id);
+    }
+  }
+
+  const keep = new Set(standalone.map((row) => row.id));
+  for (const row of rows) {
+    if (eligible(row) && row.kind === 'Repo' && !represented.has(row.id)) keep.add(row.id);
+  }
+
+  return rows.filter((row) => keep.has(row.id));
 }
 
 // What each entry is still missing.
