@@ -44,6 +44,17 @@ function check(name, fn) {
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'session-ctx-'));
 
+// The git scan is off until asked for, so any test about what it reports has to
+// ask. Tests that are about it staying quiet deliberately do not call this.
+const enableGitActivity = (home) => {
+  fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+  fs.writeFileSync(
+    path.join(home, '.claude', 'session.config.json'),
+    JSON.stringify({ gitActivity: { enabled: true } }),
+  );
+  return home;
+};
+
 // ----------------------------------------------------------- the bridge ----
 
 check('the bridge carries the raw percentage, not the meter percentage', () => {
@@ -419,6 +430,7 @@ check('work left in another repository is reported', () => {
   fs.mkdirSync(repo, { recursive: true });
   spawnSync('git', ['init', '-q', repo]);
   fs.writeFileSync(path.join(repo, 'wip.txt'), 'half finished');
+  enableGitActivity(home);
   const out = runSessionStart(home, home);
   assert.match(out, /leftovers/, out);
   assert.match(out, /uncommitted/, out);
@@ -431,6 +443,7 @@ check('the repository you are standing in is not reported back to you', () => {
   fs.mkdirSync(repo, { recursive: true });
   spawnSync('git', ['init', '-q', repo]);
   fs.writeFileSync(path.join(repo, 'wip.txt'), 'mine');
+  enableGitActivity(home);
   const out = runSessionStart(home, repo);
   assert.doesNotMatch(out, /current.*uncommitted/, out);
 });
@@ -653,8 +666,79 @@ check('the caveat reaches the notice, not just the flag', () => {
   // incomplete scan is pinned separately above.
   const home = tmp();
   fs.mkdirSync(path.join(home, 'Projects', 'notarepo', '.git'), { recursive: true });
+  enableGitActivity(home);
   const out = runSessionStart(home, home);
   assert.match(out, /could not be checked/, `expected the caveat, got: ${out}`);
+});
+
+// ------------------------------------------------ off until asked for ----
+//
+// The one default here that is not about cost. It is 86ms and bounded. The
+// reason it is off is that installing a plugin about sessions and handoffs
+// should not also start walking a directory of your unrelated work.
+//
+// The parallel-session check reads the process table and stays on, because it
+// looks for Claude Code sessions, which is this plugin's own subject. The line
+// is what each one looks at, not how expensive it is.
+
+const cfg = require(path.join(ROOT, 'scripts', 'config.js'));
+
+check('the git scan is off unless somebody asks for it', () => {
+  assert.strictEqual(cfg.DEFAULTS.gitActivity.enabled, false);
+  assert.strictEqual(cfg.load(tmp()).gitActivity.enabled, false, 'no config file means off');
+});
+
+check('a fresh install says nothing about repositories', () => {
+  // End to end, with real work sitting in a real repository. Before, this
+  // reported it. The point is not that the notice is wrong, it is that nobody
+  // asked for it yet.
+  const home = tmp();
+  const repo = path.join(home, 'Projects', 'untouched');
+  fs.mkdirSync(repo, { recursive: true });
+  spawnSync('git', ['init', '-q', repo]);
+  fs.writeFileSync(path.join(repo, 'wip.txt'), 'left behind');
+  const out = runSessionStart(home, home);
+  assert.doesNotMatch(out, /repositor/i, out);
+  assert.match(out, /Today is/, 'the rest of the notice still runs');
+});
+
+check('the parallel-session check is still on by default', () => {
+  // Turning off the wrong one would be a quiet way to lose the check this
+  // plugin is mostly about.
+  assert.strictEqual(cfg.DEFAULTS.gitActivity.enabled, false);
+  assert.ok(!('enabled' in (cfg.DEFAULTS.contextWarnings || {})) || cfg.DEFAULTS.contextWarnings.enabled !== false);
+  assert.doesNotMatch(SESSION_START_SRC, /liveSessions[\s\S]{0,200}enabled === false/,
+    'the session check should not have picked up an off switch by accident');
+});
+
+check('naming any setting turns it on, so a config is never silently ignored', () => {
+  // `load` replaces whole keys rather than merging into them, so a config that
+  // sets `roots` drops the default `enabled: false` and the scan runs.
+  //
+  // Pinned because it is load-bearing and invisible. If `load` ever starts deep
+  // merging, this config would be read, accepted, and quietly do nothing, which
+  // is the failure mode this plugin keeps being written against. Better it
+  // breaks here.
+  const home = tmp();
+  fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+  fs.writeFileSync(
+    path.join(home, '.claude', 'session.config.json'),
+    JSON.stringify({ gitActivity: { roots: ['~/code'] } }),
+  );
+  const loaded = cfg.load(home);
+  assert.notStrictEqual(loaded.gitActivity.enabled, false,
+    'setting roots without `enabled` must not leave the scan off');
+  assert.deepStrictEqual(loaded.gitActivity.roots, ['~/code']);
+});
+
+check('an explicit false still wins', () => {
+  const home = tmp();
+  fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+  fs.writeFileSync(
+    path.join(home, '.claude', 'session.config.json'),
+    JSON.stringify({ gitActivity: { enabled: false, roots: ['~/code'] } }),
+  );
+  assert.strictEqual(cfg.load(home).gitActivity.enabled, false);
 });
 
 process.stdout.write(`\n${failures === 0 ? 'all passed' : `${failures} failed`}\n`);

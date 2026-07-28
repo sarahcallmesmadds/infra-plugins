@@ -65,14 +65,33 @@ const DEFAULTS = {
   // that did not exist and reported nothing, which is indistinguishable from
   // all clear.
   //
-  // `enabled: false` switches it off, and it is worth saying plainly what is
-  // being switched: this walks `roots` and runs git at every session start, on
-  // a machine where somebody installed a plugin rather than wrote one. Bounded
-  // at 12 repositories, depth 2, 400ms per git call and the session-start
-  // budget, so the cost is small, but small and expected are different things.
-  // Anyone who would rather it did not read their disk should be able to find
-  // the switch, which means here and in the README rather than only in code.
-  gitActivity: {},
+  // Off until asked for, which is the one default in this file that is not
+  // about cost.
+  //
+  // It is 86ms and bounded at 12 repositories, depth 2 and 400ms per git call.
+  // Speed was never the question. The question is that installing a plugin
+  // about sessions and handoffs would also start walking a directory of your
+  // unrelated work and spawning git processes, every session, on a machine
+  // where somebody installed something rather than wrote it. Nothing in the
+  // name would lead them to expect that.
+  //
+  // The line this sits on: the parallel-session check reads the process table
+  // by default and stays that way, because it is the plugin looking at Claude
+  // Code sessions, which is its own subject. This one reads your work. One is
+  // the plugin looking at itself, the other is the plugin looking at you, and
+  // only the second needs asking.
+  //
+  // The cost of this default is real and falls on the people it was built for.
+  // Somebody who reads the README and turns it on is largely somebody who did
+  // not leave uncommitted work behind. That is accepted rather than solved.
+  //
+  // `load` replaces whole keys rather than merging into them, so a config
+  // saying `{"gitActivity": {"roots": ["~/code"]}}` drops this `enabled: false`
+  // and the scan runs. That is deliberate: configuring the thing is asking for
+  // it, and the alternative is a config that is read, accepted, and silently
+  // does nothing. If `load` ever starts deep merging, that stops being true,
+  // and there is a test pinning it so the change cannot be quiet.
+  gitActivity: { enabled: false },
 
   // Word budgets for the memory directory, checked by /wrap.
   //

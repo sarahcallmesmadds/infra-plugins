@@ -130,30 +130,39 @@ absolute paths from one machine, so anywhere else it checked six directories
 that did not exist, found nothing, and said nothing, which reads exactly like an
 all clear.
 
-**This is on by default, and it reads your disk.** At every session start it
-walks `roots`, which defaults to `~/Projects`, and runs git in each repository
-it finds. That is bounded at 12 repositories, two directories deep, 400ms per
-git call and the overall session-start budget, so it costs on the order of a
-tenth of a second. The cost is not the point. Something that spawns git and
-reads a directory on your machine every time you open a session should be a
-thing you agreed to, so it is written here rather than left to be discovered.
+**This one is off until you ask for it.** Everything else in the plugin runs on
+install. This does not, because it walks a directory of your work and runs git
+in every repository it finds there, at every session start. That is bounded at
+12 repositories, two directories deep, 400ms per git call, and it costs about a
+tenth of a second. The cost is not the reason. Reading your disk is something
+to be asked about, not something to be discovered afterwards.
 
-To switch it off:
+The parallel-session check above does run by default, and reads your process
+table to do it. The difference is what each one looks at. That one looks for
+Claude Code sessions, which is this plugin's own subject. This one looks at
+your unrelated work.
+
+To turn it on:
 
 ```json
 {
-  "gitActivity": { "enabled": false }
+  "gitActivity": { "enabled": true }
 }
 ```
 
-To keep it and point it somewhere else:
+Or turn it on and point it somewhere else, which does the same thing. Naming
+any setting here is taken as asking for it, so you do not need `enabled` as
+well:
 
 ```json
 {
-  "gitActivity": { "roots": ["~/Projects"], "depth": 2, "recentHours": 6 },
+  "gitActivity": { "roots": ["~/code", "~/work"], "depth": 2, "recentHours": 6 },
   "contextWarnings": { "warningRemaining": 35, "criticalRemaining": 25 }
 }
 ```
+
+`roots` defaults to `~/Projects`, `depth` to 2, `recentHours` to 6, and at most
+12 repositories are checked.
 
 ## The memory budget
 
