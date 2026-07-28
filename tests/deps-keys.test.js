@@ -42,8 +42,23 @@ const SKILLS = {
   'built-check': read(BUILD_LOOP, 'skills', 'built-check', 'SKILL.md'),
 };
 
+// The number of checks this file is expected to run. It is asserted at the
+// bottom rather than printed from a literal, because on 2026-07-28 three checks
+// were added here and the hardcoded tally was left at 17, so the suite ran 20
+// and said 17. That is the failure this repository keeps finding: the value was
+// right, the sentence printed beside it was not.
+//
+// Counting as they run fixes the wrong number. It does not fix the other half,
+// which is why the literal was here at all: a check that quietly disappears
+// should be noticed. So the count is derived AND compared, and this constant
+// has to move when a check is added or removed. Forgetting now fails the suite
+// instead of printing a smaller number nobody reads.
+const EXPECTED_CHECKS = 20;
+
 let failed = 0;
+let ran = 0;
 function check(what, fn) {
+  ran += 1;
   try {
     fn();
     console.log(`  ok    ${what}`);
@@ -66,6 +81,45 @@ check('every skill that searches a plugin-repo root also searches scripts/', () 
       + 'where the logic lives'
     );
   }
+});
+
+// --- the statusline/ and tests/ gaps ---------------------------------------
+
+// Same drift as scripts/, found by diffing the repository against DEPS.json on
+// 2026-07-28: 19 test files and 2 statusline files, none of them reachable by
+// any search. The statusline pair was in the map only because someone added it
+// by hand, which is the state that looks fixed and is not.
+check('every skill that searches a plugin-repo root also searches statusline/', () => {
+  for (const [name, text] of Object.entries(SKILLS)) {
+    if (!/plugins\/\*\//.test(text)) continue;
+    assert.ok(
+      /plugins\/\*\/statusline\//.test(text),
+      `${name} searches a plugin-repo root but never looks in statusline/, `
+      + 'a fourth place a plugin keeps executable code'
+    );
+  }
+});
+
+check('every skill that searches a plugin-repo root also searches tests/', () => {
+  // This one cannot be fixed by adding another subdirectory to the plugins/*/
+  // glob. tests/ is a sibling of plugins/, not a child, so the search has to
+  // reach outside the pattern that finds everything else.
+  for (const [name, text] of Object.entries(SKILLS)) {
+    if (!/plugins\/\*\//.test(text)) continue;
+    assert.ok(
+      /<root\.path>\/tests\//.test(text),
+      `${name} searches a plugin-repo root but never looks in tests/, which `
+      + 'sits at the repository root and inside no plugin'
+    );
+  }
+});
+
+check('a test target keeps a key that cannot collide with a plugin target', () => {
+  assert.ok(
+    /built-check\.test/.test(SKILLS['audit-deps']),
+    'audit-deps does not say what key a test file gets, so built-check.test.js '
+    + "and the build-loop skill called built-check can land on the same key"
+  );
 });
 
 check('a script target is no longer sent straight to a manual ask', () => {
@@ -294,5 +348,14 @@ check('plugin-qualified keys are unique across the whole repository', () => {
   }
 });
 
-console.log(`\n17 checks, ${failed} failed`);
+if (ran !== EXPECTED_CHECKS) {
+  failed += 1;
+  console.log(
+    `  FAIL  the file runs the number of checks it expects to\n`
+    + `        ran ${ran}, expected ${EXPECTED_CHECKS}. If you added or removed a `
+    + `check, move EXPECTED_CHECKS. If you did not, one has gone missing.`
+  );
+}
+
+console.log(`\n${ran} checks, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

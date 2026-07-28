@@ -126,8 +126,16 @@ ls  <root.path>/plugins/*/skills/<slug>/SKILL.md 2>/dev/null
 ls  <root.path>/plugins/*/hooks/<slug>*          2>/dev/null
 ls  <root.path>/plugins/*/commands/<slug>.md     2>/dev/null
 ls  <root.path>/plugins/*/scripts/<slug>*        2>/dev/null
+ls  <root.path>/plugins/*/statusline/<slug>*     2>/dev/null
 ls -d <root.path>/plugins/<slug>                 2>/dev/null
+ls  <root.path>/tests/<slug>*.js                 2>/dev/null
 ```
+
+The last two are easy to leave out and both hide real evidence. `statusline/` is
+a fourth place a plugin keeps executable code, and `tests/` sits at the root of
+the repository rather than inside a plugin, so a glob anchored at `plugins/*/`
+never reaches it. A to-build item satisfied by a test suite looks unbuilt
+without that line.
 
 A plugin counts as built only when its directory holds a `.claude-plugin/plugin.json`. An empty directory with the right name is a `started`, not a `looks built`.
 

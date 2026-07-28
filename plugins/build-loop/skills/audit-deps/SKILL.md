@@ -57,8 +57,25 @@ ls -1  <root.path>/plugins/*/skills/*/SKILL.md 2>/dev/null   # kind: skill
 ls -1  <root.path>/plugins/*/hooks/*           2>/dev/null   # kind: hook
 ls -1  <root.path>/plugins/*/commands/*.md     2>/dev/null   # kind: command
 ls -1  <root.path>/plugins/*/scripts/*         2>/dev/null   # kind: script
+ls -1  <root.path>/plugins/*/statusline/*      2>/dev/null   # kind: script
 ls -1d <root.path>/plugins/*/                  2>/dev/null   # kind: plugin
+ls -1  <root.path>/tests/*.js                  2>/dev/null   # kind: script
 ```
+
+The last two listings are the ones that get forgotten, and they are forgotten
+for opposite reasons. `statusline/` is a fourth place a plugin keeps executable
+code, alongside `hooks/`, `commands/` and `scripts/`, and a search written from
+the plugin template will not know it exists. `tests/` is at the **root of the
+repository and not inside any plugin**, so every glob anchored at `plugins/*/`
+walks straight past it however many directories it lists.
+
+A test is a dependent like any other, and usually the most useful one in the
+map: the answer to "what does this fix put at risk" is very often a file that
+pins the exact sentence being edited. Give a test `kind: script`, since that is
+the vocabulary the schema and the queue's `target_kind` share, and a bare key
+with no plugin segment, because it sits in no plugin. Strip only the final
+extension, so `built-check.test.js` gives the target `built-check.test` and
+cannot collide with a plugin's own `built-check`.
 
 The second skill listing catches repositories that nest the definition one level
 deeper, as `<root>/<name>/skill/SKILL.md`.

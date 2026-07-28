@@ -82,10 +82,21 @@ You show this in the draft at Step 2, so a wrong guess costs nothing. Asking abo
    ls <root.path>/plugins/*/commands/{target}.md        # -> target_kind: command
    ls <root.path>/plugins/*/scripts/{target}            # -> target_kind: script
    ls <root.path>/plugins/*/scripts/{target}.*          # -> target_kind: script
+   ls <root.path>/plugins/*/statusline/{target}.*       # -> target_kind: script
    ls -d <root.path>/plugins/{target}                   # -> target_kind: plugin
+   ls <root.path>/tests/{target}.js                     # -> target_kind: script
+   ls <root.path>/tests/{target}.test.js                # -> target_kind: script
    ```
 
    A hit here **overrides the kind you guessed in step 2 of this list**, because the directory it was found in is evidence and your guess was not.
+
+   **`statusline/` and `tests/` are searched for opposite reasons.** `statusline/`
+   is a fourth place a plugin keeps executable code and a search written from the
+   plugin template will not know it is there. `tests/` is at the root of the
+   repository and inside no plugin, so a glob anchored at `plugins/*/` cannot
+   reach it however many subdirectories it lists. Try both the bare name and the
+   `.test.js` form, since a correction is far more likely to arrive as
+   "session-skills" than as "session-skills.test".
 
    **`scripts/` is not optional and it is where the logic usually lives.** A hook or a skill in a well-built plugin is a thin wrapper over a module in `scripts/`, so that is the file a fix edits. Leaving it out meant `hook-io`, `config`, `command`, `scan` and `patterns` all failed to resolve and fell through to asking the user for a path. Two of the four `guardrails` bugs fixed on 2026-07-27 were in `scripts/`, so this was the common case rather than the edge.
 
