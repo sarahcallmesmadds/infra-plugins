@@ -83,12 +83,18 @@ You show this in the draft at Step 2, so a wrong guess costs nothing. Asking abo
    ls <root.path>/plugins/*/scripts/{target}            # -> target_kind: script
    ls <root.path>/plugins/*/scripts/{target}.*          # -> target_kind: script
    ls <root.path>/plugins/*/statusline/{target}.*       # -> target_kind: script
-   ls -d <root.path>/plugins/{target}                   # -> target_kind: plugin
+   ls <root.path>/plugins/{target}/.claude-plugin/plugin.json  # -> target_kind: plugin
    ls <root.path>/tests/{target}.js                     # -> target_kind: script
    ls <root.path>/tests/{target}.test.js                # -> target_kind: script
    ```
 
    A hit here **overrides the kind you guessed in step 2 of this list**, because the directory it was found in is evidence and your guess was not.
+
+   **A plugin resolves to its `.claude-plugin/plugin.json`, never to its
+   directory.** The path recorded here is what `/apply-fix` later opens, and a
+   directory cannot be opened or edited. `DEPS.json` stores plugin rows the same
+   way, so recording a directory also makes the queue entry and the map disagree
+   about the same plugin.
 
    **`statusline/` and `tests/` are searched for opposite reasons.** `statusline/`
    is a fourth place a plugin keeps executable code and a search written from the

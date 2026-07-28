@@ -53,7 +53,7 @@ const SKILLS = {
 // should be noticed. So the count is derived AND compared, and this constant
 // has to move when a check is added or removed. Forgetting now fails the suite
 // instead of printing a smaller number nobody reads.
-const EXPECTED_CHECKS = 20;
+const EXPECTED_CHECKS = 23;
 
 let failed = 0;
 let ran = 0;
@@ -345,6 +345,51 @@ check('plugin-qualified keys are unique across the whole repository', () => {
     const key = `plugins:${t.plugin}/${t.name}`;
     assert.ok(!seen.has(key), `plugin-qualified key still collides: ${key}`);
     seen.add(key);
+  }
+});
+
+// --- what a plugin row's path points at -------------------------------------
+
+// Found by running the audit by hand on 2026-07-28. The map stores a plugin as
+// its manifest; the glob that finds plugins returns a directory. Nothing says
+// which to store, so a run reports all five plugins MISSING and the same five
+// ORPHANED in a single pass, and approving that draft doubles every plugin row.
+check('audit-deps says a plugin row stores the manifest, not the directory', () => {
+  assert.ok(
+    /`path` for a `kind: plugin` entry is the plugin's\n\s*`\.claude-plugin\/plugin\.json`/.test(SKILLS['audit-deps']),
+    'audit-deps never says what path a plugin entry stores, so the directory '
+    + 'the glob returns and the manifest already in the map both look correct'
+  );
+});
+
+check('flag-issue resolves a plugin to a file rather than a directory', () => {
+  assert.ok(
+    /plugins\/\{target\}\/\.claude-plugin\/plugin\.json/.test(SKILLS['flag-issue']),
+    'flag-issue resolves a plugin target to its directory, and /apply-fix '
+    + 'cannot open a directory'
+  );
+  assert.ok(
+    !/ls -d <root\.path>\/plugins\/\{target\}\s/.test(SKILLS['flag-issue']),
+    'the old directory-only lookup is still there beside the new one'
+  );
+});
+
+check('the two path conventions really are distinguishable', () => {
+  // The evidence the rule rests on, in the shape of the collision test above.
+  // If a manifest path ever equalled its directory path the double-add could
+  // not happen and this rule would be unnecessary.
+  const dirs = fs.readdirSync(PLUGINS).filter((d) =>
+    fs.existsSync(path.join(PLUGINS, d, '.claude-plugin', 'plugin.json')));
+  assert.ok(dirs.length > 1, `expected several plugins on disk, found ${dirs.length}`);
+  for (const d of dirs) {
+    const asDir = path.join(PLUGINS, d);
+    const asManifest = path.join(PLUGINS, d, '.claude-plugin', 'plugin.json');
+    assert.notStrictEqual(
+      asDir, asManifest,
+      `${d} resolves the same both ways, so storing the wrong one would be harmless`
+    );
+    assert.ok(fs.statSync(asDir).isDirectory(), `${d} is not a directory`);
+    assert.ok(fs.statSync(asManifest).isFile(), `${d} has no manifest file to store`);
   }
 });
 

@@ -103,6 +103,15 @@ For each path found, derive:
   earlier ones, so the map silently described the wrong file. The plugin's own
   entry keeps a bare key, `plugins:guardrails`, and cannot collide with anything
   inside it because everything inside carries a `/`.
+- **`path` for a `kind: plugin` entry is the plugin's
+  `.claude-plugin/plugin.json`, not the directory the glob returned.** Every
+  other kind stores the file the scan found, so it is easy to store the
+  directory here too and never notice. The map already held manifests, so a run
+  that stores directories reports all five plugins as MISSING and the same five
+  as ORPHANED in one pass: the same rows, twice, under two names. Nothing errors,
+  and approving that draft doubles every plugin row. A directory is also not
+  something `/apply-fix` can open, so the entry has to name a file to be worth
+  anything.
 - A path under none of the configured roots is `repo: "unknown"`. Do not guess.
 
 **Skip these when listing a hook root**, or the map fills with things that are
