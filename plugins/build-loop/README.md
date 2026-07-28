@@ -169,7 +169,7 @@ you did not complain about.
 ## Upgrading to 0.3.0
 
 The first hook in this plugin. `skill-md-check` runs after any Write or Edit,
-and when the file is a `SKILL.md` it checks four things and reports back into
+and when the file is a `SKILL.md` it checks five things and reports back into
 the conversation. It never blocks and it never writes.
 
 | Checked | Why |
