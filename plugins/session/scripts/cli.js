@@ -69,10 +69,17 @@ const COMMANDS = {
     // Without this the command reports the session that ran it, which reads as
     // "another session is live here" and is the one answer guaranteed to be
     // wrong. The hook gets the id from its event; there is no event here, so it
-    // comes from the environment, which Claude Code sets for anything it
-    // spawns. Verified against a live session rather than assumed.
-    const { sessions, complete } = sessionsMod.liveSessions({
+    // comes from the environment.
+    //
+    // Both variables were checked in a node subprocess spawned the same way
+    // this one is, rather than assumed from their names. Two are read because
+    // one variable name is a thin thread to hang the whole answer on, and the
+    // pid appears directly in the process table so it needs no agreement about
+    // formats. If a future release renames either, the other still works, and
+    // if it renames both the output says so instead of quietly lying.
+    const { sessions, complete, identifiedSelf } = sessionsMod.liveSessions({
       selfSessionId: opts.self || process.env.CLAUDE_CODE_SESSION_ID,
+      selfPid: process.env.CLAUDE_PID,
       deadline: Date.now() + 4000,
     });
     const rows = sessions.map((s) => ({
@@ -80,7 +87,7 @@ const COMMANDS = {
       overlapsHere: sessionsMod.overlaps(opts.cwd, s.cwd),
     }));
 
-    if (opts.json) return emit(opts, { sessions: rows, complete }, []);
+    if (opts.json) return emit(opts, { sessions: rows, complete, identifiedSelf }, []);
 
     if (!rows.length) {
       return emit(opts, {}, ['No other Claude Code sessions are running.']);
@@ -93,7 +100,15 @@ const COMMANDS = {
     if (!complete) {
       lines.push('', 'Some working directories could not be read, so this list may be incomplete.');
     }
-    lines.unshift(`${rows.length} other session${rows.length === 1 ? '' : 's'} running:`, '');
+    // Say it rather than let the count quietly be one too high. A list headed
+    // "other sessions" that silently includes this one is worse than no list.
+    if (!identifiedSelf) {
+      lines.push('', 'This session could not be identified, so one of the above is probably it.');
+    }
+    const heading = identifiedSelf
+      ? `${rows.length} other session${rows.length === 1 ? '' : 's'} running:`
+      : `${rows.length} session${rows.length === 1 ? '' : 's'} running:`;
+    lines.unshift(heading, '');
     emit(opts, {}, lines);
   },
 

@@ -84,6 +84,63 @@ check('empty and garbage input yield no sessions rather than throwing', () => {
   assert.deepStrictEqual(parsePs('\n\n   \n', NOW), []);
 });
 
+// ------------------------------------------------- recognising the caller ----
+//
+// Failing to recognise the caller produces the one answer guaranteed to be
+// useless: "another session is live in this directory", about itself. The hook
+// has an exact id from its event. A command run from a skill has no event and
+// reads the environment, so it reads two variables rather than betting the
+// whole answer on one name staying the same.
+
+const { liveSessions } = require(path.join(ROOT, 'scripts', 'sessions.js'));
+const psExec = (cmd) => (cmd === 'ps' ? REAL_PS : null);
+
+check('the caller is excluded by session id', () => {
+  const r = liveSessions({
+    selfSessionId: '3667d77f-7558-4f65-b19e-0483620f95bf', exec: psExec, now: NOW,
+  });
+  assert.strictEqual(r.sessions.length, 1);
+  assert.strictEqual(r.identifiedSelf, true);
+});
+
+check('the caller is excluded by pid when the id is unavailable', () => {
+  // The second signal. The pid is in the process table already, so it needs no
+  // agreement about formats, and it covers a renamed id variable.
+  const r = liveSessions({ selfPid: '66141', exec: psExec, now: NOW });
+  assert.strictEqual(r.sessions.length, 1);
+  assert.ok(!r.sessions.some((s) => s.pid === 66141));
+  assert.strictEqual(r.identifiedSelf, true);
+});
+
+check('a session id in a different case still excludes the caller', () => {
+  const r = liveSessions({
+    selfSessionId: '78F0713B-0EB4-4B77-BCCD-5441DA44A5D5', exec: psExec, now: NOW,
+  });
+  assert.ok(!r.sessions.some((s) => s.pid === 69501));
+});
+
+check('when neither signal identifies the caller, that is reported', () => {
+  // The important half. Silently listing yourself as a parallel session is a
+  // confident wrong answer; saying the list may include you is a true one.
+  const r = liveSessions({ exec: psExec, now: NOW });
+  assert.strictEqual(r.sessions.length, 2);
+  assert.strictEqual(r.identifiedSelf, false);
+});
+
+check('a nonsense pid does not accidentally exclude a real session', () => {
+  for (const bad of ['', 'abc', '0', '-1', null, undefined]) {
+    const r = liveSessions({ selfPid: bad, exec: psExec, now: NOW });
+    assert.strictEqual(r.sessions.length, 2, `pid ${JSON.stringify(bad)} excluded something`);
+    assert.strictEqual(r.identifiedSelf, false);
+  }
+});
+
+check('a failed ps reports incomplete rather than an empty all-clear', () => {
+  const r = liveSessions({ exec: () => null });
+  assert.deepStrictEqual(r.sessions, []);
+  assert.strictEqual(r.complete, false);
+});
+
 // -------------------------------------------------------------- overlap ----
 
 const OVERLAP_CASES = [

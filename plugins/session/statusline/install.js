@@ -129,9 +129,21 @@ process.stdin.on('end', function () {
     const target = newest();
     if (target) {
       process.stdout.write(require(target).renderStatusline(JSON.parse(input)));
+    } else {
+      // Deliberately not silence.
+      //
+      // settings.json points here, so somebody switched the status line on. If
+      // this cannot find the plugin, rendering nothing produces a blank line
+      // that looks exactly like a status line that was never configured, and
+      // there is no way to tell those apart by looking. That is the precise
+      // failure this whole plugin was written to stop repeating.
+      //
+      // Saying so costs one dim line and names the fix.
+      process.stdout.write('\\x1b[2msession plugin not found, run /status-bar\\x1b[0m');
     }
   } catch (e) {
-    // Never break the prompt.
+    // A thrown error is different: it is a bug here, not a missing install,
+    // and the prompt must survive it.
   }
   process.exit(0);
 });

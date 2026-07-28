@@ -351,6 +351,42 @@ check('a dry run writes nothing', () => {
   assert.ok(!fs.existsSync(result.shimPath));
 });
 
+check('a resolver that finds no plugin says so rather than rendering blank', () => {
+  // settings.json pointing here means somebody switched the status line on. A
+  // blank line looks exactly like a status line that was never configured, and
+  // there is no way to tell the two apart by looking. That is the failure this
+  // plugin exists to stop repeating, so the empty case is the one that has to
+  // speak.
+  const home = tmpHome();
+  const { shimPath } = install.install({ home });
+  const run = spawnSync(process.execPath, [shimPath], {
+    input: '{"model":{"display_name":"Claude"}}', encoding: 'utf8', env: { ...process.env, HOME: home },
+  });
+  assert.notStrictEqual(run.stdout.trim(), '', 'the resolver rendered nothing at all');
+  assert.match(run.stdout, /not found/);
+  assert.match(run.stdout, /status-bar/, 'it did not name the fix');
+});
+
+check('a resolver with a version installed renders the real line', () => {
+  const home = tmpHome();
+  const { shimPath } = install.install({ home });
+  const v = path.join(home, '.claude', 'plugins', 'cache', 'smadds', 'session', '0.1.0');
+  fs.mkdirSync(path.join(v, 'statusline'), { recursive: true });
+  fs.mkdirSync(path.join(v, 'scripts'), { recursive: true });
+  for (const f of ['config.js', 'mcp-health.js']) {
+    fs.copyFileSync(path.join(ROOT, 'scripts', f), path.join(v, 'scripts', f));
+  }
+  fs.copyFileSync(path.join(ROOT, 'statusline', 'statusline.js'), path.join(v, 'statusline', 'statusline.js'));
+
+  const run = spawnSync(process.execPath, [shimPath], {
+    input: '{"model":{"display_name":"Claude 5"},"workspace":{"current_dir":"/tmp/proj"}}',
+    encoding: 'utf8',
+    env: { ...process.env, HOME: home },
+  });
+  assert.match(run.stdout, /Claude 5/);
+  assert.doesNotMatch(run.stdout, /not found/);
+});
+
 check('installing with no version on disk yet is reported, not treated as an error', () => {
   // Normal on a first install from a working copy: nothing is in the plugin
   // cache until the marketplace install runs, and the resolver will find it

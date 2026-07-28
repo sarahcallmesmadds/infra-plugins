@@ -137,12 +137,32 @@ function parsePs(text, now = Date.now()) {
 // The check is between calls, not around them. execFileSync blocks the event
 // loop for as long as the child runs, so a timer cannot interrupt work already
 // underway; it can only stop the next one from starting.
-function liveSessions({ selfSessionId, now = Date.now(), exec = run, deadline } = {}) {
+function liveSessions({
+  selfSessionId, selfPid, now = Date.now(), exec = run, deadline,
+} = {}) {
   const ps = exec('ps', ['-eo', 'pid,lstart,command'], PS_TIMEOUT_MS);
-  if (!ps) return { sessions: [], complete: false };
+  if (!ps) return { sessions: [], complete: false, identifiedSelf: false };
 
+  // Two independent ways to recognise the caller, because getting this wrong
+  // produces the one answer guaranteed to be useless: "another session is live
+  // in this directory", about itself.
+  //
+  // The hook has the session id from its event, which is exact. A command run
+  // from a skill has no event, so it reads the environment, and depending on a
+  // single environment variable name is a thin thread to hang the whole answer
+  // on. The pid of the Claude process is exported alongside it and appears
+  // directly in the process table, so either one alone is enough.
+  //
+  // `identifiedSelf` reports whether anything matched. When nothing did, the
+  // caller has to say the list may include the current session rather than
+  // presenting it as a list of other people's.
   const self = selfSessionId ? String(selfSessionId).toLowerCase() : null;
-  const found = parsePs(ps, now).filter((s) => s.sessionId !== self);
+  const selfPidNum = Number(selfPid);
+  const hasPid = Number.isInteger(selfPidNum) && selfPidNum > 0;
+
+  const all = parsePs(ps, now);
+  const found = all.filter((s) => s.sessionId !== self && !(hasPid && s.pid === selfPidNum));
+  const identifiedSelf = found.length < all.length;
 
   const sessions = [];
   let complete = true;
@@ -160,7 +180,7 @@ function liveSessions({ selfSessionId, now = Date.now(), exec = run, deadline } 
     sessions.push({ ...s, cwd });
   }
 
-  return { sessions, complete };
+  return { sessions, complete, identifiedSelf };
 }
 
 // True when `other` is working somewhere that can collide with `cwd`: the same
