@@ -187,6 +187,69 @@ check('an unreachable tool is not described as needing sign-in', () => {
   assert.doesNotMatch(seg, /needs sign-in/);
 });
 
+// The next three pin the sentence rather than the data. `resolve` already kept
+// missing and down apart, and there is a passing test above proving it, but the
+// display path swept them into one bucket and called both "unreachable". A typo
+// in the config was reported as an outage, which sends someone to troubleshoot
+// a service that is working.
+//
+// The lesson is the one this repository keeps relearning: a correct
+// distinction upstream, a comment explaining it, and a test pinning it are all
+// worth nothing if the sentence a person actually reads collapses it again.
+
+check('a mistyped tool name is never called unreachable', () => {
+  const home = withCache([{ name: 'claude.ai Notion', url: 'u', status: 'connected' }]);
+  const seg = health.statuslineSegment({
+    config: CFG([{ label: 'Noton', match: 'Noton' }]), home, color: false,
+  });
+  assert.doesNotMatch(seg, /unreachable/, 'a config typo was reported as an outage');
+  assert.match(seg, /not found/);
+});
+
+check('a mistyped name does not get the colour that means something is broken', () => {
+  // 31 is red and means a tool has actually stopped working. A name that
+  // matches nothing is a config problem, so it gets 33.
+  const home = withCache([{ name: 'claude.ai Notion', url: 'u', status: 'connected' }]);
+  const seg = health.statuslineSegment({
+    config: CFG([{ label: 'Noton', match: 'Noton' }]), home,
+  });
+  assert.ok(seg.includes('\x1b[33m'), `expected yellow, got ${JSON.stringify(seg)}`);
+  assert.ok(!seg.includes('\x1b[31m'), 'a config typo was coloured as an outage');
+});
+
+check('a real outage and a mistyped name at once are reported separately', () => {
+  const home = withCache([{ name: 'claude.ai Thing', url: 'u', status: 'down' }]);
+  const seg = health.statuslineSegment({
+    config: CFG([{ label: 'Thing', match: 'Thing' }, { label: 'Ghost', match: 'nosuch' }]),
+    home,
+    color: false,
+  });
+  assert.match(seg, /Thing unreachable/);
+  assert.match(seg, /Ghost not found/);
+});
+
+check('all three problem kinds at once each keep their own wording', () => {
+  const home = withCache([
+    { name: 'claude.ai Gmail', url: 'u', status: 'connected' },
+    { name: 'claude.ai Mercury', url: 'u', status: 'needs_auth' },
+    { name: 'claude.ai Thing', url: 'u', status: 'down' },
+  ]);
+  const seg = health.statuslineSegment({
+    config: CFG([
+      { label: 'Email', match: 'Gmail' },
+      { label: 'Bank', match: 'Mercury' },
+      { label: 'Thing', match: 'Thing' },
+      { label: 'Ghost', match: 'nosuch' },
+    ]),
+    home,
+    color: false,
+  });
+  assert.match(seg, /Core tools 1\/4/);
+  assert.match(seg, /Bank needs sign-in/);
+  assert.match(seg, /Thing unreachable/);
+  assert.match(seg, /Ghost not found/);
+});
+
 check('a stale cache says how old it is', () => {
   // A count with no age is a claim about a moment you cannot see.
   const home = withCache(SERVERS, { ageMinutes: 300 });

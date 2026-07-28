@@ -198,19 +198,36 @@ function statuslineSegment({ config, home = os.homedir(), now = Date.now(), colo
   const stale = s.ageMinutes != null && s.ageMinutes >= (config.healthMaxAgeMinutes || 30) * 2;
   if (stale && !config.showStaleHealth) return '';
 
-  const problems = s.tools.filter((t) => t.status !== 'connected');
-  const code = problems.some((t) => t.status === 'needs_auth' || t.status === 'down') ? 31
-    : problems.length ? 33 : 32;
+  // Three buckets, not two, because there are three different things to go and
+  // do about them.
+  //
+  // `resolve` above is careful to separate a server that is down from a config
+  // entry that matches nothing, and says why in its own comment. An earlier
+  // version of this function then threw that away: it split on needs_auth and
+  // swept everything else into one bucket labelled "unreachable", so a typo in
+  // the config was reported as an outage and sent you to check a service that
+  // was working perfectly.
+  //
+  // Worth recording how that survived. The distinction was correct in the data,
+  // there was a passing test pinning it, and the comment explaining it was
+  // right there. All of that was one layer upstream of the sentence anyone
+  // actually reads. Fixing a thing and writing down why the rest is fine is not
+  // the same as checking that the rest is fine.
+  const label = (t) => t.label;
+  const needsAuth = s.tools.filter((t) => t.status === 'needs_auth').map(label);
+  const down = s.tools.filter((t) => t.status === 'down').map(label);
+  const missing = s.tools.filter((t) => t.status === 'missing').map(label);
+
+  // A missing entry is a config problem and nothing is broken, so it does not
+  // get the colour that means "something is wrong with your tools".
+  const code = (needsAuth.length || down.length) ? 31 : missing.length ? 33 : 32;
 
   let text = `Core tools ${s.connected}/${s.total}`;
-  if (problems.length) {
-    const needsAuth = problems.filter((t) => t.status === 'needs_auth').map((t) => t.label);
-    const other = problems.filter((t) => t.status !== 'needs_auth').map((t) => t.label);
-    const bits = [];
-    if (needsAuth.length) bits.push(`${needsAuth.join(', ')} needs sign-in`);
-    if (other.length) bits.push(`${other.join(', ')} unreachable`);
-    text += ` (${bits.join('; ')})`;
-  }
+  const bits = [];
+  if (needsAuth.length) bits.push(`${needsAuth.join(', ')} needs sign-in`);
+  if (down.length) bits.push(`${down.join(', ')} unreachable`);
+  if (missing.length) bits.push(`${missing.join(', ')} not found, check the name`);
+  if (bits.length) text += ` (${bits.join('; ')})`;
   if (stale) text += ` · ${formatAge(s.ageMinutes)} old`;
 
   const body = color ? `\x1b[${code}m${text}\x1b[0m` : text;

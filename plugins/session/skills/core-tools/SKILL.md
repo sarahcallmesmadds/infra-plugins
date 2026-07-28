@@ -95,6 +95,7 @@ Core tools 4/5 (Notion needs sign-in)
 | `5/5` green | Everything answered |
 | `needs sign-in` | Authentication expired. Sign in again |
 | `unreachable` | The server answered badly or not at all. Not an auth problem, do not send them to sign in |
+| `not found, check the name` | The `match` string matches no connected server. A config problem, usually a rename or a typo. Nothing is down |
 | `· 3h old` | The cache is stale. The count was true three hours ago and may not be now |
 
 ---
