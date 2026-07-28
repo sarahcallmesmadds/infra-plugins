@@ -252,6 +252,233 @@ check('files that are not handoffs are never swept', () => {
   assert.ok(fs.existsSync(notes));
 });
 
+// ------------------------------------------------- forget and the prune ----
+//
+// `target` added entries and nothing ever removed one, so the index only ever
+// grew. Every lookup verifies the file exists, so a stale entry was harmless
+// on its own, and clearing a single one meant hand-editing JSON.
+//
+// The subtle one is the repoint. The sweep moves a document into archived/ and
+// used to leave the index pointing at where it had been, which turned an entry
+// for a handoff this very command had just archived into a dead entry. Adding
+// a prune without following the move would have deleted that entry as rubbish.
+
+const AGE = (file, days) => {
+  const t = (Date.now() - days * 86400000) / 1000;
+  fs.utimesSync(file, t, t);
+};
+
+check('forget drops the entry and leaves the document alone', () => {
+  const home = tmpHome();
+  const repo = path.join(home, 'code', 'keeper');
+  const { target } = roundTrip(repo, home);
+  assert.ok(handoffs.readIndex(home).keeper, 'setup: the entry was not recorded');
+
+  const out = cli(['forget', 'keeper', '--json'], home);
+  assert.strictEqual(out.removed, true);
+  assert.strictEqual(out.fileStillThere, true, 'it should report that the document survives');
+  assert.ok(!handoffs.readIndex(home).keeper, 'the entry is still in the index');
+  assert.ok(fs.existsSync(target.path), 'forget deleted the handoff, which it must never do');
+});
+
+check('forget says so when the document was already gone', () => {
+  const home = tmpHome();
+  const repo = path.join(home, 'code', 'vanished');
+  const { target } = roundTrip(repo, home);
+  fs.rmSync(target.path);
+  const out = cli(['forget', 'vanished', '--json'], home);
+  assert.strictEqual(out.removed, true);
+  assert.strictEqual(out.fileStillThere, false);
+});
+
+check('forget on an unknown slug changes nothing', () => {
+  const home = tmpHome();
+  roundTrip(path.join(home, 'code', 'real'), home);
+  const before = JSON.stringify(handoffs.readIndex(home));
+  const out = cli(['forget', 'never-existed', '--json'], home);
+  assert.strictEqual(out.removed, false);
+  assert.strictEqual(JSON.stringify(handoffs.readIndex(home)), before, 'the index was rewritten anyway');
+});
+
+check('forget with no slug does not empty the index', () => {
+  // The shape worth guarding: a missing argument slugifying to "" and matching
+  // everything, or being written back as a key.
+  const home = tmpHome();
+  roundTrip(path.join(home, 'code', 'survivor'), home);
+  const out = cli(['forget', '--json'], home);
+  assert.strictEqual(out.removed, false);
+  assert.ok(handoffs.readIndex(home).survivor, 'a bare forget removed a real entry');
+});
+
+check('forget normalises the slug the same way everything else does', () => {
+  const home = tmpHome();
+  const repo = path.join(home, 'code', 'My.Repo');
+  roundTrip(repo, home);
+  assert.ok(handoffs.readIndex(home)['my-repo'], 'setup: recorded under an unexpected key');
+  const out = cli(['forget', 'My.Repo', '--json'], home);
+  assert.strictEqual(out.removed, true, 'the name a person would type did not match the stored key');
+});
+
+check('forget prints which of the two things happened', () => {
+  // Whether the document survived decides whether anything was lost, so it has
+  // to be in the text rather than left to be inferred from silence.
+  const home = tmpHome();
+  const repo = path.join(home, 'code', 'printed');
+  roundTrip(repo, home);
+  const out = cli(['forget', 'printed'], home);
+  assert.match(out.raw, /untouched/i, out.raw);
+  assert.match(out.raw, /HANDOFF\.md/, out.raw);
+});
+
+check('the sweep drops entries whose files are gone', () => {
+  const home = tmpHome();
+  const repo = path.join(home, 'code', 'deleted-later');
+  roundTrip(repo, home);
+  fs.rmSync(path.join(repo, 'HANDOFF.md'));
+
+  const out = cli(['archive', '--json'], home);
+  assert.deepStrictEqual(out.pruned.map((p) => p.slug), ['deleted-later']);
+  assert.ok(!handoffs.readIndex(home)['deleted-later'], 'the dead entry is still there');
+});
+
+check('the sweep never drops an entry whose file is present', () => {
+  const home = tmpHome();
+  roundTrip(path.join(home, 'code', 'alive'), home);
+  const out = cli(['archive', '--json'], home);
+  assert.deepStrictEqual(out.pruned, []);
+  assert.ok(handoffs.readIndex(home).alive, 'the sweep dropped a live entry');
+});
+
+check('the sweep follows a document it archives instead of forgetting it', () => {
+  // Without the repoint this entry looks exactly like one whose file was
+  // deleted, and the prune added in the same change would throw it away.
+  const home = tmpHome();
+  const t = cli(['target', 'ancient', '--cwd', home, '--json'], home);
+  fs.writeFileSync(t.path, 'old');
+  AGE(t.path, 60);
+
+  const out = cli(['archive', '--json'], home);
+  assert.deepStrictEqual(out.moved, ['ancient']);
+  assert.deepStrictEqual(out.pruned, [], 'the entry was pruned rather than followed');
+  assert.deepStrictEqual(out.repointed.map((r) => r.slug), ['ancient']);
+
+  const entry = handoffs.readIndex(home).ancient;
+  assert.ok(entry, 'the entry was dropped');
+  assert.strictEqual(entry.path, path.join(handoffs.archiveRoot(home), 'HANDOFF-ancient.md'));
+  assert.strictEqual(entry.kind, 'archived', 'pickup can no longer say it was archived');
+  assert.strictEqual(handoffs.findHandoff('ancient', home).kind, 'archived');
+});
+
+check('a dry run reports the prune without performing it', () => {
+  const home = tmpHome();
+  const repo = path.join(home, 'code', 'dry');
+  roundTrip(repo, home);
+  fs.rmSync(path.join(repo, 'HANDOFF.md'));
+
+  const out = cli(['archive', '--dry-run', '--json'], home);
+  assert.deepStrictEqual(out.pruned.map((p) => p.slug), ['dry']);
+  assert.ok(handoffs.readIndex(home).dry, 'a dry run edited the index');
+});
+
+check('an entry whose directory cannot be read is kept, not pruned', () => {
+  // The unmounted volume. Project handoffs live next to their work and work
+  // lives on external disks and network shares, where existsSync says false
+  // for something that is merely offline. The index holds the one location
+  // that cannot be reconstructed, so pruning on that answer loses the ability
+  // to find a document that is still perfectly there.
+  const home = tmpHome();
+  const volume = path.join(home, 'Volumes', 'work');
+  const repo = path.join(volume, 'offsite');
+  roundTrip(repo, home);
+  assert.ok(handoffs.readIndex(home).offsite, 'setup');
+
+  fs.rmSync(volume, { recursive: true, force: true });   // the disk goes away
+
+  const out = cli(['archive', '--json'], home);
+  assert.deepStrictEqual(out.pruned, [], 'an offline handoff was pruned');
+  assert.deepStrictEqual(out.unreachable.map((u) => u.slug), ['offsite']);
+  assert.ok(handoffs.readIndex(home).offsite, 'the only pointer to that handoff was destroyed');
+});
+
+check('the entry comes back to life when the volume returns', () => {
+  const home = tmpHome();
+  const volume = path.join(home, 'Volumes', 'work');
+  const repo = path.join(volume, 'offsite');
+  const { target } = roundTrip(repo, home);
+  const body = fs.readFileSync(target.path, 'utf8');
+
+  fs.rmSync(volume, { recursive: true, force: true });
+  cli(['archive', '--json'], home);
+  assert.strictEqual(cli(['find', 'offsite', '--json'], home).match, null, 'found while offline');
+
+  fs.mkdirSync(repo, { recursive: true });               // remounted
+  fs.writeFileSync(target.path, body);
+  const found = cli(['find', 'offsite', '--json'], home);
+  assert.ok(found.match, 'the handoff is back but pickup can no longer find it by name');
+  assert.strictEqual(found.match.path, target.path);
+});
+
+check('a file missing from a directory that is right there is still pruned', () => {
+  // The other side of it. Conservatism that never prunes anything would make
+  // the sweep pointless, and this is the case that prompted the command.
+  const home = tmpHome();
+  const repo = path.join(home, 'code', 'really-deleted');
+  roundTrip(repo, home);
+  fs.rmSync(path.join(repo, 'HANDOFF.md'));              // directory stays
+
+  const out = cli(['archive', '--json'], home);
+  assert.deepStrictEqual(out.pruned.map((p) => p.slug), ['really-deleted']);
+  assert.deepStrictEqual(out.unreachable, []);
+});
+
+check('a dry run previews the repoints as well as the moves', () => {
+  // A preview that omits one of the three things the sweep does is not a
+  // preview of the sweep.
+  const home = tmpHome();
+  const t = cli(['target', 'previewed', '--cwd', home, '--json'], home);
+  fs.writeFileSync(t.path, 'old');
+  AGE(t.path, 60);
+
+  const out = cli(['archive', '--dry-run', '--json'], home);
+  assert.deepStrictEqual(out.moved, ['previewed']);
+  assert.deepStrictEqual(out.repointed.map((r) => r.slug), ['previewed'], 'the repoint was not previewed');
+  assert.strictEqual(handoffs.readIndex(home).previewed.kind, 'central', 'a dry run edited the index');
+  assert.ok(fs.existsSync(t.path), 'a dry run moved a file');
+});
+
+check('an index that could not be written is not reported as changed', () => {
+  // writeIndex swallows its errors on purpose, so it must never be treated as
+  // having succeeded. Reporting work that did not reach the disk is the exact
+  // shape this plugin keeps catching in itself.
+  const home = tmpHome();
+  const repo = path.join(home, 'code', 'unwritable');
+  roundTrip(repo, home);
+  fs.rmSync(path.join(repo, 'HANDOFF.md'));
+
+  const root = handoffs.handoffRoot(home);
+  fs.chmodSync(root, 0o500);                             // readable, not writable
+  try {
+    const out = cli(['archive', '--json'], home);
+    assert.deepStrictEqual(out.pruned.map((p) => p.slug), ['unwritable']);
+    assert.strictEqual(out.indexWritten, false, 'a failed write was reported as a completed prune');
+    assert.ok(handoffs.readIndex(home).unwritable, 'setup: the entry should still be on disk');
+
+    const human = cli(['archive'], home);
+    assert.match(human.raw, /could not be written/i, human.raw);
+  } finally {
+    fs.chmodSync(root, 0o700);
+  }
+});
+
+check('the sweep says out loud that it touched the index', () => {
+  const home = tmpHome();
+  const repo = path.join(home, 'code', 'quietly');
+  roundTrip(repo, home);
+  fs.rmSync(path.join(repo, 'HANDOFF.md'));
+  const out = cli(['archive'], home);
+  assert.match(out.raw, /Dropped 1 index entry/, out.raw);
+});
+
 // ---------------------------------------------------------- memory dir ----
 
 check('the memory directory is found via the same slug Claude Code uses', () => {

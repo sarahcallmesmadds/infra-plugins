@@ -7,6 +7,7 @@
 //   cli.js archive [--days N] [--dry-run]
 //                                sweep stale handoffs into archived/
 //   cli.js find <slug>           locate the handoff a slug refers to
+//   cli.js forget <slug>         drop an index entry, leaving the document
 //   cli.js recent                the newest handoffs, for the pickup menu
 //   cli.js target [topic]        where wrap should write from here
 //   cli.js memory                the memory directory for this project, if any
@@ -142,11 +143,67 @@ const COMMANDS = {
     if (result.skipped) {
       return emit(opts, result, [`No handoffs directory at ${result.root}. Nothing to sweep.`]);
     }
-    if (!result.moved.length) {
-      return emit(opts, result, [`Nothing untouched for ${opts.days} days. Nothing moved.`]);
-    }
+
     const verb = opts.dryRun ? 'Would archive' : 'Archived';
-    emit(opts, result, [`${verb} ${result.moved.length}: ${result.moved.join(', ')}`]);
+    const lines = result.moved.length
+      ? [`${verb} ${result.moved.length}: ${result.moved.join(', ')}`]
+      : [`Nothing untouched for ${opts.days} days. Nothing moved.`];
+
+    // Said out loud rather than done quietly. The sweep now edits the index as
+    // well as the folder, and a command that changes something it does not
+    // mention is the shape of every bug in this plugin so far.
+    const plural = (n) => (n === 1 ? 'entry' : 'entries');
+
+    if (result.repointed.length) {
+      const verb2 = opts.dryRun ? 'Would repoint' : 'Repointed';
+      lines.push(`${verb2} ${result.repointed.length} index ${plural(result.repointed.length)} to the archive: `
+        + result.repointed.map((r) => r.slug).join(', '));
+    }
+    if (result.pruned.length) {
+      const would = opts.dryRun ? 'Would drop' : 'Dropped';
+      lines.push(`${would} ${result.pruned.length} index ${plural(result.pruned.length)} pointing at files that are gone: `
+        + result.pruned.map((p) => p.slug).join(', '));
+    }
+    // Kept, and worth saying. Silence here reads as "everything was checked",
+    // when in fact one of these is a handoff whose disk was not mounted.
+    if (result.unreachable.length) {
+      const it = result.unreachable.length === 1 ? 'it' : 'them';
+      lines.push(`Left ${result.unreachable.length} index ${plural(result.unreachable.length)} alone, `
+        + `because the directory holding ${it} could not be read: ${result.unreachable.map((u) => u.slug).join(', ')}`);
+    }
+    // Last, and unmissable. Everything above this describes what was worked
+    // out; this is whether any of it reached the disk.
+    if (!result.indexWritten) {
+      lines.push('', 'The index could not be written, so none of the index changes above actually happened.');
+    }
+    emit(opts, result, lines);
+  },
+
+  // Drop an index entry without touching the document it names.
+  //
+  // `target` adds entries and, until this existed, nothing removed one. An
+  // entry whose project has since been deleted or moved stayed for good, and
+  // clearing a single one meant hand-editing JSON.
+  forget(opts) {
+    const slug = opts.rest[0];
+    if (!slug) {
+      if (opts.json) return emit(opts, { removed: false, reason: 'no slug given' }, []);
+      return emit(opts, {}, ['Which one? Usage: cli.js forget <slug>']);
+    }
+
+    const result = handoffs.forgetHandoff(slug, opts.home);
+    if (opts.json) return emit(opts, result, []);
+
+    if (!result.removed) {
+      return emit(opts, {}, [`Nothing forgotten: ${result.reason} ("${slug}").`]);
+    }
+    const lines = [`Forgot "${result.slug}".`];
+    // Which of these two it is decides whether anything was actually lost, so
+    // it is not left for the reader to infer from silence.
+    lines.push(result.fileStillThere
+      ? `The handoff itself is untouched at ${result.entry.path}`
+      : `It pointed at ${result.entry.path}, which is not there.`);
+    emit(opts, {}, lines);
   },
 
   find(opts) {
