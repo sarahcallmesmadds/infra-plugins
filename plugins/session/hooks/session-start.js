@@ -36,6 +36,27 @@ const path = require('path');
 const BUDGET_MS = 1200;
 const STDIN_WAIT_MS = 1000;
 
+// The session scan gets a share of the budget rather than all of it.
+//
+// Both stages take the same absolute deadline, so whatever the first one spends
+// comes out of the second. That part is deliberate: the number a person notices
+// is the total delay before their first prompt, not how fairly it was divided,
+// and giving each stage its own full budget would let the hook take twice as
+// long as the number above says.
+//
+// The problem is what the git scan then reports. `liveSessions` reads the
+// process table, which is the one call here whose cost depends on the machine
+// rather than on this code. Where it ran long enough to exhaust the budget, the
+// git scan discovered nothing, returned `complete: false`, and the hook said
+// "some repositories could not be checked" about a scan that had not checked
+// any. True, useless, and identical to a real partial scan.
+//
+// So cap the first stage. The git scan keeps the same absolute deadline and is
+// therefore guaranteed the remainder, and the total is still bounded by
+// BUDGET_MS. When `liveSessions` returns early, which is the normal case at
+// around a tenth of its cap, the git scan still gets everything left over.
+const SESSIONS_BUDGET_MS = Math.round(BUDGET_MS * 0.6);
+
 // Naming every overlapping session gets silly past a handful, and past a
 // handful the count is the useful part anyway.
 const MAX_NAMED = 4;
@@ -189,7 +210,7 @@ function main(event) {
 
   const live = sessionsMod.liveSessions({
     selfSessionId: event && event.session_id,
-    deadline: started + BUDGET_MS,
+    deadline: started + SESSIONS_BUDGET_MS,
   });
 
   const cwd = (event && event.cwd) || process.cwd();

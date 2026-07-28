@@ -414,5 +414,63 @@ check('the repository you are standing in is not reported back to you', () => {
   assert.doesNotMatch(out, /current.*uncommitted/, out);
 });
 
+// --------------------------------------------------- the budget split ----
+//
+// Both stages take the same absolute deadline, so whatever the session scan
+// spends comes out of the git scan. That is deliberate, since the number a
+// person notices is the total delay and not how it was divided.
+//
+// What it cost was the message. `liveSessions` reads the process table, the one
+// call here whose cost depends on the machine, and where it ran long enough to
+// exhaust the budget the git scan discovered nothing, returned `complete:
+// false`, and the hook reported that some repositories could not be checked. On
+// a scan that had checked none. True, useless, and shaped exactly like a real
+// partial scan.
+//
+// These are source assertions rather than timing ones on purpose. Reproducing
+// it behaviourally needs a machine slow enough to burn 1200ms reading the
+// process table, which is not something a test can ask for and not something
+// worth faking with a sleep. What can be pinned is that the first stage is
+// capped, which is the property that stops the starvation.
+
+const SESSION_START_SRC = fs.readFileSync(path.join(ROOT, 'hooks', 'session-start.js'), 'utf8');
+
+check('the session scan is not handed the whole budget', () => {
+  // The regression: `deadline: started + BUDGET_MS` on the liveSessions call
+  // leaves the git scan whatever happens to be left, including nothing.
+  const liveCall = SESSION_START_SRC.match(/liveSessions\(\{[^}]*\}\)/s);
+  assert.ok(liveCall, 'could not find the liveSessions call');
+  assert.doesNotMatch(
+    liveCall[0], /started \+ BUDGET_MS/,
+    'liveSessions must not take the full budget, or a slow process table starves the git scan',
+  );
+  assert.match(liveCall[0], /started \+ SESSIONS_BUDGET_MS/, liveCall[0]);
+});
+
+check('the git scan keeps the full absolute deadline', () => {
+  // It has to stay absolute. A relative one would push the total past BUDGET_MS,
+  // and picking up whatever the session scan did not use is the point.
+  assert.match(SESSION_START_SRC, /gitActivityLine\(cwd, started \+ BUDGET_MS\)/);
+});
+
+check('the split leaves the git scan a usable share and stays inside the budget', () => {
+  const budget = Number(SESSION_START_SRC.match(/const BUDGET_MS = (\d+)/)[1]);
+  const share = SESSION_START_SRC.match(/const SESSIONS_BUDGET_MS = Math\.round\(BUDGET_MS \* ([\d.]+)\)/);
+  assert.ok(share, 'SESSIONS_BUDGET_MS should stay a stated fraction of BUDGET_MS');
+  const sessions = Math.round(budget * Number(share[1]));
+  assert.ok(sessions < budget, 'the session scan must not be able to use the whole budget');
+  assert.ok(budget - sessions >= 300,
+    `the git scan is guaranteed only ${budget - sessions}ms, which is not enough to discover anything`);
+});
+
+check('an exhausted deadline still reports incomplete rather than clean', () => {
+  // The other half of the contract, and the half that must not change. Capping
+  // the session scan makes starvation unlikely, not impossible, so a scan that
+  // ran out of time still has to say so rather than return a quiet all-clear.
+  const out = ga.scan({ cwd: process.cwd(), config: {}, deadline: Date.now() - 1 });
+  assert.strictEqual(out.complete, false, 'an expired deadline is not a complete scan');
+  assert.strictEqual(out.repos.length, 0);
+});
+
 process.stdout.write(`\n${failures === 0 ? 'all passed' : `${failures} failed`}\n`);
 process.exit(failures === 0 ? 0 : 1);
