@@ -166,6 +166,25 @@ function renderRollingSpend(data) {
   return ` · \x1b[${colorCode}m${text}\x1b[0m`;
 }
 
+// Hand the number to the model as well as to the person.
+//
+// Claude Code sends the context window here and tells the model nothing, so the
+// assistant deciding whether to open six more files cannot see the bar the user
+// is watching fill up. This writes it where a PostToolUse hook can read it.
+//
+// Best effort and silent on failure: a status line that could not write a cache
+// is still a status line.
+function writeContextBridge(data) {
+  try {
+    require(path.join(__dirname, '..', 'scripts', 'context.js')).writeBridge({
+      sessionId: data.session_id,
+      contextWindow: data.context_window,
+    });
+  } catch (e) {
+    // Never break the prompt over the bridge.
+  }
+}
+
 function renderContextMeter(contextWindow) {
   const remaining = contextWindow?.remaining_percentage;
   if (remaining == null) return '';
@@ -211,6 +230,7 @@ function composeStatusline({
 
 function renderStatusline(data) {
   const dir = data.workspace?.current_dir || process.cwd();
+  writeContextBridge(data);
   return composeStatusline({
     model: data.model?.display_name || 'Claude',
     dirname: path.basename(dir),
@@ -241,6 +261,7 @@ function run() {
 if (require.main === module) run();
 
 module.exports = {
+  writeContextBridge,
   readGitOwner,
   readCoreToolsStatuslineSegment,
   formatUsd,

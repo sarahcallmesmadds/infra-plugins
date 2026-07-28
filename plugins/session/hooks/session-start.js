@@ -122,6 +122,45 @@ function kickHealthRefresh() {
   }
 }
 
+// Work left behind in a repository, which no live process will report.
+//
+// Deliberately quiet about the current repository's own uncommitted changes:
+// you are about to work in it, you can see them, and mentioning them at the top
+// of every session in a repo you are mid-change on is the fastest way to teach
+// somebody to skip this whole notice.
+//
+// What is worth saying is activity somewhere else, because that is the part you
+// cannot see from here.
+function gitActivityLine(cwd, deadline) {
+  try {
+    const config = require(path.join(__dirname, '..', 'scripts', 'config.js')).load();
+    if (config.gitActivity && config.gitActivity.enabled === false) return '';
+
+    const ga = require(path.join(__dirname, '..', 'scripts', 'git-activity.js'));
+    const here = ga.findRepoRoot(cwd);
+    const { notable, complete } = ga.scan({ cwd, config: config.gitActivity, deadline });
+
+    const elsewhere = notable.filter((r) => r.repo !== here);
+    if (!elsewhere.length) return '';
+
+    const described = elsewhere.slice(0, 3).map((r) => {
+      const bits = [];
+      if (r.changed) bits.push(`${r.changed} uncommitted`);
+      if (r.commits && r.commits.length) bits.push(`${r.commits.length} recent commit${r.commits.length === 1 ? '' : 's'}`);
+      return `${r.name}${r.branch ? ` on ${r.branch}` : ''}: ${bits.join(', ')}`;
+    }).join('; ');
+
+    const more = elsewhere.length > 3 ? `, and ${elsewhere.length - 3} more` : '';
+    const caveat = complete ? '' : ' Not every repository was checked, so there may be more.';
+
+    return `Recent work sits in ${elsewhere.length} other repositor${elsewhere.length === 1 ? 'y' : 'ies'}: `
+      + `${described}${more}.${caveat} `
+      + 'Mentioned in case it belongs to something still in progress. Nothing here needs doing.';
+  } catch (_) {
+    return '';
+  }
+}
+
 function main(event) {
   const { todayLine } = require(path.join(__dirname, '..', 'scripts', 'today.js'));
   const sessionsMod = require(path.join(__dirname, '..', 'scripts', 'sessions.js'));
@@ -135,8 +174,12 @@ function main(event) {
     deadline: started + BUDGET_MS,
   });
 
-  const parallel = parallelLine((event && event.cwd) || process.cwd(), live, sessionsMod);
+  const cwd = (event && event.cwd) || process.cwd();
+  const parallel = parallelLine(cwd, live, sessionsMod);
   if (parallel) parts.push(parallel);
+
+  const activity = gitActivityLine(cwd, started + BUDGET_MS);
+  if (activity) parts.push(activity);
 
   process.stdout.write(JSON.stringify({
     hookSpecificOutput: {
@@ -173,4 +216,4 @@ function run() {
 
 if (require.main === module) run();
 
-module.exports = { parallelLine, describeAge };
+module.exports = { parallelLine, describeAge, gitActivityLine };

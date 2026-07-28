@@ -41,6 +41,31 @@ const DEFAULTS = {
   // happens in the background at session start.
   healthMaxAgeMinutes: 30,
 
+  // Warn the model when its own context is filling up.
+  //
+  // Only works when the status line is installed, because the status line is
+  // the only component Claude Code hands the context window to. Without it the
+  // bridge file is never written and this stays silent, which is the correct
+  // behaviour: a warning invented from no reading would be worse than none.
+  //
+  // `enabled: false` switches it off. The thresholds are remaining percentages,
+  // not used, so they count down.
+  contextWarnings: {},
+
+  // Report uncommitted work and recent commits at session start.
+  //
+  // Complements the live session check rather than duplicating it. That one
+  // reads the process table and answers "is anyone in here now". This one
+  // answers "was anyone in here, and did they leave something", which is the
+  // case a window closed ten minutes ago produces.
+  //
+  // `roots` are searched for repositories, `~` expanded. Discovery rather than
+  // a hand-written list on purpose: the hook this ports from held six absolute
+  // paths from another machine, so anywhere else it checked six directories
+  // that did not exist and reported nothing, which is indistinguishable from
+  // all clear.
+  gitActivity: {},
+
   // Word budgets for the memory directory, checked by /wrap.
   //
   // Overrides merge one key at a time, so raising the total does not silently
