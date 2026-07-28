@@ -133,9 +133,30 @@ function audit({ dir, config = {} } = {}) {
   const files = scan(dir);
   if (!files) return null;
 
+  // Two different sets, and they are different on purpose.
+  //
+  //   `files` is everything that loads, including the index. That is what the
+  //   total has to cover, because the index loads too and its words are as
+  //   real as any other.
+  //
+  //   `body` is everything the per-file checks apply to. The index is exempt:
+  //   it is a list of links, a long one means a lot of memories rather than a
+  //   bloated file, and flagging it would be advice to delete the thing that
+  //   makes the rest findable.
+  //
+  // The bug this replaces: `total` summed `files` and the caller printed it
+  // against `body.length`, so the sentence said "8957 words across 10 files"
+  // when 8957 covered eleven. Small, and precisely the shape this whole check
+  // was built to catch, in the fourth consecutive instance of it. A number is
+  // reported next to a count of a different set, and both are individually
+  // correct.
+  //
+  // So the count travels with the total rather than being recovered from a
+  // list that was filtered for another reason entirely.
   const body = files.filter((f) => !f.isIndex);
   const index = files.find((f) => f.isIndex);
   const total = files.reduce((n, f) => n + f.words, 0);
+  const fileCount = files.length;
   const findings = [];
 
   for (const f of body) {
@@ -201,7 +222,9 @@ function audit({ dir, config = {} } = {}) {
     }
   }
 
-  return { dir, total, limits, files: body, findings };
+  // `fileCount` is what `total` covers. `files` is what the findings are about.
+  // Never print one against the length of the other.
+  return { dir, total, fileCount, limits, files: body, findings };
 }
 
 module.exports = { DEFAULTS, LIVE_TYPES, words, declaredType, linksIn, scan, audit };

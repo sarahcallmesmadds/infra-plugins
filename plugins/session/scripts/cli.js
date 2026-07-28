@@ -229,7 +229,10 @@ const COMMANDS = {
 
     if (opts.json) return emit(opts, result, []);
 
-    const lines = [`${result.total} words across ${result.files.length} files, budget ${result.limits.totalWords}.`, ''];
+    // fileCount, not files.length. The second is filtered to exclude the index
+    // because the index is exempt from the per-file checks, and printing a total
+    // against it claimed more words than the count covered.
+    const lines = [`${result.total} words across ${result.fileCount} files, budget ${result.limits.totalWords}.`, ''];
     if (!result.findings.length) {
       lines.push('Nothing to act on.');
       return emit(opts, {}, lines);

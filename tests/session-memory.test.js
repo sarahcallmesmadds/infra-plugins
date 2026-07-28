@@ -214,7 +214,56 @@ check('a clean directory prints the total and nothing to act on', () => {
   const home = homeWithMemory('/p', { 'MEMORY.md': '- [A](a.md) h\n', 'a.md': file('project', 10) });
   const out = cli(home, '/p');
   assert.match(out, /Nothing to act on/);
-  assert.match(out, /words across 1 files/);
+  assert.match(out, /words across 2 files/, out);
+});
+
+// The count printed beside the total must cover the same set the total does.
+//
+// It did not. `total` summed every file including the index and the sentence
+// printed it against a list that had been filtered to exclude the index, so it
+// said "8957 words across 10 files" when 8957 covered eleven. Both numbers were
+// individually right.
+//
+// That is the fourth time in this plugin that two correct values were printed
+// next to each other and the sentence was wrong, and it happened inside the
+// check written to catch exactly that. So this asserts the relationship rather
+// than either number, which is the assertion the earlier version was missing:
+// it matched the substring "words across N files" without ever checking that N
+// described the same files as the total.
+
+check('the printed file count covers the same files as the printed total', () => {
+  const home = homeWithMemory('/p', {
+    'MEMORY.md': '- [A](a.md) h\n- [B](b.md) h\n',
+    'a.md': file('project', 10),
+    'b.md': file('reference', 10),
+  });
+  const out = cli(home, '/p');
+  const m = out.match(/(\d+) words across (\d+) files/);
+  assert.ok(m, `no summary line in: ${out}`);
+  assert.strictEqual(Number(m[2]), 3, 'the index is a file that loads and must be counted');
+});
+
+check('the total equals the sum of every file, index included', () => {
+  const dir = dirWith({
+    'MEMORY.md': 'one two three',
+    'a.md': file('project', 10),
+    'b.md': file('reference', 10),
+  });
+  const r = memory.audit({ dir });
+  const summed = memory.scan(dir).reduce((n, f) => n + f.words, 0);
+  assert.strictEqual(r.total, summed);
+  assert.strictEqual(r.fileCount, 3);
+  // And the set the findings iterate is deliberately smaller, which is the
+  // discrepancy that caused the bug. Both are correct; they are just not the
+  // same thing, and nothing may print one against the other.
+  assert.strictEqual(r.files.length, 2);
+});
+
+check('the count is right when there is no index at all', () => {
+  const dir = dirWith({ 'a.md': file('project', 10) });
+  const r = memory.audit({ dir });
+  assert.strictEqual(r.fileCount, 1);
+  assert.strictEqual(r.files.length, 1);
 });
 
 check('a finding is printed with the file and the numbers', () => {
