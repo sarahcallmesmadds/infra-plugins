@@ -41,6 +41,20 @@ const DEFAULTS = {
   // happens in the background at session start.
   healthMaxAgeMinutes: 30,
 
+  // Word budgets for the memory directory, checked by /wrap.
+  //
+  // Overrides merge one key at a time, so raising the total does not silently
+  // reset the per-file limits. Empty here means the defaults in memory.js
+  // apply, which is the common case.
+  //
+  // The live and durable limits differ on purpose. A `project` file is live
+  // state, meant to be replaced rather than grown, so a long one means nothing
+  // has been taken out since it was written. A `reference` file accumulates
+  // slowly and legitimately, and holding both to one number would either nag
+  // about a good reference file or stay quiet while a status document turns
+  // into a session log.
+  memoryBudget: {},
+
   // Show the health segment even when the cache is older than the age above.
   //
   // On by default, and marked as stale when it is. A count with no freshness is

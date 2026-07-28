@@ -125,6 +125,36 @@ to the harness, not to this plugin.
 **Skip this step entirely if the session was empty.** An empty session must
 never overwrite durable notes.
 
+### Then measure what you just wrote to
+
+```bash
+"${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js memory-check
+```
+
+Everything above this line is advice, and advice is what every component in this
+library has now been caught failing at. This is the number.
+
+It changes nothing and deletes nothing. Surface whatever it reports in the Step
+4 summary, and stay silent when it reports nothing.
+
+| What it says | What it means |
+|---|---|
+| `oversize-live` | A file meant to be replaced has been grown instead. Something in it already happened and can go |
+| `oversize-durable` | Long enough to be worth splitting, though length here is allowed |
+| `over-budget` | The directory as a whole. Each file is pulled in whenever it looks relevant, so the cost is paid repeatedly |
+| `unlisted` | Nothing in the index points at it, so it may never be recalled |
+| `dangling-index` | The index points at a file that is not there |
+| `broken-link` | A `[[link]]` resolves to nothing |
+
+**Do not act on these unprompted.** Report them and let her decide. Trimming
+somebody's notes because a number went over is exactly the behaviour a check
+like this must never have.
+
+**If something is flagged `oversize-live`, check its declared type before
+trimming.** A file that has quietly become durable reference should be retyped
+rather than cut. The first real run of this check flagged two files and one of
+them was simply mislabelled.
+
 ---
 
 ## Step 4: Show the summary

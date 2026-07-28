@@ -10,6 +10,7 @@
 //   cli.js recent                the newest handoffs, for the pickup menu
 //   cli.js target [topic]        where wrap should write from here
 //   cli.js memory                the memory directory for this project, if any
+//   cli.js memory-check          is that directory still worth loading
 //
 // Common flags:
 //   --json                       machine-readable output
@@ -30,6 +31,7 @@ const { todayLine } = require(path.join(__dirname, 'today.js'));
 const sessionsMod = require(path.join(__dirname, 'sessions.js'));
 const mcpHealth = require(path.join(__dirname, 'mcp-health.js'));
 const configMod = require(path.join(__dirname, 'config.js'));
+const memoryMod = require(path.join(__dirname, 'memory.js'));
 
 function parseArgs(argv) {
   const out = {
@@ -200,6 +202,44 @@ const COMMANDS = {
     const dir = handoffs.memoryDir(opts.cwd, opts.home);
     if (opts.json) return emit(opts, { memoryDir: dir }, []);
     emit(opts, {}, [dir || 'No memory directory for this project.']);
+  },
+
+  // Measure the memory directory rather than trusting the rules about it.
+  //
+  // /wrap already tells the model to edit rather than append and to replace
+  // stale lines rather than adding beside them. Those are the right rules and
+  // they are advice, which this repository has spent two days learning the
+  // value of. This reports numbers at the one moment somebody is already
+  // deciding what still matters.
+  //
+  // It changes nothing and deletes nothing, ever.
+  'memory-check': function memoryCheck(opts) {
+    const dir = handoffs.memoryDir(opts.cwd, opts.home);
+    if (!dir) {
+      if (opts.json) return emit(opts, { memoryDir: null, findings: [] }, []);
+      return emit(opts, {}, ['No memory directory for this project. Nothing to check.']);
+    }
+
+    const config = configMod.load(opts.home);
+    const result = memoryMod.audit({ dir, config: config.memoryBudget });
+    if (!result) {
+      if (opts.json) return emit(opts, { memoryDir: dir, findings: [] }, []);
+      return emit(opts, {}, [`Could not read ${dir}.`]);
+    }
+
+    if (opts.json) return emit(opts, result, []);
+
+    const lines = [`${result.total} words across ${result.files.length} files, budget ${result.limits.totalWords}.`, ''];
+    if (!result.findings.length) {
+      lines.push('Nothing to act on.');
+      return emit(opts, {}, lines);
+    }
+    for (const f of result.findings) {
+      const where = f.file ? `${f.file}: ` : '';
+      const size = f.words != null ? `${f.words} words, over ${f.limit}. ` : '';
+      lines.push(`  ${f.kind}`, `    ${where}${size}${f.note}`);
+    }
+    emit(opts, {}, lines);
   },
 
   // Every connected server, so /core-tools can offer a real list to pick from
