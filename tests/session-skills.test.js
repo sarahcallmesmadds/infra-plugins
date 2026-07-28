@@ -14,10 +14,25 @@
 // wrap/SKILL.md telling the skill to run that check and to change what it says
 // when the check comes back empty.
 //
-// So the fix lives entirely in prose, in a file no test reads. It can be
-// deleted, or reworded back into something weaker, and every suite in this
-// repository stays green. That is exactly the state the repository was in on
-// the day the bug shipped.
+// CORRECTION, and the reason this header no longer says what it did.
+//
+// The first version of this file claimed nothing read wrap/SKILL.md. That was
+// wrong. session-handoffs.test.js has read it since e419218, the commit that
+// made the fix, and pins four things there: that Step 2 ends by checking the
+// file, that the summary template does not carry the success lines, that the
+// condition precedes the ending it governs, and that the failure ending offers
+// no pickup slug. Those cover the wrap half of this file almost exactly.
+//
+// The claim survived a grep because that suite builds the path as
+// path.join(ROOT, 'skills', 'wrap', 'SKILL.md'), and the grep looked for the
+// literal 'skills/wrap'. Worth remembering before concluding that anything
+// here is uncovered: a constructed path matches no search for the path.
+//
+// What was genuinely uncovered is pickup/SKILL.md, which nothing read at all.
+// The pickup checks below are the part of this file that earns its place. The
+// wrap checks are kept deliberately, and the duplication is the point: they
+// assert against the whole file where the older ones slice it by section, so a
+// step moved wholesale out of Step 2 fails here and passes there.
 //
 // These checks pin behaviour rather than sentences. Rewording is fine. Removing
 // the step, or moving the success line back inside the template that gets

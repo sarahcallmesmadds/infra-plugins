@@ -121,6 +121,20 @@ function recordHandoff({ slug, target, kind, home = os.homedir(), now = Date.now
   if (!slug || !target) return null;
   const handoffs = readIndex(home);
   handoffs[slugify(slug)] = { path: target, kind: kind || 'project', recorded_at: new Date(now).toISOString() };
+  return writeIndex(handoffs, home);
+}
+
+// Write the index the only way it is ever written: to a temporary file, then
+// renamed over the real one.
+//
+// Two sessions in the same directory is the ordinary case rather than the
+// exotic one, and a plain write leaves a window where a concurrent read sees a
+// half-written file. `rename` is atomic, so a reader gets either the old index
+// or the new one and never something in between.
+//
+// Shared by every writer here so that a new one cannot be added with a plain
+// `writeFileSync`, which is how the guarantee would quietly be lost.
+function writeIndex(handoffs, home = os.homedir()) {
   try {
     fs.mkdirSync(handoffRoot(home), { recursive: true });
     const file = indexPath(home);
@@ -133,6 +147,60 @@ function recordHandoff({ slug, target, kind, home = os.homedir(), now = Date.now
     // It must never take the wrap down, since the handoff itself is the point.
     return null;
   }
+}
+
+// Drop one entry by slug, without touching the handoff it names.
+//
+// The separation is the whole point. `wrap` adds entries and nothing ever
+// removed one, so the index only grew, and clearing a single stale entry meant
+// hand-editing JSON. Deleting the document as well would make this a dangerous
+// command to reach for, and the entry is not the work.
+//
+// Reports whether the file is still there so the caller can say so. Forgetting
+// an entry whose document still exists is legitimate, and `pickup` will often
+// still find it through the guessed paths, which is worth knowing before it
+// surprises somebody.
+function forgetHandoff(slug, home = os.homedir()) {
+  const key = slugify(slug);
+  if (!key) return { slug: key, removed: false, reason: 'empty slug' };
+
+  const handoffs = readIndex(home);
+  const entry = handoffs[key];
+  if (!entry) return { slug: key, removed: false, reason: 'not in the index' };
+
+  let fileStillThere = false;
+  try { fileStillThere = !!entry.path && fs.existsSync(entry.path); } catch (_) { /* treat as gone */ }
+
+  delete handoffs[key];
+  if (writeIndex(handoffs, home) === null) {
+    return { slug: key, removed: false, reason: 'the index could not be written', entry };
+  }
+  return { slug: key, removed: true, entry, fileStillThere };
+}
+
+// Drop every entry whose file is not there any more.
+//
+// An entry is recorded before the document is written, on purpose, so an
+// intent that was never fulfilled is normal and harmless: every lookup verifies
+// the file exists. What is not harmless is that nothing ever cleared them, so
+// a handoff whose project is deleted, renamed or moved leaves a permanent
+// entry, and the file only grows.
+//
+// Never touches an entry whose file is present, so this cannot lose a handoff.
+function pruneIndex({ home = os.homedir(), dryRun = false } = {}) {
+  const handoffs = readIndex(home);
+  const dropped = [];
+  const kept = {};
+
+  for (const [key, entry] of Object.entries(handoffs)) {
+    let present = false;
+    try { present = !!(entry && entry.path) && fs.existsSync(entry.path); } catch (_) { present = false; }
+    if (present) kept[key] = entry;
+    else dropped.push({ slug: key, path: entry && entry.path });
+  }
+
+  if (dropped.length && !dryRun) writeIndex(kept, home);
+  return { dropped };
 }
 
 function slugify(text) {
@@ -202,6 +270,7 @@ function archiveStale({ days = DEFAULT_STALE_DAYS, home = os.homedir(), now = Da
   const root = handoffRoot(home);
   const dest = archiveRoot(home);
   const moved = [];
+  const relocations = [];
 
   let entries;
   try {
@@ -209,7 +278,9 @@ function archiveStale({ days = DEFAULT_STALE_DAYS, home = os.homedir(), now = Da
   } catch (_) {
     // No handoffs directory yet. Nothing to sweep, and creating one here would
     // be a side effect nobody asked for.
-    return { moved, root, skipped: true };
+    return {
+      moved, root, skipped: true, repointed: [], pruned: [],
+    };
   }
 
   const cutoff = now - days * 86400000;
@@ -217,20 +288,51 @@ function archiveStale({ days = DEFAULT_STALE_DAYS, home = os.homedir(), now = Da
   for (const name of entries) {
     if (!name.startsWith('HANDOFF-') || !name.endsWith('.md')) continue;
     const from = path.join(root, name);
+    const to = path.join(dest, name);
     try {
       const stat = fs.statSync(from);
       if (!stat.isFile() || stat.mtimeMs >= cutoff) continue;
       if (!dryRun) {
         fs.mkdirSync(dest, { recursive: true });
-        fs.renameSync(from, path.join(dest, name));
+        fs.renameSync(from, to);
       }
       moved.push(name.replace(/^HANDOFF-/, '').replace(/\.md$/, ''));
+      relocations.push({ from, to });
     } catch (_) {
       // One unreadable file must not stop the sweep.
     }
   }
 
-  return { moved, root, skipped: false };
+  // Follow the files that just moved, before pruning.
+  //
+  // The sweep renames the document and left the index pointing at where it used
+  // to be, so an entry for a handoff this very command archived became a dead
+  // entry the moment it ran. Lookups still found it, because the search order
+  // reaches archived/ on its own, but only by falling through the index rather
+  // than using it, and the entry was then indistinguishable from one whose file
+  // was genuinely deleted. Pruning without this step would throw it away.
+  //
+  // The kind changes with the move, so `pickup` can still open with the note
+  // that this handoff was archived.
+  const repointed = [];
+  if (!dryRun && relocations.length) {
+    const handoffs = readIndex(home);
+    let touched = false;
+    for (const [key, entry] of Object.entries(handoffs)) {
+      const hit = entry && relocations.find((r) => r.from === entry.path);
+      if (!hit) continue;
+      handoffs[key] = { ...entry, path: hit.to, kind: 'archived' };
+      repointed.push({ slug: key, from: hit.from, to: hit.to });
+      touched = true;
+    }
+    if (touched) writeIndex(handoffs, home);
+  }
+
+  const { dropped } = pruneIndex({ home, dryRun });
+
+  return {
+    moved, root, skipped: false, repointed, pruned: dropped,
+  };
 }
 
 // The newest handoffs, for the menu `pickup` shows when given no slug.
@@ -278,7 +380,10 @@ module.exports = {
   archiveRoot,
   indexPath,
   readIndex,
+  writeIndex,
   recordHandoff,
+  forgetHandoff,
+  pruneIndex,
   memoryDir,
   writeTarget,
   slugify,
