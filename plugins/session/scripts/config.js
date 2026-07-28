@@ -41,6 +41,58 @@ const DEFAULTS = {
   // happens in the background at session start.
   healthMaxAgeMinutes: 30,
 
+  // Warn the model when its own context is filling up.
+  //
+  // Only works when the status line is installed, because the status line is
+  // the only component Claude Code hands the context window to. Without it the
+  // bridge file is never written and this stays silent, which is the correct
+  // behaviour: a warning invented from no reading would be worse than none.
+  //
+  // `enabled: false` switches it off. The thresholds are remaining percentages,
+  // not used, so they count down.
+  contextWarnings: {},
+
+  // Report uncommitted work and recent commits at session start.
+  //
+  // Complements the live session check rather than duplicating it. That one
+  // reads the process table and answers "is anyone in here now". This one
+  // answers "was anyone in here, and did they leave something", which is the
+  // case a window closed ten minutes ago produces.
+  //
+  // `roots` are searched for repositories, `~` expanded. Discovery rather than
+  // a hand-written list on purpose: the hook this ports from held six absolute
+  // paths from another machine, so anywhere else it checked six directories
+  // that did not exist and reported nothing, which is indistinguishable from
+  // all clear.
+  //
+  // Off until asked for, which is the one default in this file that is not
+  // about cost.
+  //
+  // It is 86ms and bounded at 12 repositories, depth 2 and 400ms per git call.
+  // Speed was never the question. The question is that installing a plugin
+  // about sessions and handoffs would also start walking a directory of your
+  // unrelated work and spawning git processes, every session, on a machine
+  // where somebody installed something rather than wrote it. Nothing in the
+  // name would lead them to expect that.
+  //
+  // The line this sits on: the parallel-session check reads the process table
+  // by default and stays that way, because it is the plugin looking at Claude
+  // Code sessions, which is its own subject. This one reads your work. One is
+  // the plugin looking at itself, the other is the plugin looking at you, and
+  // only the second needs asking.
+  //
+  // The cost of this default is real and falls on the people it was built for.
+  // Somebody who reads the README and turns it on is largely somebody who did
+  // not leave uncommitted work behind. That is accepted rather than solved.
+  //
+  // `load` replaces whole keys rather than merging into them, so a config
+  // saying `{"gitActivity": {"roots": ["~/code"]}}` drops this `enabled: false`
+  // and the scan runs. That is deliberate: configuring the thing is asking for
+  // it, and the alternative is a config that is read, accepted, and silently
+  // does nothing. If `load` ever starts deep merging, that stops being true,
+  // and there is a test pinning it so the change cannot be quiet.
+  gitActivity: { enabled: false },
+
   // Word budgets for the memory directory, checked by /wrap.
   //
   // Overrides merge one key at a time, so raising the total does not silently

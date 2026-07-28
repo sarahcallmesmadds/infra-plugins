@@ -36,6 +36,27 @@ const path = require('path');
 const BUDGET_MS = 1200;
 const STDIN_WAIT_MS = 1000;
 
+// The session scan gets a share of the budget rather than all of it.
+//
+// Both stages take the same absolute deadline, so whatever the first one spends
+// comes out of the second. That part is deliberate: the number a person notices
+// is the total delay before their first prompt, not how fairly it was divided,
+// and giving each stage its own full budget would let the hook take twice as
+// long as the number above says.
+//
+// The problem is what the git scan then reports. `liveSessions` reads the
+// process table, which is the one call here whose cost depends on the machine
+// rather than on this code. Where it ran long enough to exhaust the budget, the
+// git scan discovered nothing, returned `complete: false`, and the hook said
+// "some repositories could not be checked" about a scan that had not checked
+// any. True, useless, and identical to a real partial scan.
+//
+// So cap the first stage. The git scan keeps the same absolute deadline and is
+// therefore guaranteed the remainder, and the total is still bounded by
+// BUDGET_MS. When `liveSessions` returns early, which is the normal case at
+// around a tenth of its cap, the git scan still gets everything left over.
+const SESSIONS_BUDGET_MS = Math.round(BUDGET_MS * 0.6);
+
 // Naming every overlapping session gets silly past a handful, and past a
 // handful the count is the useful part anyway.
 const MAX_NAMED = 4;
@@ -122,6 +143,72 @@ function kickHealthRefresh() {
   }
 }
 
+// Work left behind in a repository, which no live process will report.
+//
+// Deliberately quiet about the current repository's own uncommitted changes:
+// you are about to work in it, you can see them, and mentioning them at the top
+// of every session in a repo you are mid-change on is the fastest way to teach
+// somebody to skip this whole notice.
+//
+// What is worth saying is activity somewhere else, because that is the part you
+// cannot see from here.
+function gitActivityLine(cwd, deadline) {
+  try {
+    const config = require(path.join(__dirname, '..', 'scripts', 'config.js')).load();
+    if (config.gitActivity && config.gitActivity.enabled === false) return '';
+
+    const ga = require(path.join(__dirname, '..', 'scripts', 'git-activity.js'));
+    const here = ga.findRepoRoot(cwd);
+    const { notable, complete } = ga.scan({ cwd, config: config.gitActivity, deadline });
+
+    const elsewhere = notable.filter((r) => r.repo !== here);
+
+    // Nothing found is two answers, and only one of them is good news.
+    //
+    // This returned '' the moment the list was empty, without ever consulting
+    // `complete`, so a scan the deadline cut short reported exactly what a
+    // clean machine reports. That is the failure this module's own header
+    // warns about, in the one place that reads it, and `parallelLine` sitting
+    // directly above already handles the same case correctly.
+    //
+    // Sixth instance of this shape in this plugin. It is not carelessness about
+    // the logic; the flag was computed, threaded through, and documented. It is
+    // that the early return is written before the caveat, and an early return
+    // is easy to read as "nothing to say" when it means "nothing found so far".
+    // No command is named here on purpose. This said "Run /sessions", and there
+    // is no such skill in this plugin or anywhere else. There is a `sessions`
+    // subcommand on the CLI, which is presumably where the name came from, but
+    // the model has no path to it and cannot invoke a subcommand as a slash
+    // command. So the one actionable sentence in the notice pointed at nothing.
+    //
+    // A notice that ends in an instruction that fails is worse than one that
+    // ends without an instruction, because the failure is what gets remembered
+    // about the notice.
+    if (!elsewhere.length) {
+      if (complete) return '';
+      return 'Some repositories could not be checked before the session-start budget ran out, '
+        + 'so whether anything was left uncommitted elsewhere is unknown. '
+        + 'Check by hand if that matters.';
+    }
+
+    const described = elsewhere.slice(0, 3).map((r) => {
+      const bits = [];
+      if (r.changed) bits.push(`${r.changed} uncommitted`);
+      if (r.commits && r.commits.length) bits.push(`${r.commits.length} recent commit${r.commits.length === 1 ? '' : 's'}`);
+      return `${r.name}${r.branch ? ` on ${r.branch}` : ''}: ${bits.join(', ')}`;
+    }).join('; ');
+
+    const more = elsewhere.length > 3 ? `, and ${elsewhere.length - 3} more` : '';
+    const caveat = complete ? '' : ' Not every repository was checked, so there may be more.';
+
+    return `Recent work sits in ${elsewhere.length} other repositor${elsewhere.length === 1 ? 'y' : 'ies'}: `
+      + `${described}${more}.${caveat} `
+      + 'Mentioned in case it belongs to something still in progress. Nothing here needs doing.';
+  } catch (_) {
+    return '';
+  }
+}
+
 function main(event) {
   const { todayLine } = require(path.join(__dirname, '..', 'scripts', 'today.js'));
   const sessionsMod = require(path.join(__dirname, '..', 'scripts', 'sessions.js'));
@@ -132,11 +219,15 @@ function main(event) {
 
   const live = sessionsMod.liveSessions({
     selfSessionId: event && event.session_id,
-    deadline: started + BUDGET_MS,
+    deadline: started + SESSIONS_BUDGET_MS,
   });
 
-  const parallel = parallelLine((event && event.cwd) || process.cwd(), live, sessionsMod);
+  const cwd = (event && event.cwd) || process.cwd();
+  const parallel = parallelLine(cwd, live, sessionsMod);
   if (parallel) parts.push(parallel);
+
+  const activity = gitActivityLine(cwd, started + BUDGET_MS);
+  if (activity) parts.push(activity);
 
   process.stdout.write(JSON.stringify({
     hookSpecificOutput: {
@@ -173,4 +264,4 @@ function run() {
 
 if (require.main === module) run();
 
-module.exports = { parallelLine, describeAge };
+module.exports = { parallelLine, describeAge, gitActivityLine };

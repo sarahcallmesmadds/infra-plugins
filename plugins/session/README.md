@@ -89,6 +89,81 @@ number is as fresh as the cache and no fresher, which is why it starts showing
 its age once it gets old, and why it shows nothing at all rather than `0/5`
 before the first refresh finishes.
 
+## Knowing how full the context is
+
+Claude Code sends the status line a `context_window` on every render and tells
+the model nothing. So you can watch the bar turn orange while the assistant
+deciding whether to open six more files has no idea, and `/context` is the only
+way to read it, and only you can run that.
+
+The status line writes the number to a file and a `PostToolUse` hook reads it
+back. Two components that cannot talk to each other, joined by the filesystem.
+
+At 35% remaining the model is told to finish what is underway rather than start
+something new. At 25% it is told to say so plainly and ask you how to proceed.
+Repeats are debounced across five tool calls, because a warning on every single
+call would spend context complaining about context, but crossing from warning
+into critical is never swallowed.
+
+**The message is advisory and never orders anything written.** An earlier
+version of this told the model to save state and write handoff files, so a long
+session would produce files nobody asked for at the moment you were busiest.
+Reporting a fact is useful; acting on it unasked is not.
+
+**This needs the status line installed.** It is the only component Claude Code
+hands the context window to. Without it, no file is written, and the hook stays
+quiet rather than inventing a number.
+
+## Work left behind in other repositories
+
+The parallel session check reads the process table, so it answers "is anyone in
+here right now". A window you closed ten minutes ago leaves no process and
+leaves its uncommitted work sitting in the tree.
+
+So the session notice also reports uncommitted changes and commits from the last
+six hours in repositories other than the one you are in. Your own repo is left
+out, because you can see it and saying so every time is how a notice gets
+ignored.
+
+Repositories are discovered, not listed. The hook this came from held six
+absolute paths from one machine, so anywhere else it checked six directories
+that did not exist, found nothing, and said nothing, which reads exactly like an
+all clear.
+
+**This one is off until you ask for it.** Everything else in the plugin runs on
+install. This does not, because it walks a directory of your work and runs git
+in every repository it finds there, at every session start. That is bounded at
+12 repositories, two directories deep, 400ms per git call, and it costs about a
+tenth of a second. The cost is not the reason. Reading your disk is something
+to be asked about, not something to be discovered afterwards.
+
+The parallel-session check above does run by default, and reads your process
+table to do it. The difference is what each one looks at. That one looks for
+Claude Code sessions, which is this plugin's own subject. This one looks at
+your unrelated work.
+
+To turn it on:
+
+```json
+{
+  "gitActivity": { "enabled": true }
+}
+```
+
+Or turn it on and point it somewhere else, which does the same thing. Naming
+any setting here is taken as asking for it, so you do not need `enabled` as
+well:
+
+```json
+{
+  "gitActivity": { "roots": ["~/code", "~/work"], "depth": 2, "recentHours": 6 },
+  "contextWarnings": { "warningRemaining": 35, "criticalRemaining": 25 }
+}
+```
+
+`roots` defaults to `~/Projects`, `depth` to 2, `recentHours` to 6, and at most
+12 repositories are checked.
+
 ## The memory budget
 
 Notes that load into a session are cheap to write and need a decision to delete,
