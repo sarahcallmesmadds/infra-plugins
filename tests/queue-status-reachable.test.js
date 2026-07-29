@@ -48,7 +48,7 @@ const TERMINAL = ['Resolved', "Won't Fix", 'fix applied, watching'];
 const RETIRED = 'fix attempted / unresolved';
 
 // See deps-keys.test.js for why this is compared rather than printed.
-const EXPECTED_CHECKS = 11;
+const EXPECTED_CHECKS = 12;
 
 let failed = 0;
 let ran = 0;
@@ -176,6 +176,24 @@ check('verify-fix records the rejected attempt in notes', () => {
   assert.match(VERIFY_FIX, /Append to `notes`[\s\S]{0,400}?attempted and rejected/,
     'the fail path sets Open without recording that an attempt was made, so the '
     + 'retirement lost information rather than moving it');
+});
+
+check('the rejection note does not assert a file state both modes cannot share', () => {
+  // Step V4 is reached from Mode A, where the file was never written, and from
+  // Mode B, where the fix was applied and committed in an earlier session. A
+  // fixed sentence about the file is false in one of them. It was false in Mode
+  // B on first write: the note said the file was unchanged, directly above the
+  // branch offering to help restore it, which only makes sense if it changed.
+  const note = VERIFY_FIX.match(/Append to `notes` array: [^\n]+/);
+  assert.ok(note, 'could not find the note the fail path appends');
+  assert.ok(!/target file is unchanged/.test(note[0]),
+    'the note hardcodes "the target file is unchanged", which is false whenever '
+    + 'Step V4 is reached from Mode B');
+  assert.ok(/\{file_state\}/.test(note[0]),
+    'the note should take the file state from the calling mode rather than stating one');
+  assert.match(VERIFY_FIX, /Mode B[\s\S]{0,200}?already committed/,
+    'Step V4 no longer defines what file_state means in Mode B, so the caller has '
+    + 'nothing to substitute');
 });
 
 check('apply-fix leaves the entry Open when the write fails', () => {
