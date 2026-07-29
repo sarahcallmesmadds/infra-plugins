@@ -1,6 +1,6 @@
 {
   "name": "build-loop",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Keep everything you build honest. Log what a skill, hook, command, plugin, or script got wrong the moment it happens, fix it from the queue with an approval gate, know what else the fix puts at risk, and keep a to-build list that closes itself when the work actually ships.",
   "author": {
     "name": "Sarah Madden",

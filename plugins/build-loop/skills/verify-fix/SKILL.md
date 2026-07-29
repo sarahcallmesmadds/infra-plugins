@@ -1,7 +1,7 @@
 ---
 name: verify-fix
 type: human
-description: Human-review verification gate for fixes. Presents the original failing scenario from the queue entry, shows the before/after diff, and asks the user whether the fix looks right. If yes — signals pass (apply-fix handles the commit). If no — marks the queue entry "fix attempted / unresolved" and restores the target file to its pre-fix state. Can be called from within /apply-fix or invoked standalone to re-verify a fix from a previous session.
+description: Human-review verification gate for fixes. Presents the original failing scenario from the queue entry, shows the before/after diff, and asks the user whether the fix looks right. If yes — signals pass (apply-fix handles the commit). If no — leaves the queue entry Open with a note recording the rejected attempt, and restores the target file to its pre-fix state. Can be called from within /apply-fix or invoked standalone to re-verify a fix from a previous session.
 argument-hint: "[queue-entry-id or target-name]"
 allowed-tools: Read, Write, Bash(ls:*), Bash(cat:*), Bash(date:*), Bash(mv:*), Bash(node:*)
 ---
@@ -97,12 +97,29 @@ Rules for the diff:
 
 ### Step V4 — Fail path: mark queue and report
 
-The target file has NOT been written (verify happens before write in the /apply-fix flow). No file restoration is needed.
+**This step is shared by both modes, and the file state differs between them.**
+Work out `{file_state}` before writing anything:
+
+| Called from | State of the target file | `{file_state}` |
+|---|---|---|
+| Mode A, within `/apply-fix` | Never written. Verification happens before the write. | `The target file was never written.` |
+| Mode B, standalone | Already written and committed in an earlier session. | `The fix is already committed, so the target file still carries it until it is reverted.` |
+
+Getting this wrong writes a false audit trail. Mode B exists to re-review a fix
+from a previous session, which by definition was applied, and the branch below
+offers to help restore that file precisely because it did change. A note saying
+the file is untouched would contradict the offer sitting next to it.
 
 Run atomic write on the queue entry:
 1. Read the current queue entry JSON.
-2. Set `status` to `"fix attempted / unresolved"`.
-3. Append to `notes` array: `{"ts": "{date -u +"%Y-%m-%dT%H:%M:%S.000Z"}", "text": "Verification failed: the user rejected diff. {retry instructions if given, else 'No reason given.'}"}`.
+2. Set `status` back to `"Open"`.
+
+   A rejected fix is an open bug. It used to get its own status,
+   `"fix attempted / unresolved"`, which read as more precise and was worse: no
+   filter in `/list-bugs` reached it, so rejecting a diff removed the entry from
+   the only view that lists work. The attempt is not lost, it is the note written
+   in the next step, and a note is visible where a status was not.
+3. Append to `notes` array: `{"ts": "{date -u +"%Y-%m-%dT%H:%M:%S.000Z"}", "text": "Fix attempted and rejected at the verify gate. {retry instructions if given, else 'No reason given.'} {file_state}"}`.
 4. Write updated JSON to `~/.claude/build-loop/queue/{id}.json.tmp` using the Write tool.
 5. Run: `node -e "JSON.parse(require('fs').readFileSync(require('os').homedir() + '/.claude/build-loop/queue/{id}.json.tmp','utf8'))"`
 6. If parse succeeds: `mv ~/.claude/build-loop/queue/{id}.json.tmp ~/.claude/build-loop/queue/{id}.json`
@@ -110,8 +127,9 @@ Run atomic write on the queue entry:
 
 Display:
 ```
-Understood. Fix discarded. Queue entry {id} is now "fix attempted / unresolved".
-The target file is unchanged. You can try again with /apply-fix or leave this for later.
+Understood. Fix discarded. Queue entry {id} stays Open, with a note recording
+that this attempt was rejected. {file_state} You can try again with /apply-fix
+or leave this for later.
 ```
 
 ---
@@ -177,7 +195,10 @@ Same three response types as Step V3:
   Display: "Queue entry {id} is now 'fix applied, watching'. Try it in a real session. When it works, you can close this to Resolved."
 
 - **"no"** (FAIL in standalone mode):
-  Follow Step V4 fail path (set `"fix attempted / unresolved"`, append failure note).
+  Follow Step V4 fail path (set status back to `"Open"`, append failure note),
+  using the **Mode B** value of `{file_state}`. The fix reached the file in an
+  earlier session, so a note claiming it is untouched would contradict the offer
+  on the next line.
   Additionally display: "Should I help restore the target file to its pre-fix state? To check what the file looked like before: git -C {repo_root} log --oneline -5, find the commit with [queue:{id}] in the message, then run /revert-fix {id} to undo it."
 
 - **"retry: {instructions}"** (REVISE in standalone mode):
