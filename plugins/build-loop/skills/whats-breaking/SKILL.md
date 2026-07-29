@@ -73,7 +73,7 @@ target: string (the name of the thing corrected — grouping key)
 target_kind: "skill" | "hook" | "command" | "plugin" | "script" | "other"
 repo: string (name of the root it lives in, or "unknown")
 type: "primary" | "dep-review" (missing field defaults to "primary")
-status: "Resolved" | "fix applied, watching" | "Open" | "In Progress" | "fix attempted / unresolved"
+status: "Resolved" | "fix applied, watching" | "Open" | "In Progress" | "fix attempted / unresolved" (retired in 0.3.1, still readable on older entries)
 session_id: string (may be empty string "" — fall back to entry.id for dedup)
 what_happened: string (free text — read for diagnosis generation in Step 2d)
 target_path: string (absolute path to the file a fix would edit — copied into flag entries)
@@ -103,7 +103,10 @@ Discard everything else:
 - `type: "dep-review"` entries — never count toward structural flags
 - `status: "Open"` entries
 - `status: "In Progress"` entries
-- `status: "fix attempted / unresolved"` entries
+- `status: "fix attempted / unresolved"` entries. Retired in 0.3.1: nothing writes
+  it any more and a rejected fix stays `Open`. Kept here because entries written
+  before 0.3.1 still carry it, and both statuses are discarded anyway, so the
+  retirement changes nothing about which entries feed pattern detection.
 
 This filter is strict. Only closed primary corrections feed pattern detection.
 

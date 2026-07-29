@@ -166,6 +166,35 @@ answer, not its conclusion.
 opinion about whether something is any good, and it will not rewrite anything
 you did not complain about.
 
+## Upgrading to 0.3.1
+
+One fewer status. `fix attempted / unresolved` is retired.
+
+Rejecting a fix at the verify gate used to move the entry to that status. It
+means "the fix did not land and the file is unchanged", which is an open bug by
+any reading, and **no `/list-bugs` filter reached it.** Not the default, not
+`open`, not `in progress`. So saying no to a diff removed the entry from every
+view that lists outstanding work. It stayed on disk, still counted by
+`/whats-breaking`, and invisible to the person who filed it.
+
+A rejected fix now stays `Open`, and the attempt is written to `notes`. Same for
+a write that fails partway: the entry stays `Open` with the error in `notes`.
+Nothing is lost, because a note is visible in a place a status was not.
+
+The oldest version of this skill, before it was a plugin, did show the status in
+its default view, and said why: failed fixes need re-attention so they stay
+beside open work. The behaviour and the sentence explaining it were dropped
+together in a rewrite, which is why nothing left could say it had been deliberate.
+
+**Nothing to do on upgrade.** Readers still accept the old value, so an entry
+written by an earlier version keeps working, and `/apply-fix` treats it as open.
+The schema stays at v5: the change is compatible in both directions, and bumping
+it would signal a migration that does not exist.
+
+`tests/queue-status-reachable.test.js` now asserts the general rule, that any
+status a skill writes is either shown by the default view or marked terminal in
+the schema, so this cannot come back under a different name.
+
 ## Upgrading to 0.3.0
 
 The first hook in this plugin. `skill-md-check` runs after any Write or Edit,
