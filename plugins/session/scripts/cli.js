@@ -168,8 +168,16 @@ const COMMANDS = {
     // when in fact one of these is a handoff whose disk was not mounted.
     if (result.unreachable.length) {
       const it = result.unreachable.length === 1 ? 'it' : 'them';
+      // The remedy goes on the same line as the problem. `forget` is the only
+      // thing that drops an index entry, so reporting the state without naming
+      // it describes a situation with no way out. Conditioned on the directory
+      // being gone for good, because the other reason one cannot be read is a
+      // disk that is not mounted, and forgetting those loses a live handoff.
+      const remedy = result.unreachable.length === 1
+        ? ` If it is gone for good, run \`cli.js forget ${result.unreachable[0].slug}\` to drop the entry.`
+        : ` If any are gone for good, run \`cli.js forget <slug>\` to drop them, for example \`cli.js forget ${result.unreachable[0].slug}\`.`;
       lines.push(`Left ${result.unreachable.length} index ${plural(result.unreachable.length)} alone, `
-        + `because the directory holding ${it} could not be read: ${result.unreachable.map((u) => u.slug).join(', ')}`);
+        + `because the directory holding ${it} could not be read: ${result.unreachable.map((u) => u.slug).join(', ')}.${remedy}`);
     }
     // Last, and unmissable. Everything above this describes what was worked
     // out; this is whether any of it reached the disk.
