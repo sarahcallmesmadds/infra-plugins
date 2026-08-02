@@ -219,8 +219,42 @@ function check(what, fn) {
 function staleCounts(text, file) {
   const lines = text.split('\n');
   const problems = [];
+
+  // Whether line i is inside a code example, tracked across the whole file.
+  //
+  // The walk from a sentence to its list already stopped at a fence, which
+  // covered a fence opening between the two and nothing else. It did not know
+  // whether the sentence itself was inside one. So a document showing an
+  // example of a stale count was read as containing one, and the most likely
+  // author of such a document is whoever writes up this check.
+  //
+  // Two shapes. A fenced block, and an indented one: four or more spaces on a
+  // line that follows a blank. The indent rule wants the blank, because
+  // continuation prose inside a numbered step is indented too and is ordinary
+  // text.
+  const inExample = new Array(lines.length).fill(false);
+  let fenced = false;
+  let indented = false;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
+    if (/^\s*(```|~~~)/.test(line)) {
+      inExample[i] = true;
+      fenced = !fenced;
+      continue;
+    }
+    if (fenced) { inExample[i] = true; continue; }
+
+    if (line.trim() === '') { indented = false; inExample[i] = false; continue; }
+    const lead = line.match(/^ */)[0].length;
+    const afterBlank = i > 0 && lines[i - 1].trim() === '';
+    if (lead >= 4 && (afterBlank || indented)) indented = true;
+    else if (lead < 4) indented = false;
+    inExample[i] = indented;
+  }
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (inExample[i]) continue;
     if (!line.trim() || /^\s*\|/.test(line) || /^\s*([-*]|\d+\.)\s/.test(line)) continue;
 
     const stated = announcedCount(line);
@@ -445,6 +479,39 @@ check('a divider without a trailing bar is still a divider', () => {
   const noTrailingBar = ['it checks two things:', '', '| a | b', '|---|---', '| 1 | 2', '| 3 | 4'].join('\n');
   assert.deepStrictEqual(staleCounts(noTrailingBar, path.join(ROOT, 'sample.md')), [],
     'a table written without closing bars had its heading counted as content');
+});
+
+check('a count inside a code example is not read as a real one', () => {
+  // The walk already refused to step into a fence. It did not know whether the
+  // sentence itself was inside one, so a document demonstrating a stale count
+  // was reported as containing one. Writing up this check would have done it.
+  const fenced = [
+    'Example of the thing this catches:',
+    '```markdown',
+    'it checks two things:',
+    '- a',
+    '- b',
+    '- c',
+    '```',
+  ].join('\n');
+  assert.deepStrictEqual(staleCounts(fenced, path.join(ROOT, 'sample.md')), [],
+    'a count inside a fenced example was checked as though it were prose');
+
+  const indentedBlock = [
+    'Example:',
+    '',
+    '    it checks two things:',
+    '    - a',
+    '    - b',
+    '    - c',
+  ].join('\n');
+  assert.deepStrictEqual(staleCounts(indentedBlock, path.join(ROOT, 'sample.md')), [],
+    'a count inside an indented example was checked as though it were prose');
+
+  // And prose after the example closes is checked again.
+  const after = fenced + '\n\nit checks two things:\n- a\n- b\n- c';
+  assert.strictEqual(staleCounts(after, path.join(ROOT, 'sample.md')).length, 1,
+    'the file stopped being checked after a code block closed');
 });
 
 check('it leaves a number that is not counting the list alone', () => {
