@@ -76,10 +76,17 @@ function listAt(lines, from) {
     // discarded every row above it, so a correct sentence above a four-row
     // table was reported as wrong and failed the suite.
     //
-    // A real header rule is always the second line of the table and always
-    // holds a run of dashes. Both conditions, so a body row cannot be mistaken
-    // for one wherever it sits.
-    const HEADER_RULE = /^\s*\|[\s|:-]*-{3,}[\s|:-]*\|\s*$/;
+    // A real header rule is the second line of the table and holds at least one
+    // dash. Position is the load-bearing half: a body row of `| - | - |` cannot
+    // be mistaken for a rule anywhere else in the table.
+    //
+    // It asked for three dashes at first, as belt and braces on top of the
+    // position. That was not free. GitHub-flavoured markdown accepts one dash
+    // per column, so `|-|-|` was not recognised, the two heading lines were
+    // counted as content, and a correct four-row table read as six. The
+    // position check was already doing the work the dash count was added for,
+    // and the extra condition only ruled out valid tables.
+    const HEADER_RULE = /^\s*\|[\s|:-]*-[\s|:-]*\|\s*$/;
     const hasHeader = rows.length > 1 && HEADER_RULE.test(rows[1]);
     const count = hasHeader ? rows.length - 2 : rows.length;
     return count > 0 ? { kind: 'table', count } : null;
@@ -265,6 +272,20 @@ check('a body row that looks like a header rule does not eat the table', () => {
   const withBlankRow = withDashRow.replace('| - | - |', '|   |   |');
   assert.deepStrictEqual(staleCounts(withBlankRow, path.join(ROOT, 'sample.md')), [],
     'a blank spacer row was counted as the header rule');
+
+  // A divider written the compact way GitHub also accepts.
+  const compact = [
+    'it checks four things:',
+    '',
+    '| a | b |',
+    '|-|-|',
+    '| 1 | 2 |',
+    '| 3 | 4 |',
+    '| 5 | 6 |',
+    '| 7 | 8 |',
+  ].join('\n');
+  assert.deepStrictEqual(staleCounts(compact, path.join(ROOT, 'sample.md')), [],
+    'a one-dash-per-column divider was counted as content');
 
   // And a table with no header rule at all counts every row.
   const headerless = [
