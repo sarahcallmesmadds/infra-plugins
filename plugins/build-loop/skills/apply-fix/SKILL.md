@@ -72,6 +72,24 @@ Then check:
 
 **Repo guard:** If `repo == "unknown"`: say "This entry has repo: unknown. I can't commit without knowing which repo this belongs to. Check DEPS.json or update the queue entry's repo field manually, then try again." Stop. Do not change status.
 
+**Root guard.** A root that is still named in the config may no longer be on
+disk, which reads the same from here as a repo that was never configured:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/roots.js" check
+```
+
+Exit 0, carry on. Otherwise, if the root named by this entry's `repo` is among
+the ones it reports as gone, relay what it said and stop. Do not change status.
+
+**This check belongs here rather than at Step 8, where the roots are read.** By
+Step 8 the target file is already written, so a root that turns out to be absent
+leaves the fix on disk with nothing able to commit it, and an entry that says the
+work is unfinished. That is the same limbo `2026-07-30T20-05-20-apply-fix-no-git-repo`
+describes for a target outside a git repository, and it is avoidable here for
+free: nothing has been written yet at Step 2, and `repo` is known the moment the
+entry is read.
+
 **Set status to In Progress:**
 
 ```bash
@@ -285,18 +303,8 @@ exist, use the three defaults from SCHEMA.md: `personal` at `~/.claude/skills`,
 `hooks` at `~/.claude/hooks`, and `commands` at `~/.claude/commands`. A config
 holding `skillRoots` and no `roots` is read as roots of kind `skill`.
 
-Check they exist before using one:
-
-```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/roots.js" check
-```
-
-Exit 0, carry on. Anything else names the roots that are gone. If the one this
-entry's `repo` points at is among them, relay what it said and stop, rather than
-running `git -C` against a path that is not there and reporting whatever git
-says about it. The target file is already written by this point, so say that too:
-the fix is on disk and uncommitted, and the entry stays as it is until the root
-is fixed.
+The roots were checked at Step 2, before anything was written, so by here the
+root named by this entry's `repo` is known to exist. Do not check again.
 
 Look up the entry's `repo` in `roots` to get that root's path. Then work out
 what to stage, as the path of `target_path` relative to that root. Do NOT

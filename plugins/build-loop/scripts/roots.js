@@ -89,13 +89,32 @@ function readConfig() {
     fail(`roots.js: ${CONFIG} exists but is not valid JSON (${error.message}). Fix or remove it.`);
   }
 
+  // JSON.parse returns null for the literal text `null`, and happily returns a
+  // number or an array too. Every one of those reaches `parsed.roots` below and
+  // throws a TypeError rather than the sentence written for this, and a skill
+  // relaying that prints a Node stack trace at the user. Valid JSON and a usable
+  // config are different questions and both have to be asked.
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    fail(`roots.js: ${CONFIG} must hold a JSON object with a "roots" array. Fix or remove it.`);
+  }
+
+  // An empty list is refused rather than treated as "no roots are missing". It
+  // resolves to nothing, so every caller would be told the roots are fine while
+  // nothing could ever be found under them, which is the exact confusion between
+  // empty and absent that this file exists to end.
   if (Array.isArray(parsed.roots)) {
+    if (parsed.roots.length === 0) {
+      fail(`roots.js: ${CONFIG} has an empty "roots" array, so nothing can be scanned. Add a root, or remove the file to fall back to the defaults.`);
+    }
     return { source: CONFIG, usedDefaults: false, roots: parsed.roots };
   }
 
   // A config holding skillRoots and no roots predates schema v2 and still
   // works. It is read, never rewritten.
   if (Array.isArray(parsed.skillRoots)) {
+    if (parsed.skillRoots.length === 0) {
+      fail(`roots.js: ${CONFIG} has an empty "skillRoots" array, so nothing can be scanned. Add a root, or remove the file to fall back to the defaults.`);
+    }
     const roots = parsed.skillRoots.map((r) =>
       typeof r === 'string'
         ? { name: path.basename(expand(r)), path: r, kind: 'skill' }
@@ -106,9 +125,17 @@ function readConfig() {
   fail(`roots.js: ${CONFIG} has neither "roots" nor "skillRoots". Nothing to scan.`);
 }
 
-function resolve() {
+// `kind` scopes everything it touches: the roots listed, the missing list, the
+// all-missing flag and therefore the exit code. An earlier version filtered only
+// the listing and left the rest global, on the reasoning that a filter should
+// not be able to hide a problem. That was the wrong call. It meant `missing`
+// could name a root absent from `roots`, and `allMissing` could read false while
+// every root of the kind asked about was dead. A caller that asks about skill
+// roots is answering a question about skill roots, and find-skill was reporting
+// a missing hooks directory to someone who asked which skill to use.
+function resolve(kind) {
   const config = readConfig();
-  const roots = config.roots.map((r, i) => {
+  const all = config.roots.map((r, i) => {
     const raw = r && typeof r.path === 'string' ? r.path : null;
     if (!raw) fail(`roots.js: root at position ${i} has no "path".`);
     const resolved = expand(raw);
@@ -121,61 +148,89 @@ function resolve() {
     };
   });
 
+  const roots = kind ? all.filter((r) => r.kind === kind) : all;
   const missing = roots.filter((r) => !r.exists);
   return {
     config: config.source,
     usedDefaults: Boolean(config.usedDefaults),
     legacy: config.legacy || null,
+    kind: kind || null,
     roots,
     missing,
     allMissing: roots.length > 0 && missing.length === roots.length,
   };
 }
 
+// A default that is absent is not a fault. SCHEMA.md says so in as many words:
+// on a machine where everything is installed from marketplaces rather than
+// written by hand, none of the three standard locations will exist, and that is
+// not an error. Nobody chose those paths, so reporting them as roots that have
+// gone missing describes a healthy machine as a damaged one.
+//
+// All three being absent is still worth stopping for, because then there really
+// is nowhere to look, and that is the case SCHEMA.md documents a message for.
 function codeFor(state) {
+  // Asking about a kind nothing is configured for leaves nothing to scan, which
+  // has the same consequence as every root being gone even though the cause
+  // differs. Returning OK here would tell find-skill the skill roots are fine
+  // on a machine that has none.
+  if (state.roots.length === 0) return ALL_MISSING;
   if (state.missing.length === 0) return OK;
-  return state.allMissing ? ALL_MISSING : SOME_MISSING;
+  if (state.allMissing) return ALL_MISSING;
+  return state.usedDefaults ? OK : SOME_MISSING;
 }
 
 // --- commands ------------------------------------------------------------
 
 function cmdList(args) {
-  const state = resolve();
-  const wanted = args.kind;
-  const out = wanted
-    ? { ...state, roots: state.roots.filter((r) => r.kind === wanted) }
-    : state;
-  process.stdout.write(JSON.stringify(out, null, 2) + '\n');
+  const state = resolve(args.kind);
+  process.stdout.write(JSON.stringify(state, null, 2) + '\n');
   return codeFor(state);
 }
 
 // The sentences a skill relays. They are written here rather than in each
 // SKILL.md so that six callers cannot describe the same condition six ways,
 // which is how the old guard drifted.
-function cmdCheck() {
-  const state = resolve();
+function cmdCheck(args) {
+  const state = resolve(args.kind);
+  const scope = state.kind ? ` of kind ${state.kind}` : '';
   const lines = [];
 
-  // Every dead root is named, including when they are all dead. The all-dead
-  // message used to stand on its own, and the one thing nobody knew on
-  // 2026-08-01 was which path had gone. "Nothing exists" without the path sends
-  // you looking at the config to work out what it was even pointing at.
-  for (const r of state.missing) {
-    lines.push(
-      `Root '${r.name}' points at ${r.path}, which does not exist. Nothing under it can be resolved, and anything the map holds there will read as orphaned until the path is fixed.`,
-    );
-  }
-
-  if (state.allMissing) {
-    lines.push(
-      'None of the configured roots exist on this machine, so there is nothing to scan.',
-      'If you develop plugins in a checkout, add it to ~/.claude/build-loop.config.json as a root of kind plugin-repo.',
-    );
-  }
-
-  if (lines.length === 0) {
-    const names = state.roots.map((r) => r.name).join(', ');
-    lines.push(`Every configured root exists: ${names}.`);
+  if (state.roots.length === 0) {
+    lines.push(`No root${scope} is configured, so there is nothing to scan.`);
+  } else if (state.usedDefaults) {
+    // Nobody chose these paths, so an absent one is information rather than a
+    // fault, and codeFor returns 0 so the skills stay quiet about it. All of
+    // them absent is still worth stopping for: there is then nowhere to look.
+    const present = state.roots.filter((r) => r.exists).map((r) => r.name);
+    if (state.allMissing) {
+      lines.push(
+        `There is no config file, and none of the default locations${scope} exist either, so there is nothing to scan: ${state.missing.map((r) => `${r.name} (${r.path})`).join(', ')}.`,
+        'If you develop plugins in a checkout, add it to ~/.claude/build-loop.config.json as a root of kind plugin-repo.',
+      );
+    } else {
+      lines.push(`No config file, so the default locations are in use. Present: ${present.join(', ')}.`);
+      if (state.missing.length > 0) {
+        lines.push(`Absent, which is normal on a machine where everything is installed from marketplaces: ${state.missing.map((r) => r.name).join(', ')}.`);
+      }
+    }
+  } else if (state.missing.length > 0) {
+    // One wording for a configured root, whether it is the only dead one or all
+    // of them. The all-dead message used to stand on its own and name no paths,
+    // and the one thing nobody knew on 2026-08-01 was which path had gone.
+    for (const r of state.missing) {
+      lines.push(
+        `Root '${r.name}' points at ${r.path}, which does not exist. Nothing under it can be resolved, and anything the map holds there will read as orphaned until the path is fixed.`,
+      );
+    }
+    if (state.allMissing) {
+      lines.push(
+        `None of the configured roots${scope} exist on this machine, so there is nothing to scan.`,
+        'If you develop plugins in a checkout, add it to ~/.claude/build-loop.config.json as a root of kind plugin-repo.',
+      );
+    }
+  } else {
+    lines.push(`Every configured root${scope} exists: ${state.roots.map((r) => r.name).join(', ')}.`);
   }
 
   process.stdout.write(lines.join('\n') + '\n');
@@ -219,11 +274,23 @@ function main(argv) {
     process.stdout.write([
       'roots.js <command>',
       '',
-      '  check                 report any configured root that does not exist',
-      '  list [--kind K]       print the roots as JSON, each with an exists flag',
+      '  check [--kind K]      report any configured root that does not exist',
+      '  list  [--kind K]      print the roots as JSON, each with an exists flag',
       '',
-      '  Exit codes: 0 every root exists, 3 some are missing, 4 all are missing,',
-      '  1 the config could not be read. Reads only; it never repairs a path.',
+      '  --kind scopes everything: which roots are looked at, which are reported',
+      '  missing, and the exit code. Ask about skill roots and a missing hook',
+      '  root is not your answer.',
+      '',
+      '  Exit codes: 0 every root exists, 3 some are missing, 4 nothing to scan',
+      '  (all missing, or none configured for that kind), 1 the config could not',
+      '  be read.',
+      '',
+      '  With no config file the three defaults are used, and any of them being',
+      '  absent exits 0. Nobody chose those paths, so a machine that installs',
+      '  everything from marketplaces is not broken. All three absent still',
+      '  exits 4, because then there is nowhere to look.',
+      '',
+      '  Reads only; it never repairs a path.',
       '',
     ].join('\n'));
     return OK;

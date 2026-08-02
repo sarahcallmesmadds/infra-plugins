@@ -35,17 +35,21 @@ the default root `{ "name": "personal", "path": "~/.claude/skills", "kind": "ski
 skills, and a hook root holds executable files with no frontmatter to read. The
 bug queue covers hooks and commands; routing does not.
 
-Check the roots exist before scanning them:
+Check those roots exist before scanning them, and scope the check the same way:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/roots.js" check
+node "${CLAUDE_PLUGIN_ROOT}/scripts/roots.js" check --kind skill
 ```
 
-Exit 0, carry on. Anything else names the roots that are gone: say so before
-routing. This skill's whole promise is that what it lists is what is installed,
-so a root that has moved makes it report an empty inventory in the same words it
-would use for a machine with nothing installed. Never invent a skill to fill
-that gap.
+`--kind skill` matters here. Without it the check answers about hook and command
+roots too, and this skill never looks in those, so it would warn about a missing
+hooks directory to someone who asked which skill to use.
+
+Exit 0, carry on. Anything else names the skill roots that are gone: say so
+before routing. This skill's whole promise is that what it lists is what is
+installed, so a root that has moved makes it report an empty inventory in the
+same words it would use for a machine with nothing installed. Never invent a
+skill to fill that gap.
 
 For each skill root, scan both `<root.path>/*/SKILL.md` and
 `<root.path>/*/*/SKILL.md`, so a repository that nests the definition one

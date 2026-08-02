@@ -176,7 +176,11 @@ check('skillRoots with no roots is read as roots of kind skill', () => {
   assert.strictEqual(listed.roots[0].kind, 'skill', 'a skillRoots entry is kind skill');
 });
 
-check('filtering by kind does not hide a dead root from the exit code', () => {
+check('--kind scopes the roots, the missing list and the exit code together', () => {
+  // This asserted the opposite until Devin pointed out what it caused. Leaving
+  // missing and the exit code global meant find-skill, which only ever reads
+  // skill roots, warned about a missing hooks directory to someone asking which
+  // skill to use. A caller that asks about one kind is asking about that kind.
   const home = makeHome();
   const live = path.join(home, 'skills-root');
   fs.mkdirSync(live);
@@ -188,10 +192,70 @@ check('filtering by kind does not hide a dead root from the exit code', () => {
     ] })
   );
   const out = run(home, ['list', '--kind', 'skill']);
-  assert.strictEqual(out.code, 3, 'filtering the output suppressed the dead root in the exit code');
+  assert.strictEqual(out.code, 0, 'a dead root of another kind still drove the exit code');
   const listed = JSON.parse(out.stdout);
   assert.strictEqual(listed.roots.length, 1, 'the filter did not apply to the listed roots');
-  assert.strictEqual(listed.missing.length, 1, 'missing was filtered too, so nothing reported it');
+  assert.strictEqual(listed.missing.length, 0, 'missing was left global, so it names a root absent from roots');
+  const checked = run(home, ['check', '--kind', 'skill']);
+  assert.strictEqual(checked.code, 0, 'check disagreed with list about the same scope');
+  assert.doesNotMatch(checked.stdout, /gone/, 'reported a root of a kind that was not asked about');
+});
+
+check('a kind nothing is configured for is nothing to scan, not success', () => {
+  const home = makeHome();
+  const live = path.join(home, 'repo');
+  fs.mkdirSync(live);
+  fs.writeFileSync(
+    path.join(home, '.claude', 'build-loop.config.json'),
+    JSON.stringify({ roots: [{ name: 'repo', path: live, kind: 'plugin-repo' }] })
+  );
+  const out = run(home, ['check', '--kind', 'skill']);
+  assert.strictEqual(out.code, 4, 'having no root of the asked-about kind reported success');
+  assert.match(out.stdout, /No root of kind skill is configured/, 'did not say why there was nothing');
+});
+
+check('an absent default is not reported as a fault', () => {
+  // SCHEMA.md says it outright: on a machine where everything is installed from
+  // marketplaces, none of the three defaults will exist, and that is not an
+  // error. Reporting them as roots that have gone missing describes a healthy
+  // machine as a damaged one.
+  const home = makeHome(undefined);
+  fs.mkdirSync(path.join(home, '.claude', 'skills'), { recursive: true });
+  const out = run(home, ['check']);
+  assert.strictEqual(out.code, 0, `an absent default should not be an anomaly, got ${out.code}`);
+  assert.doesNotMatch(out.stdout, /does not exist/, 'used the language of a broken configured root');
+  assert.doesNotMatch(out.stdout, /orphaned/, 'threatened the user about a path they never chose');
+  assert.match(out.stdout, /normal/, 'did not say the absence was expected');
+});
+
+check('every default being absent is still nothing to scan', () => {
+  const home = makeHome(undefined);
+  const out = run(home, ['check']);
+  assert.strictEqual(out.code, 4, `no config and no defaults on disk should exit 4, got ${out.code}`);
+  assert.match(out.stdout, /nothing to scan/, 'did not say there was nowhere to look');
+});
+
+check('a config that parses to something other than an object is refused in words', () => {
+  // JSON.parse returns null for the literal text `null`. That reached
+  // parsed.roots and threw a TypeError, so the skill relayed a Node stack trace
+  // rather than the sentence written for this.
+  for (const body of ['null', '[]', '42', '"a string"']) {
+    const home = makeHome(body);
+    const out = run(home, ['check']);
+    assert.strictEqual(out.code, 1, `config ${body} should exit 1, got ${out.code}`);
+    assert.match(out.stderr, /must hold a JSON object/, `config ${body} did not explain itself`);
+    assert.doesNotMatch(out.stderr, /at Object\.|at Module\./, `config ${body} printed a stack trace`);
+  }
+});
+
+check('an empty roots array is refused rather than read as nothing missing', () => {
+  for (const key of ['roots', 'skillRoots']) {
+    const home = makeHome({ [key]: [] });
+    const out = run(home, ['check']);
+    assert.strictEqual(out.code, 1, `empty ${key} should exit 1, got ${out.code}`);
+    assert.match(out.stderr, /empty/, `empty ${key} did not say what was wrong`);
+    assert.doesNotMatch(out.stdout, /Every configured root exists/, `empty ${key} reported success`);
+  }
 });
 
 check('an unknown option is refused rather than becoming a silent boolean', () => {
@@ -263,14 +327,30 @@ check('every skill that reads the config checks the roots exist', () => {
   );
 });
 
-check('no skill still describes the check it now delegates', () => {
+check('nothing in the plugin still describes the check it now delegates', () => {
   // The paragraph each skill used to carry said the all-dead case out loud.
   // Left next to a call that reports the same thing, a reader cannot tell which
   // one is in force, and the two drift apart from the first edit onwards. This
   // is the failure mode that put two descriptions of the retired write sequence
   // into the skills on PR #42.
-  const offending = skillDirs().filter((name) =>
-    /None of the configured roots exist/.test(skillText(name)));
+  //
+  // Reference documents count, and the first version of this check missed them:
+  // it walked skills/ only, so the identical paragraph sat untouched in
+  // SCHEMA.md, which the skills are told to read. Scoping a drift check to one
+  // directory is how the drift survives it.
+  const PLUGIN = path.join(__dirname, '..', 'plugins', 'build-loop');
+  const files = [];
+  (function walk(dir) {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) walk(full);
+      else if (/\.md$/.test(e.name)) files.push(full);
+    }
+  })(PLUGIN);
+
+  const offending = files
+    .filter((f) => /None of the configured roots exist/.test(fs.readFileSync(f, 'utf8')))
+    .map((f) => path.relative(PLUGIN, f));
   assert.deepStrictEqual(
     offending, [],
     `these still spell out the all-dead message instead of relaying roots.js: ${offending.join(', ')}`
