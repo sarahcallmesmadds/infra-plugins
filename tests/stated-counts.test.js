@@ -62,8 +62,11 @@ function markdownFiles(dir, found = []) {
 // nested bullet does not inflate the total.
 function listAt(lines, from) {
   let i = from;
-  while (i < lines.length && lines[i].trim() === '') i++;
-  if (i >= lines.length) return null;
+  // At most one blank line. This used to skip an unbounded run, which meant
+  // "directly above" was not enforced at all: a sentence and a list five blank
+  // lines apart were compared to each other.
+  if (i < lines.length && lines[i].trim() === '') i++;
+  if (i >= lines.length || lines[i].trim() === '') return null;
 
   if (/^\s*\|/.test(lines[i])) {
     const rows = [];
@@ -86,7 +89,11 @@ function listAt(lines, from) {
     // counted as content, and a correct four-row table read as six. The
     // position check was already doing the work the dash count was added for,
     // and the extra condition only ruled out valid tables.
-    const HEADER_RULE = /^\s*\|[\s|:-]*-[\s|:-]*\|\s*$/;
+    // The trailing pipe is optional, because markdown makes it optional:
+    // `|---|---` is a divider and `| a | b` is a row. Requiring it meant such a
+    // table had its heading lines counted as content and read two rows too
+    // long, so correct documentation failed the suite.
+    const HEADER_RULE = /^\s*\|[\s|:-]*-[\s|:-]*\|?\s*$/;
     const hasHeader = rows.length > 1 && HEADER_RULE.test(rows[1]);
     const count = hasHeader ? rows.length - 2 : rows.length;
     return count > 0 ? { kind: 'table', count } : null;
@@ -97,7 +104,18 @@ function listAt(lines, from) {
     let items = 0;
     for (; i < lines.length; i++) {
       const line = lines[i];
-      if (line.trim() === '') continue;
+      // A blank line inside a list ends the check rather than the list.
+      //
+      // Blanks used to be transparent, which merged two consecutive lists into
+      // one total. The obvious repair, breaking at the blank, is wrong the
+      // other way: in CommonMark `- a`, `- b`, blank, `- c`, `- d` is a single
+      // loose list of four, and that is what a reader sees rendered. So one
+      // shape wants them joined and the other wants them split, and the text
+      // does not say which.
+      //
+      // Neither is guessed at. An ambiguous grouping means no comparison, the
+      // same answer as a sentence carrying two counts.
+      if (line.trim() === '') return null;
       const here = line.match(/^\s*/)[0].length;
       if (here < indent) break;
       if (here === indent && /^\s*([-*]|\d+\.)\s/.test(line)) items++;
@@ -194,10 +212,14 @@ function staleCounts(text, file) {
     const stated = announcedCount(line);
     if (!stated) continue;
 
-    // Directly above means within two lines, allowing for one blank and a
-    // trailing colon on its own line.
-    let list = null;
-    for (let gap = 1; gap <= 2 && !list; gap++) list = listAt(lines, i + gap);
+    // Directly above means the next line, or the one after it when the line
+    // between is blank or a lone colon. It used to try `i + 2` unconditionally,
+    // which stepped over whatever was there: an unrelated paragraph, or the
+    // opening fence of a code block, so a list inside an example was compared
+    // against a sentence that had nothing to do with it.
+    const between = (lines[i + 1] || '').trim();
+    let list = listAt(lines, i + 1);
+    if (!list && (between === '' || between === ':')) list = listAt(lines, i + 2);
     if (!list) continue;
 
     checked += 1;
@@ -330,6 +352,56 @@ check('a second number in the sentence does not hijack the comparison', () => {
   const problems = staleCounts(stale, path.join(ROOT, 'sample.md'));
   assert.strictEqual(problems.length, 1, 'a stale count was skipped because the sentence ended on another number');
   assert.match(problems[0], /says "four things" above a table of 5/);
+});
+
+check('a list has to be directly under the sentence to be its list', () => {
+  // "Within two lines" was claimed and not enforced. The blank-line skip was
+  // unbounded and the second attempt stepped over whatever line was in the
+  // way, so a sentence was compared against a list further down the page, one
+  // in a following paragraph, and one inside a fenced code example.
+  const farBelow = ['it checks two things.', '', '', '', '', '- a', '- b', '- c'].join('\n');
+  assert.deepStrictEqual(staleCounts(farBelow, path.join(ROOT, 'sample.md')), [],
+    'a list several blank lines away was treated as this sentence\'s list');
+
+  const afterParagraph = ['it checks two things.', 'An unrelated paragraph.', '- a', '- b', '- c'].join('\n');
+  assert.deepStrictEqual(staleCounts(afterParagraph, path.join(ROOT, 'sample.md')), [],
+    'a paragraph between the sentence and the list was stepped over');
+
+  const inCodeFence = ['it checks two things:', '```', '- a', '- b', '- c', '```'].join('\n');
+  assert.deepStrictEqual(staleCounts(inCodeFence, path.join(ROOT, 'sample.md')), [],
+    'a list inside a code example was compared against the sentence above it');
+
+  // But the two shapes that are genuinely its list still count.
+  const immediate = ['it checks three things:', '- a', '- b', '- c'].join('\n');
+  assert.deepStrictEqual(staleCounts(immediate, path.join(ROOT, 'sample.md')), [], 'a list on the next line was missed');
+  const oneBlank = ['it checks three things:', '', '- a', '- b', '- c'].join('\n');
+  assert.deepStrictEqual(staleCounts(oneBlank, path.join(ROOT, 'sample.md')), [], 'a list after one blank line was missed');
+});
+
+check('a list with a blank line in it is left alone', () => {
+  // Two lists separated by a blank, and one loose list with a blank between
+  // items, are the same characters. Markdown renders both as one list; a reader
+  // writing the first means two. Neither reading can be recovered from the
+  // text, so both are skipped rather than one of them being reported as wrong.
+  const twoLists = ['it checks two things:', '', '- a', '- b', '', '- c', '- d'].join('\n');
+  assert.deepStrictEqual(staleCounts(twoLists, path.join(ROOT, 'sample.md')), [],
+    'an ambiguous run of bullets was compared rather than skipped');
+
+  const loose = ['it checks three things:', '', '- a', '', '- b', '', '- c'].join('\n');
+  assert.deepStrictEqual(staleCounts(loose, path.join(ROOT, 'sample.md')), [],
+    'an ambiguous run of bullets was compared rather than skipped');
+
+  // A tight list, with no blanks in it, is unambiguous and still checked.
+  const tight = ['it checks two things:', '', '- a', '- b', '- c'].join('\n');
+  const problems = staleCounts(tight, path.join(ROOT, 'sample.md'));
+  assert.strictEqual(problems.length, 1, 'a tight list stopped being checked');
+  assert.match(problems[0], /says "two things" above a list of 3/);
+});
+
+check('a divider without a trailing bar is still a divider', () => {
+  const noTrailingBar = ['it checks two things:', '', '| a | b', '|---|---', '| 1 | 2', '| 3 | 4'].join('\n');
+  assert.deepStrictEqual(staleCounts(noTrailingBar, path.join(ROOT, 'sample.md')), [],
+    'a table written without closing bars had its heading counted as content');
 });
 
 check('it leaves a number that is not counting the list alone', () => {
