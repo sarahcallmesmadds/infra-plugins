@@ -115,7 +115,20 @@ function listAt(lines, from) {
       //
       // Neither is guessed at. An ambiguous grouping means no comparison, the
       // same answer as a sentence carrying two counts.
-      if (line.trim() === '') return null;
+      if (line.trim() === '') {
+        // A blank ends a list. It is also what sits between two lists, and
+        // between the items of a loose one, and those two are the same
+        // characters. So: if bullets resume at this indent after the blank,
+        // the grouping is ambiguous and nothing is compared. If they do not,
+        // this is simply where the list stopped.
+        let j = i + 1;
+        while (j < lines.length && lines[j].trim() === '') j++;
+        const resumes = j < lines.length
+          && lines[j].match(/^\s*/)[0].length === indent
+          && /^\s*([-*]|\d+\.)\s/.test(lines[j]);
+        if (resumes) return null;
+        break;
+      }
       const here = line.match(/^\s*/)[0].length;
       if (here < indent) break;
       if (here === indent && /^\s*([-*]|\d+\.)\s/.test(line)) items++;
@@ -189,6 +202,7 @@ const LIST_NOUNS = new Set([
 let failed = 0;
 let ran = 0;
 let checked = 0;
+let repoChecked = 0;
 function check(what, fn) {
   ran += 1;
   try {
@@ -217,9 +231,25 @@ function staleCounts(text, file) {
     // which stepped over whatever was there: an unrelated paragraph, or the
     // opening fence of a code block, so a list inside an example was compared
     // against a sentence that had nothing to do with it.
-    const between = (lines[i + 1] || '').trim();
-    let list = listAt(lines, i + 1);
-    if (!list && (between === '' || between === ':')) list = listAt(lines, i + 2);
+    // Walk to the end of this paragraph, then look for the list.
+    //
+    // The announcing sentence is not always the last line of its paragraph.
+    // The instance this whole file exists for reads "it checks five things and
+    // reports back into / the conversation. It never blocks and it never
+    // writes." and the table is four lines below. A window of one or two lines
+    // was measured against the repository and found nothing at all: it missed
+    // that, and every other real case, while the fixtures kept passing because
+    // they were built to end at the last bullet.
+    //
+    // A code fence stops the walk. A list inside an example belongs to the
+    // example, not to the sentence above it.
+    let j = i + 1;
+    while (j < lines.length && lines[j].trim() !== '' && !/^\s*(\||[-*]\s|\d+\.\s)/.test(lines[j])) {
+      if (/^\s*(```|~~~)/.test(lines[j])) { j = -1; break; }
+      j++;
+    }
+    if (j < 0) continue;
+    const list = listAt(lines, j);
     if (!list) continue;
 
     checked += 1;
@@ -234,9 +264,11 @@ function staleCounts(text, file) {
 
 check('no stated count contradicts the list beside it', () => {
   const problems = [];
+  const before = checked;
   for (const file of markdownFiles(ROOT)) {
     problems.push(...staleCounts(fs.readFileSync(file, 'utf8'), file));
   }
+  repoChecked = checked - before;
   assert.deepStrictEqual(
     problems, [],
     `a number in prose disagrees with the list under it:\n        ${problems.join('\n        ')}\n`
@@ -244,13 +276,16 @@ check('no stated count contradicts the list beside it', () => {
   );
 });
 
-check('a pass is reported honestly, however few pairs there were', () => {
-  // There may be no count-and-list pairs in the repository at all right now, and
-  // that is the expected state: the three known instances were corrected before
-  // this file existed. So this does not demand a minimum. What stops it becoming
-  // a checker that silently matches nothing forever is the fixture below, which
-  // fails if the pattern stops recognising the shape it was written for.
-  console.log(`        (${checked} count-and-list pairs found in the repository)`);
+check('the guard is actually looking at the repository', () => {
+  // This used to print `checked`, which every fixture also increments, and it
+  // ran before the fixtures so the number looked plausible while the summary
+  // line at the end reported eleven. The repository was contributing none of
+  // them: a change three commits earlier had made every real list unreadable,
+  // and the mixed counter hid it. A guard that matches nothing passes forever.
+  console.log(`        (${repoChecked} count-and-list pairs found in the repository)`);
+  assert.ok(repoChecked > 0,
+    'no count sits next to a list anywhere in the repository, so this guard is checking nothing. '
+    + 'Either the pattern has stopped matching, or every such sentence has gone.');
 });
 
 check('it catches the shape it was written for', () => {
@@ -363,9 +398,17 @@ check('a list has to be directly under the sentence to be its list', () => {
   assert.deepStrictEqual(staleCounts(farBelow, path.join(ROOT, 'sample.md')), [],
     'a list several blank lines away was treated as this sentence\'s list');
 
-  const afterParagraph = ['it checks two things.', 'An unrelated paragraph.', '- a', '- b', '- c'].join('\n');
-  assert.deepStrictEqual(staleCounts(afterParagraph, path.join(ROOT, 'sample.md')), [],
-    'a paragraph between the sentence and the list was stepped over');
+  // Prose continuing the same paragraph is part of the announcement, not a
+  // barrier. This fixture used to assert the opposite, and that assertion was
+  // what made the guard miss every real case: the sentence it was written for
+  // is followed by another sentence before its table.
+  const restOfParagraph = ['it checks three things, and here is why.', 'A second sentence.', '- a', '- b', '- c'].join('\n');
+  assert.deepStrictEqual(staleCounts(restOfParagraph, path.join(ROOT, 'sample.md')), [],
+    'a correct count was reported wrong because its sentence continued');
+
+  const staleAcrossParagraph = ['it checks two things, and here is why.', 'A second sentence.', '- a', '- b', '- c'].join('\n');
+  assert.strictEqual(staleCounts(staleAcrossParagraph, path.join(ROOT, 'sample.md')).length, 1,
+    'a stale count was missed because its sentence continued onto another line');
 
   const inCodeFence = ['it checks two things:', '```', '- a', '- b', '- c', '```'].join('\n');
   assert.deepStrictEqual(staleCounts(inCodeFence, path.join(ROOT, 'sample.md')), [],
@@ -415,5 +458,5 @@ check('it leaves a number that is not counting the list alone', () => {
     'a duration next to a list was read as a count of it');
 });
 
-console.log(`\n${ran} checks, ${failed} failed  (${checked} count-and-list pairs compared)`);
+console.log(`\n${ran} checks, ${failed} failed  (${repoChecked} pairs in the repository, ${checked - repoChecked} in fixtures)`);
 process.exit(failed === 0 ? 0 : 1);
