@@ -114,11 +114,19 @@ function read(home, id) {
 // these tests catch it hung the run rather than turning it red.
 const KILL_MS = 20000;
 
+// stdio pipes the child's stderr instead of letting it through to ours.
+// execFileSync captures it either way, but by default it is also echoed to the
+// parent, and run-all.js takes the last non-empty line of a suite's output as
+// that suite's summary line. A lock-timeout message from a test that is
+// deliberately provoking one then stands in for "29 checks, 0 failed", so a
+// passing suite reads as a failing one in the only report anyone scans.
+// start() below uses execFile, which always pipes, so it never had this.
 function run(home, args) {
   return execFileSync(process.execPath, [QUEUE_JS, ...args], {
     encoding: 'utf8',
     timeout: KILL_MS,
     env: { ...process.env, HOME: home },
+    stdio: ['ignore', 'pipe', 'pipe'],
   });
 }
 
