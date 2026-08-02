@@ -15,16 +15,17 @@ This is the list of things the user plans to build. It is not the bug queue. The
 > before using it. A literal `~` creates a directory called `~` next to wherever
 > you happen to be, and every check that follows then reads the wrong place.
 
-> **New items are written directly. Anything that changes an existing item goes
-> through `scripts/queue.js`.** Creating is safe to do with the Write tool: the
-> filename is a fresh timestamped stem, so there is no file already there to
-> lose. Changing one is not, because the read and the write would be separate
-> tool calls and another session writing between them loses its change with no
-> error. `queue.js` does both inside one process holding a lock.
+> **Every write to the to-build list goes through `scripts/queue.js`.** Adding
+> an item uses `create`, changing one uses `update`. Both do the read, the check
+> and the write inside one process holding a lock.
 >
-> This paragraph used to say `allowed-tools` granted no `node`, and that adding
-> a note to an existing item therefore could not be done from here. It can now,
-> so `Bash(node:*)` is granted above and Step A2 uses it.
+> This paragraph used to say creating was safe to do with the Write tool,
+> because the filename is a fresh timestamped stem and there is no existing file
+> to lose. That is true about half-written files and misses the other half: the
+> duplicate check and the write are separate tool calls with a confirmation turn
+> between them, so two sessions adding the same idea both look, both see
+> nothing, and both write. The stem is timestamped to the second, so they can
+> also land on the same filename.
 
 ---
 
@@ -168,9 +169,28 @@ built:           null
 Then:
 
 1. Get the time: `date -u +"%Y-%m-%dT%H-%M-%S"` for the filename, `date -u +"%Y-%m-%dT%H:%M:%S.000Z"` for `created_at`.
-2. Build the filename `{YYYY-MM-DDTHH-MM-SS}-{slug(title)}.json`. The `id` MUST equal the stem.
+2. Build the `id` as `{YYYY-MM-DDTHH-MM-SS}-{slug(title)}`. It becomes the filename stem.
 3. `mkdir -p ~/.claude/build-loop/to-build`
-4. Write the JSON with the Write tool, pretty-printed, two-space indent.
+4. Write the item to a scratch file with the Write tool, pretty-printed, two-space
+   indent, then hand it over:
+
+   ```bash
+   node "${CLAUDE_PLUGIN_ROOT}/scripts/queue.js" create /tmp/{id}.json --list to-build --dedup-window all
+   ```
+
+   Do not write it into the to-build directory yourself. The exact-key half of
+   the duplicate check in Step A2 happens again inside the lock, which is what
+   makes it a guarantee rather than a look: that check and this write are
+   separated by a confirmation turn, and another session can add the same item
+   in between. Filenames are timestamped to the second, so two sessions adding
+   the same title in the same second would otherwise overwrite one another
+   outright.
+
+   Exit 0 means it was written. Exit 2 means an item with that `dedup_key`
+   already exists, so say so and name what it printed rather than retrying.
+
+   The judgment half of Step A2, whether two differently worded items describe
+   the same work, stays where it is. Nothing in a script can do it.
 5. Count what is open: read every file in the directory and count those with status `Open` or `In Progress`.
 
 Confirm:

@@ -266,7 +266,7 @@ function nowISO() {
 // be separated by another session's write.
 function cmdUpdate(args) {
   const id = args._[0];
-  if (!id) fail('queue.js update <id> [--list L] [--status S] [--note TEXT] [--json key=FILE] [--field key=value]');
+  if (!id) fail('queue.js update <id> [--list L] [--status S] [--note TEXT] [--note-file FILE] [--json key=FILE] [--field key=value]');
   const dir = dirFor(args.list);
 
   return locked(() => {
@@ -313,14 +313,32 @@ function cmdUpdate(args) {
     // affordable to lose. Reading it here rather than accepting a whole array
     // from the caller is what makes that structural rather than a rule someone
     // has to remember.
-    for (const text of args.note || []) {
+    // --note-file takes the text from a file rather than the command line.
+    //
+    // Notes carry free text: a tool's error message, retry instructions the
+    // user typed, a commit subject. Interpolating those into a quoted shell
+    // argument means a double quote, a backtick, a `$(...)` or a newline in the
+    // text ends or extends the argument, and this runs in a context where
+    // Bash(node:*) is allowed. Reading the text from a file removes the shell
+    // from the path entirely, which is a guarantee where careful quoting is a
+    // habit.
+    const texts = [...(args.note || [])];
+    for (const file of args['note-file'] || []) {
+      try {
+        texts.push(fs.readFileSync(file, 'utf8').replace(/\n+$/, ''));
+      } catch {
+        fail(`queue.js: cannot read note file ${file}. Nothing was written.`);
+      }
+    }
+
+    for (const text of texts) {
       if (!Array.isArray(entry.notes)) entry.notes = [];
       entry.notes.push({ ts, text });
     }
 
     writeEntry(id, entry, dir);
     const after = Array.isArray(entry.notes) ? entry.notes.length : 0;
-    process.stdout.write(`updated ${id}: status ${entry.status}, notes ${before} -> ${after}\n`);
+    process.stdout.write(`updated ${id}: status ${entry.status || '(unset)'}, notes ${before} -> ${after}\n`);
     return 0;
   });
 }
@@ -403,7 +421,7 @@ function cmdShow(args) {
 
 // Repeatable flags collect into an array, because --note is used more than once
 // in a single update and the last one winning would silently drop the rest.
-const REPEATABLE = new Set(['note', 'field', 'json']);
+const REPEATABLE = new Set(['note', 'note-file', 'field', 'json']);
 
 function parseArgs(argv) {
   const out = { _: [] };
@@ -428,6 +446,7 @@ function main(argv) {
       '',
       '  show   <id>                                    print an entry',
       '  update <id> [--status S] [--note TEXT]...      change one, under a lock',
+      '              [--note-file FILE]  (free text: use this, not --note)',
       '              [--json key=FILE] [--field key=value]',
       '  create <file.json> [--dedup-window MINUTES]    add one, dedup under the same lock',
       '',

@@ -213,7 +213,22 @@ Use the **Write tool** to write the full file to `{target_path}`. Do NOT use the
 **If Write tool errors:**
 > "The write failed: {error}. The target file is untouched, since Write is all-or-nothing. The queue entry stays Open, with a note recording the failure."
 
-Run `node "${CLAUDE_PLUGIN_ROOT}/scripts/queue.js" update {id} --status Open --note "Write tool failed, target file untouched: {error}"`. Stop.
+Write the note to a scratch file, reading:
+
+> Write tool failed, target file untouched: {error}
+
+Then:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/queue.js" update {id} --status Open --note-file /tmp/note.txt
+```
+
+`--note-file` rather than `--note` because `{error}` is free text from a tool.
+A double quote, a backtick, a `$(...)` or a newline in it would end or extend
+the shell argument, and this runs where `Bash(node:*)` is allowed. Use
+`--note-file` for anything interpolated from an error, from something the user
+typed, or from a file. `--note` is for fixed strings and for values with a known
+shape, such as a commit hash. Stop.
 
 The entry stays Open for the same reason a rejected verification does: a fix that
 did not land is an open bug, and a status no view lists is a bug you cannot find.

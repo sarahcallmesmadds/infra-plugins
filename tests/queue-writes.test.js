@@ -43,7 +43,7 @@ const UPDATERS = ['apply-fix', 'verify-fix', 'revert-fix'];
 // list, because it only ever wrote new files and there was nothing on disk to
 // preserve. It belongs here now: creating is where the dedup race lived, and
 // that was the half of the bug the note-preservation rule never covered.
-const CREATORS = ['flag-issue'];
+const CREATORS = ['flag-issue', 'to-build'];
 
 function skill(name) {
   const file = path.join(SKILLS, name, 'SKILL.md');
@@ -53,10 +53,14 @@ function skill(name) {
 
 // The hand-rolled sequence, in every spelling it appeared in. Any of these in a
 // skill means someone has reintroduced the gap.
+// Both lists, not just the queue. to-build kept creating items with the Write
+// tool after the queue had stopped, and these patterns only named `queue/`, so
+// nothing saw it. The bug entry covered both lists and so does this.
 const BY_HAND = [
-  /queue\/\{id\}\.json\.tmp/,
-  /queue\/\{filename\}`? using the Write tool/,
-  /mv ~\/\.claude\/build-loop\/queue/,
+  /(queue|to-build)\/\{id\}\.json\.tmp/,
+  /(queue|to-build)\/\{filename\}`? using the Write tool/,
+  /mv ~\/\.claude\/build-loop\/(queue|to-build)/,
+  /Write the JSON with the Write tool/,
 ];
 
 // A line describing the old sequence in order to say it was wrong is not an
@@ -200,16 +204,48 @@ check('no skill names the command in a form that cannot be run', () => {
   }
 });
 
+check('free text reaches a note through a file, not a shell argument', () => {
+  // A note carries a tool's error message, or retry instructions the user
+  // typed. Interpolated into a quoted shell argument, a double quote or a
+  // `$(...)` in that text ends or extends the argument, in a context where
+  // Bash(node:*) is allowed. --note-file removes the shell from the path.
+  const INTERPOLATED = /--note "[^"]*\{(error|retry|file_state)[^"]*"/;
+  const dirs = fs.readdirSync(SKILLS).filter((d) => fs.existsSync(path.join(SKILLS, d, 'SKILL.md')));
+  for (const name of dirs) {
+    const offending = skill(name).split('\n').filter((line) => INTERPOLATED.test(line));
+    assert.deepStrictEqual(
+      offending, [],
+      `${name} interpolates free text into a shell argument:\n        ${offending.join('\n        ')}\n`
+      + '        Write it to a file and use --note-file.'
+    );
+  }
+});
+
+check('queue.js can take a note from a file', () => {
+  const source = fs.readFileSync(QUEUE_JS, 'utf8');
+  assert.match(source, /note-file/, 'queue.js has no --note-file, so the skills are calling something that does not exist');
+});
+
 check('the reference documents agree with the skills', () => {
   // The schemas are prose the skills tell the model to read, so a retired rule
   // left in one competes with the live rule in the other. Nothing here scanned
   // reference/ at all, so both files kept ordering the hand-rolled sequence
   // after every skill had stopped using it.
+  // Skills are scanned as well as reference/. whats-breaking kept pointing at
+  // flag-issue as "the one exception" long after flag-issue had stopped being
+  // one, and a scan of reference/ alone could not see a stale cross-reference
+  // living inside a SKILL.md.
   const ref = path.join(__dirname, '..', 'plugins', 'build-loop', 'reference');
-  for (const file of fs.readdirSync(ref).filter((f) => f.endsWith('.md'))) {
-    const text = fs.readFileSync(path.join(ref, file), 'utf8');
+  const docs = [
+    ...fs.readdirSync(ref).filter((f) => f.endsWith('.md')).map((f) => [f, path.join(ref, f)]),
+    ...fs.readdirSync(SKILLS).filter((d) => fs.existsSync(path.join(SKILLS, d, 'SKILL.md')))
+      .map((d) => [`${d}/SKILL.md`, path.join(SKILLS, d, 'SKILL.md')]),
+  ];
+  for (const [file, full] of docs) {
+    const text = fs.readFileSync(full, 'utf8');
     const offending = text.split('\n').filter((line) =>
-      /`\.tmp` plus node parse-check plus `mv`|\.tmp. plus node parse-check/.test(line)
+      (/`?\.tmp`? (plus|\+) (node )?parse-check (plus|\+) `?mv`?/.test(line)
+        || /the one exception is `?flag-issue/i.test(line))
       && !/used to|no longer|is not a queue entry/i.test(line));
     assert.deepStrictEqual(
       offending, [],
@@ -230,7 +266,7 @@ check('the checks would catch one', () => {
 
 // Counted as they run and then compared. This line was once a formula that
 // looked derived and was not, and it reported 10 while 13 ran.
-const EXPECTED_CHECKS = 17;
+const EXPECTED_CHECKS = 21;
 if (ran !== EXPECTED_CHECKS) {
   failed += 1;
   console.log(

@@ -186,9 +186,16 @@ check('verify-fix puts a rejected fix back to Open', () => {
 
 check('verify-fix records the rejected attempt in notes', () => {
   // Retiring the status only works if the information it carried survives.
-  assert.match(VERIFY_FIX, /--status Open[\s\S]{0,400}?attempted and rejected/,
+  // The note text moved out of the command line and into the prose above it,
+  // because it interpolates what the user typed and had to stop being a shell
+  // argument. So this looks for the text near the status change rather than
+  // inside the call, in either order.
+  assert.ok(
+    /--status Open[\s\S]{0,600}?attempted and rejected/.test(VERIFY_FIX)
+    || /attempted and rejected[\s\S]{0,600}?--status Open/.test(VERIFY_FIX),
     'the fail path sets Open without recording that an attempt was made, so the '
-    + 'retirement lost information rather than moving it');
+    + 'retirement lost information rather than moving it'
+  );
 });
 
 check('the rejection note does not assert a file state both modes cannot share', () => {
@@ -197,7 +204,7 @@ check('the rejection note does not assert a file state both modes cannot share',
   // fixed sentence about the file is false in one of them. It was false in Mode
   // B on first write: the note said the file was unchanged, directly above the
   // branch offering to help restore it, which only makes sense if it changed.
-  const note = VERIFY_FIX.match(/--note "Fix attempted and rejected[^\n]+/);
+  const note = VERIFY_FIX.match(/Fix attempted and rejected[^\n]+/);
   assert.ok(note, 'could not find the note the fail path appends');
   assert.ok(!/target file is unchanged/.test(note[0]),
     'the note hardcodes "the target file is unchanged", which is false whenever '
@@ -210,7 +217,9 @@ check('the rejection note does not assert a file state both modes cannot share',
 });
 
 check('apply-fix leaves the entry Open when the write fails', () => {
-  assert.match(APPLY_FIX, /queue\.js"? update \{id\} --status Open --note "Write tool failed/,
+  assert.ok(
+    /--status Open[\s\S]{0,400}?Write tool failed/.test(APPLY_FIX)
+    || /Write tool failed[\s\S]{0,400}?--status Open/.test(APPLY_FIX),
     'a failed write still parks the entry in a status no default view shows');
 });
 

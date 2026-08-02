@@ -112,10 +112,19 @@ the file is untouched would contradict the offer sitting next to it.
 
 Set the status back to `"Open"` and record the attempt, in one call:
 
+Write the note to a scratch file, reading:
+
+> Fix attempted and rejected at the verify gate. {retry instructions if given, else 'No reason given.'} {file_state}
+
+Then:
+
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/queue.js" update {id} --status Open \
-  --note "Fix attempted and rejected at the verify gate. {retry instructions if given, else 'No reason given.'} {file_state}"
+node "${CLAUDE_PLUGIN_ROOT}/scripts/queue.js" update {id} --status Open --note-file /tmp/note.txt
 ```
+
+`--note-file` rather than `--note` because the retry instructions are text the
+user typed. A double quote or a `$(...)` in them would end or extend the shell
+argument, and this runs where `Bash(node:*)` is allowed.
 
 A rejected fix is an open bug. It used to get its own status,
 `"fix attempted / unresolved"`, which read as more precise and was worse: no
