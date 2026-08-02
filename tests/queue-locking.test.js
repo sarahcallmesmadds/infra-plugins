@@ -336,7 +336,26 @@ check('the to-build list is served by the same lock', () => {
 check('an unknown list is refused rather than guessed at', () => {
   return withHome((home) => {
     entry(home, 'e9');
-    assert.throws(() => run(home, ['update', 'e9', '--list', 'nonsense', '--note', 'x']), /unknown list/);
+    // The reserved names are the ones that matter. LISTS used to be an object
+    // literal, so `--list constructor` found a truthy inherited value, walked
+    // past a guard that only asked whether the lookup returned something, and
+    // reached path.join as a function. The caller got a stack trace where the
+    // refusal was meant to be, and the skills relay that to the user.
+    for (const bad of ['nonsense', 'constructor', '__proto__', 'toString', 'valueOf', 'hasOwnProperty']) {
+      let message = '';
+      try {
+        run(home, ['update', 'e9', '--list', bad, '--note', 'x']);
+        assert.fail(`--list ${bad} was accepted`);
+      } catch (error) {
+        message = String(error.stderr || error.message);
+      }
+      assert.match(message, /unknown list/, `--list ${bad} did not produce the refusal`);
+      assert.ok(!/TypeError|ERR_INVALID_ARG_TYPE/.test(message),
+        `--list ${bad} produced a stack trace instead of the refusal:\n        ${message.split('\n')[0]}`);
+    }
+    // And both real lists still resolve, so the guard is not refusing everything.
+    run(home, ['update', 'e9', '--note', 'fine']);
+    assert.strictEqual(read(home, 'e9').notes.length, 1);
   });
 });
 

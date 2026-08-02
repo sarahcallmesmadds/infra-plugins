@@ -38,12 +38,27 @@ const LOCK = path.join(ROOT, '.queue.lock');
 // is a single small file write, so contention between them is not a real cost,
 // and one lock is one thing to reason about and one thing to delete by hand if
 // it is ever left behind.
-const LISTS = { queue: QUEUE, 'to-build': path.join(ROOT, 'to-build') };
+// A Map, not an object literal, and that is the whole point rather than a style
+// choice. A plain object inherits `constructor`, `__proto__`, `toString` and the
+// rest, so `--list constructor` used to return a truthy inherited value, walk
+// past a guard that only asked whether the lookup found something, and reach
+// path.join as a function. The caller got a stack trace where the refusal naming
+// the two valid lists was supposed to be, and the skills relay that to the user.
+//
+// A Map has no inherited keys, so the guard cannot be walked past. The file
+// already refuses unchecked property names for --field and --json; this was the
+// one other place a caller names a key and it was missed.
+const LISTS = new Map([
+  ['queue', QUEUE],
+  ['to-build', path.join(ROOT, 'to-build')],
+]);
 
 function dirFor(name) {
-  const dir = LISTS[name || 'queue'];
-  if (!dir) fail(`queue.js: unknown list ${name}. Use one of: ${Object.keys(LISTS).join(', ')}`);
-  return dir;
+  const key = name === undefined ? 'queue' : String(name);
+  if (!LISTS.has(key)) {
+    fail(`queue.js: unknown list ${JSON.stringify(name)}. Use one of: ${[...LISTS.keys()].join(', ')}`);
+  }
+  return LISTS.get(key);
 }
 
 // How long to wait for someone else's lock before giving up, and how old a lock
