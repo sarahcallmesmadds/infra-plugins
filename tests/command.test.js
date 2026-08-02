@@ -116,6 +116,11 @@ for (const raw of DEFAULTS.safeDeletePaths) {
   // resolves paths, so a `..` segment is the one thing that can make a
   // disposable-looking string land outside the directory it names.
   expect(`rm -rf ${entry}/../../important`, 'confirm', `${raw}: climbs back out`);
+
+  // An unanchored name does not reach a top-level directory of the filesystem.
+  if (!entry.startsWith('/')) {
+    expect(`rm -rf /${entry}`, 'confirm', `${raw}: at the filesystem root`);
+  }
 }
 
 console.log(`\n${CASES.length + 2 + walked} checks, ${failed} failed`);

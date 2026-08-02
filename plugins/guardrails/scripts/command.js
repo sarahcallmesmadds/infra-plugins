@@ -140,6 +140,14 @@ function isDisposable(target, safePaths) {
   return safePaths.some((raw) => {
     const safe = String(raw).replace(/\/+$/, '');
     if (!safe) return false;
+    // An unanchored entry names a directory that appears inside a project, and
+    // a top-level directory of the filesystem is not that. `/build` is not
+    // somebody's build output, whatever it is called, and deleting the whole
+    // of it should never be silent. Only the directory itself is withheld:
+    // `/build/x` stays disposable, because a confirm verdict reaches the user
+    // as an outright deny, so tightening past the catastrophic case would deny
+    // real deletes on a machine that genuinely keeps a checkout up there.
+    if (!safe.startsWith('/') && normalized === '/' + safe) return false;
     if (normalized === safe) return true;
     if (normalized.startsWith(safe + '/')) return true;
     return normalized.includes('/' + safe + '/') || normalized.endsWith('/' + safe);

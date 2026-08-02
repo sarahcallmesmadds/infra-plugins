@@ -512,6 +512,20 @@ check('a disposable name that climbs back out is denied', () => {
   assertDenies(runHook('rm -rf /private/tmp/../../Users'), '/private/tmp/../../Users');
 });
 
+check('a disposable name at the filesystem root is denied', () => {
+  // Unanchoring the build directories means they match at any depth, and the
+  // root is a depth. `/build` is not a project's build output, so deleting the
+  // whole of it goes to the user rather than through.
+  assertDenies(runHook('rm -rf /build'), '/build');
+  assertDenies(runHook('rm -rf /dist'), '/dist');
+  assertDenies(runHook('rm -rf /coverage'), '/coverage');
+  assertDenies(runHook('rm -rf /node_modules'), '/node_modules');
+  // But only the directory itself. A confirm verdict arrives at the user as an
+  // outright deny, so withholding the subtree as well would deny real deletes
+  // on a machine that does keep a checkout up there.
+  assert.strictEqual(runHook('rm -rf /build/artifacts'), null, 'hook denied /build/artifacts');
+});
+
 fs.rmSync(FAKE_HOME, { recursive: true, force: true });
 fs.rmSync(NOWHERE, { recursive: true, force: true });
 
