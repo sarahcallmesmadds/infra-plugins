@@ -102,21 +102,46 @@ function listAt(lines, from) {
   return null;
 }
 
-// A count in a line, and the noun it counts. Only the last one on the line, so
-// "the three of them cover five cases:" is read as five, which is what the list
-// beneath it will be.
+// Every count on a line, with the noun each one counts. The caller picks which
+// matters, because only the caller knows the allowlist.
+//
+// This used to return the last match on the line and nothing else, which was
+// wrong in both directions once the allowlist existed. "The four checks below
+// apply to 3 fields:" ended on `3 fields`, and `fields` is allowlisted, so 3
+// was compared against a four-row list and correct text was reported as wrong.
+// "It checks four things across 12 files:" ended on `12 files`, which is not
+// allowlisted, so the genuinely stale `four things` was never looked at.
 function countIn(line) {
   const re = /\b(\d{1,3}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty)\s+([a-z][a-z-]*s)\b/gi;
-  let last = null;
+  const found = [];
   let hit;
   while ((hit = re.exec(line)) !== null) {
     const raw = hit[1].toLowerCase();
     const value = WORDS[raw] !== undefined ? WORDS[raw] : Number(raw);
     // A year or a version is not a count of anything.
     if (value > 100) continue;
-    last = { value, noun: hit[2].toLowerCase(), text: hit[0] };
+    found.push({ value, noun: hit[2].toLowerCase(), text: hit[0] });
   }
-  return last;
+  return found;
+}
+
+// The count that is announcing the list, or nothing when that cannot be told.
+//
+// One allowlisted count on the line is the announcer. Two or more and the line
+// is ambiguous, so it is skipped rather than guessed at.
+//
+// Taking the last one was tried and does not survive "The four checks below
+// apply to 3 fields:", where both nouns are allowlisted and the announcer is
+// the first. Taking the first does not survive "There are 2 modes and 5
+// options:" above a list of options. Nothing short of reading the sentence
+// distinguishes them, so neither is chosen.
+//
+// The cost is a stale count in a two-count sentence going unnoticed. That is
+// the right way round: this fails a build, and a guard that fails on correct
+// prose gets switched off, after which it catches nothing at all.
+function announcedCount(line) {
+  const candidates = countIn(line).filter((c) => LIST_NOUNS.has(c.noun));
+  return candidates.length === 1 ? candidates[0] : null;
 }
 
 // Nouns that name the list itself rather than something else in the sentence.
@@ -159,8 +184,8 @@ function staleCounts(text, file) {
     const line = lines[i];
     if (!line.trim() || /^\s*\|/.test(line) || /^\s*([-*]|\d+\.)\s/.test(line)) continue;
 
-    const stated = countIn(line);
-    if (!stated || !LIST_NOUNS.has(stated.noun)) continue;
+    const stated = announcedCount(line);
+    if (!stated) continue;
 
     // Directly above means within two lines, allowing for one blank and a
     // trailing colon on its own line.
@@ -250,6 +275,40 @@ check('a body row that looks like a header rule does not eat the table', () => {
   ].join('\n');
   assert.deepStrictEqual(staleCounts(headerless, path.join(ROOT, 'sample.md')), [],
     'a table without a header rule was miscounted');
+});
+
+check('a second number in the sentence does not hijack the comparison', () => {
+  // Both directions of the same mistake. Taking the last number on the line
+  // regardless of its noun compared the wrong one when the sentence ended on
+  // an allowlisted noun, and skipped the line entirely when it ended on one
+  // that was not.
+  const correct = [
+    'The four checks below apply to 3 fields:',
+    '',
+    '| Check | Meaning |',
+    '|-------|---------|',
+    '| a | 1 |',
+    '| b | 2 |',
+    '| c | 3 |',
+    '| d | 4 |',
+  ].join('\n');
+  assert.deepStrictEqual(staleCounts(correct, path.join(ROOT, 'sample.md')), [],
+    'an ambiguous sentence with two list-nouns was compared rather than skipped');
+
+  const stale = [
+    'It checks four things across 12 files:',
+    '',
+    '| Check | Meaning |',
+    '|-------|---------|',
+    '| a | 1 |',
+    '| b | 2 |',
+    '| c | 3 |',
+    '| d | 4 |',
+    '| e | 5 |',
+  ].join('\n');
+  const problems = staleCounts(stale, path.join(ROOT, 'sample.md'));
+  assert.strictEqual(problems.length, 1, 'a stale count was skipped because the sentence ended on another number');
+  assert.match(problems[0], /says "four things" above a table of 5/);
 });
 
 check('it leaves a number that is not counting the list alone', () => {
