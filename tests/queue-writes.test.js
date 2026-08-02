@@ -372,6 +372,60 @@ check('a date command that only BSD understands carries its fallback', () => {
   }
 });
 
+check('every queue.js call site says what to do when it fails', () => {
+  // Both bugs in this round were the same omission in different places: a call
+  // that can now legitimately refuse, with the instructions carrying straight
+  // on as though it had not. flag-issue went on to write dep-review children
+  // against a primary that was never created and then told the user their
+  // correction was logged. apply-fix applied and committed a fix while the
+  // entry still said nobody had started it.
+  //
+  // This is reachable in ordinary use rather than only on a disk error:
+  // acquire gives up after five seconds when another session holds the lock,
+  // and create refuses a duplicate that won the race.
+  //
+  // So every invocation has to be followed by a branch. Checked by proximity
+  // rather than by parsing, which is crude and catches the thing that actually
+  // went wrong: nobody wrote one at all.
+  // Describing the exit codes is not enough, and that distinction is the whole
+  // bug: flag-issue documented exit 2 in detail and then carried on to write
+  // dep-review children and print "Logged to ...". What has to be present is an
+  // instruction about what NOT to do, or an explicit alternative such as
+  // carrying on with the remaining items, tied to the failure itself.
+  // The action words are deliberately narrow. A loose set passed the buggy
+  // version of flag-issue, because it contained "Do NOT confirm here" a few
+  // lines below the call, which means confirm later rather than do not
+  // continue. So the phrase has to be one that actually halts or names what
+  // happens instead.
+  // The list grows only by real handling phrases. If it ever needs a loose one
+  // to pass, the call site is the thing to fix, not this.
+  const HANDLED = (text) => {
+    const near = '[\\s\\S]{0,300}';
+    const fail = '(exits? non-zero|exited? non-zero|Exit 1|Exit 2|it fails|refus\\w*)';
+    const act = '(\\bstop\\b|do not go on|do not proceed|do not retry|carry on with the remaining'
+      + '|report the failure|report what it printed|say both|is the remedy|running it again)';
+    return new RegExp(`${fail}${near}${act}`, 'i').test(text)
+      || new RegExp(`${act}${near}${fail}`, 'i').test(text);
+  };
+  const dirs = fs.readdirSync(SKILLS).filter((d) => fs.existsSync(path.join(SKILLS, d, 'SKILL.md')));
+  for (const name of dirs) {
+    const lines = skill(name).split('\n');
+    const offending = [];
+    lines.forEach((line, i) => {
+      if (!/queue\.js"? (update|create)/.test(line)) return;
+      // The prose paragraphs that merely name the command are not call sites.
+      if (!/^\s*node /.test(line)) return;
+      const after = lines.slice(i, i + 25).join('\n');
+      if (!HANDLED(after)) offending.push(`line ${i + 1}: ${line.trim()}`);
+    });
+    assert.deepStrictEqual(
+      offending, [],
+      `${name} calls queue.js with no branch for it failing:\n        ${offending.join('\n        ')}\n`
+      + '        Say what happens on a non-zero exit. It is reachable whenever another session holds the lock.'
+    );
+  }
+});
+
 check('the reference documents agree with the skills', () => {
   // The schemas are prose the skills tell the model to read, so a retired rule
   // left in one competes with the live rule in the other. Nothing here scanned
@@ -412,7 +466,7 @@ check('the checks would catch one', () => {
 
 // Counted as they run and then compared. This line was once a formula that
 // looked derived and was not, and it reported 10 while 13 ran.
-const EXPECTED_CHECKS = 28;
+const EXPECTED_CHECKS = 29;
 if (ran !== EXPECTED_CHECKS) {
   failed += 1;
   console.log(

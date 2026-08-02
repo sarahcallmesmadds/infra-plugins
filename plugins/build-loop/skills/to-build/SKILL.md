@@ -121,6 +121,10 @@ directory and hand that over:
 node "${CLAUDE_PLUGIN_ROOT}/scripts/queue.js" update {id} --list to-build --note-file {scratch}/note-{id}.txt
 ```
 
+If it exits non-zero, say the note was not added and read out what it printed.
+A refusal usually means another session holds the lock, so running it again is
+the remedy. Do not tell the user the note was added.
+
 `--note-file` rather than `--note` because this is text the user just typed. A
 double quote, a backtick, a `$(...)` or a newline in it would end or extend the
 shell argument, and this runs where `Bash(node:*)` is allowed. The file is named
@@ -221,8 +225,14 @@ Then:
    the same title in the same second would otherwise overwrite one another
    outright.
 
-   Exit 0 means it was written. Exit 2 means an item with that `dedup_key`
-   already exists, so say so and name what it printed rather than retrying.
+   **Stop here unless it exited 0.** Exit 2 means an item with that `dedup_key`
+   already exists, so say so and name what it printed rather than retrying. Exit
+   1 is a real error, including the lock being held by another session, and its
+   message is written to be read aloud.
+
+   In either case do not go on to Step 5 and do not print the confirmation
+   below. It says the item was added, and saying that about an item that was
+   refused is worse than the refusal.
 
    The judgment half of Step A2, whether two differently worded items describe
    the same work, stays where it is. Nothing in a script can do it.

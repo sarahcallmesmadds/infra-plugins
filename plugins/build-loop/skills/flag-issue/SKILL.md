@@ -261,8 +261,25 @@ Then:
    written. Exit 2 means a duplicate won the race and nothing was written: say so
    and name the entry it printed, rather than retrying. Exit 1 is a real error
    and the message is written to be read aloud.
-5. Count open items: `ls ~/.claude/build-loop/queue/*.json 2>/dev/null | wc -l`
-6. Do NOT confirm here — proceed directly to Step 4b (dep-review flagging). Confirmation happens in Step 4c after flagging completes.
+5. **Stop here unless it exited 0.** Nothing below this line is true if the
+   entry was not written.
+
+   - Exit 2, a duplicate won the race: say so, name the entry it printed, and
+     stop. Do not retry.
+   - Exit 1, a real error: read its message out and stop.
+
+   In both cases do NOT go on to Step 4b and do NOT print the confirmation.
+   Dep-review entries carry `parent_id` pointing at the primary, so writing them
+   against an entry that does not exist leaves children with no parent, and the
+   Step 4c line would tell the user their correction was logged when it was
+   discarded. That is the worst failure this skill has, because the user has no
+   reason to check.
+
+   The old flow could not reach this state: the dedup decision happened before
+   the single Write, so there was no way to be refused after deciding to write.
+   `create` can refuse, so the branch has to exist.
+6. Count open items: `ls ~/.claude/build-loop/queue/*.json 2>/dev/null | wc -l`
+7. Do NOT confirm here — proceed directly to Step 4b (dep-review flagging). Confirmation happens in Step 4c after flagging completes.
 
 ---
 
@@ -380,8 +397,12 @@ So fold `P` in wherever the value is an identifier, and leave it out wherever th
    `{primary timestamp}-dep-review-{slug(P)}-{slug(X)}.json` where there is a
    plugin. `queue.js` derives it from the `id` field, which is what keeps the two
    from drifting apart: an entry whose filename and `id` disagree cannot be found
-   by its own identifier. Exit 2 means this review already exists, which is not
-   an error and does not count toward `dep_reviews_written`.
+   by its own identifier.
+
+   Exit 2 means this review already exists, which is not an error. Exit 1 is:
+   report the failure for that dependent and carry on with the remaining ones,
+   per the failure handling at the end of this step. Neither counts toward
+   `dep_reviews_written`, so step 6 runs only after an exit 0.
 
 6. Increment `dep_reviews_written`.
 

@@ -78,6 +78,15 @@ Then check:
 node "${CLAUDE_PLUGIN_ROOT}/scripts/queue.js" update {id} --status "In Progress"
 ```
 
+**If it exits non-zero, stop.** Report what it printed and do not go on to Step
+3. The old sequence ended "if parse fails: report the error, do not swap, do not
+proceed", and that branch was dropped when the write moved into `queue.js`. It
+is more reachable now, not less: `acquire` gives up after five seconds when
+another session is holding the lock, which is an ordinary thing to happen rather
+than a disk error. Proceeding anyway means applying and committing a fix while
+the entry still says nobody has started it, so a second session picks up the
+same bug.
+
 **Never edit a queue entry with the Write tool.** `queue.js` reads the entry,
 changes what you asked for, and writes it back inside one process holding one
 lock. Doing it by hand means reading the file in one tool call and writing it in
@@ -245,6 +254,11 @@ Then:
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/scripts/queue.js" update {id} --status Open --note-file {scratch}/note-{id}.txt
 ```
+
+**If that exits non-zero too, say both things.** The target file is untouched
+and the entry could not be returned to Open, so it is parked wherever the last
+status change left it and someone has to look. Two failures reported is
+recoverable; the second one swallowed is an entry nobody knows is stuck.
 
 `--note-file` rather than `--note` because `{error}` is free text from a tool.
 A double quote, a backtick, a `$(...)` or a newline in it would end or extend
