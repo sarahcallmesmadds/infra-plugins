@@ -512,6 +512,29 @@ check('a disposable name that climbs back out is denied', () => {
   assertDenies(runHook('rm -rf /private/tmp/../../Users'), '/private/tmp/../../Users');
 });
 
+check('a disposable name reached from a subdirectory is still allowed', () => {
+  // The counterpart to the check above, and the reason a blanket refusal of
+  // anything containing `..` is wrong. Here the `..` comes first and the last
+  // segment is still the disposable directory, which is what someone working
+  // in a subdirectory types to clear a sibling project. A confirm verdict
+  // arrives as a deny, so getting this wrong refuses an ordinary command.
+  for (const command of [
+    'rm -rf ../node_modules',
+    'rm -rf ../dist',
+    'rm -rf ../../packages/app/dist',
+  ]) {
+    assert.strictEqual(runHook(command), null, `hook denied ${command}`);
+  }
+});
+
+check('an alternative spelling of a root directory is denied too', () => {
+  // The root-level guard compares text, so it has to compare tidied text.
+  // `//build` and `/./build` name the same directory as `/build`.
+  assertDenies(runHook('rm -rf //build'), '//build');
+  assertDenies(runHook('rm -rf /./build'), '/./build');
+  assertDenies(runHook('rm -rf /.//dist'), '/.//dist');
+});
+
 check('a disposable name at the filesystem root is denied', () => {
   // Unanchoring the build directories means they match at any depth, and the
   // root is a depth. `/build` is not a project's build output, so deleting the

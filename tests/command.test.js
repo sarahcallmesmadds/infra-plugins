@@ -112,14 +112,24 @@ for (const raw of DEFAULTS.safeDeletePaths) {
   expect(`rm -rf ${entry}foo`, 'confirm', `${raw}: decoy with no boundary`);
   expect(`rm -rf ${entry}-backup`, 'confirm', `${raw}: decoy suffix`);
 
-  // And no entry may be used as a doorway to somewhere above it. Nothing here
-  // resolves paths, so a `..` segment is the one thing that can make a
-  // disposable-looking string land outside the directory it names.
+  // And no entry may be used as a doorway to somewhere above it. A `..` after
+  // the name makes the match a lie: the string opens with something disposable
+  // and lands somewhere else.
   expect(`rm -rf ${entry}/../../important`, 'confirm', `${raw}: climbs back out`);
 
-  // An unanchored name does not reach a top-level directory of the filesystem.
   if (!entry.startsWith('/')) {
+    // A `..` in front of the name is the opposite case to the one above and
+    // has to keep working. The last segment is still the disposable
+    // directory, and this is what someone in a subdirectory types to clear a
+    // sibling project. Only unanchored entries can be reached this way: an
+    // anchored one names an absolute location, and `../tmp` is not `/tmp`.
+    expect(`rm -rf ../${entry}`, 'allow', `${raw}: reached from a subdirectory`);
+
+    // An unanchored name does not reach a top-level directory of the
+    // filesystem, and no alternative spelling of that location gets there.
     expect(`rm -rf /${entry}`, 'confirm', `${raw}: at the filesystem root`);
+    expect(`rm -rf //${entry}`, 'confirm', `${raw}: root, doubled separator`);
+    expect(`rm -rf /./${entry}`, 'confirm', `${raw}: root, dot segment`);
   }
 }
 
