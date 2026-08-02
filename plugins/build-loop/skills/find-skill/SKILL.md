@@ -45,11 +45,23 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/roots.js" check --kind skill
 roots too, and this skill never looks in those, so it would warn about a missing
 hooks directory to someone who asked which skill to use.
 
-Exit 0, carry on. Anything else names the skill roots that are gone: say so
-before routing. This skill's whole promise is that what it lists is what is
-installed, so a root that has moved makes it report an empty inventory in the
-same words it would use for a machine with nothing installed. Never invent a
-skill to fill that gap.
+- Exit 0, carry on.
+- Exit 3, a skill root someone configured is gone. Say so before routing.
+- Exit 5, a default location is absent. Nobody configured that path, so do not
+  frame it as something having gone missing. Carry on.
+- Exit 4, there are no skill roots to read. Say that the inventory is empty
+  because there is nowhere to look, not because nothing is installed, and stop.
+  On a machine with no config file this is what an absent `~/.claude/skills`
+  produces, and it is not a fault: nobody chose that path either, so describe it
+  as nothing being configured rather than as something having gone.
+- Exit 1, the config could not be read. Relay what it said and stop.
+
+Every one of those messages arrives on stdout, including exit 1.
+
+This skill's whole promise is that what it lists is what is installed, so a root
+that cannot be read makes it report an empty inventory in the same words it
+would use for a machine with nothing installed. Those are different answers and
+the difference is the thing worth saying. Never invent a skill to fill the gap.
 
 For each skill root, scan both `<root.path>/*/SKILL.md` and
 `<root.path>/*/*/SKILL.md`, so a repository that nests the definition one
@@ -70,15 +82,28 @@ import os, re, glob, json
 
 CONFIG = os.path.expanduser("~/.claude/build-loop.config.json")
 DEFAULT = [{"name": "personal", "path": "~/.claude/skills", "kind": "skill"}]
-try:
+
+# Only an absent config falls back to the defaults. A config that exists and
+# cannot be used is a different situation and it is not this block's to paper
+# over: roots.js refuses it above and the skill has already stopped. Catching
+# every exception here meant a corrupt config was reported by the check and then
+# quietly ignored one step later, so the routing went ahead against
+# ~/.claude/skills and looked like it had worked. That silent default is the
+# behaviour the check was added to end, so it cannot survive underneath it.
+if not os.path.exists(CONFIG):
+    roots = DEFAULT
+else:
     cfg = json.load(open(CONFIG))
     # "roots" is the current key. "skillRoots" predates the schema change and
     # carries no "kind", so every entry in it is a skill root by definition.
-    roots = cfg.get("roots") or [
-        dict(r, kind="skill") for r in cfg.get("skillRoots", [])
-    ] or DEFAULT
-except Exception:
-    roots = DEFAULT
+    if isinstance(cfg.get("roots"), list) and cfg["roots"]:
+        roots = cfg["roots"]
+    elif isinstance(cfg.get("skillRoots"), list) and cfg["skillRoots"]:
+        roots = [dict(r, kind="skill") for r in cfg["skillRoots"]]
+    else:
+        raise SystemExit(
+            "build-loop.config.json has no usable roots. roots.js check says why."
+        )
 
 # Only skill roots have a SKILL.md to read. A hook root would yield nothing and
 # a command root would yield files whose frontmatter means something different.

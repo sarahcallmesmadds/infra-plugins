@@ -43,11 +43,31 @@ const DEFAULT_ROOTS = [
 const OK = 0;
 const SOME_MISSING = 3;
 const ALL_MISSING = 4;
+// A default location that is absent is still absent, and a caller still has to
+// know. But nobody chose that path, so it is not the same event as a root
+// someone wrote into a config having moved, and giving both the same code meant
+// every caller had to re-derive the difference from the text. Two rounds of
+// review went into getting this wrong in both directions: first by reporting
+// defaults as breakage, then by exiting 0 and hiding a real absence. A separate
+// code says the thing once, here, and each skill gets one instruction for it.
+const DEFAULTS_ABSENT = 5;
+
+// The kinds a root may declare, per SCHEMA-DEPS.md. Used to refuse a typo in a
+// --kind value: `--kind skil` filtered to nothing and returned "nothing to
+// scan", which every caller treats as a reason to stop.
+const KINDS = new Set(['skill', 'hook', 'command', 'script', 'plugin', 'plugin-repo']);
 
 class RootsError extends Error {}
 
 function fail(message) {
   throw new RootsError(message);
+}
+
+function describeType(value) {
+  if (value === null) return 'null';
+  if (Array.isArray(value)) return 'an array';
+  const t = typeof value;
+  return `${/^[aeiou]/.test(t) ? 'an' : 'a'} ${t}`;
 }
 
 // `~` is expanded here and nowhere else. Node's fs takes a literal tilde, so an
@@ -102,6 +122,17 @@ function readConfig() {
   // resolves to nothing, so every caller would be told the roots are fine while
   // nothing could ever be found under them, which is the exact confusion between
   // empty and absent that this file exists to end.
+  // A `roots` key of the wrong type is exactly the case the reasoning above
+  // covers, and it used to fall through to "has neither roots nor skillRoots",
+  // which is a different complaint and sends you looking for a key that is
+  // right there in the file.
+  if ('roots' in parsed && !Array.isArray(parsed.roots)) {
+    fail(`roots.js: ${CONFIG} has a "roots" key that is ${describeType(parsed.roots)} rather than an array. Fix or remove it.`);
+  }
+  if ('skillRoots' in parsed && !Array.isArray(parsed.skillRoots)) {
+    fail(`roots.js: ${CONFIG} has a "skillRoots" key that is ${describeType(parsed.skillRoots)} rather than an array. Fix or remove it.`);
+  }
+
   if (Array.isArray(parsed.roots)) {
     if (parsed.roots.length === 0) {
       fail(`roots.js: ${CONFIG} has an empty "roots" array, so nothing can be scanned. Add a root, or remove the file to fall back to the defaults.`);
@@ -152,9 +183,26 @@ function resolve({ kind, name } = {}) {
     };
   });
 
+  // Two roots may not share a name. --name filters by it, and the answer to
+  // "does this root exist" cannot be two different things: with a duplicate,
+  // cmdCheck described the first match while codeFor graded both, so it printed
+  // "Root 'x' exists" and exited 3 at the same time.
+  const seen = new Set();
+  for (const r of all) {
+    if (seen.has(r.name)) {
+      fail(`roots.js: more than one root is named '${r.name}'. Names identify a root to --name and to a queue entry's repo field, so they have to be unique.`);
+    }
+    seen.add(r.name);
+  }
+
+  // `!== undefined`, not truthiness. An empty --name reached this as '' and
+  // skipped the filter, so a caller asking about one root silently got an
+  // answer about all of them, which is the inference this whole option removes.
+  // parseArgs refuses an empty value too; this is the second lock on the same
+  // door, because the two failures look identical from the caller's side.
   let roots = all;
-  if (kind) roots = roots.filter((r) => r.kind === kind);
-  if (name) roots = roots.filter((r) => r.name === name);
+  if (kind !== undefined && kind !== null) roots = roots.filter((r) => r.kind === kind);
+  if (name !== undefined && name !== null) roots = roots.filter((r) => r.name === name);
   const missing = roots.filter((r) => !r.exists);
   return {
     config: config.source,
@@ -190,7 +238,10 @@ function codeFor(state) {
   // are fine on a machine that has none.
   if (state.roots.length === 0) return ALL_MISSING;
   if (state.missing.length === 0) return OK;
-  return state.allMissing ? ALL_MISSING : SOME_MISSING;
+  if (state.allMissing) return ALL_MISSING;
+  // Missing, but nobody wrote these paths down. Distinct from 3 so a caller can
+  // have one rule for each rather than re-deriving the difference from the text.
+  return state.usedDefaults ? DEFAULTS_ABSENT : SOME_MISSING;
 }
 
 // --- commands ------------------------------------------------------------
@@ -229,8 +280,11 @@ function cmdCheck(args) {
     lines.push(`No root${scope} is configured, so there is nothing to scan.`);
   } else if (state.usedDefaults) {
     // Nobody chose these paths, so an absent one is information rather than a
-    // fault, and codeFor returns 0 so the skills stay quiet about it. All of
-    // them absent is still worth stopping for: there is then nowhere to look.
+    // fault. It still exits non-zero, because the directory is still not there
+    // and a caller about to use it has to know: codeFor returns DEFAULTS_ABSENT
+    // so that "absent" and "someone's configured path moved" are separable
+    // without reading the prose. All of them absent is ALL_MISSING, because
+    // then there is nowhere to look at all.
     const present = state.roots.filter((r) => r.exists).map((r) => r.name);
     if (state.allMissing) {
       lines.push(
@@ -290,6 +344,18 @@ function parseArgs(argv) {
       if (i + 1 >= argv.length) fail(`roots.js: --${name} needs a value.`);
       value = argv[++i];
     }
+
+    // `--name=` parses to an empty string, which a skill produces whenever it
+    // interpolates a field that turned out to be empty. Treated as "no scope"
+    // it silently widened the question from one root to all of them. Refused,
+    // because a caller that asked to be specific and was not told otherwise
+    // will believe it was.
+    if (value === '') {
+      fail(`roots.js: --${name} was given an empty value. Pass a real one, or leave the option off to ask about everything.`);
+    }
+    if (name === 'kind' && !KINDS.has(value)) {
+      fail(`roots.js: unknown kind ${JSON.stringify(value)}. Known kinds: ${[...KINDS].join(', ')}`);
+    }
     out[name] = value;
   }
   return out;
@@ -311,15 +377,21 @@ function main(argv) {
       '  hook root is not your answer. Use --name when you are about to work',
       '  inside one particular root and need an answer about that one.',
       '',
-      '  Exit codes: 0 every root in scope exists, 3 some are missing, 4 nothing',
-      '  to scan (all missing, or nothing configured matching the scope), 1 the',
-      '  config could not be read.',
+      '  Exit codes:',
+      '    0  every root in scope exists',
+      '    3  a root someone configured is missing',
+      '    5  only default locations are absent; nobody configured those paths,',
+      '       so this is normal on a machine that installs from marketplaces',
+      '    4  nothing to scan: all of them missing, or nothing configured in scope',
+      '    1  the config could not be read',
       '',
-      '  The code answers only whether the roots are there. It does not grade how',
-      '  much that matters: with no config file the defaults are in use and an',
-      '  absent one is reported as normal, in words, while still exiting 3. A',
-      '  caller needs to know a directory is not there even when nobody is at',
-      '  fault for it.',
+      '  3 and 5 are separated so a caller can have one rule for each instead of',
+      '  re-deriving the difference from the wording. Both mean a directory is',
+      '  not there. Only one of them means somebody should go and fix a path.',
+      '',
+      '  Everything addressed to a person goes to stdout, including the exit-1',
+      '  explanation, because the skills relay what was printed. stderr carries',
+      '  a stack trace only, which means a bug in this file.',
       '',
       '  Reads only; it never repairs a path.',
       '',
@@ -336,7 +408,18 @@ if (require.main === module) {
   try {
     code = main(process.argv.slice(2));
   } catch (error) {
-    process.stderr.write((error instanceof RootsError ? error.message : error.stack) + '\n');
+    if (error instanceof RootsError) {
+      // Written to stdout, not stderr. Every skill here is told to relay what
+      // the check printed, and a skill reads stdout: on stderr, the one case
+      // where the config itself is broken produced an empty relay and the
+      // skills carried on as though nothing had happened. This is a sentence
+      // addressed to a person and it belongs where the other sentences go.
+      process.stdout.write(error.message + '\n');
+    } else {
+      // A bug in this file rather than a message for anyone. The stack is the
+      // useful part and stderr is where it belongs.
+      process.stderr.write(error.stack + '\n');
+    }
     code = 1;
   }
   // process.exitCode, never process.exit, for the reason queue.js gives at
@@ -345,4 +428,7 @@ if (require.main === module) {
   process.exitCode = code;
 }
 
-module.exports = { main, resolve, expand, CONFIG, DEFAULT_ROOTS, OK, SOME_MISSING, ALL_MISSING };
+module.exports = {
+  main, resolve, expand, CONFIG, DEFAULT_ROOTS, KINDS,
+  OK, SOME_MISSING, ALL_MISSING, DEFAULTS_ABSENT,
+};

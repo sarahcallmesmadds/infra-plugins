@@ -41,13 +41,19 @@ function makeHome(config) {
   return home;
 }
 
+// stdio pipes the child's stderr rather than letting it through to ours.
+// execFileSync captures it either way, but without this it is also echoed to
+// the parent's stderr, and run-all.js takes the last non-empty line of a
+// suite's output as its summary. A passing suite then reports itself with an
+// error string. queue-locking.test.js has the same symptom for the same reason.
 function run(home, args) {
+  const opts = {
+    encoding: 'utf8',
+    env: { ...process.env, HOME: home },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  };
   try {
-    const stdout = execFileSync(process.execPath, [SCRIPT, ...args], {
-      encoding: 'utf8',
-      env: { ...process.env, HOME: home },
-    });
-    return { code: 0, stdout, stderr: '' };
+    return { code: 0, stdout: execFileSync(process.execPath, [SCRIPT, ...args], opts), stderr: '' };
   } catch (error) {
     return {
       code: error.status,
@@ -159,7 +165,7 @@ check('a corrupt config is refused rather than silently defaulted', () => {
   const home = makeHome('{ this is not json');
   const out = run(home, ['check']);
   assert.strictEqual(out.code, 1, `a corrupt config should exit 1, got ${out.code}`);
-  assert.match(out.stderr, /not valid JSON/, 'did not say what was wrong with it');
+  assert.match(out.stdout, /not valid JSON/, 'did not say what was wrong with it');
   assert.doesNotMatch(out.stdout, /personal/, 'fell back to the defaults, hiding the real root');
 });
 
@@ -214,21 +220,37 @@ check('a kind nothing is configured for is nothing to scan, not success', () => 
   assert.match(out.stdout, /No root of kind skill is configured/, 'did not say why there was nothing');
 });
 
-check('an absent default is described as normal, in words, and still exits 3', () => {
-  // SCHEMA.md says on a machine installing everything from marketplaces none of
-  // the three defaults will exist, and that this is not an error. That is a
-  // statement about wording, and an earlier version of this file read it as a
-  // statement about the exit code: it returned 0, which told apply-fix the root
-  // existed, and Step 8 then ran git against a path that was not there after the
-  // target file had already been written.
-  //
-  // So both halves are asserted here. Gentle words, honest code.
+check('an absent default is its own exit code, not 0 and not 3', () => {
+  // Three attempts at this one condition, which is why it now has a code of its
+  // own. First it exited 3 and was reported as breakage, which described a
+  // healthy machine as damaged. Then it exited 0, which told apply-fix a root
+  // existed when it did not. Both readings were trying to answer two questions
+  // with one number: is the directory there, and is anyone at fault for it.
+  // DEFAULTS_ABSENT answers the second separately so callers stop inferring it.
   const home = makeHome(undefined);
   fs.mkdirSync(path.join(home, '.claude', 'skills'), { recursive: true });
   const out = run(home, ['check']);
-  assert.strictEqual(out.code, 3, `an absent default is still an absent directory, got ${out.code}`);
+  assert.strictEqual(out.code, 5, `an absent default has its own code, got ${out.code}`);
+  assert.notStrictEqual(out.code, 0, 'an absent directory reported as entirely fine');
+  assert.notStrictEqual(out.code, 3, 'a path nobody chose reported as a configured root having moved');
   assert.doesNotMatch(out.stdout, /orphaned/, 'threatened the user about a path they never chose');
   assert.match(out.stdout, /normal/, 'did not say the absence was expected');
+});
+
+check('a configured root that moved keeps exit 3, and is not softened', () => {
+  const home = makeHome();
+  const live = path.join(home, 'live');
+  fs.mkdirSync(live);
+  fs.writeFileSync(
+    path.join(home, '.claude', 'build-loop.config.json'),
+    JSON.stringify({ roots: [
+      { name: 'live', path: live, kind: 'skill' },
+      { name: 'chosen', path: path.join(home, 'chosen'), kind: 'plugin-repo' },
+    ] })
+  );
+  const out = run(home, ['check']);
+  assert.strictEqual(out.code, 3, `a configured root that moved is a 3, got ${out.code}`);
+  assert.match(out.stdout, /orphaned/, 'dropped the consequence for a path somebody chose');
 });
 
 check('scoping is what keeps an absent default quiet, not the exit code', () => {
@@ -277,8 +299,9 @@ check('a config that parses to something other than an object is refused in word
     const home = makeHome(body);
     const out = run(home, ['check']);
     assert.strictEqual(out.code, 1, `config ${body} should exit 1, got ${out.code}`);
-    assert.match(out.stderr, /must hold a JSON object/, `config ${body} did not explain itself`);
-    assert.doesNotMatch(out.stderr, /at Object\.|at Module\./, `config ${body} printed a stack trace`);
+    assert.match(out.stdout, /must hold a JSON object/, `config ${body} did not explain itself`);
+    assert.doesNotMatch(out.stdout, /at Object\.|at Module\./, `config ${body} printed a stack trace`);
+    assert.strictEqual(out.stderr, '', `config ${body} wrote to stderr, which no skill reads`);
   }
 });
 
@@ -287,16 +310,73 @@ check('an empty roots array is refused rather than read as nothing missing', () 
     const home = makeHome({ [key]: [] });
     const out = run(home, ['check']);
     assert.strictEqual(out.code, 1, `empty ${key} should exit 1, got ${out.code}`);
-    assert.match(out.stderr, /empty/, `empty ${key} did not say what was wrong`);
+    assert.match(out.stdout, /empty/, `empty ${key} did not say what was wrong`);
     assert.doesNotMatch(out.stdout, /Every configured root exists/, `empty ${key} reported success`);
   }
+});
+
+check('an empty scope value is refused, not read as no scope at all', () => {
+  // --name= parses to '', which is what a skill produces the moment it
+  // interpolates a field that turned out to be empty. Treated as falsy it
+  // skipped the filter, so a caller asking about one root was quietly answered
+  // about all of them: the exact inference --name exists to remove.
+  const home = makeHome(undefined);
+  fs.mkdirSync(path.join(home, '.claude', 'skills'), { recursive: true });
+  for (const arg of ['--name=', '--kind=']) {
+    const out = run(home, ['check', arg]);
+    assert.strictEqual(out.code, 1, `${arg} was accepted, got ${out.code}`);
+    assert.match(out.stdout, /empty value/, `${arg} did not say what was wrong`);
+    assert.doesNotMatch(out.stdout, /default locations are in use/, `${arg} answered the broad question instead`);
+  }
+});
+
+check('an unknown kind value is refused rather than matching nothing', () => {
+  // A typo filtered to zero roots and returned "nothing to scan", which every
+  // caller treats as a reason to stop. The option names were validated and the
+  // values were not, which is the same "a typo that is ignored is a caller
+  // believing it asked for something it did not" this parser already argues.
+  const home = makeHome(undefined);
+  const out = run(home, ['check', '--kind', 'skil']);
+  assert.strictEqual(out.code, 1, `an unknown kind should exit 1, got ${out.code}`);
+  assert.match(out.stdout, /unknown kind "skil"/, 'did not name the bad value');
+  assert.match(out.stdout, /skill/, 'did not list what the valid kinds are');
+});
+
+check('a roots key of the wrong type says so, rather than blaming a missing key', () => {
+  for (const body of [{ roots: { a: 1 } }, { roots: 'a string' }, { skillRoots: 7 }]) {
+    const home = makeHome(body);
+    const out = run(home, ['check']);
+    assert.strictEqual(out.code, 1, `${JSON.stringify(body)} should exit 1, got ${out.code}`);
+    assert.match(out.stdout, /rather than an array/, `${JSON.stringify(body)} did not describe the real problem`);
+    assert.doesNotMatch(out.stdout, /has neither/, `${JSON.stringify(body)} blamed a key that is present`);
+  }
+});
+
+check('two roots may not share a name', () => {
+  // --name filters by it, so a duplicate made the answer to "does this root
+  // exist" two things at once: cmdCheck described the first match while codeFor
+  // graded both, printing "Root 'dup' exists" alongside a non-zero exit.
+  const home = makeHome();
+  const live = path.join(home, 'live');
+  fs.mkdirSync(live);
+  fs.writeFileSync(
+    path.join(home, '.claude', 'build-loop.config.json'),
+    JSON.stringify({ roots: [
+      { name: 'dup', path: live, kind: 'skill' },
+      { name: 'dup', path: path.join(home, 'gone'), kind: 'skill' },
+    ] })
+  );
+  const out = run(home, ['check', '--name', 'dup']);
+  assert.strictEqual(out.code, 1, `a duplicate name should exit 1, got ${out.code}`);
+  assert.match(out.stdout, /more than one root is named 'dup'/, 'did not name the collision');
+  assert.doesNotMatch(out.stdout, /exists at/, 'reported one root as fine while grading two');
 });
 
 check('an unknown option is refused rather than becoming a silent boolean', () => {
   const home = makeHome({ roots: [{ name: 'x', path: '/nonexistent/x', kind: 'skill' }] });
   const out = run(home, ['list', '--bogus', 'value']);
   assert.strictEqual(out.code, 1, 'an unknown option was accepted');
-  assert.match(out.stderr, /unknown option --bogus/, 'did not name the bad option');
+  assert.match(out.stdout, /unknown option --bogus/, 'did not name the bad option');
 });
 
 check('check and list agree about which roots are missing', () => {
@@ -373,6 +453,50 @@ check('no skill claims a bare check proves a particular root exists', () => {
     offending, [],
     `these claim a root is known to exist without having asked about it by name: ${offending.join(', ')}`
   );
+});
+
+check('every caller has a rule for a config that cannot be read', () => {
+  // Exit 1 writes an explanation and stops. Two skills enumerated only 0, 3 and
+  // 4, so a corrupt config had no rule at all and they carried on against
+  // guessed locations. An unhandled exit code in prose is not a crash, it is a
+  // skill quietly doing the wrong thing.
+  const offending = skillDirs().filter((name) => {
+    const text = skillText(name);
+    if (!/roots\.js"? check/.test(text)) return false;
+    return !/Exit 1|Anything else/.test(text);
+  });
+  assert.deepStrictEqual(
+    offending, [],
+    `these call roots.js and never say what to do on exit 1: ${offending.join(', ')}`
+  );
+});
+
+check('every broad caller has a rule for an absent default', () => {
+  // Exit 5 exists so a caller can tell "someone's path moved" from "a standard
+  // location was never created". A skill that only handles 3 either treats a
+  // normal machine as broken or ignores a real absence, and both readings have
+  // already shipped once each.
+  const offending = skillDirs().filter((name) => {
+    const text = skillText(name);
+    if (!/roots\.js"? check/.test(text)) return false;
+    if (/roots\.js"? check --name/.test(text)) return false;  // --name can never return 5
+    return !/Exit 5/.test(text);
+  });
+  assert.deepStrictEqual(
+    offending, [],
+    `these run a broad check and never say what to do on exit 5: ${offending.join(', ')}`
+  );
+});
+
+check('find-skill does not silently default underneath the check', () => {
+  // The check refused a corrupt config and the Python below it caught every
+  // exception and routed against ~/.claude/skills anyway, so the skill relayed
+  // "the config could not be read" and then behaved as though it had. A guard
+  // that the code beneath it ignores is worse than no guard: it reads as
+  // handled.
+  const text = skillText('find-skill');
+  assert.doesNotMatch(text, /except Exception:\s*\n\s*roots = DEFAULT/, 'still swallows any config error and defaults');
+  assert.match(text, /if not os\.path\.exists\(CONFIG\)/, 'no longer distinguishes an absent config from a broken one');
 });
 
 check('every skill that reads the config checks the roots exist', () => {

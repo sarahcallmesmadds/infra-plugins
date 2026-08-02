@@ -41,11 +41,16 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/roots.js" check
 ```
 
 - Exit 0, every root exists. Nothing to relay, carry on.
-- Exit 3, some root is gone. Print what it said, then scan the roots that remain.
-- Exit 4, they are all gone. Print what it said and stop, because a scan of
-  nothing looks identical to a scan that found nothing.
-- Exit 1, the config itself could not be read. The message says what is wrong
-  with it. Stop.
+- Exit 3, a root someone configured is gone. Print what it said, then scan the
+  roots that remain.
+- Exit 5, only default locations are absent. Nobody configured those paths, so
+  do not lead with it and do not stop. Carry on, and mention it only if the
+  scan then turns up orphans, where it is the explanation.
+- Exit 4, there is nothing to scan. Print what it said and stop, because a scan
+  of nothing looks identical to a scan that found nothing.
+- Exit 1, the config itself could not be read. Print what it said and stop.
+
+Every one of those messages arrives on stdout, including exit 1.
 
 On exit 3, do not offer to remove the orphans a dead root produced. Step 3 will
 bucket everything the map held under that root as ORPHANED, which reads as "these

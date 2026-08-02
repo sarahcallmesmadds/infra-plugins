@@ -90,10 +90,19 @@ You show this in the draft at Step 2, so a wrong guess costs nothing. Asking abo
    node "${CLAUDE_PLUGIN_ROOT}/scripts/roots.js" check
    ```
 
-   Exit 0 is silence, so carry on. Exit 3 or 4 names the roots that are gone:
-   relay that before asking the user anything. "I cannot find it" and "the place
-   I was looking no longer exists" are different problems, and only the first is
-   one they can answer by naming a file.
+   - Exit 0, carry on.
+   - Exit 3, a root someone configured is gone. Relay that before asking the
+     user anything. "I cannot find it" and "the place I was looking no longer
+     exists" are different problems, and only the first is one they can answer
+     by naming a file.
+   - Exit 5, only default locations are absent. Nobody configured those paths,
+     so do not lead with it. Carry on, and bring it up at point 5 below if the
+     target then fails to resolve, where it is the explanation.
+   - Exit 4, there is nowhere to look. Relay it and go straight to asking for a
+     path, rather than searching roots that are not there.
+   - Exit 1, the config could not be read. Relay it and ask for a path.
+
+   Every one of those messages arrives on stdout, including exit 1.
 
 2. Search the roots whose `kind` matches `target_kind`, in configured order, first hit wins:
    - kind `skill`: `ls <root.path>/{target}/SKILL.md`, then `ls <root.path>/{target}/skill/SKILL.md`

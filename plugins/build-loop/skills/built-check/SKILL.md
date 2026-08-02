@@ -117,10 +117,21 @@ Check they exist before reading any git log:
 node "${CLAUDE_PLUGIN_ROOT}/scripts/roots.js" check
 ```
 
-Exit 0, carry on. Exit 3, relay what it said and use the roots that remain. Exit
-4, relay it, add that you only have this session to go on, and carry on with
-session evidence alone. Do not report "no sign of it" for everything as though
-you had looked, when there was nowhere to look.
+- Exit 0, carry on.
+- Exit 3, a root someone configured is gone. Relay what it said and use the
+  roots that remain.
+- Exit 5, only default locations are absent. Nobody configured those paths, so
+  do not lead with it and do not stop. Carry on, and mention it only if the
+  search then finds no evidence, where it is the explanation.
+- Exit 4, relay it, add that you only have this session to go on, and carry on
+  with session evidence alone.
+- Exit 1, the config itself could not be read. Relay what it said and carry on
+  with session evidence alone, saying that is all you have.
+
+Every one of those messages arrives on stdout, including exit 1.
+
+Whichever of these applies, do not report "no sign of it" for everything as
+though you had looked, when there was nowhere to look.
 
 For each root that is a git repository:
 
