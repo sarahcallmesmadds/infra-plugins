@@ -60,13 +60,19 @@ function markdownFiles(dir, found = []) {
 // The list that begins at `from`, or null if there is not one. A table counts
 // its body rows; a bullet or numbered list counts its top-level items, so a
 // nested bullet does not inflate the total.
-function listAt(lines, from) {
+function listAt(lines, from, inExample = null) {
   let i = from;
   // At most one blank line. This used to skip an unbounded run, which meant
   // "directly above" was not enforced at all: a sentence and a list five blank
   // lines apart were compared to each other.
   if (i < lines.length && lines[i].trim() === '') i++;
   if (i >= lines.length || lines[i].trim() === '') return null;
+  // A list inside an example belongs to the example. This was the stated
+  // intent from the start and only ever held for fenced blocks, because the
+  // walk stopped at a fence and nothing looked at an indented one. The map was
+  // being built for every line and consulted for exactly one of them, the
+  // announcing sentence.
+  if (inExample && inExample[i]) return null;
 
   if (/^\s*\|/.test(lines[i])) {
     const rows = [];
@@ -283,7 +289,7 @@ function staleCounts(text, file) {
       j++;
     }
     if (j < 0) continue;
-    const list = listAt(lines, j);
+    const list = listAt(lines, j, inExample);
     if (!list) continue;
 
     checked += 1;
@@ -507,6 +513,28 @@ check('a count inside a code example is not read as a real one', () => {
   ].join('\n');
   assert.deepStrictEqual(staleCounts(indentedBlock, path.join(ROOT, 'sample.md')), [],
     'a count inside an indented example was checked as though it were prose');
+
+  // The sentence outside the block and the list inside it. The fixtures above
+  // put both inside, which is why this went unnoticed: the map was consulted
+  // for the sentence and never for the list.
+  const listOnlyIndented = [
+    'It checks three things:',
+    '',
+    '    - a',
+    '    - b',
+  ].join('\n');
+  assert.deepStrictEqual(staleCounts(listOnlyIndented, path.join(ROOT, 'sample.md')), [],
+    'a list inside an indented example was counted as the sentence\'s list');
+
+  const listOnlyFenced = [
+    'It checks three things:',
+    '```',
+    '- a',
+    '- b',
+    '```',
+  ].join('\n');
+  assert.deepStrictEqual(staleCounts(listOnlyFenced, path.join(ROOT, 'sample.md')), [],
+    'a list inside a fenced example was counted as the sentence\'s list');
 
   // And prose after the example closes is checked again.
   const after = fenced + '\n\nit checks two things:\n- a\n- b\n- c';
