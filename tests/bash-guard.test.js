@@ -499,6 +499,19 @@ check('a path that merely starts with a disposable name is denied', () => {
   assertDenies(runHook('rm -rf /distributed-system'), '/distributed-system');
 });
 
+check('a disposable name that climbs back out is denied', () => {
+  // Matching is on the path as typed, because the target of a delete often
+  // does not exist yet, so there is nothing to resolve. That means a `..`
+  // segment used to carry the verdict somewhere the text no longer described:
+  // every one of these was allowed, and the last two are the whole filesystem
+  // talking its way past the prompt on the strength of its first segment.
+  assertDenies(runHook('rm -rf dist/../../important'), 'dist/../../important');
+  assertDenies(runHook('rm -rf node_modules/../../important'), 'node_modules/../..');
+  assertDenies(runHook('rm -rf ~/app/dist/../src'), '~/app/dist/../src');
+  assertDenies(runHook('rm -rf /tmp/../etc'), '/tmp/../etc');
+  assertDenies(runHook('rm -rf /private/tmp/../../Users'), '/private/tmp/../../Users');
+});
+
 fs.rmSync(FAKE_HOME, { recursive: true, force: true });
 fs.rmSync(NOWHERE, { recursive: true, force: true });
 

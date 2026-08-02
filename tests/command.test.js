@@ -111,6 +111,11 @@ for (const raw of DEFAULTS.safeDeletePaths) {
   // No entry may match a neighbour that only shares its opening characters.
   expect(`rm -rf ${entry}foo`, 'confirm', `${raw}: decoy with no boundary`);
   expect(`rm -rf ${entry}-backup`, 'confirm', `${raw}: decoy suffix`);
+
+  // And no entry may be used as a doorway to somewhere above it. Nothing here
+  // resolves paths, so a `..` segment is the one thing that can make a
+  // disposable-looking string land outside the directory it names.
+  expect(`rm -rf ${entry}/../../important`, 'confirm', `${raw}: climbs back out`);
 }
 
 console.log(`\n${CASES.length + 2 + walked} checks, ${failed} failed`);

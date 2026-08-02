@@ -123,11 +123,20 @@ function deleteTargets(segment, source = segment) {
 }
 
 // A target is disposable if it is exactly the configured path, sits underneath
-// it at a segment boundary, or contains it as a whole path segment. There is no
-// bare substring case: matching on substring alone would let `/tmpfoo` pass as
-// `/tmp` and `~/node_modules_backup` pass as `node_modules`.
+// it at a segment boundary, or contains it as a whole path segment, and does
+// not climb back out through a `..` segment. There is no bare substring case:
+// matching on substring alone would let `/tmpfoo` pass as `/tmp` and
+// `~/node_modules_backup` pass as `node_modules`.
 function isDisposable(target, safePaths) {
   const normalized = target.replace(/\/+$/, '');
+  // A `..` segment walks back out of whatever was matched, so the text being
+  // compared stops describing where the delete lands: `dist/../../important`
+  // opens with a disposable name and ends somewhere else entirely, and
+  // `/tmp/../etc` is `/etc`. Nothing here resolves paths, deliberately, since
+  // the target of a delete often does not exist yet. So refuse to call these
+  // disposable and let them go to a prompt. A real delete of a build directory
+  // never needs to climb.
+  if (normalized.split('/').includes('..')) return false;
   return safePaths.some((raw) => {
     const safe = String(raw).replace(/\/+$/, '');
     if (!safe) return false;
