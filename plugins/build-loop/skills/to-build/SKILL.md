@@ -16,7 +16,7 @@ This is the list of things the user plans to build. It is not the bug queue. The
 > you happen to be, and every check that follows then reads the wrong place.
 
 > **This skill writes new items directly, on purpose.** Every write that REPLACES
-> an existing file in this plugin goes through the `.tmp` plus parse-check plus
+> an existing file in this plugin goes through `scripts/queue.js`, rather than the older `.tmp` plus parse-check plus
 > `mv` sequence. This skill only ever creates brand-new items under a fresh
 > timestamped filename, so there is no good file to lose, and `allowed-tools`
 > above grants no `node` or `mv` accordingly. If this skill is ever changed to
@@ -87,7 +87,17 @@ This check is NOT time-windowed. That is the point: writing the same idea down t
 
 > "You already have this one, from {date}: {title}. It says: {what}. Add a note to it instead, or write a separate item anyway?"
 
-If they want a note, append `{ts, text}` to that item's `notes` array. That is a REPLACING write, so use the atomic sequence: write `{id}.json.tmp`, parse-check it with node, then `mv` it into place. Since this skill's `allowed-tools` grants neither `node` nor `mv`, say plainly that you cannot append the note from here and offer to write a fresh item instead.
+If they want a note, append it with:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/queue.js" update {id} --list to-build --note "{text}"
+```
+
+That reads the item, appends to the `notes` already on it, and writes it back
+under a lock, so a note added by another session in the meantime survives. This
+used to say the note could not be appended from here at all, because the skill
+could not safely do a replacing write by hand and was honest about it. It can
+now, so it does.
 
 **If a match is found in status `Dropped`:**
 

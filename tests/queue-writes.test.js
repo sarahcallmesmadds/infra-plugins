@@ -1,30 +1,31 @@
 #!/usr/bin/env node
-// Every skill that updates an existing queue entry must read it first and
-// append to notes rather than rebuild them.
+// No skill may write a queue entry by hand. Every change goes through
+// scripts/queue.js.
 //
 // Run: node tests/queue-writes.test.js
 //
-// The bug: /apply-fix silently dropped notes. Step 8 said to append a note, and
-// the write recomposed the entry from scratch, so a note recording that an
-// earlier attempt had been abandoned was lost. Observed on a real entry, which
-// went from one note to two, and neither of the two was the one already there.
+// What this file used to check, and why it changed. The original bug was
+// /apply-fix silently dropping notes: it recomposed the entry from scratch, so
+// a note recording an abandoned attempt disappeared. The fix at the time was
+// wording. Every updater was made to say "read the current entry" and "append
+// to notes", and this file asserted those sentences were present, including
+// catching the parentheticals that had quietly cancelled them.
 //
-// The cause is the Write tool, which replaces a whole file. Anything not
-// carried across is gone with no error and no warning, so the instruction has
-// to say to carry it across. Step 2 said only "write the updated JSON", which
-// reads as an instruction to produce a correct-looking entry rather than to
-// preserve the one already on disk, and Step 8 said "append note" with no
-// sequence at all. /verify-fix and /revert-fix both spell out read, set,
-// append, write, so the same operation was written three ways and only two of
-// them worked.
+// That was the best answer available while the writing was done by a model
+// following prose, and it was never a guarantee. Reading the entry in one tool
+// call and writing it in another leaves a gap, and another session writing into
+// that gap loses its change with no error and nothing to notice. No wording
+// closes that, because the gap is between the tool calls rather than inside one.
 //
-// Pinned across all three skills rather than only the one that broke. The two
-// that are right today are right by wording alone, and nothing stops the next
-// edit from shortening one of them into the version that fails.
+// So the read, the change and the write now happen inside queue.js, holding a
+// lock, and the property this file protects is enforced by that code rather than
+// by sentences. What is left to check here is that nothing has gone back to
+// doing it by hand, which is a smaller thing and a much harder one to get wrong
+// by accident.
 //
-// What this cannot check: whether the model actually appends. These are source
-// assertions on instructions. They catch the instruction going missing, which
-// is how this bug got in.
+// The behaviour itself, that a note survives a concurrent write, is tested for
+// real in queue-locking.test.js by racing processes. This file is the source
+// assertion that the skills actually call the thing that behaves.
 
 'use strict';
 
@@ -33,10 +34,16 @@ const fs = require('fs');
 const path = require('path');
 
 const SKILLS = path.join(__dirname, '..', 'plugins', 'build-loop', 'skills');
+const QUEUE_JS = path.join(__dirname, '..', 'plugins', 'build-loop', 'scripts', 'queue.js');
 
-// Skills that modify an entry that already exists. /flag-issue is deliberately
-// absent: it creates entries, and there is nothing yet on disk to preserve.
+// Skills that change an entry that already exists.
 const UPDATERS = ['apply-fix', 'verify-fix', 'revert-fix'];
+
+// Skills that create entries. /flag-issue was deliberately absent from the old
+// list, because it only ever wrote new files and there was nothing on disk to
+// preserve. It belongs here now: creating is where the dedup race lived, and
+// that was the half of the bug the note-preservation rule never covered.
+const CREATORS = ['flag-issue'];
 
 function skill(name) {
   const file = path.join(SKILLS, name, 'SKILL.md');
@@ -44,40 +51,17 @@ function skill(name) {
   return fs.readFileSync(file, 'utf8');
 }
 
-// The regions of apply-fix that write the entry. Both had the defect, in
-// different ways, so both are checked rather than the file as a whole: a single
-// correct passage elsewhere would otherwise cover for a broken one here.
-function region(text, from, to) {
-  const start = text.indexOf(from);
-  assert.ok(start !== -1, `could not find "${from}"`);
-  const end = to ? text.indexOf(to, start) : text.length;
-  return text.slice(start, end === -1 ? text.length : end);
-}
-
-const READS = /read the current queue entry/i;
-const APPENDS = /append to (the )?(existing )?`?notes`?/i;
-
-// Phrasings that tell the model to skip the read it was just told to do. These
-// are the reason the two checks above are not enough on their own: revert-fix
-// said "Read the current queue entry JSON (already loaded — use what you have)"
-// and passed both, because the words the checks look for were all present and
-// the parenthetical that cancelled them was not looked at.
-//
-// Matched against the whole file rather than a region. There is no place in an
-// updater where reusing a copy read earlier is correct: the point of the read
-// is that the file may have changed since.
-const CANCELS_THE_READ = [
-  /already loaded/i,
-  /use what you have/i,
-  /from (memory|what you (already )?read)/i,
-  /no need to re-?read/i,
+// The hand-rolled sequence, in every spelling it appeared in. Any of these in a
+// skill means someone has reintroduced the gap.
+const BY_HAND = [
+  /queue\/\{id\}\.json\.tmp/,
+  /queue\/\{filename\}`? using the Write tool/,
+  /mv ~\/\.claude\/build-loop\/queue/,
 ];
 
-// Counted as they run and then compared, rather than computed from the shape of
-// the loop. This line said `UPDATERS.length * 2 + 4`, which looks derived and is
-// not: adding a third check per updater left it reporting 10 while 13 ran. A
-// formula that has to be re-derived by hand is a literal wearing a disguise.
-const EXPECTED_CHECKS = 13;
+// A line describing the old sequence in order to say it was wrong is not an
+// offence. The prose has to be able to name what it replaced.
+const EXPLAINING = /used to|no longer|rather than|instead of|never edit|do not write it/i;
 
 let failed = 0;
 let ran = 0;
@@ -92,80 +76,102 @@ function check(what, fn) {
   }
 }
 
-for (const name of UPDATERS) {
-  check(`${name} reads the entry before writing it`, () => {
-    assert.match(
-      skill(name), READS,
-      `${name} writes a queue entry without being told to read the current one first. `
-      + 'The Write tool replaces the whole file, so whatever it does not carry across is lost silently.'
-    );
-  });
-
-  check(`${name} appends to notes rather than replacing them`, () => {
-    assert.match(
-      skill(name), APPENDS,
-      `${name} no longer says to append to the notes array. Notes are the audit trail, `
-      + 'and they are read at exactly the moment something has gone wrong.'
-    );
-  });
-
-  check(`${name} does not then excuse the model from the read`, () => {
+for (const name of [...UPDATERS, ...CREATORS]) {
+  check(`${name} does not write the queue by hand`, () => {
     const text = skill(name);
-    for (const pattern of CANCELS_THE_READ) {
-      // The prose explaining why this phrasing was wrong necessarily quotes it,
-      // so a line that also says the words were wrong is not an offence.
-      const offending = text.split('\n').filter((line) =>
-        pattern.test(line) && !/used to say|was wrong|which is an instruction/i.test(line));
+    for (const pattern of BY_HAND) {
+      const offending = text.split('\n').filter((line) => pattern.test(line) && !EXPLAINING.test(line));
       assert.deepStrictEqual(
         offending, [],
-        `${name} tells the model it can skip re-reading the entry:\n        `
-        + offending.join('\n        ')
-        + '\n        The read exists because the file may have changed since.'
+        `${name} writes a queue entry directly:\n        ${offending.join('\n        ')}\n`
+        + '        That reopens the gap between the read and the write, where another '
+        + "session's change is lost with no error."
       );
     }
   });
 }
 
-check('apply-fix reads the entry at the In Progress write', () => {
-  // Step 2. This one said only "write the updated JSON".
-  const step2 = region(skill('apply-fix'), '**Set status to In Progress**', '## Step 3');
-  assert.match(step2, READS, 'the In Progress write does not read the entry first');
-});
+for (const name of UPDATERS) {
+  check(`${name} changes entries through queue.js update`, () => {
+    assert.match(
+      skill(name), /queue\.js"? update/,
+      `${name} changes an existing entry and never calls "queue.js update", so it is doing it some other way.`
+    );
+  });
+}
 
-check('apply-fix reads the entry at the closing write', () => {
-  // Step 8, where the note is added and where the loss was observed.
-  const step8 = region(skill('apply-fix'), '**Update the queue entry**', '**Surface dep-review');
-  assert.match(step8, READS, 'the closing write does not read the entry first');
-  assert.match(step8, APPENDS, 'the closing write does not say to append');
-});
+for (const name of CREATORS) {
+  check(`${name} adds entries through queue.js create`, () => {
+    assert.match(
+      skill(name), /queue\.js"? create/,
+      `${name} adds entries and never calls "queue.js create", so the dedup check and the write are separable again.`
+    );
+  });
+}
 
-check('the closing write says the array must grow', () => {
-  // The instruction that makes the failure checkable by whoever reads it back.
-  const step8 = region(skill('apply-fix'), '**Update the queue entry**', '---');
-  assert.match(
-    step8, /one longer|never rebuild/i,
-    'nothing states that the notes array must come back longer than it went in, '
-    + 'so a rebuild that happens to look right passes unnoticed'
+// --- the guarantees the skills are relying on ----------------------------
+
+check('queue.js appends to notes rather than taking an array from the caller', () => {
+  // The structural version of the rule this file used to ask for in prose. A
+  // caller cannot hand over a notes array at all, so it cannot hand over a
+  // stale one, and a stale one is what made the original bug possible.
+  const source = fs.readFileSync(QUEUE_JS, 'utf8');
+  assert.match(source, /entry\.notes\.push\(/, 'queue.js no longer appends to the notes already on the entry');
+  assert.ok(
+    !/entry\.notes\s*=\s*(args|JSON)/.test(source),
+    'queue.js assigns notes from something the caller passed, which is how a stale array gets back in'
   );
 });
 
-check('the checks would actually catch one', () => {
-  // A linter nobody has seen fail is a linter nobody should trust.
-  const broken = 'Set status via atomic write:\n1. Write the updated JSON to {id}.json.tmp.';
-  assert.doesNotMatch(broken, READS, 'the read pattern matches text that never mentions reading');
-  assert.doesNotMatch(broken, APPENDS, 'the append pattern matches text that never mentions notes');
-
-  const fixed = '1. Read the current queue entry JSON from disk.\n3. Append to the existing `notes` array:';
-  assert.match(fixed, READS, 'the read pattern misses the wording the skills actually use');
-  assert.match(fixed, APPENDS, 'the append pattern misses the wording the skills actually use');
+check('queue.js reads the entry inside the lock, not before it', () => {
+  const source = fs.readFileSync(QUEUE_JS, 'utf8');
+  assert.match(source, /function locked\(/, 'queue.js has no lock helper');
+  assert.ok(
+    /locked\(\(\) => \{[\s\S]{0,200}?readEntry\(id[,)]/.test(source),
+    'the read happens outside the lock, which is the bug rather than the fix'
+  );
 });
 
+check('the lock is released even when the write fails', () => {
+  // Found by the tests rather than by review: failing with process.exit skipped
+  // the finally, so one bad resolution file left the queue locked for everyone
+  // until the lock went stale.
+  const source = fs.readFileSync(QUEUE_JS, 'utf8');
+  assert.match(source, /finally\s*\{\s*release\(\)/, 'queue.js does not release the lock in a finally');
+  assert.ok(
+    !/function fail\([\s\S]{0,200}?process\.exit/.test(source),
+    'fail() exits the process, which skips the finally and leaves the lock behind'
+  );
+});
+
+check('the dep-review dedup has no expiry', () => {
+  // A parent and a dependent is one logical review forever. A ten-minute window
+  // there would write a fresh duplicate on every run.
+  assert.match(
+    skill('flag-issue'), /--dedup-window all/,
+    'flag-issue no longer asks for an unexpiring dedup window on dep-review entries'
+  );
+});
+
+check('the checks would catch one', () => {
+  // A linter nobody has seen fail is a linter nobody should trust.
+  const broken = '4. Write updated JSON to `~/.claude/build-loop/queue/{id}.json.tmp` using the Write tool.';
+  assert.ok(BY_HAND.some((p) => p.test(broken)), 'BY_HAND no longer matches the sequence it names');
+  assert.ok(!EXPLAINING.test(broken), 'the exemption for explanatory prose swallows a real offence');
+
+  const explaining = 'This skill used to write entries to queue/{id}.json.tmp by hand.';
+  assert.ok(EXPLAINING.test(explaining), 'prose explaining the old way is reported as an offence');
+});
+
+// Counted as they run and then compared. This line was once a formula that
+// looked derived and was not, and it reported 10 while 13 ran.
+const EXPECTED_CHECKS = 13;
 if (ran !== EXPECTED_CHECKS) {
   failed += 1;
   console.log(
-    `  FAIL  the file runs the number of checks it expects to\n`
+    '  FAIL  the file runs the number of checks it expects to\n'
     + `        ran ${ran}, expected ${EXPECTED_CHECKS}. If you added or removed a `
-    + `check, move EXPECTED_CHECKS. If you did not, one has gone missing.`
+    + 'check, move EXPECTED_CHECKS. If you did not, one has gone missing.'
   );
 }
 

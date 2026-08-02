@@ -215,9 +215,10 @@ Only change status on a yes.
 
 ## Step 6 — Write the closures
 
-For each item being closed, this REPLACES an existing file, so the atomic sequence is mandatory. Per item:
+Each closure replaces an existing file, so it goes through `queue.js`, which
+does the read and the write inside one process holding a lock. Per item:
 
-1. Take the item you already read. Set `status` to `"Built"`. Set `built` to:
+1. Write the `built` block to a scratch file:
 
 ```json
 {
@@ -228,23 +229,24 @@ For each item being closed, this REPLACES an existing file, so the atomic sequen
 }
 ```
 
-   Change nothing else. `created_at`, `title`, `what`, `why` and `notes` all stay as they are.
-
-2. Write the updated JSON to `~/.claude/build-loop/to-build/{id}.json.tmp` with the Write tool.
-
-3. Parse-check it:
+2. Close the item:
 
 ```bash
-node -e "JSON.parse(require('fs').readFileSync(require('os').homedir() + '/.claude/build-loop/to-build/{id}.json.tmp','utf8'))" && echo PARSE_OK
+node "${CLAUDE_PLUGIN_ROOT}/scripts/queue.js" update {id} --list to-build \
+  --status Built --json built=/tmp/built-{id}.json
 ```
 
-4. If it parses, swap it in:
+   `--json` sets a field from a JSON file, so `built` lands as an object rather
+   than as the characters that spell one. Use `--field key=value` for plain
+   strings. Nothing else changes: `created_at`, `title`, `what`, `why` and `notes` all stay as they are, which
+   is not something you have to be careful about here: `queue.js` reads the item
+   from disk and changes only what you named, so anything you did not mention
+   cannot be dropped.
 
-```bash
-mv ~/.claude/build-loop/to-build/{id}.json.tmp ~/.claude/build-loop/to-build/{id}.json
-```
-
-5. If it does not parse, delete the tempfile with `rm`, report the failure for that item, and carry on with the remaining items. One bad write must not abandon the rest.
+3. If a call exits non-zero, report the failure for that item and carry on with
+   the remaining ones. One bad write must not abandon the rest. Nothing partial
+   is left behind, and an exit usually means another session holds the lock, so
+   the remedy is to run that one again.
 
 Marking something `In Progress` from Step 5 uses the same sequence, setting only `status`.
 

@@ -110,20 +110,27 @@ from a previous session, which by definition was applied, and the branch below
 offers to help restore that file precisely because it did change. A note saying
 the file is untouched would contradict the offer sitting next to it.
 
-Run atomic write on the queue entry:
-1. Read the current queue entry JSON.
-2. Set `status` back to `"Open"`.
+Set the status back to `"Open"` and record the attempt, in one call:
 
-   A rejected fix is an open bug. It used to get its own status,
-   `"fix attempted / unresolved"`, which read as more precise and was worse: no
-   filter in `/list-bugs` reached it, so rejecting a diff removed the entry from
-   the only view that lists work. The attempt is not lost, it is the note written
-   in the next step, and a note is visible where a status was not.
-3. Append to `notes` array: `{"ts": "{date -u +"%Y-%m-%dT%H:%M:%S.000Z"}", "text": "Fix attempted and rejected at the verify gate. {retry instructions if given, else 'No reason given.'} {file_state}"}`.
-4. Write updated JSON to `~/.claude/build-loop/queue/{id}.json.tmp` using the Write tool.
-5. Run: `node -e "JSON.parse(require('fs').readFileSync(require('os').homedir() + '/.claude/build-loop/queue/{id}.json.tmp','utf8'))"`
-6. If parse succeeds: `mv ~/.claude/build-loop/queue/{id}.json.tmp ~/.claude/build-loop/queue/{id}.json`
-7. If parse fails: report error, do not swap. The queue entry remains at its previous status.
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/queue.js" update {id} --status Open \
+  --note "Fix attempted and rejected at the verify gate. {retry instructions if given, else 'No reason given.'} {file_state}"
+```
+
+A rejected fix is an open bug. It used to get its own status,
+`"fix attempted / unresolved"`, which read as more precise and was worse: no
+filter in `/list-bugs` reached it, so rejecting a diff removed the entry from
+the only view that lists work. The attempt is not lost, it is the note above,
+and a note is visible where a status was not.
+
+**Never edit a queue entry with the Write tool.** `queue.js` reads, changes and
+writes inside one process holding one lock, so another session cannot write the
+same entry in the gap between your read and your write. It also appends the note
+to what is on disk now rather than to the copy you read earlier, which is how a
+note recorded by a session you never saw survives.
+
+If the command exits non-zero, report what it printed. The entry keeps its
+previous status and nothing partial is left behind.
 
 Display:
 ```
@@ -191,7 +198,7 @@ Same three response types as Step V3:
 
 - **"yes"** (PASS in standalone mode):
   "Noted, the fix looks correct. Updating the queue entry to record your approval."
-  Via atomic write: if status was `"In Progress"`, set to `"fix applied, watching"`. Append note: `{"ts": "{now}", "text": "Standalone verify: the user confirmed fix looks correct."}`.
+  If status was `"In Progress"`, run `queue.js update {id} --status "fix applied, watching" --note "Standalone verify: the user confirmed fix looks correct."`.
   Display: "Queue entry {id} is now 'fix applied, watching'. Try it in a real session. When it works, you can close this to Resolved."
 
 - **"no"** (FAIL in standalone mode):
@@ -211,4 +218,4 @@ Same three response types as Step V3:
 
 - **Queue entry not found**: "No queue entry found at {path}. Check the ID and try again." Stop.
 - **Target file not found (Step S3)**: "Can't find the target file at {target_path}. Is this path correct?" Show what IS in the queue entry and ask if the user wants to update the path.
-- **Atomic write fails**: Report the error. Do not leave a partial .tmp file. The queue entry retains its previous status.
+- **The write fails**: report what `queue.js` printed. It leaves no partial file and the entry retains its previous status. A refusal usually means another session holds the lock, so the remedy is to run it again.

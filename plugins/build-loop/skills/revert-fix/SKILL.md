@@ -107,24 +107,23 @@ This is the new undo commit's hash — it will be different from the original fi
 
 ## Step 6 — Update queue entry and close
 
-Via atomic write, update the queue entry:
+Update the queue entry, status and note in one call:
 
-1. Read the current queue entry JSON from disk. Do not compose it from what is
-   on screen or from what you remember reading earlier. A revert has happened
-   since Step 1, the session may have run for hours, and another session may
-   have written to the same entry in between.
-2. Set `status` to `"Open"`. Change nothing else.
-3. Append to the existing `notes[]`, keeping every note already there:
-   ```json
-   {"ts": "{current UTC time}", "text": "Reverted: {revert-commit-hash}"}
-   ```
-   Get current UTC time with: `date -u +"%Y-%m-%dT%H:%M:%S.000Z"`
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/queue.js" update {id} --status Open \
+  --note "Reverted: {revert-commit-hash}"
+```
 
-4. Atomic write sequence:
-   - Write the updated JSON to `~/.claude/build-loop/queue/{id}.json.tmp` using the Write tool.
-   - Run: `node -e "JSON.parse(require('fs').readFileSync(require('os').homedir() + '/.claude/build-loop/queue/{id}.json.tmp','utf8'))"`
-   - If parse succeeds: `mv ~/.claude/build-loop/queue/{id}.json.tmp ~/.claude/build-loop/queue/{id}.json`
-   - If parse fails: report error, do not swap. Say "The queue entry update failed. The revert DID succeed (undo commit: {revert-hash}), but the queue file was not updated. Edit it manually at ~/.claude/build-loop/queue/{id}.json"
+Do not read the entry and rebuild it yourself. A revert has happened since Step
+1, the session may have run for hours, and another session may have written to
+the same entry in between. `queue.js` reads it inside the lock, so the note is
+appended to what is on disk now rather than to the copy you read at the start,
+and the version you read cannot overwrite work you never saw.
+
+If the command exits non-zero, say "The queue entry update failed. The revert
+DID succeed (undo commit: {revert-hash}), and the queue file was not updated:
+{what it printed}." A refusal usually means another session holds the lock, so
+running it again is the remedy rather than editing the file by hand.
 
 **Write the entry back, do not rebuild it.** The Write tool replaces the whole
 file, so anything not carried across is gone with no error and no warning. This
@@ -143,4 +142,4 @@ The target file is restored to its pre-fix state.
 Do you want to try a different fix, or leave this Open for later?
 ```
 
-Wait for the user's response. If they say "Won't Fix" or "mark it closed": set `status` to `"Won't Fix"` via atomic write using the same pattern above.
+Wait for the user's response. If they say "Won't Fix" or "mark it closed": run `queue.js update {id} --status "Won't Fix"`.
