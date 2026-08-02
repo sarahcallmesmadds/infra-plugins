@@ -1,0 +1,10 @@
+# Session handoffs. Written by /wrap, read by /pickup, and local to whichever
+# machine the session ran on. They are notes about a working session rather than
+# part of any plugin, and they change every time one ends.
+#
+# Ignored rather than merely untracked, because `git add -A` picked one up by
+# accident on 2026-08-02 and it had to be caught in the commit before the push.
+HANDOFF.md
+
+# macOS directory metadata.
+.DS_Store
