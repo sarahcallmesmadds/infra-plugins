@@ -305,6 +305,55 @@ check('a duplicate the user approved can still be written', () => {
   }
 });
 
+check('the shell in these skills runs on both BSD and GNU', () => {
+  // These are written and tested on macOS and reviewed on Linux, so a BSD-only
+  // form passes every local run and fails everywhere else. `mktemp -d -t name`
+  // is the case that got through: BSD synthesises a template from the prefix,
+  // GNU wants six X characters and exits 1, so on Linux the scratch directory
+  // was never created and every hand-off reading from it failed.
+  //
+  // `built-check` already got this right for dates, pairing `date -u -v` with a
+  // `date -u -d` fallback, so the precedent existed and was not followed.
+  const RULES = [
+    {
+      name: 'mktemp -t with no six-X template',
+      test: (line) => /mktemp\b[^\n]*-t\s/.test(line) && !/X{6}/.test(line),
+      fix: 'use: mktemp -d "${TMPDIR:-/tmp}/name.XXXXXX"',
+    },
+    {
+      name: 'sed -i with a BSD backup argument',
+      test: (line) => /\bsed\s+-i\s+''/.test(line),
+      fix: 'GNU sed reads the next word as the script. Write the file some other way.',
+    },
+  ];
+  const dirs = fs.readdirSync(SKILLS).filter((d) => fs.existsSync(path.join(SKILLS, d, 'SKILL.md')));
+  for (const name of dirs) {
+    // Prose describing a wrong form in order to warn about it is not an
+    // offence, the same exemption the hand-rolled-write checks use.
+    const lines = skill(name).split('\n').filter((line) => !EXPLAINING.test(line) && !/rather than as/.test(line));
+    for (const rule of RULES) {
+      const offending = lines.filter(rule.test);
+      assert.deepStrictEqual(
+        offending, [],
+        `${name} uses ${rule.name}:\n        ${offending.join('\n        ')}\n        ${rule.fix}`
+      );
+    }
+  }
+});
+
+check('a date command that only BSD understands carries its fallback', () => {
+  const dirs = fs.readdirSync(SKILLS).filter((d) => fs.existsSync(path.join(SKILLS, d, 'SKILL.md')));
+  for (const name of dirs) {
+    const offending = skill(name).split('\n').filter((line) =>
+      /\bdate\b[^\n]*\s-v[-+]/.test(line) && !/\|\|[^\n]*date/.test(line) && !EXPLAINING.test(line) && !/pairs `date/.test(line));
+    assert.deepStrictEqual(
+      offending, [],
+      `${name} uses BSD date arithmetic with no GNU fallback:\n        ${offending.join('\n        ')}\n`
+      + '        Pair it with: || date -u -d ...'
+    );
+  }
+});
+
 check('the reference documents agree with the skills', () => {
   // The schemas are prose the skills tell the model to read, so a retired rule
   // left in one competes with the live rule in the other. Nothing here scanned
@@ -345,7 +394,7 @@ check('the checks would catch one', () => {
 
 // Counted as they run and then compared. This line was once a formula that
 // looked derived and was not, and it reported 10 while 13 ran.
-const EXPECTED_CHECKS = 25;
+const EXPECTED_CHECKS = 27;
 if (ran !== EXPECTED_CHECKS) {
   failed += 1;
   console.log(

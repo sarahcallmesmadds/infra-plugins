@@ -30,8 +30,14 @@ You are logging a correction to the build loop bug queue at `~/.claude/build-loo
 hand-off, create it and reuse it for the rest of the run:
 
 ```bash
-mktemp -d -t build-loop
+mktemp -d "${TMPDIR:-/tmp}/build-loop.XXXXXX"
 ```
+
+Written out in full rather than as `mktemp -d -t build-loop`, which is BSD only.
+GNU coreutils wants at least six `X` characters in the template and exits 1 on
+the short form, so on Linux the directory is never created and every hand-off
+that reads from it fails. `built-check` pairs `date -u -v-{days}d` with a
+`date -u -d` fallback for the same reason.
 
 Use the path it prints. Never a fixed name under `/tmp`. Two reasons, and the
 second is the one that bites on this machine. A fixed name is world-readable and
