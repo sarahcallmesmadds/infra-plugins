@@ -38,14 +38,22 @@ const DEFAULTS = {
   // Still not covered: `os.tmpdir()`, which is a per-user path under
   // /var/folders on macOS. It cannot be hardcoded here because it differs per
   // machine, so it needs a config entry.
+  //
+  // Two forms of entry, and the leading slash is what picks between them. An
+  // entry starting with `/` is one specific absolute location and matches only
+  // there, which is what keeps `~/scratch/tmp` from being read as `/tmp`. An
+  // entry with no leading slash is a directory name that is disposable wherever
+  // it turns up, so it matches as a whole path segment at any depth. Build
+  // output belongs in the second form: a `dist` is a `dist` in every project.
+  // Writing one of those with a leading slash means it matches nothing at all.
   safeDeletePaths: [
     '/tmp/',
     '/private/tmp/',
     'node_modules',
     '.git/objects/pack',
-    '/dist/',
-    '/build/',
-    '/coverage/',
+    'dist',
+    'build',
+    'coverage',
     '.DS_Store',
     '__pycache__',
     '.pytest_cache',

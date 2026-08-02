@@ -71,7 +71,7 @@ key at a time, so setting one option does not reset the others.
 {
   "protectedBranches": ["main", "master", "release"],
   "requireConventionalCommits": true,
-  "safeDeletePaths": ["/tmp/", "node_modules", "/dist/", "vendor/"]
+  "safeDeletePaths": ["/tmp/", "node_modules", "dist", "vendor"]
 }
 ```
 
@@ -88,6 +88,14 @@ key at a time, so setting one option does not reset the others.
 If you find yourself approving the same deletion repeatedly, add that path to
 `safeDeletePaths` rather than approving it each time. A guard you routinely
 override is training you to ignore it.
+
+An entry there takes one of two forms, and the leading slash picks between
+them. `/tmp/` is anchored: it means that one absolute location and nothing
+else, which is what stops `~/scratch/tmp` counting as disposable. `dist` is
+unanchored: it means a directory of that name wherever it turns up, at any
+depth. Build output wants the second form, because a `dist` is a `dist` in
+every project. Writing one of those with a leading slash gives you an entry
+that matches nothing.
 
 ## How severity works, and how noisy it is
 

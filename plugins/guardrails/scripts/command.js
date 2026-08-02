@@ -122,17 +122,60 @@ function deleteTargets(segment, source = segment) {
   return targets;
 }
 
-// A target is disposable if the configured path is a prefix of it, or appears as
-// a whole path segment inside it. Substring matching alone would let
-// `~/node_modules_backup` pass as `node_modules`.
+// Tidies a path using only the text of it. Empty and `.` segments drop out, so
+// `//build` and `/./build` become `/build`, and a `..` cancels the segment in
+// front of it, so `dist/../../important` becomes `../important`.
+//
+// This resolves nothing on disk and follows no symlink. It cannot: the target
+// of a delete frequently does not exist yet, which is why matching here works
+// on the path as typed in the first place. Everything below is string work.
+//
+// The distinction that matters is where the `..` sits. After the disposable
+// name it makes the match a lie, since `dist/../../important` opens with a
+// disposable word and lands nowhere near it. Before the name it does not:
+// `../node_modules` is still a node_modules, and someone clearing a sibling
+// project's build output writes exactly that. Cancelling pairs gets both,
+// where refusing anything containing a `..` got the second one wrong.
+function lexicalPath(target) {
+  const rooted = target.startsWith('/');
+  const out = [];
+  for (const segment of target.split('/')) {
+    if (segment === '' || segment === '.') continue;
+    if (segment === '..') {
+      // A leading `..` has nothing to cancel and has to survive, or
+      // `../node_modules` reads as `node_modules` and a different directory
+      // gets waved through. Above the root there is nowhere to go, so there
+      // it does drop.
+      if (out.length && out[out.length - 1] !== '..') out.pop();
+      else if (!rooted) out.push('..');
+      continue;
+    }
+    out.push(segment);
+  }
+  return (rooted ? '/' : '') + out.join('/');
+}
+
+// A target is disposable if it is exactly the configured path, sits underneath
+// it at a segment boundary, or contains it as a whole path segment. There is no
+// bare substring case: matching on substring alone would let `/tmpfoo` pass as
+// `/tmp` and `~/node_modules_backup` pass as `node_modules`.
 function isDisposable(target, safePaths) {
-  const normalized = target.replace(/\/+$/, '');
+  const normalized = lexicalPath(target);
+  // `build/..` cancels down to nothing, and nothing is not a disposable path.
+  if (!normalized || normalized === '/') return false;
   return safePaths.some((raw) => {
-    const safe = String(raw).replace(/\/+$/, '');
+    const safe = lexicalPath(String(raw));
     if (!safe) return false;
+    // An unanchored entry names a directory that appears inside a project, and
+    // a top-level directory of the filesystem is not that. `/build` is not
+    // somebody's build output, whatever it is called, and deleting the whole
+    // of it should never be silent. Only the directory itself is withheld:
+    // `/build/x` stays disposable, because a confirm verdict reaches the user
+    // as an outright deny, so tightening past the catastrophic case would deny
+    // real deletes on a machine that genuinely keeps a checkout up there.
+    if (!safe.startsWith('/') && normalized === '/' + safe) return false;
     if (normalized === safe) return true;
     if (normalized.startsWith(safe + '/')) return true;
-    if (normalized.startsWith(safe) && safe.startsWith('/')) return true;
     return normalized.includes('/' + safe + '/') || normalized.endsWith('/' + safe);
   });
 }

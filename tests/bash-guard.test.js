@@ -73,7 +73,9 @@ function assertDenies(out, what) {
 }
 
 let failed = 0;
+let ran = 0;
 function check(what, fn) {
+  ran += 1;
   try {
     fn();
     console.log(`  ok    ${what}`);
@@ -471,8 +473,84 @@ check('a real path outside the disposable list is still denied', () => {
   assertDenies(runHook('rm -rf /private/etc/something'), '/private/etc/something');
 });
 
+check('build output is allowed, in any project and however it is spelled', () => {
+  // These three shipped as `/dist/`, `/build/` and `/coverage/`. A leading
+  // slash means one specific absolute location, so they matched no project
+  // directory anywhere, and this hook turns a confirm verdict into a hard
+  // deny. `rm -rf dist` was refused outright rather than prompted.
+  for (const command of [
+    'rm -rf dist',
+    'rm -rf ./dist',
+    'rm -rf build',
+    'rm -rf coverage',
+    'rm -rf /Users/someone/Projects/app/dist',
+  ]) {
+    assert.strictEqual(runHook(command), null, `hook denied ${command}`);
+  }
+});
+
+check('a path that merely starts with a disposable name is denied', () => {
+  // isDisposable used to allow any target beginning with an anchored entry,
+  // with nothing checking that it ended at a segment boundary. The
+  // /private/etc/something case above does not catch that: it diverges at a
+  // slash and was denied under the broken code too. These do not.
+  assertDenies(runHook('rm -rf /tmpfoo'), '/tmpfoo');
+  assertDenies(runHook('rm -rf /private/tmp-backup'), '/private/tmp-backup');
+  assertDenies(runHook('rm -rf /distributed-system'), '/distributed-system');
+});
+
+check('a disposable name that climbs back out is denied', () => {
+  // Matching is on the path as typed, because the target of a delete often
+  // does not exist yet, so there is nothing to resolve. That means a `..`
+  // segment used to carry the verdict somewhere the text no longer described:
+  // every one of these was allowed, and the last two are the whole filesystem
+  // talking its way past the prompt on the strength of its first segment.
+  assertDenies(runHook('rm -rf dist/../../important'), 'dist/../../important');
+  assertDenies(runHook('rm -rf node_modules/../../important'), 'node_modules/../..');
+  assertDenies(runHook('rm -rf ~/app/dist/../src'), '~/app/dist/../src');
+  assertDenies(runHook('rm -rf /tmp/../etc'), '/tmp/../etc');
+  assertDenies(runHook('rm -rf /private/tmp/../../Users'), '/private/tmp/../../Users');
+});
+
+check('a disposable name reached from a subdirectory is still allowed', () => {
+  // The counterpart to the check above, and the reason a blanket refusal of
+  // anything containing `..` is wrong. Here the `..` comes first and the last
+  // segment is still the disposable directory, which is what someone working
+  // in a subdirectory types to clear a sibling project. A confirm verdict
+  // arrives as a deny, so getting this wrong refuses an ordinary command.
+  for (const command of [
+    'rm -rf ../node_modules',
+    'rm -rf ../dist',
+    'rm -rf ../../packages/app/dist',
+  ]) {
+    assert.strictEqual(runHook(command), null, `hook denied ${command}`);
+  }
+});
+
+check('an alternative spelling of a root directory is denied too', () => {
+  // The root-level guard compares text, so it has to compare tidied text.
+  // `//build` and `/./build` name the same directory as `/build`.
+  assertDenies(runHook('rm -rf //build'), '//build');
+  assertDenies(runHook('rm -rf /./build'), '/./build');
+  assertDenies(runHook('rm -rf /.//dist'), '/.//dist');
+});
+
+check('a disposable name at the filesystem root is denied', () => {
+  // Unanchoring the build directories means they match at any depth, and the
+  // root is a depth. `/build` is not a project's build output, so deleting the
+  // whole of it goes to the user rather than through.
+  assertDenies(runHook('rm -rf /build'), '/build');
+  assertDenies(runHook('rm -rf /dist'), '/dist');
+  assertDenies(runHook('rm -rf /coverage'), '/coverage');
+  assertDenies(runHook('rm -rf /node_modules'), '/node_modules');
+  // But only the directory itself. A confirm verdict arrives at the user as an
+  // outright deny, so withholding the subtree as well would deny real deletes
+  // on a machine that does keep a checkout up there.
+  assert.strictEqual(runHook('rm -rf /build/artifacts'), null, 'hook denied /build/artifacts');
+});
+
 fs.rmSync(FAKE_HOME, { recursive: true, force: true });
 fs.rmSync(NOWHERE, { recursive: true, force: true });
 
-console.log(`\n27 checks, ${failed} failed`);
+console.log(`\n${ran} checks, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);
