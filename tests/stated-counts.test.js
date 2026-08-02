@@ -199,10 +199,21 @@ function announcedCount(line) {
 //
 // These are the words used when a sentence is announcing what the list under it
 // contains. The original bug said "it checks four things" above a table of five.
+// Nouns describing the width of a table rather than its length are not here.
+// `columns` and `fields` were, and a table is only ever counted by its rows, so
+// "The report has three columns:" above a three-column table of six rows was
+// reported as a contradiction. The noun decided whether to compare and never
+// what to compare against.
+//
+// Teaching the table branch to count columns for those two was the alternative.
+// It was not taken. Seven rounds on this file have all been the same shape, a
+// guess about which prose belongs to which list going wrong, and every one was
+// fixed by checking less. Adding a second thing to measure adds a second thing
+// to get wrong, against prose that is rare.
 const LIST_NOUNS = new Set([
   'things', 'checks', 'steps', 'rules', 'cases', 'reasons', 'options',
-  'states', 'statuses', 'modes', 'kinds', 'fields', 'columns', 'phases',
-  'stages', 'conditions', 'requirements', 'branches', 'outcomes', 'variants',
+  'states', 'statuses', 'modes', 'kinds', 'phases',
+  'stages', 'conditions', 'requirements', 'outcomes', 'variants',
 ]);
 
 let failed = 0;
@@ -540,6 +551,23 @@ check('a count inside a code example is not read as a real one', () => {
   const after = fenced + '\n\nit checks two things:\n- a\n- b\n- c';
   assert.strictEqual(staleCounts(after, path.join(ROOT, 'sample.md')).length, 1,
     'the file stopped being checked after a code block closed');
+});
+
+check('a count of a table\'s width is not compared against its length', () => {
+  const columns = [
+    'The report has three columns:',
+    '',
+    '| a | b | c |',
+    '|---|---|---|',
+    '| 1 | 2 | 3 |',
+    '| 4 | 5 | 6 |',
+    '| 7 | 8 | 9 |',
+    '| 1 | 2 | 3 |',
+    '| 4 | 5 | 6 |',
+    '| 7 | 8 | 9 |',
+  ].join('\n');
+  assert.deepStrictEqual(staleCounts(columns, path.join(ROOT, 'sample.md')), [],
+    'a column count was compared against the row count');
 });
 
 check('it leaves a number that is not counting the list alone', () => {
