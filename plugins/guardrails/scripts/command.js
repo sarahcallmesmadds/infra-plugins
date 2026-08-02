@@ -122,9 +122,10 @@ function deleteTargets(segment, source = segment) {
   return targets;
 }
 
-// A target is disposable if the configured path is a prefix of it, or appears as
-// a whole path segment inside it. Substring matching alone would let
-// `~/node_modules_backup` pass as `node_modules`.
+// A target is disposable if it is exactly the configured path, sits underneath
+// it at a segment boundary, or contains it as a whole path segment. There is no
+// bare substring case: matching on substring alone would let `/tmpfoo` pass as
+// `/tmp` and `~/node_modules_backup` pass as `node_modules`.
 function isDisposable(target, safePaths) {
   const normalized = target.replace(/\/+$/, '');
   return safePaths.some((raw) => {
@@ -132,7 +133,6 @@ function isDisposable(target, safePaths) {
     if (!safe) return false;
     if (normalized === safe) return true;
     if (normalized.startsWith(safe + '/')) return true;
-    if (normalized.startsWith(safe) && safe.startsWith('/')) return true;
     return normalized.includes('/' + safe + '/') || normalized.endsWith('/' + safe);
   });
 }

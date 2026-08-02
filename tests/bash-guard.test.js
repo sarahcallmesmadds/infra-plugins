@@ -73,7 +73,9 @@ function assertDenies(out, what) {
 }
 
 let failed = 0;
+let ran = 0;
 function check(what, fn) {
+  ran += 1;
   try {
     fn();
     console.log(`  ok    ${what}`);
@@ -471,8 +473,34 @@ check('a real path outside the disposable list is still denied', () => {
   assertDenies(runHook('rm -rf /private/etc/something'), '/private/etc/something');
 });
 
+check('build output is allowed, in any project and however it is spelled', () => {
+  // These three shipped as `/dist/`, `/build/` and `/coverage/`. A leading
+  // slash means one specific absolute location, so they matched no project
+  // directory anywhere, and this hook turns a confirm verdict into a hard
+  // deny. `rm -rf dist` was refused outright rather than prompted.
+  for (const command of [
+    'rm -rf dist',
+    'rm -rf ./dist',
+    'rm -rf build',
+    'rm -rf coverage',
+    'rm -rf /Users/someone/Projects/app/dist',
+  ]) {
+    assert.strictEqual(runHook(command), null, `hook denied ${command}`);
+  }
+});
+
+check('a path that merely starts with a disposable name is denied', () => {
+  // isDisposable used to allow any target beginning with an anchored entry,
+  // with nothing checking that it ended at a segment boundary. The
+  // /private/etc/something case above does not catch that: it diverges at a
+  // slash and was denied under the broken code too. These do not.
+  assertDenies(runHook('rm -rf /tmpfoo'), '/tmpfoo');
+  assertDenies(runHook('rm -rf /private/tmp-backup'), '/private/tmp-backup');
+  assertDenies(runHook('rm -rf /distributed-system'), '/distributed-system');
+});
+
 fs.rmSync(FAKE_HOME, { recursive: true, force: true });
 fs.rmSync(NOWHERE, { recursive: true, force: true });
 
-console.log(`\n27 checks, ${failed} failed`);
+console.log(`\n${ran} checks, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);
