@@ -125,12 +125,13 @@ DID succeed (undo commit: {revert-hash}), and the queue file was not updated:
 {what it printed}." A refusal usually means another session holds the lock, so
 running it again is the remedy rather than editing the file by hand.
 
-**Write the entry back, do not rebuild it.** The Write tool replaces the whole
-file, so anything not carried across is gone with no error and no warning. This
-step used to say the entry was "already loaded, use what you have", which is an
-instruction to trust a copy read before the revert ran. `apply-fix` carried the
-same phrasing and did drop notes because of it. `notes` is the field that
-suffers, because it is the one that grows.
+**Why this is a command and not a Write.** This step used to say the entry was
+"already loaded, use what you have", which is an instruction to trust a copy
+read before the revert ran. `apply-fix` carried the same phrasing and did drop
+notes because of it. The wording was then corrected to say read it again, which
+helped and did not fix it: reading in one tool call and writing in another still
+leaves a gap for another session to write into. `queue.js` closes that by doing
+both inside one process holding a lock, so there is no copy to go stale.
 
 Show closing message:
 

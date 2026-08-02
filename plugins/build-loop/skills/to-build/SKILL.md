@@ -3,7 +3,7 @@ name: to-build
 type: human
 description: The to-build list, at ~/.claude/build-loop/to-build/. With an argument it writes down something the user plans to build (a skill, hook, command, plugin, or loose script), showing a draft and waiting for confirmation before writing. With no argument it shows the list. Use when the user says "I want to build", "we should build", "add that to the to-build list", "put that on the list", "remind me to build", "what's on the to-build list", "what was I going to build", "what's left to build", or explicitly invokes /to-build. Pre-fills what and why from the current session. Never writes without confirmation.
 argument-hint: "[what you want to build, or nothing to see the list]"
-allowed-tools: Read, Write, Bash(ls:*), Bash(cat:*), Bash(date:*), Bash(mkdir:*)
+allowed-tools: Read, Write, Bash(ls:*), Bash(cat:*), Bash(date:*), Bash(mkdir:*), Bash(node:*)
 ---
 
 You are working with the to-build list at `~/.claude/build-loop/to-build/`. The schema is at `${CLAUDE_PLUGIN_ROOT}/reference/SCHEMA-BUILD.md`. Read it if you have not already in this session.
@@ -15,13 +15,16 @@ This is the list of things the user plans to build. It is not the bug queue. The
 > before using it. A literal `~` creates a directory called `~` next to wherever
 > you happen to be, and every check that follows then reads the wrong place.
 
-> **This skill writes new items directly, on purpose.** Every write that REPLACES
-> an existing file in this plugin goes through `scripts/queue.js`, rather than the older `.tmp` plus parse-check plus
-> `mv` sequence. This skill only ever creates brand-new items under a fresh
-> timestamped filename, so there is no good file to lose, and `allowed-tools`
-> above grants no `node` or `mv` accordingly. If this skill is ever changed to
-> update an existing item, that stops being true and the atomic sequence becomes
-> mandatory.
+> **New items are written directly. Anything that changes an existing item goes
+> through `scripts/queue.js`.** Creating is safe to do with the Write tool: the
+> filename is a fresh timestamped stem, so there is no file already there to
+> lose. Changing one is not, because the read and the write would be separate
+> tool calls and another session writing between them loses its change with no
+> error. `queue.js` does both inside one process holding a lock.
+>
+> This paragraph used to say `allowed-tools` granted no `node`, and that adding
+> a note to an existing item therefore could not be done from here. It can now,
+> so `Bash(node:*)` is granted above and Step A2 uses it.
 
 ---
 

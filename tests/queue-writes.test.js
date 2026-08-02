@@ -153,6 +153,36 @@ check('the dep-review dedup has no expiry', () => {
   );
 });
 
+check('every skill that calls queue.js is allowed to run it', () => {
+  // to-build was converted to call queue.js and its allowed-tools was not
+  // updated, so the note it promised to write could never be written. A skill
+  // that names a command it cannot run is broken in a way nothing else here
+  // notices: the instruction reads correctly and fails at the moment of use.
+  const dirs = fs.readdirSync(SKILLS).filter((d) => fs.existsSync(path.join(SKILLS, d, 'SKILL.md')));
+  const offending = dirs.filter((name) => {
+    const text = skill(name);
+    if (!/queue\.js"? (update|create|show)/.test(text)) return false;
+    const frontmatter = text.slice(0, text.indexOf('---', 4));
+    return !/Bash\(node:\*\)/.test(frontmatter);
+  });
+  assert.deepStrictEqual(
+    offending, [],
+    `these call queue.js and do not grant Bash(node:*): ${offending.join(', ')}`
+  );
+});
+
+check('no skill still claims it cannot run node', () => {
+  // The sentence that used to justify the old arrangement outlived it in
+  // to-build, sitting a few lines above an instruction to run node. A reader
+  // could not tell which was authoritative.
+  const dirs = fs.readdirSync(SKILLS).filter((d) => fs.existsSync(path.join(SKILLS, d, 'SKILL.md')));
+  for (const name of dirs) {
+    const offending = skill(name).split('\n').filter((line) =>
+      /grants (no|neither) `?node/.test(line) && !EXPLAINING.test(line));
+    assert.deepStrictEqual(offending, [], `${name} still says it cannot run node:\n        ${offending.join('\n        ')}`);
+  }
+});
+
 check('the checks would catch one', () => {
   // A linter nobody has seen fail is a linter nobody should trust.
   const broken = '4. Write updated JSON to `~/.claude/build-loop/queue/{id}.json.tmp` using the Write tool.';
@@ -165,7 +195,7 @@ check('the checks would catch one', () => {
 
 // Counted as they run and then compared. This line was once a formula that
 // looked derived and was not, and it reported 10 while 13 ran.
-const EXPECTED_CHECKS = 13;
+const EXPECTED_CHECKS = 15;
 if (ran !== EXPECTED_CHECKS) {
   failed += 1;
   console.log(

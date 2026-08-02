@@ -72,17 +72,22 @@ function sleep(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
+// A token unique to this run, written into the lock so `release` can tell its
+// own lock from somebody else's. The pid alone is not enough: pids are reused,
+// and the case that matters is precisely the one where an old process is gone.
+const OWNER = `${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}`;
+
 function acquire() {
   const deadline = Date.now() + WAIT_MS;
   for (;;) {
     try {
       fs.mkdirSync(LOCK);
-      fs.writeFileSync(path.join(LOCK, 'owner'), String(process.pid));
+      fs.writeFileSync(path.join(LOCK, 'owner'), OWNER);
       return;
     } catch (error) {
       if (error.code !== 'EEXIST') throw error;
 
-      // Someone else holds it, or nobody does and the file is a leftover.
+      // Someone else holds it, or nobody does and the directory is a leftover.
       let age = 0;
       try {
         age = Date.now() - fs.statSync(LOCK).mtimeMs;
@@ -91,10 +96,29 @@ function acquire() {
         continue;
       }
       if (age > STALE_MS) {
-        // Take it over. Say so on stderr rather than silently, because a stale
-        // lock means a session died mid-write and the entry may be half-formed.
+        // Take it over by renaming it, never by deleting it in place.
+        //
+        // Deleting was wrong in a way worth spelling out, because it recreated
+        // the exact bug this file exists to close. Two processes can both stat
+        // the same abandoned lock and both decide it is stale. The first
+        // deletes it and takes a fresh lock. The second then deletes that
+        // brand-new lock and takes one of its own, and now two writers are
+        // inside the critical section at once and one change is lost. The
+        // recovery path reintroduced the race.
+        //
+        // A rename is atomic and has exactly one winner: whoever renames it
+        // owns the takeover, and the loser gets ENOENT and goes back round to
+        // find the winner's lock and wait for it properly.
+        const aside = `${LOCK}.stale.${OWNER}`;
+        try {
+          fs.renameSync(LOCK, aside);
+        } catch {
+          continue; // Someone else won the takeover. Their lock is the live one.
+        }
+        // Said out loud rather than silently: a stale lock means a session died
+        // mid-write, and the entry it was writing may be half-formed.
         process.stderr.write(`queue.js: taking over a lock ${Math.round(age / 1000)}s old at ${LOCK}\n`);
-        try { fs.rmSync(LOCK, { recursive: true, force: true }); } catch { /* raced, retry */ }
+        try { fs.rmSync(aside, { recursive: true, force: true }); } catch { /* it is out of the way already */ }
         continue;
       }
       if (Date.now() > deadline) {
@@ -105,8 +129,17 @@ function acquire() {
   }
 }
 
+// Removes the lock only if it is still ours. A process whose lock was taken
+// over as stale, because it stalled for longer than STALE_MS, must not delete
+// the lock of whoever took it: that would drop a live writer out of the
+// critical section without either of them knowing.
 function release() {
-  try { fs.rmSync(LOCK, { recursive: true, force: true }); } catch { /* nothing to release */ }
+  try {
+    if (fs.readFileSync(path.join(LOCK, 'owner'), 'utf8') !== OWNER) return;
+  } catch {
+    return; // No lock, or no owner file to prove it is ours. Leave it alone.
+  }
+  try { fs.rmSync(LOCK, { recursive: true, force: true }); } catch { /* already gone */ }
 }
 
 // Runs `fn` holding the lock, and releases it whatever happens. Without the
@@ -121,8 +154,27 @@ function locked(fn) {
   }
 }
 
+// An id becomes a filename, so it has to be one. Without this, an id carrying
+// `../` writes outside the queue directory, and `show` would print, or `update`
+// rewrite, an arbitrary JSON file elsewhere on disk.
+//
+// This is hardening rather than a trust boundary: the entry is composed by the
+// model in the user's own session, so there is nobody hostile on the other side
+// of it. It still matters, because ids are built from free text the user typed,
+// target names and titles, and the old flow pinned the filename to a timestamped
+// stem where this one takes whatever the `id` field says. A target name with a
+// slash in it should fail loudly rather than write somewhere surprising.
+const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+function checkId(id) {
+  if (typeof id !== 'string' || !SAFE_ID.test(id) || id.includes('..')) {
+    fail(`queue.js: ${JSON.stringify(id)} is not a usable entry id. Ids become filenames, so they may hold letters, digits, dots, dashes and underscores only, and may not contain "..". Nothing was read or written.`);
+  }
+  return id;
+}
+
 function entryPath(id, dir = QUEUE) {
-  return path.join(dir, `${id}.json`);
+  return path.join(dir, `${checkId(id)}.json`);
 }
 
 function readEntry(id, dir = QUEUE) {
@@ -246,6 +298,7 @@ function cmdCreate(args) {
     fail(`queue.js: ${from} is not valid JSON: ${error.message}. Nothing was written.`);
   }
   if (!entry.id) fail('queue.js: the entry has no id, so there is nowhere to write it.');
+  checkId(entry.id);
 
   return locked(() => {
     if (fs.existsSync(entryPath(entry.id, dir))) {

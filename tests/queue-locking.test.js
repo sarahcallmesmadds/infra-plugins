@@ -346,6 +346,100 @@ check('--json sets a field as an object, --field as a string', () => {
   });
 });
 
+// --- ids become filenames ------------------------------------------------
+
+check('an id that is not a filename is refused by every command', () => {
+  return withHome((home) => {
+    entry(home, 'real');
+    for (const bad of ['../escape', 'a/b', '..', '/abs', '.hidden', 'has space']) {
+      assert.throws(
+        () => run(home, ['show', bad]),
+        /not a usable entry id/,
+        `show accepted ${JSON.stringify(bad)}`
+      );
+      assert.throws(
+        () => run(home, ['update', bad, '--note', 'x']),
+        /not a usable entry id/,
+        `update accepted ${JSON.stringify(bad)}`
+      );
+    }
+    // And the ordinary shape still works, so the pattern is not simply refusing
+    // everything. A real entry id has dashes, dots and digits in it.
+    run(home, ['update', 'real', '--note', 'fine']);
+    assert.strictEqual(read(home, 'real').notes.length, 1);
+  });
+});
+
+check('a create whose id would escape the directory writes nothing', () => {
+  return withHome((home) => {
+    const f = path.join(home, 'evil.json');
+    fs.writeFileSync(f, JSON.stringify({ id: '../../escaped', created_at: new Date().toISOString(), notes: [] }));
+    assert.throws(() => run(home, ['create', f]), /not a usable entry id/);
+    assert.ok(!fs.existsSync(path.join(home, '.claude', 'escaped.json')), 'it wrote outside the queue directory');
+    assert.ok(!fs.existsSync(path.join(home, 'escaped.json')), 'it wrote outside the queue directory');
+  });
+});
+
+// --- taking over an abandoned lock ---------------------------------------
+
+check('several sessions meeting one stale lock do not all take it', () => {
+  // The recovery path used to delete the stale directory in place, so two
+  // processes could both decide it was stale, and the second would delete the
+  // fresh lock the first had just taken. Both then wrote, which is the bug this
+  // file exists to close, reintroduced by the code meant to recover from a
+  // crash. Ten at once against one stale lock: every note has to survive.
+  return withHome(async (home) => {
+    const lock = path.join(home, '.claude', 'build-loop', '.queue.lock');
+    fs.mkdirSync(lock);
+    fs.writeFileSync(path.join(lock, 'owner'), 'a session that died');
+    const old = new Date(Date.now() - 120000);
+    fs.utimesSync(lock, old, old);
+
+    entry(home, 'e11');
+    const results = await Promise.all(Array.from({ length: 10 }, (_, i) =>
+      start(home, ['update', 'e11', '--note', `n${i}`])));
+
+    assert.strictEqual(results.filter((r) => r.code !== 0).length, 0, 'some runs failed outright');
+    const notes = read(home, 'e11').notes;
+    assert.strictEqual(notes.length, 10, `expected 10 notes, got ${notes.length}`);
+  });
+});
+
+check('taking over a stale lock leaves nothing behind', () => {
+  return withHome((home) => {
+    const root = path.join(home, '.claude', 'build-loop');
+    const lock = path.join(root, '.queue.lock');
+    fs.mkdirSync(lock);
+    const old = new Date(Date.now() - 120000);
+    fs.utimesSync(lock, old, old);
+
+    entry(home, 'e12');
+    run(home, ['update', 'e12', '--note', 'x']);
+    const leftover = fs.readdirSync(root).filter((f) => f.startsWith('.queue.lock'));
+    assert.deepStrictEqual(leftover, [], `the takeover left ${leftover} behind`);
+  });
+});
+
+check('a process does not release a lock that is no longer its own', () => {
+  // The mirror of the case above. A process slow enough to be declared stale
+  // must not delete the lock of whoever took over from it when it finishes.
+  // Asserted through the owner file, which is the thing release() checks.
+  return withHome((home) => {
+    const lock = path.join(home, '.claude', 'build-loop', '.queue.lock');
+    fs.mkdirSync(lock);
+    fs.writeFileSync(path.join(lock, 'owner'), 'someone else');
+    const old = new Date(Date.now() - 120000);
+    fs.utimesSync(lock, old, old);
+
+    entry(home, 'e13');
+    run(home, ['update', 'e13', '--note', 'took over']);
+
+    // The taker-over wrote, and cleaned up only what it owned.
+    assert.strictEqual(read(home, 'e13').notes.length, 1);
+    assert.ok(!fs.existsSync(lock), 'the lock it did own was not released');
+  });
+});
+
 check('no tempfile is left behind', () => {
   return withHome((home) => {
     entry(home, 'e8');
