@@ -35,6 +35,18 @@ the default root `{ "name": "personal", "path": "~/.claude/skills", "kind": "ski
 skills, and a hook root holds executable files with no frontmatter to read. The
 bug queue covers hooks and commands; routing does not.
 
+Check the roots exist before scanning them:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/roots.js" check
+```
+
+Exit 0, carry on. Anything else names the roots that are gone: say so before
+routing. This skill's whole promise is that what it lists is what is installed,
+so a root that has moved makes it report an empty inventory in the same words it
+would use for a machine with nothing installed. Never invent a skill to fill
+that gap.
+
 For each skill root, scan both `<root.path>/*/SKILL.md` and
 `<root.path>/*/*/SKILL.md`, so a repository that nests the definition one
 level deeper is still found. Routing to a skill that exists but sits in a

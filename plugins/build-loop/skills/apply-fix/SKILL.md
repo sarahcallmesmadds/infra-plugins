@@ -285,6 +285,19 @@ exist, use the three defaults from SCHEMA.md: `personal` at `~/.claude/skills`,
 `hooks` at `~/.claude/hooks`, and `commands` at `~/.claude/commands`. A config
 holding `skillRoots` and no `roots` is read as roots of kind `skill`.
 
+Check they exist before using one:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/roots.js" check
+```
+
+Exit 0, carry on. Anything else names the roots that are gone. If the one this
+entry's `repo` points at is among them, relay what it said and stop, rather than
+running `git -C` against a path that is not there and reporting whatever git
+says about it. The target file is already written by this point, so say that too:
+the fix is on disk and uncommitted, and the entry stays as it is until the root
+is fixed.
+
 Look up the entry's `repo` in `roots` to get that root's path. Then work out
 what to stage, as the path of `target_path` relative to that root. Do NOT
 assume it ends in `SKILL.md`, because the target may be a hook or a script:
