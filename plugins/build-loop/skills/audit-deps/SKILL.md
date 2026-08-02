@@ -32,6 +32,18 @@ file does not exist, use the three defaults:
 A config holding `skillRoots` and no `roots` is read as roots of kind `skill`.
 Do not rewrite that file. It predates schema v2 and still works.
 
+**Check every configured root exists before scanning, and report each one that
+does not.** A dead root is invisible otherwise: the scan lists nothing under it,
+and Step 3 then reports everything the map held under it as ORPHANED, which reads
+as "these files were deleted" when what actually happened is that the path moved.
+
+> "Root '{name}' points at {path}, which does not exist. Everything the map holds
+> under it will show as orphaned until the path is fixed."
+
+Report this for each dead root, then carry on scanning the ones that do exist. Do
+not offer to remove the orphans a dead root produced. Those entries are almost
+certainly fine and the path is the thing that broke.
+
 **If none of the configured roots exist on disk**, stop before scanning and say
 so, because a scan of nothing looks identical to a scan that found nothing:
 
