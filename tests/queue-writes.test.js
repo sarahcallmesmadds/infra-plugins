@@ -183,6 +183,41 @@ check('no skill still claims it cannot run node', () => {
   }
 });
 
+check('no skill names the command in a form that cannot be run', () => {
+  // Six inline mentions said `queue.js update ...` with no interpreter and no
+  // path, while the fenced blocks in the same files used the full form. They sit
+  // on the failure and cancellation branches, which are the least exercised and
+  // the most expensive to lose: an entry that should go back to Open stays
+  // parked in a status nobody looks at.
+  const dirs = fs.readdirSync(SKILLS).filter((d) => fs.existsSync(path.join(SKILLS, d, 'SKILL.md')));
+  for (const name of dirs) {
+    const offending = skill(name).split('\n').filter((line) => /`queue\.js (update|create|show)/.test(line));
+    assert.deepStrictEqual(
+      offending, [],
+      `${name} names queue.js without node and a path:\n        ${offending.join('\n        ')}\n`
+      + '        Use: node "${CLAUDE_PLUGIN_ROOT}/scripts/queue.js" ...'
+    );
+  }
+});
+
+check('the reference documents agree with the skills', () => {
+  // The schemas are prose the skills tell the model to read, so a retired rule
+  // left in one competes with the live rule in the other. Nothing here scanned
+  // reference/ at all, so both files kept ordering the hand-rolled sequence
+  // after every skill had stopped using it.
+  const ref = path.join(__dirname, '..', 'plugins', 'build-loop', 'reference');
+  for (const file of fs.readdirSync(ref).filter((f) => f.endsWith('.md'))) {
+    const text = fs.readFileSync(path.join(ref, file), 'utf8');
+    const offending = text.split('\n').filter((line) =>
+      /`\.tmp` plus node parse-check plus `mv`|\.tmp. plus node parse-check/.test(line)
+      && !/used to|no longer|is not a queue entry/i.test(line));
+    assert.deepStrictEqual(
+      offending, [],
+      `${file} still orders the hand-rolled sequence:\n        ${offending.join('\n        ')}`
+    );
+  }
+});
+
 check('the checks would catch one', () => {
   // A linter nobody has seen fail is a linter nobody should trust.
   const broken = '4. Write updated JSON to `~/.claude/build-loop/queue/{id}.json.tmp` using the Write tool.';
@@ -195,7 +230,7 @@ check('the checks would catch one', () => {
 
 // Counted as they run and then compared. This line was once a formula that
 // looked derived and was not, and it reported 10 while 13 ran.
-const EXPECTED_CHECKS = 15;
+const EXPECTED_CHECKS = 17;
 if (ran !== EXPECTED_CHECKS) {
   failed += 1;
   console.log(

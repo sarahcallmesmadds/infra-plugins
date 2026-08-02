@@ -44,7 +44,7 @@ Then check:
 - If `status` is `"Resolved"`, `"Won't Fix"`, or `"fix applied, watching"`: say "This entry is already {status}. Nothing to fix." Stop.
 - If `status` is `"fix attempted / unresolved"`: that status was retired in 0.3.1 and nothing writes it any more, so this entry predates the change. Treat it as `"Open"`, say "This entry was attempted in an earlier version and left unresolved. Proceeding with a new attempt." Continue. Read this even though nothing produces it: an entry written before 0.3.1 is otherwise stuck, because no other branch here handles the value.
 - If `status` is `"In Progress"` from a previous session (no commit hash in notes): say "This entry is already marked In Progress from a previous session. The last session may have been interrupted before the fix was committed. Should I start fresh (re-read the target file and propose the fix again), or check whether the file was already written?" Wait for the user's answer:
-  - "start fresh" → set status to "Open" with `queue.js update {id} --status Open`, then continue from Step 1.
+  - "start fresh" → set status to "Open" with `node "${CLAUDE_PLUGIN_ROOT}/scripts/queue.js" update {id} --status Open`, then continue from Step 1.
   - "check if written" → read the current target file and compare to the before/after description in the queue entry. If the fix appears already applied, show a summary and ask whether to commit it or revert.
 
 **Repo guard:** If `repo == "unknown"`: say "This entry has repo: unknown. I can't commit without knowing which repo this belongs to. Check DEPS.json or update the queue entry's repo field manually, then try again." Stop. Do not change status.
@@ -120,7 +120,7 @@ would not say which is at risk. Keep the two fields apart everywhere else.
   each exist in more than one plugin here, so a bare name in a warning about
   what a fix might break is the one place ambiguity costs something.
 
-  Wait for the user's explicit confirmation. If they say no: set status back with `queue.js update {id} --status Open`. Stop.
+  Wait for the user's explicit confirmation. If they say no: set status back with `node "${CLAUDE_PLUGIN_ROOT}/scripts/queue.js" update {id} --status Open`. Stop.
 
 ---
 
@@ -197,7 +197,7 @@ Rules for the diff display:
 
 Response handling:
 - `"yes"` (or any clear affirmative) → proceed to Step 7.
-- `"no"` (or any negative) → set status back with `queue.js update {id} --status Open`. Ask: "Should I mark this Won't Fix or leave it Open for later?" Then stop. Do NOT write the target file.
+- `"no"` (or any negative) → set status back with `node "${CLAUDE_PLUGIN_ROOT}/scripts/queue.js" update {id} --status Open`. Ask: "Should I mark this Won't Fix or leave it Open for later?" Then stop. Do NOT write the target file.
 - `"retry: {instructions}"` → revise the fix reasoning incorporating the user's instructions, return to Step 5 with the revised reasoning, show an updated diff, return to Step 6.
 
 ---
@@ -213,7 +213,7 @@ Use the **Write tool** to write the full file to `{target_path}`. Do NOT use the
 **If Write tool errors:**
 > "The write failed: {error}. The target file is untouched, since Write is all-or-nothing. The queue entry stays Open, with a note recording the failure."
 
-Run `queue.js update {id} --status Open --note "Write tool failed, target file untouched: {error}"`. Stop.
+Run `node "${CLAUDE_PLUGIN_ROOT}/scripts/queue.js" update {id} --status Open --note "Write tool failed, target file untouched: {error}"`. Stop.
 
 The entry stays Open for the same reason a rejected verification does: a fix that
 did not land is an open bug, and a status no view lists is a bug you cannot find.

@@ -365,9 +365,20 @@ The file is not rewritten on read. `/whats-breaking` writes every flag back unde
 
 Group by `target`. Three or more closed primary corrections for the same target, across three or more unique sessions. A correction is "closed primary" if `type == "primary"` (or the field is missing) AND `status` is `Resolved` or `fix applied, watching`. Dedup by `session_id || id` when counting unique sessions.
 
-### Atomic write rule
+### Write rule
 
-`pattern-flags.json` writes use the `.tmp` plus node parse-check plus `mv` sequence, like every other JSON write that REPLACES an existing file. Creating a brand-new queue entry is the one case that does not need it, because there is no existing file to lose. `/flag-issue` documents that in its own header.
+Queue entries are never written by hand. Changing one goes through
+`scripts/queue.js update`, and creating one goes through `scripts/queue.js
+create`, which re-checks the `dedup_key` inside the same lock it writes under.
+`/flag-issue` composes the entry to a scratch file and hands it over.
+
+This used to say that creating was the one case not needing care, because there
+was no existing file to lose. That was true about half-written files and missed
+the other half: the dedup check and the write were separate tool calls, so two
+sessions capturing the same correction both saw an empty queue and both wrote.
+
+`pattern-flags.json` is not a queue entry and still uses the `.tmp` plus node
+parse-check plus `mv` sequence.
 
 ---
 

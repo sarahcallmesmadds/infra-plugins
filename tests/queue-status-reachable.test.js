@@ -180,7 +180,7 @@ check('no skill writes the retired status', () => {
 });
 
 check('verify-fix puts a rejected fix back to Open', () => {
-  assert.match(VERIFY_FIX, /queue\.js" update \{id\} --status Open/,
+  assert.match(VERIFY_FIX, /queue\.js"? update \{id\} --status Open/,
     'the fail path no longer returns the entry to Open');
 });
 
@@ -210,7 +210,7 @@ check('the rejection note does not assert a file state both modes cannot share',
 });
 
 check('apply-fix leaves the entry Open when the write fails', () => {
-  assert.match(APPLY_FIX, /queue\.js update \{id\} --status Open --note "Write tool failed/,
+  assert.match(APPLY_FIX, /queue\.js"? update \{id\} --status Open --note "Write tool failed/,
     'a failed write still parks the entry in a status no default view shows');
 });
 

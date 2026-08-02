@@ -22,8 +22,8 @@ You are logging a correction to the build loop bug queue at `~/.claude/build-loo
 > capturing the same correction both looked at the queue, both saw no duplicate,
 > and both wrote. The check was never the problem. The gap after it was.
 >
-> `queue.js create` does the check and the write inside one process holding one
-> lock, so nothing can land between them.
+> The `create` command does the check and the write inside one process holding
+> one lock, so nothing can land between them.
 
 ## Session context guard
 

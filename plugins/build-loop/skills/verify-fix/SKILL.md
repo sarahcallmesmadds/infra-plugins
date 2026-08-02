@@ -198,7 +198,7 @@ Same three response types as Step V3:
 
 - **"yes"** (PASS in standalone mode):
   "Noted, the fix looks correct. Updating the queue entry to record your approval."
-  If status was `"In Progress"`, run `queue.js update {id} --status "fix applied, watching" --note "Standalone verify: the user confirmed fix looks correct."`.
+  If status was `"In Progress"`, run `node "${CLAUDE_PLUGIN_ROOT}/scripts/queue.js" update {id} --status "fix applied, watching" --note "Standalone verify: the user confirmed fix looks correct."`.
   Display: "Queue entry {id} is now 'fix applied, watching'. Try it in a real session. When it works, you can close this to Resolved."
 
 - **"no"** (FAIL in standalone mode):

@@ -79,6 +79,23 @@ const OWNER = `${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2
 
 function acquire() {
   const deadline = Date.now() + WAIT_MS;
+
+  // Every path that goes round again comes through here, so there is no way to
+  // retry without both checking the deadline and pausing first.
+  //
+  // There used to be. A retry after a failed takeover jumped straight back to
+  // the top, skipping both, and the loop then spun at full CPU with no exit:
+  // mkdir fails EEXIST, the rename fails again for whatever reason it failed
+  // the first time, round again forever. A directory that cannot be written to
+  // is enough to trigger it, and the symptom is a session that hangs with no
+  // message rather than the refusal that was supposed to happen after WAIT_MS.
+  const waitOrGiveUp = (why) => {
+    if (Date.now() > deadline) {
+      fail(`queue.js: could not take the queue lock within ${WAIT_MS}ms (${why}). Nothing was written. Try again, or remove ${LOCK} if you are certain no other session is running.`);
+    }
+    sleep(POLL_MS);
+  };
+
   for (;;) {
     try {
       fs.mkdirSync(LOCK);
@@ -93,6 +110,7 @@ function acquire() {
         age = Date.now() - fs.statSync(LOCK).mtimeMs;
       } catch {
         // It vanished between the failed mkdir and the stat, so it is free now.
+        waitOrGiveUp('the lock kept appearing and vanishing');
         continue;
       }
       if (age > STALE_MS) {
@@ -112,8 +130,14 @@ function acquire() {
         const aside = `${LOCK}.stale.${OWNER}`;
         try {
           fs.renameSync(LOCK, aside);
-        } catch {
-          continue; // Someone else won the takeover. Their lock is the live one.
+        } catch (renameError) {
+          // Either somebody else won the takeover, in which case their lock is
+          // the live one and waiting is right, or the rename cannot succeed at
+          // all, for instance because the directory is not writable. The two
+          // are indistinguishable from here and the deadline covers both: one
+          // resolves inside it, the other reports rather than spinning.
+          waitOrGiveUp(`a stale lock could not be moved aside: ${renameError.code || renameError.message}`);
+          continue;
         }
         // Said out loud rather than silently: a stale lock means a session died
         // mid-write, and the entry it was writing may be half-formed.
@@ -121,10 +145,7 @@ function acquire() {
         try { fs.rmSync(aside, { recursive: true, force: true }); } catch { /* it is out of the way already */ }
         continue;
       }
-      if (Date.now() > deadline) {
-        fail(`queue.js: another session has held the queue lock for ${WAIT_MS}ms. Nothing was written. Try again, or remove ${LOCK} if you are certain no other session is running.`);
-      }
-      sleep(POLL_MS);
+      waitOrGiveUp('another session is holding it');
     }
   }
 }
@@ -165,6 +186,35 @@ function locked(fn) {
 // stem where this one takes whatever the `id` field says. A target name with a
 // slash in it should fail loudly rather than write somewhere surprising.
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+// Keys that --field and --json may not set, and why each one is here.
+//
+// `notes` is the whole point of the file. The guarantee is that a caller cannot
+// hand over a notes array, so it cannot hand over a stale one, and --json
+// notes=FILE was a way to do exactly that: it replaced the history and the
+// before/after counter still read 1 -> 1, so the loss was hidden by the line
+// meant to reveal it. Use --note, which appends to what is on disk.
+//
+// `id` has to equal the filename stem or the entry cannot be found by its own
+// identifier, and nothing about setting it here moves the file.
+//
+// The prototype keys are not an exploit in a short-lived local process that
+// serializes with JSON.stringify, which would not emit them anyway. They are
+// here because an unchecked write of arbitrary property names is worth
+// refusing on principle in a file that already refuses unchecked ids.
+const PROTECTED_KEYS = new Set(['notes', 'id', '__proto__', 'constructor', 'prototype']);
+
+function checkKey(key) {
+  if (PROTECTED_KEYS.has(key)) {
+    const advice = key === 'notes'
+      ? ' Use --note, which appends to the notes already on the entry.'
+      : key === 'id'
+        ? ' An id has to match its filename, so changing one here would only break the pair.'
+        : '';
+    fail(`queue.js: ${key} cannot be set with --field or --json.${advice} Nothing was written.`);
+  }
+  return key;
+}
 
 function checkId(id) {
   if (typeof id !== 'string' || !SAFE_ID.test(id) || id.includes('..')) {
@@ -234,7 +284,7 @@ function cmdUpdate(args) {
     for (const pair of jsonFields) {
       const at = pair.indexOf('=');
       if (at < 1) fail(`queue.js: --json wants key=FILE, got ${pair}`);
-      const key = pair.slice(0, at);
+      const key = checkKey(pair.slice(0, at));
       const file = pair.slice(at + 1);
       let raw;
       try {
@@ -255,7 +305,7 @@ function cmdUpdate(args) {
     for (const pair of args.field || []) {
       const at = pair.indexOf('=');
       if (at < 1) fail(`queue.js: --field wants key=value, got ${pair}`);
-      entry[pair.slice(0, at)] = pair.slice(at + 1);
+      entry[checkKey(pair.slice(0, at))] = pair.slice(at + 1);
     }
 
     // Appended, never rebuilt. The notes array is the audit trail and is read

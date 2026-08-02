@@ -143,4 +143,4 @@ The target file is restored to its pre-fix state.
 Do you want to try a different fix, or leave this Open for later?
 ```
 
-Wait for the user's response. If they say "Won't Fix" or "mark it closed": run `queue.js update {id} --status "Won't Fix"`.
+Wait for the user's response. If they say "Won't Fix" or "mark it closed": run `node "${CLAUDE_PLUGIN_ROOT}/scripts/queue.js" update {id} --status "Won't Fix"`.

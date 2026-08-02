@@ -108,9 +108,16 @@ function read(home, id) {
   return JSON.parse(fs.readFileSync(queueFile(home, id), 'utf8'));
 }
 
+// Every spawn gets a timeout. Without one, a bug that makes queue.js loop
+// forever hangs the suite instead of failing it, and a hung suite reports
+// nothing at all. That is not hypothetical: reverting the deadline fix to check
+// these tests catch it hung the run rather than turning it red.
+const KILL_MS = 20000;
+
 function run(home, args) {
   return execFileSync(process.execPath, [QUEUE_JS, ...args], {
     encoding: 'utf8',
+    timeout: KILL_MS,
     env: { ...process.env, HOME: home },
   });
 }
@@ -119,6 +126,7 @@ function run(home, args) {
 function start(home, args) {
   return new Promise((resolve) => {
     execFile(process.execPath, [QUEUE_JS, ...args], {
+      timeout: KILL_MS,
       env: { ...process.env, HOME: home },
     }, (error, stdout, stderr) => resolve({ code: error ? error.code : 0, stdout, stderr }));
   });
@@ -437,6 +445,82 @@ check('a process does not release a lock that is no longer its own', () => {
     // The taker-over wrote, and cleaned up only what it owned.
     assert.strictEqual(read(home, 'e13').notes.length, 1);
     assert.ok(!fs.existsSync(lock), 'the lock it did own was not released');
+  });
+});
+
+// --- what --field and --json may not touch -------------------------------
+
+check('the notes history cannot be replaced through a field option', () => {
+  // The guarantee this whole file rests on is that a caller cannot hand over a
+  // notes array, so it cannot hand over a stale one. --json notes=FILE was a
+  // way to do exactly that, and the before/after counter still printed 1 -> 1,
+  // so the line meant to reveal a loss concealed one instead.
+  return withHome((home) => {
+    entry(home, 'p1', { notes: [{ ts: 'old', text: 'was here first' }] });
+    fs.writeFileSync(path.join(home, 'n.json'), '[]');
+    assert.throws(
+      () => run(home, ['update', 'p1', '--json', `notes=${path.join(home, 'n.json')}`, '--note', 'new']),
+      /notes cannot be set/
+    );
+    const after = read(home, 'p1');
+    assert.strictEqual(after.notes.length, 1, 'the history was touched');
+    assert.strictEqual(after.notes[0].text, 'was here first');
+  });
+});
+
+check('the id cannot be changed out from under its filename', () => {
+  return withHome((home) => {
+    entry(home, 'p2');
+    assert.throws(() => run(home, ['update', 'p2', '--field', 'id=other']), /id cannot be set/);
+    assert.strictEqual(read(home, 'p2').id, 'p2');
+  });
+});
+
+check('prototype keys are refused like any other protected name', () => {
+  return withHome((home) => {
+    entry(home, 'p3');
+    for (const key of ['__proto__', 'constructor', 'prototype']) {
+      assert.throws(() => run(home, ['update', 'p3', '--field', `${key}=x`]), /cannot be set/, `${key} was accepted`);
+    }
+    // And an ordinary field still works, so the list is not refusing everything.
+    run(home, ['update', 'p3', '--field', 'repo=fine']);
+    assert.strictEqual(read(home, 'p3').repo, 'fine');
+  });
+});
+
+// --- giving up ------------------------------------------------------------
+
+check('a lock that cannot be taken over is reported rather than spun on', () => {
+  // The takeover retry used to jump straight back to the top of the loop,
+  // skipping both the deadline and the pause, so a stale lock that could not be
+  // moved aside span at full CPU forever. The session looks frozen and no
+  // message is ever printed. A directory that is not writable is enough.
+  return withHome((home) => {
+    const root = path.join(home, '.claude', 'build-loop');
+    const lock = path.join(root, '.queue.lock');
+    fs.mkdirSync(lock);
+    const old = new Date(Date.now() - 300000);
+    fs.utimesSync(lock, old, old);
+    entry(home, 'p4');
+
+    fs.chmodSync(root, 0o500); // readable and traversable, not writable
+    const started = Date.now();
+    try {
+      // The message matters as much as the exit: a child killed by the harness
+      // timeout also throws, and that is a spin rather than a refusal.
+      assert.throws(
+        () => run(home, ['update', 'p4', '--note', 'x']),
+        (error) => {
+          assert.ok(!error.killed, 'it had to be killed, so it never gave up on its own');
+          assert.match(String(error.stderr || error.message), /could not take the queue lock/);
+          return true;
+        }
+      );
+    } finally {
+      fs.chmodSync(root, 0o700);
+    }
+    const took = Date.now() - started;
+    assert.ok(took < 20000, `it took ${took}ms to give up, which is not giving up`);
   });
 });
 
