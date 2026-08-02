@@ -66,13 +66,23 @@ function listAt(lines, from) {
   if (i >= lines.length) return null;
 
   if (/^\s*\|/.test(lines[i])) {
-    let rows = 0;
-    for (; i < lines.length && /^\s*\|/.test(lines[i]); i++) {
-      // The header and the |---|---| rule underneath it are not entries.
-      if (/^\s*\|[\s|:-]+\|\s*$/.test(lines[i])) { rows = 0; continue; }
-      rows++;
-    }
-    return rows > 0 ? { kind: 'table', count: rows } : null;
+    const rows = [];
+    for (; i < lines.length && /^\s*\|/.test(lines[i]); i++) rows.push(lines[i]);
+
+    // The header rule is found by position, not by shape. The first attempt
+    // matched any row built only from pipes, spaces, dashes and colons, and
+    // then reset the running total when it saw one. A body row of `| - | - |`
+    // meaning "none", or a blank spacer row, matched that and silently
+    // discarded every row above it, so a correct sentence above a four-row
+    // table was reported as wrong and failed the suite.
+    //
+    // A real header rule is always the second line of the table and always
+    // holds a run of dashes. Both conditions, so a body row cannot be mistaken
+    // for one wherever it sits.
+    const HEADER_RULE = /^\s*\|[\s|:-]*-{3,}[\s|:-]*\|\s*$/;
+    const hasHeader = rows.length > 1 && HEADER_RULE.test(rows[1]);
+    const count = hasHeader ? rows.length - 2 : rows.length;
+    return count > 0 ? { kind: 'table', count } : null;
   }
 
   if (/^\s*([-*]|\d+\.)\s/.test(lines[i])) {
@@ -207,6 +217,39 @@ check('it catches the shape it was written for', () => {
 
   const fixed = sample.replace('four things', 'five things');
   assert.deepStrictEqual(staleCounts(fixed, path.join(ROOT, 'sample.md')), [], 'a correct count is reported as wrong');
+});
+
+check('a body row that looks like a header rule does not eat the table', () => {
+  // `| - | - |` meaning "none", and a blank spacer row, both matched the first
+  // version of the separator test, which then reset the count to zero. Every
+  // row above one was discarded, so a correct count was reported as wrong and
+  // the suite failed until the table was rewritten.
+  const withDashRow = [
+    'it checks four things:',
+    '',
+    '| Check | Meaning |',
+    '|-------|---------|',
+    '| a | x |',
+    '| - | - |',
+    '| c | z |',
+    '| d | w |',
+  ].join('\n');
+  assert.deepStrictEqual(staleCounts(withDashRow, path.join(ROOT, 'sample.md')), [],
+    'a body row of dashes was counted as the header rule');
+
+  const withBlankRow = withDashRow.replace('| - | - |', '|   |   |');
+  assert.deepStrictEqual(staleCounts(withBlankRow, path.join(ROOT, 'sample.md')), [],
+    'a blank spacer row was counted as the header rule');
+
+  // And a table with no header rule at all counts every row.
+  const headerless = [
+    'it checks two things:',
+    '',
+    '| a | x |',
+    '| b | y |',
+  ].join('\n');
+  assert.deepStrictEqual(staleCounts(headerless, path.join(ROOT, 'sample.md')), [],
+    'a table without a header rule was miscounted');
 });
 
 check('it leaves a number that is not counting the list alone', () => {
