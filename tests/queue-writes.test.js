@@ -291,6 +291,24 @@ check('queue.js sets an exit code rather than calling process.exit', () => {
   assert.match(source, /process\.exitCode = code/, 'nothing sets the exit code, so a failure would report success');
 });
 
+check('acquire undoes the lock if it cannot write the owner marker', () => {
+  // locked() only arms its release once acquire returns, so the window between
+  // creating the lock directory and writing the marker inside it is the one
+  // path the "released whatever happens" guarantee does not cover. A throw
+  // there used to leave the directory on disk with nothing that would remove
+  // it, since every later run refuses to release a lock it does not own, so
+  // the queue was shut for STALE_MS.
+  //
+  // A source assertion because provoking it needs a write to fail inside a
+  // directory that was just created successfully, which in practice means a
+  // full disk. queue-locking.test.js covers the reachable half.
+  const source = fs.readFileSync(QUEUE_JS, 'utf8');
+  const window = source.slice(source.indexOf('fs.mkdirSync(LOCK)'), source.indexOf('return;'));
+  assert.match(window, /catch \(markerError\)/, 'the owner-marker write is not guarded');
+  assert.match(window, /rmSync\(LOCK/, 'a failed marker write does not remove the lock it just created');
+  assert.match(window, /throw markerError/, 'a failed marker write is swallowed, so the caller thinks it holds the lock');
+});
+
 check('a duplicate the user approved can still be written', () => {
   // Both skills offer to add something after warning it looks like a duplicate,
   // and both then called create with a window that refuses exactly that. The
@@ -394,7 +412,7 @@ check('the checks would catch one', () => {
 
 // Counted as they run and then compared. This line was once a formula that
 // looked derived and was not, and it reported 10 while 13 ran.
-const EXPECTED_CHECKS = 27;
+const EXPECTED_CHECKS = 28;
 if (ran !== EXPECTED_CHECKS) {
   failed += 1;
   console.log(

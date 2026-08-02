@@ -114,7 +114,20 @@ function acquire() {
   for (;;) {
     try {
       fs.mkdirSync(LOCK);
-      fs.writeFileSync(path.join(LOCK, 'owner'), OWNER);
+      // From here the lock exists and nothing is armed to remove it yet:
+      // locked() only installs its finally once acquire returns. So if writing
+      // the owner marker fails, on ENOSPC or EIO or the directory being moved
+      // aside underneath us, the error would escape with the directory still on
+      // disk, and no later run would clear it because release refuses to remove
+      // a lock it does not own. Every write would be refused until it aged out.
+      //
+      // Undo it here, where the knowledge that it was just created still exists.
+      try {
+        fs.writeFileSync(path.join(LOCK, 'owner'), OWNER);
+      } catch (markerError) {
+        try { fs.rmSync(LOCK, { recursive: true, force: true }); } catch { /* nothing else to try */ }
+        throw markerError;
+      }
       return;
     } catch (error) {
       if (error.code !== 'EEXIST') throw error;
@@ -438,13 +451,45 @@ function cmdShow(args) {
 // in a single update and the last one winning would silently drop the rest.
 const REPEATABLE = new Set(['note', 'note-file', 'field', 'json']);
 
+// Options that take a value, and therefore always consume the next token.
+//
+// The parser used to decide that by looking at the token: if it began with two
+// dashes it could not be a value. That silently destroyed any note starting
+// with dashes. `--note "--force was ignored"` is one shell argument, but it
+// begins with `--`, so `note` was set to the string 'true', the real text was
+// re-read as a flag called `force was ignored`, and the entry was written with
+// a note reading `true` and an exit code of 0. The text of what went wrong,
+// gone, with nothing to notice.
+//
+// Knowing which options take values removes the guess. `--note --force` now
+// means a note reading `--force`, which is what it looks like it means.
+const VALUE_OPTS = new Set([
+  'list', 'status', 'note', 'note-file', 'field', 'json', 'resolution', 'dedup-window',
+]);
+
 function parseArgs(argv) {
   const out = { _: [] };
   for (let i = 0; i < argv.length; i++) {
     const token = argv[i];
     if (!token.startsWith('--')) { out._.push(token); continue; }
-    const name = token.slice(2);
-    const value = argv[i + 1] !== undefined && !argv[i + 1].startsWith('--') ? argv[++i] : 'true';
+
+    // `--name=value` is unambiguous whatever the value starts with.
+    const eq = token.indexOf('=');
+    let name = eq > 2 ? token.slice(2, eq) : token.slice(2);
+    let value = eq > 2 ? token.slice(eq + 1) : undefined;
+
+    // An unknown option used to become a silent boolean, which is how a
+    // mangled value turned into a flag nobody asked for. Refusing it means a
+    // typo is reported rather than ignored.
+    if (!VALUE_OPTS.has(name)) {
+      fail(`queue.js: unknown option --${name}. Known options: ${[...VALUE_OPTS].map((o) => '--' + o).join(', ')}`);
+    }
+
+    if (value === undefined) {
+      if (i + 1 >= argv.length) fail(`queue.js: --${name} needs a value.`);
+      value = argv[++i];
+    }
+
     if (REPEATABLE.has(name)) (out[name] = out[name] || []).push(value);
     else out[name] = value;
   }

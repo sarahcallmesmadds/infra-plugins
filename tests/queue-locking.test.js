@@ -522,6 +522,14 @@ check('a lock that cannot be taken over is reported rather than spun on', () => 
     fs.utimesSync(lock, old, old);
     entry(home, 'p4');
 
+    // chmod does nothing to root, so under a container that runs tests as root
+    // the rename succeeds, the takeover works, and this turns red because of
+    // the environment rather than the code. A test that fails for a reason it
+    // is not about teaches people to ignore it.
+    if (process.getuid && process.getuid() === 0) {
+      console.log('        (skipped: running as root, where chmod cannot make a directory unwritable)');
+      return;
+    }
     fs.chmodSync(root, 0o500); // readable and traversable, not writable
     const started = Date.now();
     try {
@@ -540,6 +548,61 @@ check('a lock that cannot be taken over is reported rather than spun on', () => 
     }
     const took = Date.now() - started;
     assert.ok(took < 20000, `it took ${took}ms to give up, which is not giving up`);
+  });
+});
+
+check('a note that begins with dashes is stored as written', () => {
+  // The parser used to decide what was a value by looking at the token: if it
+  // began with two dashes it could not be one. So this note was stored as the
+  // string 'true', the real text was re-read as a flag, and the command exited
+  // 0. The wording of what went wrong, lost with nothing to notice.
+  return withHome((home) => {
+    entry(home, 'a1');
+    run(home, ['update', 'a1', '--note', '--force was ignored']);
+    assert.strictEqual(read(home, 'a1').notes[0].text, '--force was ignored');
+
+    // The same rule swallowed any value beginning with dashes, not just notes.
+    run(home, ['update', 'a1', '--status', '--odd']);
+    assert.strictEqual(read(home, 'a1').status, '--odd');
+  });
+});
+
+check('an unknown option is refused rather than becoming a silent flag', () => {
+  return withHome((home) => {
+    entry(home, 'a2');
+    assert.throws(() => run(home, ['update', 'a2', '--nope', 'x']), /unknown option --nope/);
+    assert.throws(() => run(home, ['update', 'a2', '--note']), /--note needs a value/);
+    assert.strictEqual(read(home, 'a2').notes.length, 0, 'it wrote despite refusing the arguments');
+  });
+});
+
+check('--name=value is read whatever the value starts with', () => {
+  return withHome((home) => {
+    entry(home, 'a3');
+    run(home, ['update', 'a3', '--note=--still a note']);
+    assert.strictEqual(read(home, 'a3').notes[0].text, '--still a note');
+  });
+});
+
+check('a run that cannot take the lock leaves nothing behind', () => {
+  // The weaker half of the marker-write invariant, and the half that is
+  // reachable from outside: whatever goes wrong while trying to acquire, no
+  // lock and no half-renamed leftover may survive it. The marker-write path
+  // itself needs a write to fail inside a directory that was just created
+  // successfully, which cannot be provoked without a full disk, so that one is
+  // pinned as a source assertion in queue-writes.test.js instead.
+  return withHome((home) => {
+    const root = path.join(home, '.claude', 'build-loop');
+    entry(home, 'a4');
+
+    // A file where the lock directory belongs: mkdir fails, and it is not stale,
+    // so this gives up after WAIT_MS rather than taking over.
+    fs.writeFileSync(path.join(root, '.queue.lock'), 'not a directory');
+    assert.throws(() => run(home, ['update', 'a4', '--note', 'x']), /could not take the queue lock/);
+
+    const leftovers = fs.readdirSync(root).filter((f) => f.startsWith('.queue.lock') && f !== '.queue.lock');
+    assert.deepStrictEqual(leftovers, [], `left ${leftovers} behind`);
+    assert.strictEqual(read(home, 'a4').notes.length, 0, 'it wrote without holding the lock');
   });
 });
 
