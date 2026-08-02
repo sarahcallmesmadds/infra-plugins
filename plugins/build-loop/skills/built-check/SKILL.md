@@ -3,7 +3,7 @@ name: built-check
 type: human
 description: Cross-checks the to-build list at ~/.claude/build-loop/to-build/ against what has actually been built, and offers to close the finished items in one step. Looks for evidence in the git log of every configured root, on disk, and in the current session. Use at the end of a session, when wrapping up, or when the user asks "what did I ship", "did I build any of this", "close the ones I've done", "is anything on the list done", or explicitly invokes /built-check. Shows the evidence for each item and closes nothing without an explicit yes.
 argument-hint: "[optional: number of days back to look, default 90]"
-allowed-tools: Read, Write, Bash(ls:*), Bash(cat:*), Bash(date:*), Bash(mv:*), Bash(rm:*), Bash(node:*), Bash(git:*), Bash(find:*), Bash(stat:*)
+allowed-tools: Read, Write, Bash(ls:*), Bash(cat:*), Bash(date:*), Bash(mktemp:*), Bash(mv:*), Bash(rm:*), Bash(node:*), Bash(git:*), Bash(find:*), Bash(stat:*)
 ---
 
 You are reconciling the to-build list against reality. The schema is at `${CLAUDE_PLUGIN_ROOT}/reference/SCHEMA-BUILD.md`. Read it if you have not already in this session.
@@ -19,6 +19,29 @@ Two rules that do not bend:
 > Node's `fs` both take it literally, so expand it to the absolute home path
 > before using it. A literal `~` creates a directory called `~` next to wherever
 > you happen to be, and every check that follows then reads the wrong place.
+
+---
+
+**Scratch files go in a private directory, made once per run.** Before the first
+hand-off, create it and reuse it for the rest of the run:
+
+```bash
+mktemp -d "${TMPDIR:-/tmp}/build-loop.XXXXXX"
+```
+
+Written out in full rather than as `mktemp -d -t build-loop`, which is BSD only.
+GNU coreutils wants at least six `X` characters in the template and exits 1 on
+the short form, so on Linux the directory is never created and every hand-off
+that reads from it fails. `built-check` pairs `date -u -v-{days}d` with a
+`date -u -d` fallback for the same reason.
+
+Use the path it prints, written as `{scratch}` below. Never a fixed name under
+`/tmp`. Two reasons, and the second is the one that bites on this machine. A
+fixed name is world-readable and another local user can replace it between the
+Write and the call, so what lands in the list is not what was composed. And a
+fixed name is shared between sessions: with two in flight, which is the premise
+of this whole change, one session's Write lands between the other's Write and
+its call, and the wrong text is recorded against the wrong item.
 
 ---
 
@@ -215,9 +238,10 @@ Only change status on a yes.
 
 ## Step 6 — Write the closures
 
-For each item being closed, this REPLACES an existing file, so the atomic sequence is mandatory. Per item:
+Each closure replaces an existing file, so it goes through `queue.js`, which
+does the read and the write inside one process holding a lock. Per item:
 
-1. Take the item you already read. Set `status` to `"Built"`. Set `built` to:
+1. Write the `built` block to a scratch file:
 
 ```json
 {
@@ -228,23 +252,24 @@ For each item being closed, this REPLACES an existing file, so the atomic sequen
 }
 ```
 
-   Change nothing else. `created_at`, `title`, `what`, `why` and `notes` all stay as they are.
-
-2. Write the updated JSON to `~/.claude/build-loop/to-build/{id}.json.tmp` with the Write tool.
-
-3. Parse-check it:
+2. Close the item:
 
 ```bash
-node -e "JSON.parse(require('fs').readFileSync(require('os').homedir() + '/.claude/build-loop/to-build/{id}.json.tmp','utf8'))" && echo PARSE_OK
+node "${CLAUDE_PLUGIN_ROOT}/scripts/queue.js" update {id} --list to-build \
+  --status Built --json built={scratch}/built-{id}.json
 ```
 
-4. If it parses, swap it in:
+   `--json` sets a field from a JSON file, so `built` lands as an object rather
+   than as the characters that spell one. Use `--field key=value` for plain
+   strings. Nothing else changes: `created_at`, `title`, `what`, `why` and `notes` all stay as they are, which
+   is not something you have to be careful about here: `queue.js` reads the item
+   from disk and changes only what you named, so anything you did not mention
+   cannot be dropped.
 
-```bash
-mv ~/.claude/build-loop/to-build/{id}.json.tmp ~/.claude/build-loop/to-build/{id}.json
-```
-
-5. If it does not parse, delete the tempfile with `rm`, report the failure for that item, and carry on with the remaining items. One bad write must not abandon the rest.
+3. If a call exits non-zero, report the failure for that item and carry on with
+   the remaining ones. One bad write must not abandon the rest. Nothing partial
+   is left behind, and an exit usually means another session holds the lock, so
+   the remedy is to run that one again.
 
 Marking something `In Progress` from Step 5 uses the same sequence, setting only `status`.
 

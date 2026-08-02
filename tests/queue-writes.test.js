@@ -1,30 +1,31 @@
 #!/usr/bin/env node
-// Every skill that updates an existing queue entry must read it first and
-// append to notes rather than rebuild them.
+// No skill may write a queue entry by hand. Every change goes through
+// scripts/queue.js.
 //
 // Run: node tests/queue-writes.test.js
 //
-// The bug: /apply-fix silently dropped notes. Step 8 said to append a note, and
-// the write recomposed the entry from scratch, so a note recording that an
-// earlier attempt had been abandoned was lost. Observed on a real entry, which
-// went from one note to two, and neither of the two was the one already there.
+// What this file used to check, and why it changed. The original bug was
+// /apply-fix silently dropping notes: it recomposed the entry from scratch, so
+// a note recording an abandoned attempt disappeared. The fix at the time was
+// wording. Every updater was made to say "read the current entry" and "append
+// to notes", and this file asserted those sentences were present, including
+// catching the parentheticals that had quietly cancelled them.
 //
-// The cause is the Write tool, which replaces a whole file. Anything not
-// carried across is gone with no error and no warning, so the instruction has
-// to say to carry it across. Step 2 said only "write the updated JSON", which
-// reads as an instruction to produce a correct-looking entry rather than to
-// preserve the one already on disk, and Step 8 said "append note" with no
-// sequence at all. /verify-fix and /revert-fix both spell out read, set,
-// append, write, so the same operation was written three ways and only two of
-// them worked.
+// That was the best answer available while the writing was done by a model
+// following prose, and it was never a guarantee. Reading the entry in one tool
+// call and writing it in another leaves a gap, and another session writing into
+// that gap loses its change with no error and nothing to notice. No wording
+// closes that, because the gap is between the tool calls rather than inside one.
 //
-// Pinned across all three skills rather than only the one that broke. The two
-// that are right today are right by wording alone, and nothing stops the next
-// edit from shortening one of them into the version that fails.
+// So the read, the change and the write now happen inside queue.js, holding a
+// lock, and the property this file protects is enforced by that code rather than
+// by sentences. What is left to check here is that nothing has gone back to
+// doing it by hand, which is a smaller thing and a much harder one to get wrong
+// by accident.
 //
-// What this cannot check: whether the model actually appends. These are source
-// assertions on instructions. They catch the instruction going missing, which
-// is how this bug got in.
+// The behaviour itself, that a note survives a concurrent write, is tested for
+// real in queue-locking.test.js by racing processes. This file is the source
+// assertion that the skills actually call the thing that behaves.
 
 'use strict';
 
@@ -33,10 +34,16 @@ const fs = require('fs');
 const path = require('path');
 
 const SKILLS = path.join(__dirname, '..', 'plugins', 'build-loop', 'skills');
+const QUEUE_JS = path.join(__dirname, '..', 'plugins', 'build-loop', 'scripts', 'queue.js');
 
-// Skills that modify an entry that already exists. /flag-issue is deliberately
-// absent: it creates entries, and there is nothing yet on disk to preserve.
+// Skills that change an entry that already exists.
 const UPDATERS = ['apply-fix', 'verify-fix', 'revert-fix'];
+
+// Skills that create entries. /flag-issue was deliberately absent from the old
+// list, because it only ever wrote new files and there was nothing on disk to
+// preserve. It belongs here now: creating is where the dedup race lived, and
+// that was the half of the bug the note-preservation rule never covered.
+const CREATORS = ['flag-issue', 'to-build'];
 
 function skill(name) {
   const file = path.join(SKILLS, name, 'SKILL.md');
@@ -44,40 +51,21 @@ function skill(name) {
   return fs.readFileSync(file, 'utf8');
 }
 
-// The regions of apply-fix that write the entry. Both had the defect, in
-// different ways, so both are checked rather than the file as a whole: a single
-// correct passage elsewhere would otherwise cover for a broken one here.
-function region(text, from, to) {
-  const start = text.indexOf(from);
-  assert.ok(start !== -1, `could not find "${from}"`);
-  const end = to ? text.indexOf(to, start) : text.length;
-  return text.slice(start, end === -1 ? text.length : end);
-}
-
-const READS = /read the current queue entry/i;
-const APPENDS = /append to (the )?(existing )?`?notes`?/i;
-
-// Phrasings that tell the model to skip the read it was just told to do. These
-// are the reason the two checks above are not enough on their own: revert-fix
-// said "Read the current queue entry JSON (already loaded — use what you have)"
-// and passed both, because the words the checks look for were all present and
-// the parenthetical that cancelled them was not looked at.
-//
-// Matched against the whole file rather than a region. There is no place in an
-// updater where reusing a copy read earlier is correct: the point of the read
-// is that the file may have changed since.
-const CANCELS_THE_READ = [
-  /already loaded/i,
-  /use what you have/i,
-  /from (memory|what you (already )?read)/i,
-  /no need to re-?read/i,
+// The hand-rolled sequence, in every spelling it appeared in. Any of these in a
+// skill means someone has reintroduced the gap.
+// Both lists, not just the queue. to-build kept creating items with the Write
+// tool after the queue had stopped, and these patterns only named `queue/`, so
+// nothing saw it. The bug entry covered both lists and so does this.
+const BY_HAND = [
+  /(queue|to-build)\/\{id\}\.json\.tmp/,
+  /(queue|to-build)\/\{filename\}`? using the Write tool/,
+  /mv ~\/\.claude\/build-loop\/(queue|to-build)/,
+  /Write the JSON with the Write tool/,
 ];
 
-// Counted as they run and then compared, rather than computed from the shape of
-// the loop. This line said `UPDATERS.length * 2 + 4`, which looks derived and is
-// not: adding a third check per updater left it reporting 10 while 13 ran. A
-// formula that has to be re-derived by hand is a literal wearing a disguise.
-const EXPECTED_CHECKS = 13;
+// A line describing the old sequence in order to say it was wrong is not an
+// offence. The prose has to be able to name what it replaced.
+const EXPLAINING = /used to|no longer|rather than|instead of|never edit|do not write it/i;
 
 let failed = 0;
 let ran = 0;
@@ -92,80 +80,399 @@ function check(what, fn) {
   }
 }
 
-for (const name of UPDATERS) {
-  check(`${name} reads the entry before writing it`, () => {
-    assert.match(
-      skill(name), READS,
-      `${name} writes a queue entry without being told to read the current one first. `
-      + 'The Write tool replaces the whole file, so whatever it does not carry across is lost silently.'
-    );
-  });
-
-  check(`${name} appends to notes rather than replacing them`, () => {
-    assert.match(
-      skill(name), APPENDS,
-      `${name} no longer says to append to the notes array. Notes are the audit trail, `
-      + 'and they are read at exactly the moment something has gone wrong.'
-    );
-  });
-
-  check(`${name} does not then excuse the model from the read`, () => {
+for (const name of [...UPDATERS, ...CREATORS]) {
+  check(`${name} does not write the queue by hand`, () => {
     const text = skill(name);
-    for (const pattern of CANCELS_THE_READ) {
-      // The prose explaining why this phrasing was wrong necessarily quotes it,
-      // so a line that also says the words were wrong is not an offence.
-      const offending = text.split('\n').filter((line) =>
-        pattern.test(line) && !/used to say|was wrong|which is an instruction/i.test(line));
+    for (const pattern of BY_HAND) {
+      const offending = text.split('\n').filter((line) => pattern.test(line) && !EXPLAINING.test(line));
       assert.deepStrictEqual(
         offending, [],
-        `${name} tells the model it can skip re-reading the entry:\n        `
-        + offending.join('\n        ')
-        + '\n        The read exists because the file may have changed since.'
+        `${name} writes a queue entry directly:\n        ${offending.join('\n        ')}\n`
+        + '        That reopens the gap between the read and the write, where another '
+        + "session's change is lost with no error."
       );
     }
   });
 }
 
-check('apply-fix reads the entry at the In Progress write', () => {
-  // Step 2. This one said only "write the updated JSON".
-  const step2 = region(skill('apply-fix'), '**Set status to In Progress**', '## Step 3');
-  assert.match(step2, READS, 'the In Progress write does not read the entry first');
-});
+for (const name of UPDATERS) {
+  check(`${name} changes entries through queue.js update`, () => {
+    assert.match(
+      skill(name), /queue\.js"? update/,
+      `${name} changes an existing entry and never calls "queue.js update", so it is doing it some other way.`
+    );
+  });
+}
 
-check('apply-fix reads the entry at the closing write', () => {
-  // Step 8, where the note is added and where the loss was observed.
-  const step8 = region(skill('apply-fix'), '**Update the queue entry**', '**Surface dep-review');
-  assert.match(step8, READS, 'the closing write does not read the entry first');
-  assert.match(step8, APPENDS, 'the closing write does not say to append');
-});
+for (const name of CREATORS) {
+  check(`${name} adds entries through queue.js create`, () => {
+    assert.match(
+      skill(name), /queue\.js"? create/,
+      `${name} adds entries and never calls "queue.js create", so the dedup check and the write are separable again.`
+    );
+  });
+}
 
-check('the closing write says the array must grow', () => {
-  // The instruction that makes the failure checkable by whoever reads it back.
-  const step8 = region(skill('apply-fix'), '**Update the queue entry**', '---');
-  assert.match(
-    step8, /one longer|never rebuild/i,
-    'nothing states that the notes array must come back longer than it went in, '
-    + 'so a rebuild that happens to look right passes unnoticed'
+// --- the guarantees the skills are relying on ----------------------------
+
+check('queue.js appends to notes rather than taking an array from the caller', () => {
+  // The structural version of the rule this file used to ask for in prose. A
+  // caller cannot hand over a notes array at all, so it cannot hand over a
+  // stale one, and a stale one is what made the original bug possible.
+  const source = fs.readFileSync(QUEUE_JS, 'utf8');
+  assert.match(source, /entry\.notes\.push\(/, 'queue.js no longer appends to the notes already on the entry');
+  assert.ok(
+    !/entry\.notes\s*=\s*(args|JSON)/.test(source),
+    'queue.js assigns notes from something the caller passed, which is how a stale array gets back in'
   );
 });
 
-check('the checks would actually catch one', () => {
-  // A linter nobody has seen fail is a linter nobody should trust.
-  const broken = 'Set status via atomic write:\n1. Write the updated JSON to {id}.json.tmp.';
-  assert.doesNotMatch(broken, READS, 'the read pattern matches text that never mentions reading');
-  assert.doesNotMatch(broken, APPENDS, 'the append pattern matches text that never mentions notes');
-
-  const fixed = '1. Read the current queue entry JSON from disk.\n3. Append to the existing `notes` array:';
-  assert.match(fixed, READS, 'the read pattern misses the wording the skills actually use');
-  assert.match(fixed, APPENDS, 'the append pattern misses the wording the skills actually use');
+check('queue.js reads the entry inside the lock, not before it', () => {
+  const source = fs.readFileSync(QUEUE_JS, 'utf8');
+  assert.match(source, /function locked\(/, 'queue.js has no lock helper');
+  assert.ok(
+    /locked\(\(\) => \{[\s\S]{0,200}?readEntry\(id[,)]/.test(source),
+    'the read happens outside the lock, which is the bug rather than the fix'
+  );
 });
 
+check('the lock is released even when the write fails', () => {
+  // Found by the tests rather than by review: failing with process.exit skipped
+  // the finally, so one bad resolution file left the queue locked for everyone
+  // until the lock went stale.
+  const source = fs.readFileSync(QUEUE_JS, 'utf8');
+  assert.match(source, /finally\s*\{\s*release\(\)/, 'queue.js does not release the lock in a finally');
+  assert.ok(
+    !/function fail\([\s\S]{0,200}?process\.exit/.test(source),
+    'fail() exits the process, which skips the finally and leaves the lock behind'
+  );
+});
+
+check('the dep-review dedup has no expiry', () => {
+  // A parent and a dependent is one logical review forever. A ten-minute window
+  // there would write a fresh duplicate on every run.
+  assert.match(
+    skill('flag-issue'), /--dedup-window all/,
+    'flag-issue no longer asks for an unexpiring dedup window on dep-review entries'
+  );
+});
+
+check('every skill that calls queue.js is allowed to run it', () => {
+  // to-build was converted to call queue.js and its allowed-tools was not
+  // updated, so the note it promised to write could never be written. A skill
+  // that names a command it cannot run is broken in a way nothing else here
+  // notices: the instruction reads correctly and fails at the moment of use.
+  const dirs = fs.readdirSync(SKILLS).filter((d) => fs.existsSync(path.join(SKILLS, d, 'SKILL.md')));
+  const offending = dirs.filter((name) => {
+    const text = skill(name);
+    if (!/queue\.js"? (update|create|show)/.test(text)) return false;
+    const frontmatter = text.slice(0, text.indexOf('---', 4));
+    return !/Bash\(node:\*\)/.test(frontmatter);
+  });
+  assert.deepStrictEqual(
+    offending, [],
+    `these call queue.js and do not grant Bash(node:*): ${offending.join(', ')}`
+  );
+});
+
+check('no skill still claims it cannot run node', () => {
+  // The sentence that used to justify the old arrangement outlived it in
+  // to-build, sitting a few lines above an instruction to run node. A reader
+  // could not tell which was authoritative.
+  const dirs = fs.readdirSync(SKILLS).filter((d) => fs.existsSync(path.join(SKILLS, d, 'SKILL.md')));
+  for (const name of dirs) {
+    const offending = skill(name).split('\n').filter((line) =>
+      /grants (no|neither) `?node/.test(line) && !EXPLAINING.test(line));
+    assert.deepStrictEqual(offending, [], `${name} still says it cannot run node:\n        ${offending.join('\n        ')}`);
+  }
+});
+
+check('no skill names the command in a form that cannot be run', () => {
+  // Six inline mentions said `queue.js update ...` with no interpreter and no
+  // path, while the fenced blocks in the same files used the full form. They sit
+  // on the failure and cancellation branches, which are the least exercised and
+  // the most expensive to lose: an entry that should go back to Open stays
+  // parked in a status nobody looks at.
+  const dirs = fs.readdirSync(SKILLS).filter((d) => fs.existsSync(path.join(SKILLS, d, 'SKILL.md')));
+  for (const name of dirs) {
+    const offending = skill(name).split('\n').filter((line) => /`queue\.js (update|create|show)/.test(line));
+    assert.deepStrictEqual(
+      offending, [],
+      `${name} names queue.js without node and a path:\n        ${offending.join('\n        ')}\n`
+      + '        Use: node "${CLAUDE_PLUGIN_ROOT}/scripts/queue.js" ...'
+    );
+  }
+});
+
+check('free text reaches a note through a file, not a shell argument', () => {
+  // A note carries a tool's error message, or retry instructions the user
+  // typed. Interpolated into a quoted shell argument, a double quote or a
+  // `$(...)` in that text ends or extends the argument, in a context where
+  // Bash(node:*) is allowed. --note-file removes the shell from the path.
+  // Any placeholder in a --note argument, not a list of the ones seen so far.
+  // The first version named error, retry and file_state, and to-build's
+  // --note "{text}" walked straight past it: a denylist of the cases already
+  // known is not a rule, it is a record of what has been noticed. Values with a
+  // genuinely fixed shape are allowed by name and have to be argued for.
+  const SAFE_IN_NOTE = new Set(['commit-hash', 'revert-commit-hash', 'repo', 'id', 'target']);
+  const INTERPOLATED = (line) => {
+    for (const arg of line.match(/--note "[^"]*"/g) || []) {
+      for (const [, name] of arg.matchAll(/\{([^}]+)\}/g)) {
+        if (!SAFE_IN_NOTE.has(name.trim())) return true;
+      }
+    }
+    return false;
+  };
+  const dirs = fs.readdirSync(SKILLS).filter((d) => fs.existsSync(path.join(SKILLS, d, 'SKILL.md')));
+  for (const name of dirs) {
+    const offending = skill(name).split('\n').filter(INTERPOLATED);
+    assert.deepStrictEqual(
+      offending, [],
+      `${name} interpolates free text into a shell argument:\n        ${offending.join('\n        ')}\n`
+      + '        Write it to a file and use --note-file.'
+    );
+  }
+});
+
+check('queue.js can take a note from a file', () => {
+  const source = fs.readFileSync(QUEUE_JS, 'utf8');
+  assert.match(source, /note-file/, 'queue.js has no --note-file, so the skills are calling something that does not exist');
+});
+
+check('scratch files are not written to a fixed shared path', () => {
+  // A hand-off staged at a fixed name under /tmp is two bugs. Another local
+  // user can replace it between the Write and the call, and two sessions share
+  // it, so one session's note can be recorded against the other's entry. Both
+  // are fixed the same way: a directory from mktemp, and names scoped to the id.
+  const dirs = fs.readdirSync(SKILLS).filter((d) => fs.existsSync(path.join(SKILLS, d, 'SKILL.md')));
+  for (const name of dirs) {
+    const offending = skill(name).split('\n').filter((line) =>
+      /(--note-file|--json [a-z]+=|create|update)[^\n]*\s\/tmp\//.test(line));
+    assert.deepStrictEqual(
+      offending, [],
+      `${name} stages a hand-off at a fixed path:\n        ${offending.join('\n        ')}\n`
+      + '        Use a directory from mktemp and name the file after the entry id.'
+    );
+  }
+});
+
+check('a skill that grants mktemp is one that uses it, and the other way round', () => {
+  const dirs = fs.readdirSync(SKILLS).filter((d) => fs.existsSync(path.join(SKILLS, d, 'SKILL.md')));
+  for (const name of dirs) {
+    const text = skill(name);
+    const frontmatter = text.slice(0, text.indexOf('---', 4));
+    const uses = /\{scratch\}/.test(text);
+    const granted = /Bash\(mktemp:\*\)/.test(frontmatter);
+    assert.strictEqual(uses, granted,
+      uses
+        ? `${name} uses a {scratch} path and does not grant Bash(mktemp:*), so it cannot make one`
+        : `${name} grants Bash(mktemp:*) and never uses a scratch path`);
+  }
+});
+
+check('queue.js sets an exit code rather than calling process.exit', () => {
+  // On macOS a write to a pipe is asynchronous, so exiting immediately after
+  // one can drop it. Every caller here is a skill reading what was printed:
+  // flag-issue names the entry create reported, apply-fix repeats what update
+  // said when it failed. A truncated line there is a skill reporting half a
+  // sentence at the moment something went wrong, and it would be intermittent,
+  // which is the worst way for it to show up.
+  //
+  // A source assertion because the failure is a race: a test that ran the
+  // command and checked the output would pass almost every time either way.
+  const source = fs.readFileSync(QUEUE_JS, 'utf8');
+  const offending = source.split('\n').filter((line) =>
+    /process\.exit\(/.test(line) && !/^\s*\/\//.test(line));
+  assert.deepStrictEqual(
+    offending, [],
+    `queue.js calls process.exit, which can truncate what it just printed:\n        ${offending.join('\n        ')}\n`
+    + '        Set process.exitCode and let the process end on its own.'
+  );
+  assert.match(source, /process\.exitCode = code/, 'nothing sets the exit code, so a failure would report success');
+});
+
+check('acquire undoes the lock if it cannot write the owner marker', () => {
+  // locked() only arms its release once acquire returns, so the window between
+  // creating the lock directory and writing the marker inside it is the one
+  // path the "released whatever happens" guarantee does not cover. A throw
+  // there used to leave the directory on disk with nothing that would remove
+  // it, since every later run refuses to release a lock it does not own, so
+  // the queue was shut for STALE_MS.
+  //
+  // A source assertion because provoking it needs a write to fail inside a
+  // directory that was just created successfully, which in practice means a
+  // full disk. queue-locking.test.js covers the reachable half.
+  const source = fs.readFileSync(QUEUE_JS, 'utf8');
+  const window = source.slice(source.indexOf('fs.mkdirSync(LOCK)'), source.indexOf('return;'));
+  assert.match(window, /catch \(markerError\)/, 'the owner-marker write is not guarded');
+  assert.match(window, /rmSync\(LOCK/, 'a failed marker write does not remove the lock it just created');
+  assert.match(window, /throw markerError/, 'a failed marker write is swallowed, so the caller thinks it holds the lock');
+});
+
+check('a duplicate the user approved can still be written', () => {
+  // Both skills offer to add something after warning it looks like a duplicate,
+  // and both then called create with a window that refuses exactly that. The
+  // user says "write anyway" and nothing is saved. --dedup-window 0 skips the
+  // check and is the only way to honour the answer.
+  for (const name of ['flag-issue', 'to-build']) {
+    assert.match(
+      skill(name), /--dedup-window 0/,
+      `${name} offers to write a duplicate anyway and never mentions --dedup-window 0, `
+      + 'so the write is refused for the thing the user just approved'
+    );
+  }
+});
+
+check('the shell in these skills runs on both BSD and GNU', () => {
+  // These are written and tested on macOS and reviewed on Linux, so a BSD-only
+  // form passes every local run and fails everywhere else. `mktemp -d -t name`
+  // is the case that got through: BSD synthesises a template from the prefix,
+  // GNU wants six X characters and exits 1, so on Linux the scratch directory
+  // was never created and every hand-off reading from it failed.
+  //
+  // `built-check` already got this right for dates, pairing `date -u -v` with a
+  // `date -u -d` fallback, so the precedent existed and was not followed.
+  const RULES = [
+    {
+      name: 'mktemp -t with no six-X template',
+      test: (line) => /mktemp\b[^\n]*-t\s/.test(line) && !/X{6}/.test(line),
+      fix: 'use: mktemp -d "${TMPDIR:-/tmp}/name.XXXXXX"',
+    },
+    {
+      name: 'sed -i with a BSD backup argument',
+      test: (line) => /\bsed\s+-i\s+''/.test(line),
+      fix: 'GNU sed reads the next word as the script. Write the file some other way.',
+    },
+  ];
+  const dirs = fs.readdirSync(SKILLS).filter((d) => fs.existsSync(path.join(SKILLS, d, 'SKILL.md')));
+  for (const name of dirs) {
+    // Prose describing a wrong form in order to warn about it is not an
+    // offence, the same exemption the hand-rolled-write checks use.
+    const lines = skill(name).split('\n').filter((line) => !EXPLAINING.test(line) && !/rather than as/.test(line));
+    for (const rule of RULES) {
+      const offending = lines.filter(rule.test);
+      assert.deepStrictEqual(
+        offending, [],
+        `${name} uses ${rule.name}:\n        ${offending.join('\n        ')}\n        ${rule.fix}`
+      );
+    }
+  }
+});
+
+check('a date command that only BSD understands carries its fallback', () => {
+  const dirs = fs.readdirSync(SKILLS).filter((d) => fs.existsSync(path.join(SKILLS, d, 'SKILL.md')));
+  for (const name of dirs) {
+    const offending = skill(name).split('\n').filter((line) =>
+      /\bdate\b[^\n]*\s-v[-+]/.test(line) && !/\|\|[^\n]*date/.test(line) && !EXPLAINING.test(line) && !/pairs `date/.test(line));
+    assert.deepStrictEqual(
+      offending, [],
+      `${name} uses BSD date arithmetic with no GNU fallback:\n        ${offending.join('\n        ')}\n`
+      + '        Pair it with: || date -u -d ...'
+    );
+  }
+});
+
+check('every queue.js call site says what to do when it fails', () => {
+  // Both bugs in this round were the same omission in different places: a call
+  // that can now legitimately refuse, with the instructions carrying straight
+  // on as though it had not. flag-issue went on to write dep-review children
+  // against a primary that was never created and then told the user their
+  // correction was logged. apply-fix applied and committed a fix while the
+  // entry still said nobody had started it.
+  //
+  // This is reachable in ordinary use rather than only on a disk error:
+  // acquire gives up after five seconds when another session holds the lock,
+  // and create refuses a duplicate that won the race.
+  //
+  // So every invocation has to be followed by a branch. Checked by proximity
+  // rather than by parsing, which is crude and catches the thing that actually
+  // went wrong: nobody wrote one at all.
+  // Describing the exit codes is not enough, and that distinction is the whole
+  // bug: flag-issue documented exit 2 in detail and then carried on to write
+  // dep-review children and print "Logged to ...". What has to be present is an
+  // instruction about what NOT to do, or an explicit alternative such as
+  // carrying on with the remaining items, tied to the failure itself.
+  // The action words are deliberately narrow. A loose set passed the buggy
+  // version of flag-issue, because it contained "Do NOT confirm here" a few
+  // lines below the call, which means confirm later rather than do not
+  // continue. So the phrase has to be one that actually halts or names what
+  // happens instead.
+  // The list grows only by real handling phrases. If it ever needs a loose one
+  // to pass, the call site is the thing to fix, not this.
+  const HANDLED = (text) => {
+    const near = '[\\s\\S]{0,300}';
+    const fail = '(exits? non-zero|exited? non-zero|Exit 1|Exit 2|it fails|refus\\w*)';
+    const act = '(\\bstop\\b|do not go on|do not proceed|do not retry|carry on with the remaining'
+      + '|report the failure|report what it printed|say both|is the remedy|running it again)';
+    return new RegExp(`${fail}${near}${act}`, 'i').test(text)
+      || new RegExp(`${act}${near}${fail}`, 'i').test(text);
+  };
+  const dirs = fs.readdirSync(SKILLS).filter((d) => fs.existsSync(path.join(SKILLS, d, 'SKILL.md')));
+  for (const name of dirs) {
+    const lines = skill(name).split('\n');
+    const offending = [];
+    lines.forEach((line, i) => {
+      if (!/queue\.js"? (update|create)/.test(line)) return;
+      // The prose paragraphs that merely name the command are not call sites.
+      if (!/^\s*node /.test(line)) return;
+      const after = lines.slice(i, i + 25).join('\n');
+      if (!HANDLED(after)) offending.push(`line ${i + 1}: ${line.trim()}`);
+    });
+    assert.deepStrictEqual(
+      offending, [],
+      `${name} calls queue.js with no branch for it failing:\n        ${offending.join('\n        ')}\n`
+      + '        Say what happens on a non-zero exit. It is reachable whenever another session holds the lock.'
+    );
+  }
+});
+
+check('the reference documents agree with the skills', () => {
+  // The schemas are prose the skills tell the model to read, so a retired rule
+  // left in one competes with the live rule in the other. Nothing here scanned
+  // reference/ at all, so both files kept ordering the hand-rolled sequence
+  // after every skill had stopped using it.
+  // Skills are scanned as well as reference/. whats-breaking kept pointing at
+  // flag-issue as "the one exception" long after flag-issue had stopped being
+  // one, and a scan of reference/ alone could not see a stale cross-reference
+  // living inside a SKILL.md.
+  const ref = path.join(__dirname, '..', 'plugins', 'build-loop', 'reference');
+  const docs = [
+    ...fs.readdirSync(ref).filter((f) => f.endsWith('.md')).map((f) => [f, path.join(ref, f)]),
+    ...fs.readdirSync(SKILLS).filter((d) => fs.existsSync(path.join(SKILLS, d, 'SKILL.md')))
+      .map((d) => [`${d}/SKILL.md`, path.join(SKILLS, d, 'SKILL.md')]),
+  ];
+  for (const [file, full] of docs) {
+    const text = fs.readFileSync(full, 'utf8');
+    const offending = text.split('\n').filter((line) =>
+      (/`?\.tmp`? (plus|\+) (node )?parse-check (plus|\+) `?mv`?/.test(line)
+        || /the one exception is `?flag-issue/i.test(line))
+      && !/used to|no longer|is not a queue entry/i.test(line));
+    assert.deepStrictEqual(
+      offending, [],
+      `${file} still orders the hand-rolled sequence:\n        ${offending.join('\n        ')}`
+    );
+  }
+});
+
+check('the checks would catch one', () => {
+  // A linter nobody has seen fail is a linter nobody should trust.
+  const broken = '4. Write updated JSON to `~/.claude/build-loop/queue/{id}.json.tmp` using the Write tool.';
+  assert.ok(BY_HAND.some((p) => p.test(broken)), 'BY_HAND no longer matches the sequence it names');
+  assert.ok(!EXPLAINING.test(broken), 'the exemption for explanatory prose swallows a real offence');
+
+  const explaining = 'This skill used to write entries to queue/{id}.json.tmp by hand.';
+  assert.ok(EXPLAINING.test(explaining), 'prose explaining the old way is reported as an offence');
+});
+
+// Counted as they run and then compared. This line was once a formula that
+// looked derived and was not, and it reported 10 while 13 ran.
+const EXPECTED_CHECKS = 29;
 if (ran !== EXPECTED_CHECKS) {
   failed += 1;
   console.log(
-    `  FAIL  the file runs the number of checks it expects to\n`
+    '  FAIL  the file runs the number of checks it expects to\n'
     + `        ran ${ran}, expected ${EXPECTED_CHECKS}. If you added or removed a `
-    + `check, move EXPECTED_CHECKS. If you did not, one has gone missing.`
+    + 'check, move EXPECTED_CHECKS. If you did not, one has gone missing.'
   );
 }
 

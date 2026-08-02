@@ -3,7 +3,7 @@ name: apply-fix
 type: human
 description: Applies a correction from the bug queue to an actual target file. Reads the queue entry, checks DEPS.json for dependents, reasons about the surgical fix, shows a plain-language before/after diff, waits for the user's approval (yes / no / retry), then writes the fix, commits to the correct repo, and updates the queue entry status to "fix applied, watching" with the commit hash stored. Never writes without explicit approval.
 argument-hint: "[queue-entry-id or target-name]"
-allowed-tools: Read, Write, Bash(ls:*), Bash(cat:*), Bash(date:*), Bash(mkdir:*), Bash(mv:*), Bash(rm:*), Bash(node:*), Bash(git:*), Bash(grep:*), Bash(wc:*)
+allowed-tools: Read, Write, Bash(ls:*), Bash(cat:*), Bash(date:*), Bash(mktemp:*), Bash(mkdir:*), Bash(mv:*), Bash(rm:*), Bash(node:*), Bash(git:*), Bash(grep:*), Bash(wc:*)
 ---
 
 You are applying a correction from the build loop bug queue to an actual target file. The schema is at `${CLAUDE_PLUGIN_ROOT}/reference/SCHEMA.md` and the dependency map is at `~/.claude/build-loop/DEPS.json`.
@@ -15,6 +15,29 @@ Eight steps. Do not reorder or skip steps. The diff gate (Step 6) must come befo
 > Node's `fs` both take it literally, so expand it to the absolute home path
 > before using it. A literal `~` creates a directory called `~` next to wherever
 > you happen to be, and every check that follows then reads the wrong place.
+
+---
+
+**Scratch files go in a private directory, made once per run.** Before the first
+hand-off, create it and reuse it for the rest of the run:
+
+```bash
+mktemp -d "${TMPDIR:-/tmp}/build-loop.XXXXXX"
+```
+
+Written out in full rather than as `mktemp -d -t build-loop`, which is BSD only.
+GNU coreutils wants at least six `X` characters in the template and exits 1 on
+the short form, so on Linux the directory is never created and every hand-off
+that reads from it fails. `built-check` pairs `date -u -v-{days}d` with a
+`date -u -d` fallback for the same reason.
+
+Use the path it prints, written as `{scratch}` below. Never a fixed name under
+`/tmp`. Two reasons, and the second is the one that bites on this machine. A
+fixed name is world-readable and another local user can replace it between the
+Write and the call, so what lands in the list is not what was composed. And a
+fixed name is shared between sessions: with two in flight, which is the premise
+of this whole change, one session's Write lands between the other's Write and
+its call, and the wrong text is recorded against the wrong item.
 
 ---
 
@@ -44,27 +67,37 @@ Then check:
 - If `status` is `"Resolved"`, `"Won't Fix"`, or `"fix applied, watching"`: say "This entry is already {status}. Nothing to fix." Stop.
 - If `status` is `"fix attempted / unresolved"`: that status was retired in 0.3.1 and nothing writes it any more, so this entry predates the change. Treat it as `"Open"`, say "This entry was attempted in an earlier version and left unresolved. Proceeding with a new attempt." Continue. Read this even though nothing produces it: an entry written before 0.3.1 is otherwise stuck, because no other branch here handles the value.
 - If `status` is `"In Progress"` from a previous session (no commit hash in notes): say "This entry is already marked In Progress from a previous session. The last session may have been interrupted before the fix was committed. Should I start fresh (re-read the target file and propose the fix again), or check whether the file was already written?" Wait for the user's answer:
-  - "start fresh" → set status to "Open" via atomic write (see below), then continue from Step 1.
+  - "start fresh" → set status to "Open" with `node "${CLAUDE_PLUGIN_ROOT}/scripts/queue.js" update {id} --status Open`, then continue from Step 1.
   - "check if written" → read the current target file and compare to the before/after description in the queue entry. If the fix appears already applied, show a summary and ask whether to commit it or revert.
 
 **Repo guard:** If `repo == "unknown"`: say "This entry has repo: unknown. I can't commit without knowing which repo this belongs to. Check DEPS.json or update the queue entry's repo field manually, then try again." Stop. Do not change status.
 
-**Set status to In Progress** via atomic write:
-1. Read the current queue entry JSON from disk. Do not compose it from what is
-   on screen or from what you remember reading earlier.
-2. Set `status` to `"In Progress"`. Change nothing else.
-3. Write the whole entry back, every field it already had, to
-   `~/.claude/build-loop/queue/{id}.json.tmp` using the Write tool.
-4. Run: `node -e "JSON.parse(require('fs').readFileSync(require('os').homedir() + '/.claude/build-loop/queue/{id}.json.tmp','utf8'))"`
-5. If parse succeeds: `mv ~/.claude/build-loop/queue/{id}.json.tmp ~/.claude/build-loop/queue/{id}.json`
-6. If parse fails: report the error. Do not swap. Do not proceed.
+**Set status to In Progress:**
 
-**Write the entry back, do not rebuild it.** The Write tool replaces the whole
-file, so anything not carried across is gone with no error and no warning. This
-step used to say only "write the updated JSON", which reads as an instruction to
-produce a correct-looking entry rather than to preserve the one already there,
-and notes recorded by earlier sessions were dropped. `notes` is the field that
-suffers, because it is the one that grows.
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/queue.js" update {id} --status "In Progress"
+```
+
+**If it exits non-zero, stop.** Report what it printed and do not go on to Step
+3. The old sequence ended "if parse fails: report the error, do not swap, do not
+proceed", and that branch was dropped when the write moved into `queue.js`. It
+is more reachable now, not less: `acquire` gives up after five seconds when
+another session is holding the lock, which is an ordinary thing to happen rather
+than a disk error. Proceeding anyway means applying and committing a fix while
+the entry still says nobody has started it, so a second session picks up the
+same bug.
+
+**Never edit a queue entry with the Write tool.** `queue.js` reads the entry,
+changes what you asked for, and writes it back inside one process holding one
+lock. Doing it by hand means reading the file in one tool call and writing it in
+another, and in between that gap another session can write the same entry. Its
+change is then gone, with no error and nothing to notice, because your write
+carried a copy of the entry from before it existed. Three sessions in this
+directory at once is normal, so that gap is not hypothetical.
+
+It is also what protects `notes`. The array is read at the moment something has
+gone wrong, which is when it is least affordable to lose, and `--note` appends to
+whatever is on disk rather than to whatever you remember reading.
 
 ---
 
@@ -119,7 +152,7 @@ would not say which is at risk. Keep the two fields apart everywhere else.
   each exist in more than one plugin here, so a bare name in a warning about
   what a fix might break is the one place ambiguity costs something.
 
-  Wait for the user's explicit confirmation. If they say no: set status back to `"Open"` via atomic write (same 3-step pattern). Stop.
+  Wait for the user's explicit confirmation. If they say no: set status back with `node "${CLAUDE_PLUGIN_ROOT}/scripts/queue.js" update {id} --status Open`. Stop.
 
 ---
 
@@ -196,7 +229,7 @@ Rules for the diff display:
 
 Response handling:
 - `"yes"` (or any clear affirmative) → proceed to Step 7.
-- `"no"` (or any negative) → set status back to `"Open"` via atomic write. Ask: "Should I mark this Won't Fix or leave it Open for later?" Then stop. Do NOT write the target file.
+- `"no"` (or any negative) → set status back with `node "${CLAUDE_PLUGIN_ROOT}/scripts/queue.js" update {id} --status Open`. Ask: "Should I mark this Won't Fix or leave it Open for later?" Then stop. Do NOT write the target file.
 - `"retry: {instructions}"` → revise the fix reasoning incorporating the user's instructions, return to Step 5 with the revised reasoning, show an updated diff, return to Step 6.
 
 ---
@@ -212,7 +245,27 @@ Use the **Write tool** to write the full file to `{target_path}`. Do NOT use the
 **If Write tool errors:**
 > "The write failed: {error}. The target file is untouched, since Write is all-or-nothing. The queue entry stays Open, with a note recording the failure."
 
-Run atomic write to set status to `"Open"` with note `{"ts": "{now}", "text": "Write tool failed, target file untouched: {error}"}`. Stop.
+Write the note to a scratch file, reading:
+
+> Write tool failed, target file untouched: {error}
+
+Then:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/queue.js" update {id} --status Open --note-file {scratch}/note-{id}.txt
+```
+
+**If that exits non-zero too, say both things.** The target file is untouched
+and the entry could not be returned to Open, so it is parked wherever the last
+status change left it and someone has to look. Two failures reported is
+recoverable; the second one swallowed is an entry nobody knows is stuck.
+
+`--note-file` rather than `--note` because `{error}` is free text from a tool.
+A double quote, a backtick, a `$(...)` or a newline in it would end or extend
+the shell argument, and this runs where `Bash(node:*)` is allowed. Use
+`--note-file` for anything interpolated from an error, from something the user
+typed, or from a file. `--note` is for fixed strings and for values with a known
+shape, such as a commit hash. Stop.
 
 The entry stays Open for the same reason a rejected verification does: a fix that
 did not land is an open bug, and a status no view lists is a bug you cannot find.
@@ -261,29 +314,34 @@ git -C {repo_root} rev-parse HEAD
 ```
 Where `{repo_root}` is the `path` of the root named by the entry's `repo` field.
 
-**Update the queue entry** via atomic write:
-1. Read the current queue entry JSON from disk. It has changed since Step 2, and
-   it may carry notes this session never saw.
-2. Set `status` to `"fix applied, watching"`.
-3. Append to the existing `notes` array:
-   ```json
-   {"ts": "{ISO-8601 now}", "text": "Committed: {commit-hash} to {repo}"}
-   ```
-   Append, never rebuild. The array must come back one longer than it went in.
-   Get the timestamp with `date -u +"%Y-%m-%dT%H:%M:%S.000Z"`.
-4. Write the whole entry back, every field it already had, to
-   `~/.claude/build-loop/queue/{id}.json.tmp` using the Write tool.
-5. Run: `node -e "JSON.parse(require('fs').readFileSync(require('os').homedir() + '/.claude/build-loop/queue/{id}.json.tmp','utf8'))"`
-6. If parse succeeds: `mv ~/.claude/build-loop/queue/{id}.json.tmp ~/.claude/build-loop/queue/{id}.json`
-7. If parse fails: report the error. Do not swap. Say "The fix is committed
-   ({commit-hash}), and the queue entry was not updated. Edit it by hand at
-   `~/.claude/build-loop/queue/{id}.json`"
+**Update the queue entry**, status and note in one call:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/queue.js" update {id} \
+  --status "fix applied, watching" \
+  --note "Committed: {commit-hash} to {repo}"
+```
+
+One call rather than two, because everything asked for in one call lands in one
+write. Split across two, another session can write between them and leave the
+status changed with the note explaining it missing.
+
+The entry has almost certainly changed since Step 2 and may carry notes this
+session never saw. That is handled: the read happens inside the lock, so the
+note is appended to what is on disk now rather than to the copy you read
+earlier. Do not read the entry and rebuild it yourself.
+
+If the command exits non-zero, say "The fix is committed ({commit-hash}), and
+the queue entry was not updated: {what it printed}." Do not retry silently, and
+do not edit the file by hand to get around it. A refusal here usually means
+another session holds the lock, and the retry is the whole fix.
 
 Notes are the audit trail on a queue entry: a repo unknown warning, the reason a
 dep-review was raised, a record that an earlier attempt was abandoned. They are
 read at exactly the moment something has gone wrong, which is when they are
 least affordable to lose. An entry that arrives here with one note leaves with
-three, the original plus the Committed note plus any commentary. Never two.
+two, the original plus the Committed note. `queue.js` prints the count before and
+after, so a lost note is visible rather than silent.
 
 **Surface dep-review entries** — run `ls ~/.claude/build-loop/queue/*.json 2>/dev/null`. Read each file and find any entries where `parent_id == this entry's id` AND `status == "Open"`. If any exist:
 

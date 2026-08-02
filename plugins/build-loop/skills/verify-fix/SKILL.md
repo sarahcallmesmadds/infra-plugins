@@ -3,7 +3,7 @@ name: verify-fix
 type: human
 description: Human-review verification gate for fixes. Presents the original failing scenario from the queue entry, shows the before/after diff, and asks the user whether the fix looks right. If yes — signals pass (apply-fix handles the commit). If no — leaves the queue entry Open with a note recording the rejected attempt, and restores the target file to its pre-fix state. Can be called from within /apply-fix or invoked standalone to re-verify a fix from a previous session.
 argument-hint: "[queue-entry-id or target-name]"
-allowed-tools: Read, Write, Bash(ls:*), Bash(cat:*), Bash(date:*), Bash(mv:*), Bash(node:*)
+allowed-tools: Read, Write, Bash(ls:*), Bash(cat:*), Bash(date:*), Bash(mktemp:*), Bash(mv:*), Bash(node:*)
 ---
 
 You are the human-review verification gate for the build loop. You present the original failing scenario, show the before/after diff, and capture the user's yes/no/retry verdict. You do NOT commit — committing is /apply-fix's responsibility.
@@ -15,6 +15,29 @@ Two modes of operation: Mode A (called from within /apply-fix at Step 6) and Mod
 > Node's `fs` both take it literally, so expand it to the absolute home path
 > before using it. A literal `~` creates a directory called `~` next to wherever
 > you happen to be, and every check that follows then reads the wrong place.
+
+---
+
+**Scratch files go in a private directory, made once per run.** Before the first
+hand-off, create it and reuse it for the rest of the run:
+
+```bash
+mktemp -d "${TMPDIR:-/tmp}/build-loop.XXXXXX"
+```
+
+Written out in full rather than as `mktemp -d -t build-loop`, which is BSD only.
+GNU coreutils wants at least six `X` characters in the template and exits 1 on
+the short form, so on Linux the directory is never created and every hand-off
+that reads from it fails. `built-check` pairs `date -u -v-{days}d` with a
+`date -u -d` fallback for the same reason.
+
+Use the path it prints, written as `{scratch}` below. Never a fixed name under
+`/tmp`. Two reasons, and the second is the one that bites on this machine. A
+fixed name is world-readable and another local user can replace it between the
+Write and the call, so what lands in the list is not what was composed. And a
+fixed name is shared between sessions: with two in flight, which is the premise
+of this whole change, one session's Write lands between the other's Write and
+its call, and the wrong text is recorded against the wrong item.
 
 ---
 
@@ -110,20 +133,36 @@ from a previous session, which by definition was applied, and the branch below
 offers to help restore that file precisely because it did change. A note saying
 the file is untouched would contradict the offer sitting next to it.
 
-Run atomic write on the queue entry:
-1. Read the current queue entry JSON.
-2. Set `status` back to `"Open"`.
+Set the status back to `"Open"` and record the attempt, in one call:
 
-   A rejected fix is an open bug. It used to get its own status,
-   `"fix attempted / unresolved"`, which read as more precise and was worse: no
-   filter in `/list-bugs` reached it, so rejecting a diff removed the entry from
-   the only view that lists work. The attempt is not lost, it is the note written
-   in the next step, and a note is visible where a status was not.
-3. Append to `notes` array: `{"ts": "{date -u +"%Y-%m-%dT%H:%M:%S.000Z"}", "text": "Fix attempted and rejected at the verify gate. {retry instructions if given, else 'No reason given.'} {file_state}"}`.
-4. Write updated JSON to `~/.claude/build-loop/queue/{id}.json.tmp` using the Write tool.
-5. Run: `node -e "JSON.parse(require('fs').readFileSync(require('os').homedir() + '/.claude/build-loop/queue/{id}.json.tmp','utf8'))"`
-6. If parse succeeds: `mv ~/.claude/build-loop/queue/{id}.json.tmp ~/.claude/build-loop/queue/{id}.json`
-7. If parse fails: report error, do not swap. The queue entry remains at its previous status.
+Write the note to a scratch file, reading:
+
+> Fix attempted and rejected at the verify gate. {retry instructions if given, else 'No reason given.'} {file_state}
+
+Then:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/queue.js" update {id} --status Open --note-file {scratch}/note-{id}.txt
+```
+
+`--note-file` rather than `--note` because the retry instructions are text the
+user typed. A double quote or a `$(...)` in them would end or extend the shell
+argument, and this runs where `Bash(node:*)` is allowed.
+
+A rejected fix is an open bug. It used to get its own status,
+`"fix attempted / unresolved"`, which read as more precise and was worse: no
+filter in `/list-bugs` reached it, so rejecting a diff removed the entry from
+the only view that lists work. The attempt is not lost, it is the note above,
+and a note is visible where a status was not.
+
+**Never edit a queue entry with the Write tool.** `queue.js` reads, changes and
+writes inside one process holding one lock, so another session cannot write the
+same entry in the gap between your read and your write. It also appends the note
+to what is on disk now rather than to the copy you read earlier, which is how a
+note recorded by a session you never saw survives.
+
+If the command exits non-zero, report what it printed. The entry keeps its
+previous status and nothing partial is left behind.
 
 Display:
 ```
@@ -191,7 +230,7 @@ Same three response types as Step V3:
 
 - **"yes"** (PASS in standalone mode):
   "Noted, the fix looks correct. Updating the queue entry to record your approval."
-  Via atomic write: if status was `"In Progress"`, set to `"fix applied, watching"`. Append note: `{"ts": "{now}", "text": "Standalone verify: the user confirmed fix looks correct."}`.
+  If status was `"In Progress"`, run `node "${CLAUDE_PLUGIN_ROOT}/scripts/queue.js" update {id} --status "fix applied, watching" --note "Standalone verify: the user confirmed fix looks correct."`.
   Display: "Queue entry {id} is now 'fix applied, watching'. Try it in a real session. When it works, you can close this to Resolved."
 
 - **"no"** (FAIL in standalone mode):
@@ -211,4 +250,4 @@ Same three response types as Step V3:
 
 - **Queue entry not found**: "No queue entry found at {path}. Check the ID and try again." Stop.
 - **Target file not found (Step S3)**: "Can't find the target file at {target_path}. Is this path correct?" Show what IS in the queue entry and ask if the user wants to update the path.
-- **Atomic write fails**: Report the error. Do not leave a partial .tmp file. The queue entry retains its previous status.
+- **The write fails**: report what `queue.js` printed. It leaves no partial file and the entry retains its previous status. A refusal usually means another session holds the lock, so the remedy is to run it again.

@@ -64,11 +64,24 @@ function check(what, fn) {
 }
 
 // Every place a skill is told to set a status, and the value it sets.
+//
+// Two spellings, because there are two. Statuses are now written by calling
+// `queue.js update --status X`, and that is the one that matters. The prose
+// form is still read as well: it is how a skill describes what the call does,
+// and a status named only in prose is still a status somebody has to be able to
+// find in /list-bugs. Reading only the calls would let a prose-only mention of
+// a retired status slip back in, which is the exact bug this file exists for.
 function statusesWrittenBy(text) {
   const found = new Set();
-  const re = /[Ss]et\s+(?:`status`|status)\s+(?:back\s+)?to\s+`?"([^"]+)"`?/g;
-  let m;
-  while ((m = re.exec(text)) !== null) found.add(m[1]);
+  const patterns = [
+    /--status\s+"([^"]+)"/g,
+    /--status\s+([A-Za-z][A-Za-z'’ ]*?)(?=\s|`|$)/gm,
+    /[Ss]et\s+(?:`status`|status)\s+(?:back\s+)?to\s+`?"([^"]+)"`?/g,
+  ];
+  for (const re of patterns) {
+    let m;
+    while ((m = re.exec(text)) !== null) found.add(m[1].trim());
+  }
   return found;
 }
 
@@ -167,15 +180,22 @@ check('no skill writes the retired status', () => {
 });
 
 check('verify-fix puts a rejected fix back to Open', () => {
-  assert.match(VERIFY_FIX, /Set `status` back to `"Open"`/,
+  assert.match(VERIFY_FIX, /queue\.js"? update \{id\} --status Open/,
     'the fail path no longer returns the entry to Open');
 });
 
 check('verify-fix records the rejected attempt in notes', () => {
   // Retiring the status only works if the information it carried survives.
-  assert.match(VERIFY_FIX, /Append to `notes`[\s\S]{0,400}?attempted and rejected/,
+  // The note text moved out of the command line and into the prose above it,
+  // because it interpolates what the user typed and had to stop being a shell
+  // argument. So this looks for the text near the status change rather than
+  // inside the call, in either order.
+  assert.ok(
+    /--status Open[\s\S]{0,600}?attempted and rejected/.test(VERIFY_FIX)
+    || /attempted and rejected[\s\S]{0,600}?--status Open/.test(VERIFY_FIX),
     'the fail path sets Open without recording that an attempt was made, so the '
-    + 'retirement lost information rather than moving it');
+    + 'retirement lost information rather than moving it'
+  );
 });
 
 check('the rejection note does not assert a file state both modes cannot share', () => {
@@ -184,7 +204,7 @@ check('the rejection note does not assert a file state both modes cannot share',
   // fixed sentence about the file is false in one of them. It was false in Mode
   // B on first write: the note said the file was unchanged, directly above the
   // branch offering to help restore it, which only makes sense if it changed.
-  const note = VERIFY_FIX.match(/Append to `notes` array: [^\n]+/);
+  const note = VERIFY_FIX.match(/Fix attempted and rejected[^\n]+/);
   assert.ok(note, 'could not find the note the fail path appends');
   assert.ok(!/target file is unchanged/.test(note[0]),
     'the note hardcodes "the target file is unchanged", which is false whenever '
@@ -197,7 +217,9 @@ check('the rejection note does not assert a file state both modes cannot share',
 });
 
 check('apply-fix leaves the entry Open when the write fails', () => {
-  assert.match(APPLY_FIX, /Run atomic write to set status to `"Open"` with note/,
+  assert.ok(
+    /--status Open[\s\S]{0,400}?Write tool failed/.test(APPLY_FIX)
+    || /Write tool failed[\s\S]{0,400}?--status Open/.test(APPLY_FIX),
     'a failed write still parks the entry in a status no default view shows');
 });
 

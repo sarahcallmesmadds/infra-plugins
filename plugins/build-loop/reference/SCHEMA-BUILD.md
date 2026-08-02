@@ -126,11 +126,24 @@ Unlike the bug queue, this dedup is NOT time-windowed. Writing down the same ide
 
 ---
 
-## Atomic write rule
+## Write rule
 
-Creating a brand-new item does not need the atomic sequence, because there is no existing file to lose. This matches `/flag-issue`.
+Creating a brand-new item can be done with the Write tool, because the filename
+is a fresh timestamped stem and there is no existing file to lose.
 
-Any write that REPLACES an existing item, which means every status change made by `/built-check`, uses the `.tmp` plus node parse-check plus `mv` sequence.
+Any write that CHANGES an existing item, which means every status change made by
+`/built-check`, goes through `scripts/queue.js`:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/queue.js" update {id} --list to-build --status Built
+```
+
+This used to say to write a `.tmp`, parse-check it with node, and `mv` it into
+place. That protects a single write from being torn in half and was never the
+problem. The problem is that the read and the write are separate tool calls, and
+another session writing between them loses its change with no error, because the
+write that lands carries a copy composed before the other one existed. `queue.js`
+does the read, the change and the write in one process holding a lock.
 
 ---
 

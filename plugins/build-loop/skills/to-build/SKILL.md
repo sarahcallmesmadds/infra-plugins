@@ -3,7 +3,7 @@ name: to-build
 type: human
 description: The to-build list, at ~/.claude/build-loop/to-build/. With an argument it writes down something the user plans to build (a skill, hook, command, plugin, or loose script), showing a draft and waiting for confirmation before writing. With no argument it shows the list. Use when the user says "I want to build", "we should build", "add that to the to-build list", "put that on the list", "remind me to build", "what's on the to-build list", "what was I going to build", "what's left to build", or explicitly invokes /to-build. Pre-fills what and why from the current session. Never writes without confirmation.
 argument-hint: "[what you want to build, or nothing to see the list]"
-allowed-tools: Read, Write, Bash(ls:*), Bash(cat:*), Bash(date:*), Bash(mkdir:*)
+allowed-tools: Read, Write, Bash(ls:*), Bash(cat:*), Bash(date:*), Bash(mkdir:*), Bash(mktemp:*), Bash(node:*)
 ---
 
 You are working with the to-build list at `~/.claude/build-loop/to-build/`. The schema is at `${CLAUDE_PLUGIN_ROOT}/reference/SCHEMA-BUILD.md`. Read it if you have not already in this session.
@@ -15,13 +15,40 @@ This is the list of things the user plans to build. It is not the bug queue. The
 > before using it. A literal `~` creates a directory called `~` next to wherever
 > you happen to be, and every check that follows then reads the wrong place.
 
-> **This skill writes new items directly, on purpose.** Every write that REPLACES
-> an existing file in this plugin goes through the `.tmp` plus parse-check plus
-> `mv` sequence. This skill only ever creates brand-new items under a fresh
-> timestamped filename, so there is no good file to lose, and `allowed-tools`
-> above grants no `node` or `mv` accordingly. If this skill is ever changed to
-> update an existing item, that stops being true and the atomic sequence becomes
-> mandatory.
+> **Every write to the to-build list goes through `scripts/queue.js`.** Adding
+> an item uses `create`, changing one uses `update`. Both do the read, the check
+> and the write inside one process holding a lock.
+>
+> This paragraph used to say creating was safe to do with the Write tool,
+> because the filename is a fresh timestamped stem and there is no existing file
+> to lose. That is true about half-written files and misses the other half: the
+> duplicate check and the write are separate tool calls with a confirmation turn
+> between them, so two sessions adding the same idea both look, both see
+> nothing, and both write. The stem is timestamped to the second, so they can
+> also land on the same filename.
+
+---
+
+**Scratch files go in a private directory, made once per run.** Before the first
+hand-off, create it and reuse it for the rest of the run:
+
+```bash
+mktemp -d "${TMPDIR:-/tmp}/build-loop.XXXXXX"
+```
+
+Written out in full rather than as `mktemp -d -t build-loop`, which is BSD only.
+GNU coreutils wants at least six `X` characters in the template and exits 1 on
+the short form, so on Linux the directory is never created and every hand-off
+that reads from it fails. `built-check` pairs `date -u -v-{days}d` with a
+`date -u -d` fallback for the same reason.
+
+Use the path it prints, written as `{scratch}` below. Never a fixed name under
+`/tmp`. Two reasons, and the second is the one that bites on this machine. A
+fixed name is world-readable and another local user can replace it between the
+Write and the call, so what lands in the list is not what was composed. And a
+fixed name is shared between sessions: with two in flight, which is the premise
+of this whole change, one session's Write lands between the other's Write and
+its call, and the wrong text is recorded against the wrong item.
 
 ---
 
@@ -87,7 +114,27 @@ This check is NOT time-windowed. That is the point: writing the same idea down t
 
 > "You already have this one, from {date}: {title}. It says: {what}. Add a note to it instead, or write a separate item anyway?"
 
-If they want a note, append `{ts, text}` to that item's `notes` array. That is a REPLACING write, so use the atomic sequence: write `{id}.json.tmp`, parse-check it with node, then `mv` it into place. Since this skill's `allowed-tools` grants neither `node` nor `mv`, say plainly that you cannot append the note from here and offer to write a fresh item instead.
+If they want a note, write the text they gave you to a file in the scratch
+directory and hand that over:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/queue.js" update {id} --list to-build --note-file {scratch}/note-{id}.txt
+```
+
+If it exits non-zero, say the note was not added and read out what it printed.
+A refusal usually means another session holds the lock, so running it again is
+the remedy. Do not tell the user the note was added.
+
+`--note-file` rather than `--note` because this is text the user just typed. A
+double quote, a backtick, a `$(...)` or a newline in it would end or extend the
+shell argument, and this runs where `Bash(node:*)` is allowed. The file is named
+after the item so two sessions writing notes at once cannot swap them.
+
+That reads the item, appends to the `notes` already on it, and writes it back
+under a lock, so a note added by another session in the meantime survives. This
+used to say the note could not be appended from here at all, because the skill
+could not safely do a replacing write by hand and was honest about it. It can
+now, so it does.
 
 **If a match is found in status `Dropped`:**
 
@@ -155,9 +202,40 @@ built:           null
 Then:
 
 1. Get the time: `date -u +"%Y-%m-%dT%H-%M-%S"` for the filename, `date -u +"%Y-%m-%dT%H:%M:%S.000Z"` for `created_at`.
-2. Build the filename `{YYYY-MM-DDTHH-MM-SS}-{slug(title)}.json`. The `id` MUST equal the stem.
+2. Build the `id` as `{YYYY-MM-DDTHH-MM-SS}-{slug(title)}`. It becomes the filename stem.
 3. `mkdir -p ~/.claude/build-loop/to-build`
-4. Write the JSON with the Write tool, pretty-printed, two-space indent.
+4. Write the item to a scratch file with the Write tool, pretty-printed, two-space
+   indent, then hand it over:
+
+   ```bash
+   node "${CLAUDE_PLUGIN_ROOT}/scripts/queue.js" create {scratch}/{id}.json --list to-build --dedup-window all
+   ```
+
+   **If the user was warned about a duplicate in Step A2 and said to add it
+   anyway, pass `--dedup-window 0` instead**, which skips the check. Without
+   that, `--dedup-window all` refuses the very item they just approved and the
+   skill reports a refusal for something nobody wanted refused. An item whose
+   title slugs to an existing key could otherwise never be added at all.
+
+   Do not write it into the to-build directory yourself. The exact-key half of
+   the duplicate check in Step A2 happens again inside the lock, which is what
+   makes it a guarantee rather than a look: that check and this write are
+   separated by a confirmation turn, and another session can add the same item
+   in between. Filenames are timestamped to the second, so two sessions adding
+   the same title in the same second would otherwise overwrite one another
+   outright.
+
+   **Stop here unless it exited 0.** Exit 2 means an item with that `dedup_key`
+   already exists, so say so and name what it printed rather than retrying. Exit
+   1 is a real error, including the lock being held by another session, and its
+   message is written to be read aloud.
+
+   In either case do not go on to Step 5 and do not print the confirmation
+   below. It says the item was added, and saying that about an item that was
+   refused is worse than the refusal.
+
+   The judgment half of Step A2, whether two differently worded items describe
+   the same work, stays where it is. Nothing in a script can do it.
 5. Count what is open: read every file in the directory and count those with status `Open` or `In Progress`.
 
 Confirm:

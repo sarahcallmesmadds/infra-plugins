@@ -3,7 +3,7 @@ name: flag-issue
 type: human
 description: Logs a correction to the bug queue at ~/.claude/build-loop/queue/, against anything the user built — a skill, a hook, a slash command, a plugin, or a loose script. Use when the user says "that was wrong", "it should have", "next time", "don't do that", corrects anything of theirs by name, says the output was not what they wanted, or explicitly invokes /flag-issue. Reads the current session context to pre-fill what it was, what happened, what was expected, and a correct example; then shows a draft to the user and waits for confirmation before writing. Dedupes against queue entries from the last 10 minutes. After writing a primary entry, reads DEPS.json and auto-adds one dep-review queue entry per dependent listed in the map — so anything likely affected by the fix surfaces for review without the user having to remember.
 argument-hint: "[optional name of the thing that misbehaved]"
-allowed-tools: Read, Write, Bash(ls:*), Bash(cat:*), Bash(date:*), Bash(mkdir:*)
+allowed-tools: Read, Write, Bash(ls:*), Bash(cat:*), Bash(date:*), Bash(mkdir:*), Bash(mktemp:*), Bash(node:*)
 ---
 
 You are logging a correction to the build loop bug queue at `~/.claude/build-loop/queue/`. The schema is at `${CLAUDE_PLUGIN_ROOT}/reference/SCHEMA.md` — read it if you haven't already in this session.
@@ -14,20 +14,38 @@ You are logging a correction to the build loop bug queue at `~/.claude/build-loo
 > before using it. A literal `~` creates a directory called `~` next to wherever
 > you happen to be, and every check that follows then reads the wrong place.
 
-> **This skill writes directly, on purpose.** Every other skill here writes JSON
-> through the `.tmp` plus parse-check plus `mv` sequence, and says that rule has
-> no exceptions. This one is the exception, which is why `allowed-tools` above
-> grants no `node` or `mv`.
+> **Every queue write goes through `scripts/queue.js`.** This skill used to
+> write entries with the Write tool, on the argument that a brand-new file under
+> a fresh timestamped name has no good file to lose. That reasoning was about
+> half-written files and it was right about those. It missed the other failure:
+> the dedup check and the write were separate tool calls, so two sessions
+> capturing the same correction both looked at the queue, both saw no duplicate,
+> and both wrote. The check was never the problem. The gap after it was.
 >
-> The reason is what the pattern protects against. It exists so a half-written
-> file cannot replace a good one. This skill only ever creates brand-new queue
-> entries under a fresh timestamped filename, so there is no good file to lose.
-> The worst case is one unparseable new entry, and `list-bugs` already
-> renders those as `(malformed)` rather than failing, so it is visible and
-> deletable.
->
-> If this skill is ever changed to update an existing entry, that rule stops
-> applying and the atomic sequence becomes mandatory.
+> The `create` command does the check and the write inside one process holding
+> one lock, so nothing can land between them.
+
+
+**Scratch files go in a private directory, made once per run.** Before the first
+hand-off, create it and reuse it for the rest of the run:
+
+```bash
+mktemp -d "${TMPDIR:-/tmp}/build-loop.XXXXXX"
+```
+
+Written out in full rather than as `mktemp -d -t build-loop`, which is BSD only.
+GNU coreutils wants at least six `X` characters in the template and exits 1 on
+the short form, so on Linux the directory is never created and every hand-off
+that reads from it fails. `built-check` pairs `date -u -v-{days}d` with a
+`date -u -d` fallback for the same reason.
+
+Use the path it prints. Never a fixed name under `/tmp`. Two reasons, and the
+second is the one that bites on this machine. A fixed name is world-readable and
+another local user can replace it between the Write and the call, so what lands
+in the queue is not what was composed. And a fixed name is shared between
+sessions: with two of them in flight, which is the premise of this whole change,
+one session's Write lands between the other's Write and its call, and the wrong
+text is recorded against the wrong entry.
 
 ## Session context guard
 
@@ -172,11 +190,18 @@ Before writing, check for a duplicate:
    - Lowercase, replace all non-alphanumeric characters with `-`, strip leading/trailing dashes.
    - Result: `dedup_key = "{target}::{slug}"`
 
-2. Run `ls ~/.claude/build-loop/queue/*.json 2>/dev/null`.
-   For each file found, read it and check:
-   - Does its `dedup_key` equal the new one?
-   - Was its `created_at` within the last 10 minutes?
-   If both are true, a duplicate exists.
+2. Look for an existing entry with the same `dedup_key` created in the last ten
+   minutes, so you can tell the user before writing:
+
+   ```bash
+   ls ~/.claude/build-loop/queue/*.json 2>/dev/null
+   ```
+
+   Read each and compare. This is a courtesy check, not the guarantee. The real
+   one happens inside the lock in Step 4, which is where a duplicate is actually
+   refused, and it is worth knowing which is which: this check can be beaten by
+   another session writing in the moment between it and your write, and that one
+   cannot.
 
 3. If a duplicate is found:
    > "I already have a similar entry from {when}: `{existing_filename}`. Skip (dedupe) or write anyway?"
@@ -219,10 +244,42 @@ Then:
 2. Build the filename: `{YYYY-MM-DDTHH-MM-SS}-{slug(target)}.json`
    The `id` field MUST equal the filename stem (everything before `.json`).
 3. Ensure the queue directory exists: `mkdir -p ~/.claude/build-loop/queue`
-4. Use the Write tool to write the JSON file to `~/.claude/build-loop/queue/{filename}`.
-   Pretty-print with 2-space indentation (human-readable).
-5. Count open items: `ls ~/.claude/build-loop/queue/*.json 2>/dev/null | wc -l`
-6. Do NOT confirm here — proceed directly to Step 4b (dep-review flagging). Confirmation happens in Step 4c after flagging completes.
+4. Write the composed entry to a scratch file with the Write tool, then hand it
+   over. Do not write it into the queue directory yourself:
+
+   ```bash
+   node "${CLAUDE_PLUGIN_ROOT}/scripts/queue.js" create {scratch}/{filename}
+   ```
+
+   It re-checks the `dedup_key` inside the lock and writes only if nothing
+   matched, so the check and the write cannot be separated.
+
+   **If Step 3 found a duplicate and the user said "write anyway", pass
+   `--dedup-window 0`**, which skips the check. Without it the write is refused
+   for the exact duplicate they just approved, and the correction they asked to
+   keep is discarded. Exit 0 means it was
+   written. Exit 2 means a duplicate won the race and nothing was written: say so
+   and name the entry it printed, rather than retrying. Exit 1 is a real error
+   and the message is written to be read aloud.
+5. **Stop here unless it exited 0.** Nothing below this line is true if the
+   entry was not written.
+
+   - Exit 2, a duplicate won the race: say so, name the entry it printed, and
+     stop. Do not retry.
+   - Exit 1, a real error: read its message out and stop.
+
+   In both cases do NOT go on to Step 4b and do NOT print the confirmation.
+   Dep-review entries carry `parent_id` pointing at the primary, so writing them
+   against an entry that does not exist leaves children with no parent, and the
+   Step 4c line would tell the user their correction was logged when it was
+   discarded. That is the worst failure this skill has, because the user has no
+   reason to check.
+
+   The old flow could not reach this state: the dedup decision happened before
+   the single Write, so there was no way to be refused after deciding to write.
+   `create` can refuse, so the branch has to exist.
+6. Count open items: `ls ~/.claude/build-loop/queue/*.json 2>/dev/null | wc -l`
+7. Do NOT confirm here — proceed directly to Step 4b (dep-review flagging). Confirmation happens in Step 4c after flagging completes.
 
 ---
 
@@ -301,7 +358,10 @@ So fold `P` in wherever the value is an identifier, and leave it out wherever th
 
 2. **Compute the dep-review dedup key**: `dep-review::{P}/{X}::{primary entry's id}` when `P` is present, otherwise `dep-review::{X}::{primary entry's id}`. The plugin belongs here. Without it, two dependents called `cli` in different plugins produce one key, and the second is skipped as a duplicate of the first.
 
-3. **Dedup check**: run `ls ~/.claude/build-loop/queue/*.json 2>/dev/null`. Read each file. If any existing entry has the same `dedup_key`, skip this dependent and continue to the next. (Unlike primary dedup, dep-review dedup is NOT time-windowed — the same parent_id + dependent pair is one logical review, forever.)
+3. **Dedup**: not a separate step any more. Step 5 passes `--dedup-window all`,
+   which makes `queue.js` refuse any entry whose `dedup_key` already exists at
+   any age. Unlike primary dedup, dep-review dedup has no expiry: one parent and
+   one dependent is one logical review, forever, not one every ten minutes.
 
 4. **Build the dep-review entry** (all fields per SCHEMA.md v5):
    ```
@@ -327,7 +387,22 @@ So fold `P` in wherever the value is an identifier, and leave it out wherever th
    resolution:       null
    ```
 
-5. **Write the entry**. Filename: the `id` above with `.json` appended, so `{primary timestamp}-dep-review-{slug(P)}-{slug(X)}.json` where there is a plugin. It has to equal the `id` exactly, or the entry cannot be found by its own identifier. Use the Write tool. Pretty-print with 2-space indentation.
+5. **Write the entry.** Compose it to a scratch file with the Write tool, then:
+
+   ```bash
+   node "${CLAUDE_PLUGIN_ROOT}/scripts/queue.js" create {scratch}/{id}.json --dedup-window all
+   ```
+
+   The filename it lands under is the `id` with `.json` appended, so
+   `{primary timestamp}-dep-review-{slug(P)}-{slug(X)}.json` where there is a
+   plugin. `queue.js` derives it from the `id` field, which is what keeps the two
+   from drifting apart: an entry whose filename and `id` disagree cannot be found
+   by its own identifier.
+
+   Exit 2 means this review already exists, which is not an error. Exit 1 is:
+   report the failure for that dependent and carry on with the remaining ones,
+   per the failure handling at the end of this step. Neither counts toward
+   `dep_reviews_written`, so step 6 runs only after an exit 0.
 
 6. Increment `dep_reviews_written`.
 
@@ -347,7 +422,7 @@ Pluralization: use "entry" when `dep_reviews_written == 1`, "entries" otherwise.
 
 ### Failure handling inside Step 4b
 
-If ANY dep-review write fails (Write tool error, tempfile issue), continue with the remaining dependents and note the failure in the confirmation:
+If ANY dep-review write fails (exit 1 from `queue.js`, or the Write tool erroring on the scratch file), continue with the remaining dependents and note the failure in the confirmation. An exit 2 is a duplicate rather than a failure, so it is not counted here:
 > "Flagged {K} of {total} dep-reviews. {total - K} failed to write. Check the queue directory manually."
 
 The primary entry write is never rolled back because a dep-review write failed. The primary is the source of truth; dep-reviews are convenience.
