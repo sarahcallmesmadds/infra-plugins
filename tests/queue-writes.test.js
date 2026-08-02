@@ -209,10 +209,23 @@ check('free text reaches a note through a file, not a shell argument', () => {
   // typed. Interpolated into a quoted shell argument, a double quote or a
   // `$(...)` in that text ends or extends the argument, in a context where
   // Bash(node:*) is allowed. --note-file removes the shell from the path.
-  const INTERPOLATED = /--note "[^"]*\{(error|retry|file_state)[^"]*"/;
+  // Any placeholder in a --note argument, not a list of the ones seen so far.
+  // The first version named error, retry and file_state, and to-build's
+  // --note "{text}" walked straight past it: a denylist of the cases already
+  // known is not a rule, it is a record of what has been noticed. Values with a
+  // genuinely fixed shape are allowed by name and have to be argued for.
+  const SAFE_IN_NOTE = new Set(['commit-hash', 'revert-commit-hash', 'repo', 'id', 'target']);
+  const INTERPOLATED = (line) => {
+    for (const arg of line.match(/--note "[^"]*"/g) || []) {
+      for (const [, name] of arg.matchAll(/\{([^}]+)\}/g)) {
+        if (!SAFE_IN_NOTE.has(name.trim())) return true;
+      }
+    }
+    return false;
+  };
   const dirs = fs.readdirSync(SKILLS).filter((d) => fs.existsSync(path.join(SKILLS, d, 'SKILL.md')));
   for (const name of dirs) {
-    const offending = skill(name).split('\n').filter((line) => INTERPOLATED.test(line));
+    const offending = skill(name).split('\n').filter(INTERPOLATED);
     assert.deepStrictEqual(
       offending, [],
       `${name} interpolates free text into a shell argument:\n        ${offending.join('\n        ')}\n`
@@ -224,6 +237,51 @@ check('free text reaches a note through a file, not a shell argument', () => {
 check('queue.js can take a note from a file', () => {
   const source = fs.readFileSync(QUEUE_JS, 'utf8');
   assert.match(source, /note-file/, 'queue.js has no --note-file, so the skills are calling something that does not exist');
+});
+
+check('scratch files are not written to a fixed shared path', () => {
+  // A hand-off staged at a fixed name under /tmp is two bugs. Another local
+  // user can replace it between the Write and the call, and two sessions share
+  // it, so one session's note can be recorded against the other's entry. Both
+  // are fixed the same way: a directory from mktemp, and names scoped to the id.
+  const dirs = fs.readdirSync(SKILLS).filter((d) => fs.existsSync(path.join(SKILLS, d, 'SKILL.md')));
+  for (const name of dirs) {
+    const offending = skill(name).split('\n').filter((line) =>
+      /(--note-file|--json [a-z]+=|create|update)[^\n]*\s\/tmp\//.test(line));
+    assert.deepStrictEqual(
+      offending, [],
+      `${name} stages a hand-off at a fixed path:\n        ${offending.join('\n        ')}\n`
+      + '        Use a directory from mktemp and name the file after the entry id.'
+    );
+  }
+});
+
+check('a skill that grants mktemp is one that uses it, and the other way round', () => {
+  const dirs = fs.readdirSync(SKILLS).filter((d) => fs.existsSync(path.join(SKILLS, d, 'SKILL.md')));
+  for (const name of dirs) {
+    const text = skill(name);
+    const frontmatter = text.slice(0, text.indexOf('---', 4));
+    const uses = /\{scratch\}/.test(text);
+    const granted = /Bash\(mktemp:\*\)/.test(frontmatter);
+    assert.strictEqual(uses, granted,
+      uses
+        ? `${name} uses a {scratch} path and does not grant Bash(mktemp:*), so it cannot make one`
+        : `${name} grants Bash(mktemp:*) and never uses a scratch path`);
+  }
+});
+
+check('a duplicate the user approved can still be written', () => {
+  // Both skills offer to add something after warning it looks like a duplicate,
+  // and both then called create with a window that refuses exactly that. The
+  // user says "write anyway" and nothing is saved. --dedup-window 0 skips the
+  // check and is the only way to honour the answer.
+  for (const name of ['flag-issue', 'to-build']) {
+    assert.match(
+      skill(name), /--dedup-window 0/,
+      `${name} offers to write a duplicate anyway and never mentions --dedup-window 0, `
+      + 'so the write is refused for the thing the user just approved'
+    );
+  }
 });
 
 check('the reference documents agree with the skills', () => {
@@ -266,7 +324,7 @@ check('the checks would catch one', () => {
 
 // Counted as they run and then compared. This line was once a formula that
 // looked derived and was not, and it reported 10 while 13 ran.
-const EXPECTED_CHECKS = 21;
+const EXPECTED_CHECKS = 24;
 if (ran !== EXPECTED_CHECKS) {
   failed += 1;
   console.log(

@@ -3,7 +3,7 @@ name: apply-fix
 type: human
 description: Applies a correction from the bug queue to an actual target file. Reads the queue entry, checks DEPS.json for dependents, reasons about the surgical fix, shows a plain-language before/after diff, waits for the user's approval (yes / no / retry), then writes the fix, commits to the correct repo, and updates the queue entry status to "fix applied, watching" with the commit hash stored. Never writes without explicit approval.
 argument-hint: "[queue-entry-id or target-name]"
-allowed-tools: Read, Write, Bash(ls:*), Bash(cat:*), Bash(date:*), Bash(mkdir:*), Bash(mv:*), Bash(rm:*), Bash(node:*), Bash(git:*), Bash(grep:*), Bash(wc:*)
+allowed-tools: Read, Write, Bash(ls:*), Bash(cat:*), Bash(date:*), Bash(mktemp:*), Bash(mkdir:*), Bash(mv:*), Bash(rm:*), Bash(node:*), Bash(git:*), Bash(grep:*), Bash(wc:*)
 ---
 
 You are applying a correction from the build loop bug queue to an actual target file. The schema is at `${CLAUDE_PLUGIN_ROOT}/reference/SCHEMA.md` and the dependency map is at `~/.claude/build-loop/DEPS.json`.
@@ -15,6 +15,23 @@ Eight steps. Do not reorder or skip steps. The diff gate (Step 6) must come befo
 > Node's `fs` both take it literally, so expand it to the absolute home path
 > before using it. A literal `~` creates a directory called `~` next to wherever
 > you happen to be, and every check that follows then reads the wrong place.
+
+---
+
+**Scratch files go in a private directory, made once per run.** Before the first
+hand-off, create it and reuse it for the rest of the run:
+
+```bash
+mktemp -d -t build-loop
+```
+
+Use the path it prints, written as `{scratch}` below. Never a fixed name under
+`/tmp`. Two reasons, and the second is the one that bites on this machine. A
+fixed name is world-readable and another local user can replace it between the
+Write and the call, so what lands in the list is not what was composed. And a
+fixed name is shared between sessions: with two in flight, which is the premise
+of this whole change, one session's Write lands between the other's Write and
+its call, and the wrong text is recorded against the wrong item.
 
 ---
 
@@ -220,7 +237,7 @@ Write the note to a scratch file, reading:
 Then:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/queue.js" update {id} --status Open --note-file /tmp/note.txt
+node "${CLAUDE_PLUGIN_ROOT}/scripts/queue.js" update {id} --status Open --note-file {scratch}/note-{id}.txt
 ```
 
 `--note-file` rather than `--note` because `{error}` is free text from a tool.

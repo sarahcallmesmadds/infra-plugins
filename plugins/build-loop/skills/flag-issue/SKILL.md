@@ -3,7 +3,7 @@ name: flag-issue
 type: human
 description: Logs a correction to the bug queue at ~/.claude/build-loop/queue/, against anything the user built — a skill, a hook, a slash command, a plugin, or a loose script. Use when the user says "that was wrong", "it should have", "next time", "don't do that", corrects anything of theirs by name, says the output was not what they wanted, or explicitly invokes /flag-issue. Reads the current session context to pre-fill what it was, what happened, what was expected, and a correct example; then shows a draft to the user and waits for confirmation before writing. Dedupes against queue entries from the last 10 minutes. After writing a primary entry, reads DEPS.json and auto-adds one dep-review queue entry per dependent listed in the map — so anything likely affected by the fix surfaces for review without the user having to remember.
 argument-hint: "[optional name of the thing that misbehaved]"
-allowed-tools: Read, Write, Bash(ls:*), Bash(cat:*), Bash(date:*), Bash(mkdir:*), Bash(node:*)
+allowed-tools: Read, Write, Bash(ls:*), Bash(cat:*), Bash(date:*), Bash(mkdir:*), Bash(mktemp:*), Bash(node:*)
 ---
 
 You are logging a correction to the build loop bug queue at `~/.claude/build-loop/queue/`. The schema is at `${CLAUDE_PLUGIN_ROOT}/reference/SCHEMA.md` — read it if you haven't already in this session.
@@ -24,6 +24,22 @@ You are logging a correction to the build loop bug queue at `~/.claude/build-loo
 >
 > The `create` command does the check and the write inside one process holding
 > one lock, so nothing can land between them.
+
+
+**Scratch files go in a private directory, made once per run.** Before the first
+hand-off, create it and reuse it for the rest of the run:
+
+```bash
+mktemp -d -t build-loop
+```
+
+Use the path it prints. Never a fixed name under `/tmp`. Two reasons, and the
+second is the one that bites on this machine. A fixed name is world-readable and
+another local user can replace it between the Write and the call, so what lands
+in the queue is not what was composed. And a fixed name is shared between
+sessions: with two of them in flight, which is the premise of this whole change,
+one session's Write lands between the other's Write and its call, and the wrong
+text is recorded against the wrong entry.
 
 ## Session context guard
 
@@ -226,11 +242,16 @@ Then:
    over. Do not write it into the queue directory yourself:
 
    ```bash
-   node "${CLAUDE_PLUGIN_ROOT}/scripts/queue.js" create /tmp/{filename}
+   node "${CLAUDE_PLUGIN_ROOT}/scripts/queue.js" create {scratch}/{filename}
    ```
 
    It re-checks the `dedup_key` inside the lock and writes only if nothing
-   matched, so the check and the write cannot be separated. Exit 0 means it was
+   matched, so the check and the write cannot be separated.
+
+   **If Step 3 found a duplicate and the user said "write anyway", pass
+   `--dedup-window 0`**, which skips the check. Without it the write is refused
+   for the exact duplicate they just approved, and the correction they asked to
+   keep is discarded. Exit 0 means it was
    written. Exit 2 means a duplicate won the race and nothing was written: say so
    and name the entry it printed, rather than retrying. Exit 1 is a real error
    and the message is written to be read aloud.
@@ -346,7 +367,7 @@ So fold `P` in wherever the value is an identifier, and leave it out wherever th
 5. **Write the entry.** Compose it to a scratch file with the Write tool, then:
 
    ```bash
-   node "${CLAUDE_PLUGIN_ROOT}/scripts/queue.js" create /tmp/{id}.json --dedup-window all
+   node "${CLAUDE_PLUGIN_ROOT}/scripts/queue.js" create {scratch}/{id}.json --dedup-window all
    ```
 
    The filename it lands under is the `id` with `.json` appended, so
