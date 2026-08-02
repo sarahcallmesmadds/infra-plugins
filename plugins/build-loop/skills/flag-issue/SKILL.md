@@ -84,6 +84,26 @@ You show this in the draft at Step 2, so a wrong guess costs nothing. Asking abo
 
 1. Read the roots from `~/.claude/build-loop.config.json`. If that file does not exist, use the three defaults from SCHEMA.md: `personal` at `~/.claude/skills` (kind `skill`), `hooks` at `~/.claude/hooks` (kind `hook`), and `commands` at `~/.claude/commands` (kind `command`). If the config has `skillRoots` and no `roots`, read each of those as a root of kind `skill`.
 
+   Then check they still exist, before searching them:
+
+   ```bash
+   node "${CLAUDE_PLUGIN_ROOT}/scripts/roots.js" check
+   ```
+
+   - Exit 0, carry on.
+   - Exit 3, a root someone configured is gone. Relay that before asking the
+     user anything. "I cannot find it" and "the place I was looking no longer
+     exists" are different problems, and only the first is one they can answer
+     by naming a file.
+   - Exit 5, only default locations are absent. Nobody configured those paths,
+     so do not lead with it. Carry on, and bring it up at point 5 below if the
+     target then fails to resolve, where it is the explanation.
+   - Exit 4, there is nowhere to look. Relay it and go straight to asking for a
+     path, rather than searching roots that are not there.
+   - Exit 1, the config could not be read. Relay it and ask for a path.
+
+   Every one of those messages arrives on stdout, including exit 1.
+
 2. Search the roots whose `kind` matches `target_kind`, in configured order, first hit wins:
    - kind `skill`: `ls <root.path>/{target}/SKILL.md`, then `ls <root.path>/{target}/skill/SKILL.md`
    - kind `hook`: `ls <root.path>/{target}`, then `ls <root.path>/{target}.*`
@@ -130,11 +150,9 @@ You show this in the draft at Step 2, so a wrong guess costs nothing. Asking abo
 
 4. If `target_kind` is `other` and nothing above matched, there is no convention left to search. Ask.
 
-5. If nothing was found anywhere, first check whether any configured root exists on disk at all. If none do, say this once rather than asking for a path every time:
+5. If nothing was found anywhere, the check in point 1 has already said whether the roots themselves are the problem. Where it named one as gone, repeat that before asking for anything: a root that has moved is the likely reason, and naming a file does not fix it.
 
-   > "None of the configured roots exist on this machine. If you develop plugins in a checkout, add it to `~/.claude/build-loop.config.json` as a root of kind `plugin-repo` and this will resolve automatically. For now, what file should a fix edit?"
-
-   Otherwise ask: "I can't find `{target}` in any configured root. What file should a fix edit?"
+   Then ask: "I can't find `{target}` in any configured root. What file should a fix edit?"
 
    Record whatever path they confirm. If it sits outside every configured root, set `repo: "unknown"` and note it. Never guess a path, and never fall back to a plausible-looking file. A wrong path here sends a commit into an unrelated repository.
 

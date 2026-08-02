@@ -79,19 +79,24 @@ checkout you actually edit, never at the installed copy.
 
 A target found under no root is recorded as `repo: "unknown"`, and nothing will commit a fix for it until that is resolved by hand.
 
-### If none of the default roots exist
+### When a root does not exist
 
 The three defaults are the standard locations, and on a machine where
 everything is installed from marketplaces rather than written by hand, none of
 them will exist. That is not an error, but it does mean nothing resolves
 automatically and every capture will stop to ask for a path.
 
-When a command notices that no configured root exists on disk, it says so once
-and points at the config, rather than asking for a path every single time:
+A root named in a config the user wrote is a different matter: that path was
+chosen, so its being absent is worth saying out loud.
 
-> "None of the configured roots exist on this machine. If you develop plugins in
-> a checkout, add it to `~/.claude/build-loop.config.json` as a root of kind
-> `plugin-repo` and everything will resolve automatically."
+**This file does not describe what a skill says about either case.**
+`scripts/roots.js` owns that wording, and every skill that reads the config
+calls it and relays what it prints. Run `roots.js --help` for the exit codes.
+
+The sentence used to be written out here and again in three of the six skills,
+which is four copies of one rule with no way to tell which was in force. Three
+of the six never had it at all, and that gap stayed invisible until a root moved
+on 2026-08-01 and nothing said so.
 
 ---
 

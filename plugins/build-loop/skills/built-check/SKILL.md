@@ -111,9 +111,27 @@ Collect from three places. Gather all three before judging anything, because the
 
 Read the roots from `~/.claude/build-loop.config.json`. With no config file, use the three defaults from SCHEMA.md: `personal` at `~/.claude/skills` (kind `skill`), `hooks` at `~/.claude/hooks` (kind `hook`), and `commands` at `~/.claude/commands` (kind `command`). If the config has `skillRoots` and no `roots`, read those as roots of kind `skill`.
 
-If none of the roots exist on disk, say so once and carry on using session evidence alone. Do not report "no sign of it" for everything as though you had looked, when there was nowhere to look:
+Check they exist before reading any git log:
 
-> "None of the configured roots exist on this machine, so I only have this session to go on."
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/roots.js" check
+```
+
+- Exit 0, carry on.
+- Exit 3, a root someone configured is gone. Relay what it said and use the
+  roots that remain.
+- Exit 5, only default locations are absent. Nobody configured those paths, so
+  do not lead with it and do not stop. Carry on, and mention it only if the
+  search then finds no evidence, where it is the explanation.
+- Exit 4, relay it, add that you only have this session to go on, and carry on
+  with session evidence alone.
+- Exit 1, the config itself could not be read. Relay what it said and carry on
+  with session evidence alone, saying that is all you have.
+
+Every one of those messages arrives on stdout, including exit 1.
+
+Whichever of these applies, do not report "no sign of it" for everything as
+though you had looked, when there was nowhere to look.
 
 For each root that is a git repository:
 

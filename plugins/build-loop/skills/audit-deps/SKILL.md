@@ -32,12 +32,31 @@ file does not exist, use the three defaults:
 A config holding `skillRoots` and no `roots` is read as roots of kind `skill`.
 Do not rewrite that file. It predates schema v2 and still works.
 
-**If none of the configured roots exist on disk**, stop before scanning and say
-so, because a scan of nothing looks identical to a scan that found nothing:
+**Check the roots before scanning, and relay what it says.** The check is a
+script rather than a paragraph, because the same rule has to hold in every skill
+that reads this config, and six paragraphs drift where one script cannot:
 
-> "None of the configured roots exist on this machine, so there is nothing to
-> scan. If you develop plugins in a checkout, add it to
-> `~/.claude/build-loop.config.json` as a root of kind `plugin-repo`."
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/roots.js" check
+```
+
+- Exit 0, every root exists. Nothing to relay, carry on.
+- Exit 3, a root someone configured is gone. Print what it said, then scan the
+  roots that remain.
+- Exit 5, only default locations are absent. Nobody configured those paths, so
+  do not lead with it and do not stop. Carry on, and mention it only if the
+  scan then turns up orphans, where it is the explanation.
+- Exit 4, there is nothing to scan. Print what it said and stop, because a scan
+  of nothing looks identical to a scan that found nothing.
+- Exit 1, the config itself could not be read. Print what it said and stop.
+
+Every one of those messages arrives on stdout, including exit 1.
+
+On exit 3, do not offer to remove the orphans a dead root produced. Step 3 will
+bucket everything the map held under that root as ORPHANED, which reads as "these
+files were deleted" when the path is what moved. Those entries are almost
+certainly fine, and approving that draft throws away the map instead of fixing
+the path.
 
 What you list depends on the root's `kind`:
 

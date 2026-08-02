@@ -87,6 +87,19 @@ roots of kind `skill`. If `repo` is
 `"unknown"`, or names a root that is no longer configured, stop and say so.
 Never guess a repository to run a revert in.
 
+A root that is still configured may no longer be on disk, which is a different
+thing and reads the same from here. Ask about the one this entry names, before
+running anything:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/roots.js" check --name {repo}
+```
+
+Exit 0 means that root exists. Anything else means it does not, or is not
+configured at all: relay what the check printed and stop. A revert is the one
+operation here where guessing at a repository would rewrite work in the wrong
+place, so "the other roots are fine" is not a good enough answer.
+
 Run:
 ```bash
 git -C {repo_root} revert {commit-hash} --no-edit
