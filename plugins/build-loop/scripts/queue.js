@@ -471,7 +471,16 @@ if (require.main === module) {
     process.stderr.write((error instanceof QueueError ? error.message : error.stack) + '\n');
     code = 1;
   }
-  process.exit(code);
+  // `process.exitCode`, never `process.exit`. On macOS a write to a pipe is
+  // asynchronous, so exiting immediately after one can drop it, and every
+  // caller here is a skill reading what was printed: flag-issue names the entry
+  // create reported, apply-fix repeats what update said when it failed. A
+  // truncated line there is a skill reporting nothing, or half a sentence, at
+  // the moment something went wrong.
+  //
+  // Setting the code and letting the process end on its own flushes first.
+  // Nothing in this file is asynchronous, so it ends immediately either way.
+  process.exitCode = code;
 }
 
 module.exports = { main, LOCK, QUEUE };

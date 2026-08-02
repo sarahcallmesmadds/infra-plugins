@@ -270,6 +270,27 @@ check('a skill that grants mktemp is one that uses it, and the other way round',
   }
 });
 
+check('queue.js sets an exit code rather than calling process.exit', () => {
+  // On macOS a write to a pipe is asynchronous, so exiting immediately after
+  // one can drop it. Every caller here is a skill reading what was printed:
+  // flag-issue names the entry create reported, apply-fix repeats what update
+  // said when it failed. A truncated line there is a skill reporting half a
+  // sentence at the moment something went wrong, and it would be intermittent,
+  // which is the worst way for it to show up.
+  //
+  // A source assertion because the failure is a race: a test that ran the
+  // command and checked the output would pass almost every time either way.
+  const source = fs.readFileSync(QUEUE_JS, 'utf8');
+  const offending = source.split('\n').filter((line) =>
+    /process\.exit\(/.test(line) && !/^\s*\/\//.test(line));
+  assert.deepStrictEqual(
+    offending, [],
+    `queue.js calls process.exit, which can truncate what it just printed:\n        ${offending.join('\n        ')}\n`
+    + '        Set process.exitCode and let the process end on its own.'
+  );
+  assert.match(source, /process\.exitCode = code/, 'nothing sets the exit code, so a failure would report success');
+});
+
 check('a duplicate the user approved can still be written', () => {
   // Both skills offer to add something after warning it looks like a duplicate,
   // and both then called create with a window that refuses exactly that. The
@@ -324,7 +345,7 @@ check('the checks would catch one', () => {
 
 // Counted as they run and then compared. This line was once a formula that
 // looked derived and was not, and it reported 10 while 13 ran.
-const EXPECTED_CHECKS = 24;
+const EXPECTED_CHECKS = 25;
 if (ran !== EXPECTED_CHECKS) {
   failed += 1;
   console.log(
