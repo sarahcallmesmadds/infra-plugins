@@ -214,18 +214,52 @@ check('a kind nothing is configured for is nothing to scan, not success', () => 
   assert.match(out.stdout, /No root of kind skill is configured/, 'did not say why there was nothing');
 });
 
-check('an absent default is not reported as a fault', () => {
-  // SCHEMA.md says it outright: on a machine where everything is installed from
-  // marketplaces, none of the three defaults will exist, and that is not an
-  // error. Reporting them as roots that have gone missing describes a healthy
-  // machine as a damaged one.
+check('an absent default is described as normal, in words, and still exits 3', () => {
+  // SCHEMA.md says on a machine installing everything from marketplaces none of
+  // the three defaults will exist, and that this is not an error. That is a
+  // statement about wording, and an earlier version of this file read it as a
+  // statement about the exit code: it returned 0, which told apply-fix the root
+  // existed, and Step 8 then ran git against a path that was not there after the
+  // target file had already been written.
+  //
+  // So both halves are asserted here. Gentle words, honest code.
   const home = makeHome(undefined);
   fs.mkdirSync(path.join(home, '.claude', 'skills'), { recursive: true });
   const out = run(home, ['check']);
-  assert.strictEqual(out.code, 0, `an absent default should not be an anomaly, got ${out.code}`);
-  assert.doesNotMatch(out.stdout, /does not exist/, 'used the language of a broken configured root');
+  assert.strictEqual(out.code, 3, `an absent default is still an absent directory, got ${out.code}`);
   assert.doesNotMatch(out.stdout, /orphaned/, 'threatened the user about a path they never chose');
   assert.match(out.stdout, /normal/, 'did not say the absence was expected');
+});
+
+check('scoping is what keeps an absent default quiet, not the exit code', () => {
+  // find-skill reads skill roots only. On the common machine it must hear
+  // nothing about hooks and commands, and that has to come from asking a
+  // narrower question rather than from the answer being softened for everyone.
+  const home = makeHome(undefined);
+  fs.mkdirSync(path.join(home, '.claude', 'skills'), { recursive: true });
+  const out = run(home, ['check', '--kind', 'skill']);
+  assert.strictEqual(out.code, 0, 'the skill root exists, so the scoped check should be clean');
+  assert.doesNotMatch(out.stdout, /hooks|commands/, 'reported roots this caller never reads');
+});
+
+check('--name answers about one root, which is what a committer asks', () => {
+  const home = makeHome(undefined);
+  fs.mkdirSync(path.join(home, '.claude', 'skills'), { recursive: true });
+
+  const present = run(home, ['check', '--name', 'personal']);
+  assert.strictEqual(present.code, 0, 'a root that exists was not reported as existing');
+  assert.match(present.stdout, /Root 'personal' exists/, 'did not confirm the named root');
+
+  // The regression this whole check exists for: a bare check on this machine
+  // exits 3, but the question apply-fix has is about one root, and inferring a
+  // narrow answer from a broad one is what let an absent root through.
+  const absent = run(home, ['check', '--name', 'hooks']);
+  assert.notStrictEqual(absent.code, 0, 'an absent root answered as though it were fine');
+  assert.match(absent.stdout, /nowhere to work/, 'did not say the caller cannot work there');
+
+  const unconfigured = run(home, ['check', '--name', 'no-such-root']);
+  assert.notStrictEqual(unconfigured.code, 0, 'an unconfigured name answered as though it were fine');
+  assert.match(unconfigured.stdout, /No root named 'no-such-root'/, 'did not name what it could not find');
 });
 
 check('every default being absent is still nothing to scan', () => {
@@ -308,6 +342,36 @@ check('every skill that calls roots.js is allowed to run it', () => {
   assert.deepStrictEqual(
     offending, [],
     `these call roots.js and do not grant Bash(node:*): ${offending.join(', ')}`
+  );
+});
+
+check('a skill that commits into one root asks about that root by name', () => {
+  // apply-fix and revert-fix both run git inside the root named by the entry's
+  // repo field. A bare check answers about every root, and "the others are
+  // fine" is not an answer about the one you are about to write into. That gap
+  // is how an absent default reached a git command as an all-clear.
+  const offending = ['apply-fix', 'revert-fix'].filter((name) =>
+    !/roots\.js"? check --name/.test(skillText(name)));
+  assert.deepStrictEqual(
+    offending, [],
+    `these run git inside one root and do not ask about it by name: ${offending.join(', ')}`
+  );
+});
+
+check('no skill claims a bare check proves a particular root exists', () => {
+  // The claim apply-fix made at Step 8 after the first review round. It was
+  // false for as long as a bare check could exit 0 with something missing, and
+  // a sentence asserting a guarantee is worse than no sentence, because the
+  // steps after it stop looking.
+  const offending = skillDirs().filter((name) => {
+    const text = skillText(name);
+    if (!/roots\.js/.test(text)) return false;
+    if (/roots\.js"? check --name/.test(text)) return false;
+    return /known to exist|is known to be there/.test(text);
+  });
+  assert.deepStrictEqual(
+    offending, [],
+    `these claim a root is known to exist without having asked about it by name: ${offending.join(', ')}`
   );
 });
 

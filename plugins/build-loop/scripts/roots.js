@@ -133,7 +133,11 @@ function readConfig() {
 // every root of the kind asked about was dead. A caller that asks about skill
 // roots is answering a question about skill roots, and find-skill was reporting
 // a missing hooks directory to someone who asked which skill to use.
-function resolve(kind) {
+// `name` narrows to a single root, which is the question apply-fix and
+// revert-fix actually have: not "is everything well" but "is the one I am about
+// to commit into there". Asking the broad question and inferring the narrow
+// answer from it is what let an absent root through.
+function resolve({ kind, name } = {}) {
   const config = readConfig();
   const all = config.roots.map((r, i) => {
     const raw = r && typeof r.path === 'string' ? r.path : null;
@@ -148,42 +152,51 @@ function resolve(kind) {
     };
   });
 
-  const roots = kind ? all.filter((r) => r.kind === kind) : all;
+  let roots = all;
+  if (kind) roots = roots.filter((r) => r.kind === kind);
+  if (name) roots = roots.filter((r) => r.name === name);
   const missing = roots.filter((r) => !r.exists);
   return {
     config: config.source,
     usedDefaults: Boolean(config.usedDefaults),
     legacy: config.legacy || null,
     kind: kind || null,
+    name: name || null,
     roots,
     missing,
     allMissing: roots.length > 0 && missing.length === roots.length,
   };
 }
 
-// A default that is absent is not a fault. SCHEMA.md says so in as many words:
-// on a machine where everything is installed from marketplaces rather than
-// written by hand, none of the three standard locations will exist, and that is
-// not an error. Nobody chose those paths, so reporting them as roots that have
-// gone missing describes a healthy machine as a damaged one.
+// The exit code answers one question only: does every root in scope exist. It
+// does not grade how upset to be about the answer.
 //
-// All three being absent is still worth stopping for, because then there really
-// is nowhere to look, and that is the case SCHEMA.md documents a message for.
+// An earlier version returned OK when a default was absent, on the reasoning
+// that SCHEMA.md calls that "not an error". It is not an error, and the code
+// still has to say it, because the exit code is the only signal a caller gets
+// about whether the root it is about to use is there. Returning OK told
+// apply-fix the root existed, and Step 8 then ran git against a path that was
+// not there, after the target file had already been written: the exact limbo
+// the Step 2 guard exists to prevent.
+//
+// "Not an error" is a statement about wording, so it lives in the wording.
+// cmdCheck says plainly that an absent default is normal. Scope is what keeps
+// that quiet where it is irrelevant: find-skill asks --kind skill and never
+// hears about a missing hooks directory at all.
 function codeFor(state) {
-  // Asking about a kind nothing is configured for leaves nothing to scan, which
-  // has the same consequence as every root being gone even though the cause
-  // differs. Returning OK here would tell find-skill the skill roots are fine
-  // on a machine that has none.
+  // Asking about a kind or a name nothing is configured for leaves nothing to
+  // scan, which has the same consequence as every root being gone even though
+  // the cause differs. Returning OK here would tell find-skill the skill roots
+  // are fine on a machine that has none.
   if (state.roots.length === 0) return ALL_MISSING;
   if (state.missing.length === 0) return OK;
-  if (state.allMissing) return ALL_MISSING;
-  return state.usedDefaults ? OK : SOME_MISSING;
+  return state.allMissing ? ALL_MISSING : SOME_MISSING;
 }
 
 // --- commands ------------------------------------------------------------
 
 function cmdList(args) {
-  const state = resolve(args.kind);
+  const state = resolve(args);
   process.stdout.write(JSON.stringify(state, null, 2) + '\n');
   return codeFor(state);
 }
@@ -192,11 +205,27 @@ function cmdList(args) {
 // SKILL.md so that six callers cannot describe the same condition six ways,
 // which is how the old guard drifted.
 function cmdCheck(args) {
-  const state = resolve(args.kind);
+  const state = resolve(args);
   const scope = state.kind ? ` of kind ${state.kind}` : '';
   const lines = [];
 
-  if (state.roots.length === 0) {
+  if (state.name) {
+    // Narrowed to one root, so answer about that root and nothing else. The
+    // caller asked because it is about to work inside it.
+    const found = state.roots[0];
+    if (!found) {
+      lines.push(`No root named '${state.name}'${scope} is configured, so there is nowhere to work.`);
+    } else if (!found.exists) {
+      lines.push(
+        `Root '${found.name}' points at ${found.path}, which does not exist, so there is nowhere to work.`,
+        state.usedDefaults
+          ? 'It is a default location rather than one anything configured, so nothing has been lost. Nothing can be written there either.'
+          : 'Anything the map holds under it will read as orphaned until the path is fixed.',
+      );
+    } else {
+      lines.push(`Root '${found.name}' exists at ${found.path}.`);
+    }
+  } else if (state.roots.length === 0) {
     lines.push(`No root${scope} is configured, so there is nothing to scan.`);
   } else if (state.usedDefaults) {
     // Nobody chose these paths, so an absent one is information rather than a
@@ -242,7 +271,7 @@ function cmdCheck(args) {
 // Same shape as queue.js on purpose, including refusing an unknown option
 // rather than turning it into a silent boolean. A typo that is ignored is a
 // caller believing it asked for something it did not.
-const VALUE_OPTS = new Set(['kind']);
+const VALUE_OPTS = new Set(['kind', 'name']);
 
 function parseArgs(argv) {
   const out = { _: [] };
@@ -274,21 +303,23 @@ function main(argv) {
     process.stdout.write([
       'roots.js <command>',
       '',
-      '  check [--kind K]      report any configured root that does not exist',
-      '  list  [--kind K]      print the roots as JSON, each with an exists flag',
+      '  check [--kind K] [--name N]   report any root in scope that is missing',
+      '  list  [--kind K] [--name N]   the roots as JSON, each with an exists flag',
       '',
-      '  --kind scopes everything: which roots are looked at, which are reported',
-      '  missing, and the exit code. Ask about skill roots and a missing hook',
-      '  root is not your answer.',
+      '  --kind and --name scope everything: which roots are looked at, which are',
+      '  reported missing, and the exit code. Ask about skill roots and a missing',
+      '  hook root is not your answer. Use --name when you are about to work',
+      '  inside one particular root and need an answer about that one.',
       '',
-      '  Exit codes: 0 every root exists, 3 some are missing, 4 nothing to scan',
-      '  (all missing, or none configured for that kind), 1 the config could not',
-      '  be read.',
+      '  Exit codes: 0 every root in scope exists, 3 some are missing, 4 nothing',
+      '  to scan (all missing, or nothing configured matching the scope), 1 the',
+      '  config could not be read.',
       '',
-      '  With no config file the three defaults are used, and any of them being',
-      '  absent exits 0. Nobody chose those paths, so a machine that installs',
-      '  everything from marketplaces is not broken. All three absent still',
-      '  exits 4, because then there is nowhere to look.',
+      '  The code answers only whether the roots are there. It does not grade how',
+      '  much that matters: with no config file the defaults are in use and an',
+      '  absent one is reported as normal, in words, while still exiting 3. A',
+      '  caller needs to know a directory is not there even when nobody is at',
+      '  fault for it.',
       '',
       '  Reads only; it never repairs a path.',
       '',

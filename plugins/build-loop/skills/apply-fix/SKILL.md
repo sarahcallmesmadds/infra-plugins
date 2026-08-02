@@ -73,14 +73,20 @@ Then check:
 **Repo guard:** If `repo == "unknown"`: say "This entry has repo: unknown. I can't commit without knowing which repo this belongs to. Check DEPS.json or update the queue entry's repo field manually, then try again." Stop. Do not change status.
 
 **Root guard.** A root that is still named in the config may no longer be on
-disk, which reads the same from here as a repo that was never configured:
+disk, which reads the same from here as a repo that was never configured. Ask
+about the one this entry names, not about the roots in general:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/roots.js" check
+node "${CLAUDE_PLUGIN_ROOT}/scripts/roots.js" check --name {repo}
 ```
 
-Exit 0, carry on. Otherwise, if the root named by this entry's `repo` is among
-the ones it reports as gone, relay what it said and stop. Do not change status.
+Exit 0 means that root exists, and Step 8 can commit into it. Anything else
+means it cannot: relay what the check printed and stop. Do not change status.
+
+**`--name`, rather than a bare `check`.** The question here is about one root.
+A bare check answers about all of them, and "everything taken together is fine"
+is not an answer about the one you are about to write into. That gap is not
+hypothetical: it is how a missing default reached Step 8 as an all-clear.
 
 **This check belongs here rather than at Step 8, where the roots are read.** By
 Step 8 the target file is already written, so a root that turns out to be absent
@@ -303,8 +309,12 @@ exist, use the three defaults from SCHEMA.md: `personal` at `~/.claude/skills`,
 `hooks` at `~/.claude/hooks`, and `commands` at `~/.claude/commands`. A config
 holding `skillRoots` and no `roots` is read as roots of kind `skill`.
 
-The roots were checked at Step 2, before anything was written, so by here the
-root named by this entry's `repo` is known to exist. Do not check again.
+Step 2 asked about this entry's `repo` by name, before anything was written, so
+by here that root is known to exist. Do not check again.
+
+If `git -C` still fails, the root exists and is not a git repository, which is a
+different problem with its own handling below. Do not read it as the root being
+absent.
 
 Look up the entry's `repo` in `roots` to get that root's path. Then work out
 what to stage, as the path of `target_path` relative to that root. Do NOT

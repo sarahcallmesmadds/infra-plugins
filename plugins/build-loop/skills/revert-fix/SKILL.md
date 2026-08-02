@@ -88,15 +88,17 @@ roots of kind `skill`. If `repo` is
 Never guess a repository to run a revert in.
 
 A root that is still configured may no longer be on disk, which is a different
-thing and reads the same from here. Check before running anything:
+thing and reads the same from here. Ask about the one this entry names, before
+running anything:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/roots.js" check
+node "${CLAUDE_PLUGIN_ROOT}/scripts/roots.js" check --name {repo}
 ```
 
-Exit 0, carry on. Anything else names the roots that are gone. If this entry's
-`repo` is among them, relay what it said and stop. A revert is the one operation
-here where guessing at a repository would rewrite work in the wrong place.
+Exit 0 means that root exists. Anything else means it does not, or is not
+configured at all: relay what the check printed and stop. A revert is the one
+operation here where guessing at a repository would rewrite work in the wrong
+place, so "the other roots are fine" is not a good enough answer.
 
 Run:
 ```bash
