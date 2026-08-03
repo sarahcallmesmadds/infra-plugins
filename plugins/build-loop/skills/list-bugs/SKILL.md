@@ -1,7 +1,7 @@
 ---
 name: list-bugs
 type: human
-description: Shows the build loop bug queue as a plain-language table. Use when the user asks "what's in the queue", "what bugs are open", "show me the queue", "what did I capture", or explicitly invokes /list-bugs. Supports optional status filter argument (open, all, resolved, wontfix). Default filter is Open + In Progress items only, sorted oldest first.
+description: Shows the build loop bug queue as a plain-language table. Use when the user asks "what's in the queue", "what bugs are open", "show me the queue", "what did I capture", or explicitly invokes /list-bugs. Supports optional status filter argument (open, all, resolved, wontfix). Default filter is Open + In Progress items only, leading with the items that can actually be started and oldest first within that.
 argument-hint: "[optional filter: open | all | resolved | wontfix]"
 allowed-tools: Read, Bash(ls:*), Bash(cat:*)
 ---
@@ -41,26 +41,39 @@ Determine the human-readable `filter_label`:
    - If parsing succeeds: extract `target`, `target_kind`, `what_happened`, `status`, `created_at`, `what_expected`, `target_path`, `dedup_key`, `type` fields. Apply the read-time defaults from SCHEMA.md so an older entry never crashes this view: a missing `type` reads as `"primary"`, a missing `target` reads from `skill`, a missing `target_path` reads from `skill_path`, and a missing `target_kind` reads as `"skill"`.
    - If parsing fails for any reason: create a synthetic entry with `target: "(malformed)"`, `target_kind: "(error)"`, `what_happened: "file {filename} could not be parsed"`, `status: "(error)"`, `created_at: "?"`, `type: "(error)"`. Do not hide broken entries — the user needs to see them so they can fix them.
 5. If a file read fails (permission denied, etc.): treat as a parse failure — list it as `(error)` with the filename and continue. Never stop processing remaining files.
-6. Apply the filter from Step 1. Drop entries whose status does not match.
+6. Build a status index from **every** entry read, before any filtering happens: a map from each entry's `id` to its `status`. Build it first, because a dep-review's parent is usually Resolved by the time the review can be done, and a Resolved parent is dropped by the default filter while its status is still needed here.
+7. Resolve each `dep-review` entry against that index and classify it:
+   - Look up `parent_id` and record what it points at as `parent_status`. A missing `parent_id`, or one naming an entry that is not on disk, reads as `parent_status = "(unknown)"`.
+   - **waiting** when `parent_status` is `Open` or `In Progress`. The parent bug is still unfixed, so no change exists yet whose impact could be reviewed.
+   - **answerable** for every other `parent_status`, `(unknown)` included. A finished parent means the fix landed and the review can be done now. An unknown parent is surfaced rather than hidden, because a dep-review pointing at nothing is itself worth seeing.
+   - A `primary` entry is never waiting, and neither is an `(error)` entry.
+8. Apply the filter from Step 1. Drop entries whose status does not match.
 
 ### Step 3 — Sort
 
 Sort the surviving entries in this order:
-1. **Primary (status order):** `Open` → `In Progress` → `Resolved` → `Won't Fix` → `(error)` last.
-2. **Secondary within each status group:** `created_at` ascending (oldest first — older = more urgent).
+1. **Actionability band:** `primary` first, then answerable `dep-review`, then waiting `dep-review`. This is what keeps the view leading with work that can actually be started. A waiting dep-review is a real item, but it is blocked on something else in the queue, so it sits below everything that is not.
+2. **Status order within a band:** `Open` → `In Progress` → `Resolved` → `Won't Fix` → `(error)` last.
+3. **`created_at` ascending within each status group**, oldest first, since older means more urgent.
 
 For `(error)` entries, sort by filename ascending as a fallback.
 
 ### Step 4 — Render the table
 
-Count `N` = number of entries after filtering and sorting.
+Count `N` = number of entries after filtering and sorting. Then count the bands within it:
+`P` = primaries, `A` = answerable dep-reviews, `W` = waiting dep-reviews.
+
+Build `{breakdown}`, which stops a queue full of blocked reviews from reading as a queue
+full of bugs:
+- If `A` and `W` are both zero, `{breakdown}` is the empty string, and the header reads exactly as it always did.
+- Otherwise `{breakdown}` is `, ` followed by the non-zero counts among `{P} primary`, `{A} dep-review ready`, and `{W} dep-review waiting`, joined with `, `. Omit any segment whose count is zero.
 
 If `N == 0`: print "No {filter_label} items in the queue." and skip to Step 5.
 
 If `N > 0`: produce a Markdown table with this exact header:
 
 ```
-## Build loop queue: {filter_label} ({N} items)
+## Build loop queue: {filter_label} ({N} items{breakdown})
 
 | Target | Kind | What happened | Type | Status | Date |
 |--------|------|---------------|------|--------|------|
@@ -70,7 +83,7 @@ Then add one row per entry (up to 20 rows):
 - **Target column:** `target` field value, falling back to the `skill` field for entries written before schema v5
 - **Kind column:** `target_kind` field value, or `skill` when the field is absent
 - **What happened column:** truncate `what_happened` to 60 characters; append `...` if truncated. Escape any literal `|` character as `\|` so the Markdown table doesn't break.
-- **Type column:** the value from the entry, defaulting to `"primary"` if missing (per Step 2 point 4). Show `"primary"` or `"dep-review"` or `"(error)"`. This column is display-only — it does NOT affect filtering or sort.
+- **Type column:** the value from the entry, defaulting to `"primary"` if missing (per Step 2 point 4). Show `"primary"`, `"dep-review"`, `"dep-review (waiting)"`, or `"(error)"`. Marking the waiting ones is what lets the header count be reconciled row by row. This column does not affect filtering, but it does affect sort, through the band in Step 3.
 - **Status column:** `status` field value
 - **Date column:** first 10 characters of `created_at` (format: `YYYY-MM-DD`). If `created_at` is `"?"`, show `?`.
 
@@ -79,9 +92,16 @@ If `N > 20`: after the 20th row, print a summary line:
 
 ### Step 5 — Highlight the top urgent item
 
-After the table (or after the "no items" message), check if any `Open` status entries exist in the full filtered set.
+After the table (or after the "no items" message), pick what gets the spotlight, in this
+order. A waiting dep-review never takes it while any other open entry exists, because it
+names work that cannot be started yet.
 
-If at least one `Open` entry exists: find the oldest one (lowest `created_at`) and print a spotlight block:
+1. The oldest `Open` **primary**, by lowest `created_at`.
+2. If there is no open primary, the oldest `Open` **answerable dep-review**.
+3. If the only open entries are waiting dep-reviews, print the blocked block below instead of a spotlight.
+4. If there are zero `Open` entries at all, skip this step entirely.
+
+For cases 1 and 2, print a spotlight block:
 
 ```
 **Most urgent open item:**
@@ -94,11 +114,22 @@ If at least one `Open` entry exists: find the oldest one (lowest `created_at`) a
 
 If there are zero `Open` entries (after filtering), skip this block entirely.
 
+For case 3, where every open entry is a dep-review waiting on an unfixed parent, print this
+instead. It says what to do next rather than presenting a blocked item as the urgent one:
+
+```
+**Nothing open can be started yet.** All {W} open items are dep-reviews waiting on a parent fix that has not landed:
+
+- {target}, waiting on {parent target} (`{parent_id}`, status {parent_status})
+
+Fix a parent first. `/apply-fix` offers up its dep-reviews once the fix commits, so these are not lost by sitting here.
+```
+
 ### Step 6 — Footer
 
 Always end with this exact line, regardless of what was shown above:
 
-"Run `/flag-issue` to log a new correction. Run `/list-bugs all` to see every status. Dep-review entries are reviews triggered automatically. See SCHEMA.md Type enum for details."
+"Run `/flag-issue` to log a new correction. Run `/list-bugs all` to see every status. Dep-review entries are reviews triggered automatically, and one marked waiting is blocked until its parent bug is fixed. See SCHEMA.md Type enum for details."
 
 ### Failure handling
 
@@ -107,3 +138,4 @@ Always end with this exact line, regardless of what was shown above:
 - If `what_happened` or `what_expected` fields are missing from an entry, substitute `"(missing)"` rather than crashing.
 - If `created_at` is missing or unparseable, treat as `"?"` for display and sort these entries last within their status group.
 - If the `type` field is missing from an entry (Phase 1 v1 entries), render it as `"primary"`. Never display an empty column.
+- If a dep-review's `parent_id` is missing, or names an entry that is not on disk, treat it as answerable with `parent_status = "(unknown)"`. Never drop it and never crash. A dep-review whose parent has vanished is a real problem, and hiding it is how it stays one.
