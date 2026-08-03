@@ -41,11 +41,13 @@ Determine the human-readable `filter_label`:
    - If parsing succeeds: extract `id`, `parent_id`, `target`, `target_kind`, `what_happened`, `status`, `created_at`, `what_expected`, `target_path`, `dedup_key`, `type` fields. `id` and `parent_id` are what Step 5 and the index in point 6 match on, so a run that skips them has nothing to match and will render empty or invented parent details. Apply the read-time defaults from SCHEMA.md so an older entry never crashes this view: a missing `type` reads as `"primary"`, a missing `target` reads from `skill`, a missing `target_path` reads from `skill_path`, and a missing `target_kind` reads as `"skill"`.
    - If parsing fails for any reason: create a synthetic entry with `id: null`, `parent_id: null`, `target: "(malformed)"`, `target_kind: "(error)"`, `what_happened: "file {filename} could not be parsed"`, `status: "(error)"`, `created_at: "?"`, `type: "(error)"`. Do not hide broken entries — the user needs to see them so they can fix them.
 5. If a file read fails (permission denied, etc.): treat as a parse failure — list it as `(error)` with the filename and continue. Never stop processing remaining files.
-6. Build a parent index from **every** entry read, before any filtering happens: a map from each entry's `id` to both its `status` and its `target`. Carry the `target` as well as the status, because Step 5 names the parent and a parent dropped by the filter is not available to look up later. Build the index first, for the same reason: a dep-review's parent is usually Resolved by the time the review can be done, and a Resolved parent is dropped by the default filter while its status and name are both still needed here.
+6. Build a parent index from **every** entry read, before any filtering happens: a map from each entry's `id` to both its `status` and its `target`. **Skip any entry whose `id` is null or absent.** A malformed file has no usable id, and indexing several of them would collide them all onto one key and let a dep-review that records no parent resolve against a broken file. Carry the `target` as well as the status, because Step 5 names the parent and a parent dropped by the filter is not available to look up later. Build the index first, for the same reason: a dep-review's parent is usually Resolved by the time the review can be done, and a Resolved parent is dropped by the default filter while its status and name are both still needed here.
 7. Resolve each `dep-review` entry against that index and classify it:
-   - Look up `parent_id` in that index and record what it points at as `parent_status` and `parent_target`. A missing `parent_id`, or one naming an entry that is not on disk, reads as `parent_status = "(unknown)"` and `parent_target = "(unknown)"`.
-   - **waiting** when `parent_status` is `Open` or `In Progress`. The parent bug is still unfixed, so no change exists yet whose impact could be reviewed.
-   - **answerable** for every other `parent_status`, `(unknown)` included. A finished parent means the fix landed and the review can be done now. An unknown parent is surfaced rather than hidden, because a dep-review pointing at nothing is itself worth seeing.
+   - If `parent_id` is null or absent, **stop there**: `parent_status` and `parent_target` are both `"(unknown)"`, with no index lookup. `null` is the schema's value for "no parent", so looking it up is how a dep-review ends up blamed on an unrelated entry.
+   - Otherwise look `parent_id` up in the index and record what it points at as `parent_status` and `parent_target`. An id naming an entry that is not on disk also reads as `"(unknown)"` for both.
+   - **waiting** when `parent_status` is `Open`, `In Progress`, `Won't Fix`, or the retired `fix attempted / unresolved`. What these share is that no change was ever made, so there is nothing whose impact could be reviewed. `Won't Fix` means the correction was declined and `fix attempted / unresolved` means the write failed or the diff was rejected, so neither is a finished fix despite reading like a closed entry.
+   - **answerable** when `parent_status` is `Resolved`, `fix applied, watching`, or `(unknown)`. The first two are the only statuses that mean a fix actually landed. An unknown parent is surfaced rather than hidden, because a dep-review pointing at nothing is itself worth seeing.
+   - Record `waiting_reason` on each waiting entry, since the two cases need different advice: `"no fix yet"` for `Open` and `In Progress`, and `"parent closed without a change"` for `Won't Fix` and `fix attempted / unresolved`. A parent in the second group will never produce a fix, so its dep-review wants closing rather than waiting on.
    - A `primary` entry is never waiting, and neither is an `(error)` entry.
 8. Apply the filter from Step 1. Drop entries whose status does not match.
 
@@ -123,7 +125,7 @@ instead of a spotlight. It says what to do next rather than presenting a blocked
 urgent one. Open with this line:
 
 ```
-**Nothing open can be started yet.** All {W_open} open items are dep-reviews waiting on a parent fix that has not landed:
+**Nothing open can be started yet.** All {W_open} open items are dep-reviews with no change to review, because none of their parents produced a fix:
 ```
 
 Then add **one bullet per waiting entry**, all `W_open` of them, so the list below the count
@@ -131,20 +133,21 @@ is as long as the count claims. One bullet against a stated count of nine is the
 spells out to avoid:
 
 ```
-- {target}, waiting on {parent_target} (`{parent_id}`, status {parent_status})
+- {target}, from {parent_target} (`{parent_id}`, status {parent_status}, {waiting_reason})
 ```
 
-Then close with this line:
+Then close with the line matching what is actually in the list. Both, if it holds a mix:
 
 ```
-Fix a parent first. `/apply-fix` offers up its dep-reviews once the fix commits, so these are not lost by sitting here.
+For a parent still open, fix that first, and /apply-fix offers up its dep-reviews once the fix commits.
+For a parent closed without a change, no fix is coming, so close the dep-review instead. /apply-fix only surfaces dep-reviews when a parent fix commits, so nothing else will clear it.
 ```
 
 ### Step 6 — Footer
 
 Always end with this exact line, regardless of what was shown above:
 
-"Run `/flag-issue` to log a new correction. Run `/list-bugs all` to see every status. Dep-review entries are reviews triggered automatically, and one marked waiting is blocked until its parent bug is fixed. See SCHEMA.md Type enum for details."
+"Run `/flag-issue` to log a new correction. Run `/list-bugs all` to see every status. Dep-review entries are reviews triggered automatically, and one marked waiting has no change to review because its parent never produced a fix. See SCHEMA.md Type enum for details."
 
 ### Failure handling
 
