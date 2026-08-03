@@ -31,13 +31,14 @@ Look at `$ARGUMENTS`:
 
 **Annotate every list this step shows, not just one of them.** That means the
 multi-match list under the target-name bullet as well as the empty-argument list.
-Read each candidate's notes and label it:
+Read each candidate's notes and label it by its **last** marker, since notes are
+append-only and an entry can carry both (see SCHEMA.md, note markers):
 
-| Notes | Label |
+| Last marker in note order | Label |
 |---|---|
-| a `Committed:` note | no label, this is the revertible case |
-| a `Not committed:` note | `(no commit, nothing to revert)` |
-| neither | `(no commit recorded)` |
+| `Committed:` | no label, this is the revertible case |
+| `Not committed:` | `(no commit, nothing to revert)` |
+| no marker at all | `(no commit recorded)` |
 
 `"fix applied, watching"` does not imply a commit. `/apply-fix` lands there after
 writing a file whose root is not a git repository, and `/verify-fix` lands there after
@@ -60,7 +61,11 @@ Read the queue entry JSON using the Read tool.
 
 ## Step 3 — Find the commit hash
 
-Scan the entry's `notes[]` array for an object where `text` starts with `"Committed:"`.
+Scan the entry's `notes[]` array in order for objects whose `text` starts with
+`"Committed:"` or `"Not committed:"`, and take the **last** one. Notes are append-only,
+so an entry that was written without a repository and later committed carries both, and
+the older `Not committed:` describes a state that has since changed. Deciding on the
+first match found refuses to revert a commit that exists.
 
 Extract the hash from that string. The format is:
 ```
@@ -68,7 +73,9 @@ Extract the hash from that string. The format is:
 ```
 Example: `"Committed: abc1234 to personal"` → hash is `abc1234`.
 
-- If a note starts with **`Not committed:`**, there is nothing to revert and no commit to search for. `/apply-fix` Step 8 writes that marker when it wrote the file and the root was not a git repository. Quote the note rather than restating its reason, which keeps this correct if the wording gains other cases:
+- If that last marker is **`Committed:`**, extract the hash from it as above and continue, even if an earlier `Not committed:` note also exists. The commit is the newer fact.
+
+- If that last marker is **`Not committed:`**, there is nothing to revert and no commit to search for. `/apply-fix` Step 8 writes that marker when it wrote the file and the root was not a git repository. Quote the note rather than restating its reason, which keeps this correct if the wording gains other cases:
 
   > "There is nothing to revert. The entry records: {the Not committed: note}. No commit exists, so there is no earlier version for git to restore, and undoing it means putting the file back by hand.
   >

@@ -265,6 +265,17 @@ readers must branch on the prefix rather than on whether a hash happens to be pr
 | `Not committed:` | `/apply-fix` Step 8 | The file was written and there was nowhere to commit it. Format `Not committed: written to {target_path}, {repo} is not a git repository`. Nothing to revert and no diff to show. |
 | neither | `/verify-fix` Step S4 standalone PASS | Promoted from `In Progress` on the user's say-so, with no commit either way. The reason is genuinely unknown. |
 
+**The last marker wins.** Notes are append-only, so one entry can carry both. That
+happens on a real path: `/apply-fix` writes `Not committed:` because the root was not a
+git repository, the user runs `git init` and reopens the entry, and a second run appends
+`Committed:`. Read the markers in note order and use the most recently appended one.
+Anything else refuses to revert a commit that exists, because `Not committed:` is the
+older record of a state that has since changed.
+
+Most-recent is the rule rather than "prefer `Committed:`" because the reverse sequence
+is also real: a fix committed once, reverted, then re-applied somewhere without a
+repository. The newest marker is the only one that describes the file as it is now.
+
 **Absence of a hash does not identify the reason.** A reader that treats every hashless
 entry as the no-repository case will tell someone their repository is not a git
 repository when it is, because the standalone verify path produces hashless entries

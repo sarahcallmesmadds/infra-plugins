@@ -126,9 +126,9 @@ Work out `{file_state}` before writing anything:
 | Called from | State of the target file | `{file_state}` |
 |---|---|---|
 | Mode A, within `/apply-fix` | Never written. Verification happens before the write. | `The target file was never written.` |
-| Mode B, standalone, entry has a `Committed:` note | Already written and committed in an earlier session. | `The fix is already committed, so the target file still carries it until it is reverted.` |
-| Mode B, standalone, entry has a `Not committed:` note | Written, never committed, because its root is not a git repository. | `The fix was written to the target file and never committed, so the file carries it and there is no commit to restore from.` |
-| Mode B, standalone, neither note | Written at some point, with no record of whether it was committed. | `The target file was written and the entry records no commit either way.` |
+| Mode B, last marker is `Committed:` | Already written and committed in an earlier session. | `The fix is already committed, so the target file still carries it until it is reverted.` |
+| Mode B, last marker is `Not committed:` | Written, never committed, because its root is not a git repository. | `The fix was written to the target file and never committed, so the file carries it and there is no commit to restore from.` |
+| Mode B, no marker in any note | Written at some point, with no record of whether it was committed. | `The target file was written and the entry records no commit either way.` |
 
 Getting this wrong writes a false audit trail. Mode B exists to re-review a fix
 from a previous session, which by definition was applied, and the branch below
@@ -189,9 +189,9 @@ When /verify-fix is invoked directly (not from within /apply-fix), it works inde
 
 Check the loaded entry's status:
 
-- **"fix applied, watching"**, with a `Committed:` note carrying a hash: The fix was approved and committed. Say: "This fix was already committed at {commit-hash from notes}. Do you want to review the change retroactively? I can show you the diff from that commit." Wait for confirmation before proceeding.
-- **"fix applied, watching"** with a note starting **`Not committed:`**: `/apply-fix` Step 8 writes that marker when it wrote the file and had nowhere to commit it. Quote the reason from the note rather than restating it, since the note carries the actual `{target_path}` and `{repo}`. Say: "This fix was written and never committed. The entry records: {the Not committed: note}. There is no diff to show and `/revert-fix` cannot undo it. I can show you what is in the file now." Then go to Step S3.
-- **"fix applied, watching"** with **neither** marker: say "This entry is 'fix applied, watching' but records no commit and no reason. I can show you what is in the file now, though I cannot tell you whether it was committed." Then go to Step S3.
+- **"fix applied, watching"**, whose **last** note marker is `Committed:` and carries a hash: The fix was approved and committed. Say: "This fix was already committed at {commit-hash from notes}. Do you want to review the change retroactively? I can show you the diff from that commit." Wait for confirmation before proceeding.
+- **"fix applied, watching"** whose **last** note marker is **`Not committed:`**: `/apply-fix` Step 8 writes that marker when it wrote the file and had nowhere to commit it. Quote the reason from the note rather than restating it, since the note carries the actual `{target_path}` and `{repo}`. Say: "This fix was written and never committed. The entry records: {the Not committed: note}. There is no diff to show and `/revert-fix` cannot undo it. I can show you what is in the file now." Then go to Step S3.
+- **"fix applied, watching"** with **no** marker in any note: say "This entry is 'fix applied, watching' but records no commit and no reason. I can show you what is in the file now, though I cannot tell you whether it was committed." Then go to Step S3.
 
   **Do not infer a cause from a missing hash.** Step S4's own standalone PASS path below promotes an `In Progress` entry to this status with a note and no hash, so hashless entries arise here as well as from a missing repository. Guessing tells someone their repository is not a git repository when it is. And read the notes before asserting a hash at all: printing `{commit-hash}` unsubstituted is the failure this skill forbids in Step S3.
 - **"In Progress"**: The fix was started but not committed (session may have been interrupted). Proceed to Step S2.
