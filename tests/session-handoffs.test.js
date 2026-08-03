@@ -193,6 +193,96 @@ check('no match returns null and the tried paths are still available to show', (
   assert.strictEqual(handoffs.searchPaths('nope', home).length, 4);
 });
 
+// ------------------------------------------------------- moved projects ----
+//
+// The bug: /pickup could not find a handoff after its repo directory moved.
+// searchPaths covered only ~/Projects/<slug>, and the index held the same stale
+// path, so both missed together. It reported "no match", which is the same thing
+// it says when no handoff was ever written, so the failure looked like an
+// absence rather than a move.
+
+function writeConfig(home, value) {
+  fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+  fs.writeFileSync(path.join(home, '.claude', 'session.config.json'), JSON.stringify(value));
+}
+
+check('the default is the single root that used to be hardcoded', () => {
+  const home = tmpHome();
+  assert.deepStrictEqual(handoffs.projectRoots(home), [path.join(home, 'Projects')]);
+});
+
+check('a handoff under a second configured root is found by name', () => {
+  const home = tmpHome();
+  writeConfig(home, { projectRoots: ['~/Projects', '~/src'] });
+  const repo = path.join(home, 'src', 'moved-app');
+  fs.mkdirSync(repo, { recursive: true });
+  fs.writeFileSync(path.join(repo, 'HANDOFF.md'), '# Session Handoff\n');
+  const found = handoffs.findHandoff('moved-app', home);
+  assert.ok(found, 'a repo under a configured root must be reachable without an index entry');
+  assert.strictEqual(found.path, path.join(repo, 'HANDOFF.md'));
+});
+
+check('a miss names the recorded path instead of only the guesses', () => {
+  const home = tmpHome();
+  const repo = path.join(home, 'Projects', 'plugins');
+  const { target } = roundTrip(repo, home);
+  fs.rmSync(repo, { recursive: true });
+  const out = cli(['find', target.slug, '--json'], home);
+  assert.strictEqual(out.match, null, 'a stale entry must still degrade to not found');
+  assert.ok(out.stale, 'the recorded path is the one fact worth reporting on a miss');
+  assert.strictEqual(out.stale.path, target.path);
+});
+
+check('a moved project reads as unreachable, not as a deleted handoff', () => {
+  // Its whole directory went with it, so entryState cannot tell this from an
+  // unmounted volume and the message must not claim the handoff was deleted.
+  const home = tmpHome();
+  const repo = path.join(home, 'Projects', 'gone-away');
+  const { target } = roundTrip(repo, home);
+  fs.rmSync(repo, { recursive: true });
+  assert.strictEqual(handoffs.staleRecord(target.slug, home).state, 'unreachable');
+});
+
+check('a deleted handoff in a surviving directory reads as gone', () => {
+  const home = tmpHome();
+  const repo = path.join(home, 'Projects', 'still-here');
+  const { target } = roundTrip(repo, home);
+  fs.rmSync(target.path);
+  assert.strictEqual(handoffs.staleRecord(target.slug, home).state, 'gone');
+});
+
+check('a slug that was never recorded reports no stale path', () => {
+  const home = tmpHome();
+  assert.strictEqual(handoffs.staleRecord('never-existed', home), null);
+  assert.strictEqual(cli(['find', 'never-existed', '--json'], home).stale, null);
+});
+
+check('a handoff that is present reports no stale path', () => {
+  const home = tmpHome();
+  const repo = path.join(home, 'Projects', 'present');
+  const { target } = roundTrip(repo, home);
+  assert.strictEqual(handoffs.staleRecord(target.slug, home), null);
+});
+
+check('unusable roots are dropped and an empty list falls back', () => {
+  // Searching nowhere finds nothing, which is indistinguishable from the bug
+  // this section exists for, so an empty list must never be honoured.
+  const home = tmpHome();
+  writeConfig(home, { projectRoots: [null, '', 42, '  ', '~/src'] });
+  assert.deepStrictEqual(handoffs.projectRoots(home), [path.join(home, 'src')]);
+  writeConfig(home, { projectRoots: [] });
+  assert.deepStrictEqual(handoffs.projectRoots(home), [path.join(home, 'Projects')]);
+  writeConfig(home, { projectRoots: 'not-a-list' });
+  assert.deepStrictEqual(handoffs.projectRoots(home), [path.join(home, 'Projects')]);
+});
+
+check('an absolute root is used as given, not joined onto home', () => {
+  const home = tmpHome();
+  const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'roots-'));
+  writeConfig(home, { projectRoots: [elsewhere] });
+  assert.deepStrictEqual(handoffs.projectRoots(home), [elsewhere]);
+});
+
 // -------------------------------------------------------------- archive ----
 
 check('handoffs past the threshold are moved, not deleted', () => {

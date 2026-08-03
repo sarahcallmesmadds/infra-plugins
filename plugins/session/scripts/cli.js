@@ -217,8 +217,11 @@ const COMMANDS = {
   find(opts) {
     const slug = opts.rest[0];
     const match = handoffs.findHandoff(slug, opts.home);
+    const stale = match ? null : handoffs.staleRecord(slug, opts.home);
     if (opts.json) {
-      return emit(opts, { slug, match, tried: handoffs.searchPaths(slug, opts.home) }, []);
+      return emit(opts, {
+        slug, match, stale, tried: handoffs.searchPaths(slug, opts.home),
+      }, []);
     }
     if (match) {
       const age = Math.round((Date.now() - match.mtime) / 86400000);
@@ -227,10 +230,23 @@ const COMMANDS = {
         `  kind: ${match.kind}, last touched ${age} day${age === 1 ? '' : 's'} ago`,
       ]);
     }
-    emit(opts, {}, [
-      `No handoff found for "${slug}". Looked at:`,
-      ...handoffs.searchPaths(slug, opts.home).map((c) => `  ${c.path}`),
-    ]);
+    // A stale entry and no entry at all produced the same message, so a moved
+    // project read as a handoff that never existed. The recorded path is the one
+    // fact worth having here, because it says where to look.
+    const lines = [`No handoff found for "${slug}".`];
+    if (stale) {
+      // `unreachable` cannot tell a moved project from an unmounted volume, so
+      // it names both rather than implying the one that happens to be rarer.
+      // A moved repo lands here, not in `gone`, because its whole directory went
+      // with it.
+      lines.push(stale.state === 'unreachable'
+        ? `The index points at ${stale.path}, and its directory is not there either. Either the project moved, in which case add its new parent to projectRoots, or it is on a volume that is not mounted, in which case the handoff is fine and this will find it once the volume is back.`
+        : `The index points at ${stale.path}, which is gone. The directory is still there, so the handoff itself was deleted or renamed rather than moved with the project.`);
+    }
+    const roots = handoffs.projectRoots(opts.home).length;
+    lines.push(`Searched ${roots} project root${roots === 1 ? '' : 's'}. Looked at:`);
+    lines.push(...handoffs.searchPaths(slug, opts.home).map((c) => `  ${c.path}`));
+    emit(opts, {}, lines);
   },
 
   recent(opts) {

@@ -203,6 +203,31 @@ Handoffs untouched for 30 days are swept into `archived/` at the start of the
 next wrap. They are moved, never deleted, and `/pickup` still finds them by
 name.
 
+A project handoff sits next to the work, so finding one by name means knowing
+where repositories live. That was `~/Projects` and nothing else, which found
+nothing for anyone whose code is elsewhere. It is now a list you can state:
+
+```json
+{
+  "projectRoots": ["~/Projects", "~/src", "/Volumes/work/repos"]
+}
+```
+
+The default is `["~/Projects"]`, so nothing changes unless you set it. Entries
+that are not usable strings are dropped, and an empty list falls back to the
+default rather than searching nowhere.
+
+This is a convenience, not the mechanism. `/wrap` records where it wrote, and that
+record is the only thing that knows where a handoff next to the work actually went.
+Every lookup verifies the file is still there, so a stale record degrades to "not
+found" rather than to a confident path that resolves to nothing.
+
+When that happens `/pickup` now says which path was recorded and what state it is
+in, instead of reporting a miss that looks the same as no handoff ever existing. A
+missing document in a surviving directory was deleted or renamed. A missing
+directory means the project moved or its volume is not mounted, and nothing here
+can tell those apart, so it does not guess.
+
 ## What pickup deliberately does not do
 
 It does not open the files the handoff mentions. It lists them and waits to be
