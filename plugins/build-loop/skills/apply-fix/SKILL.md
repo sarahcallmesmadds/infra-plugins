@@ -182,11 +182,28 @@ would not say which is at risk. Keep the two fields apart everywhere else.
 
 ## Step 4 — Read the target file
 
+**Resolve `{target_path}` to a file first.** The Read tool cannot read a directory,
+and a `plugin`-kind entry may record one. `/flag-issue` requires a plugin to be
+recorded as `plugins/{target}/.claude-plugin/plugin.json`, so an entry holding the
+bare directory predates that rule or was written by hand.
+
+- If it is a **file**, read it and carry on.
+- If it is a **directory** and `target_kind` is `plugin`, the fix cannot be a
+  full-file write against a directory. Say which file the entry should have held
+  and stop, rather than guessing which file inside the plugin the fix belongs in:
+
+  > "Can't apply a fix to {target_path}, which is a directory. A plugin entry should point at .claude-plugin/plugin.json, and a fix that belongs in one file inside the plugin needs an entry naming that file. Fix the entry's path, or run /audit-deps to rebuild it."
+
+- If it is a **directory** and `target_kind` is anything else, stop the same way. There is no convention to guess with.
+
+`/verify-fix` Step S3 resolves the same way, and Mode A of it depends on this read
+having happened, so a directory that slips through here fails there instead.
+
 Read the file at `{target_path}` in full using the Read tool. Read the entire file — not just the section you plan to change. You need the full content to:
 - Understand the surrounding context
 - Write the complete updated file back in Step 7 (full-file Write, not patch)
 
-If the file is not found: say "Can't find the target file at {target_path}. Is this path correct?" Stop.
+If the path resolves to nothing: say "Can't find the target file at {target_path}. Is this path correct?" Stop. Use that only for a path that is absent, not for one that exists and is a directory, because asking whether a correct path is correct sends the reader to check the one thing that is not wrong.
 
 ---
 
@@ -325,8 +342,42 @@ git -C <root.path> add <target_path relative to root.path>
 git -C <root.path> commit -m "fix({target}): {one-line summary of fix} [queue:{id}]"
 ```
 
-If the root is not itself a git repository, `git -C` fails. Say so and stop,
-rather than searching upwards for some other repository to commit into.
+If the root is not itself a git repository, `git -C` fails. Do not search upwards
+for some other repository to commit into, and **do not stop here.** Step 7 already
+wrote the file, and stopping cannot unwrite it, so stopping leaves the entry at
+`In Progress` while the change is live on disk. A status that says the work is
+unfinished when the file has already changed is the half-finished state the 0.3.1
+status cleanup existed to remove.
+
+Skip the commit and give the entry a terminal state describing what is actually
+true, in one call. The note is free text, so it goes through a file rather than a
+shell argument, the same as every other note this skill writes:
+
+```bash
+NOTE=$(mktemp)
+cat > "$NOTE" <<'EOF'
+Written to {target_path} (no commit, not inside a git repo)
+EOF
+node "${CLAUDE_PLUGIN_ROOT}/scripts/queue.js" update {id} \
+  --status "fix applied, watching" \
+  --note-file "$NOTE"
+```
+
+There is no commit hash, so record none rather than an invented or empty-looking
+one.
+
+If that call exits non-zero, say "The fix is written to {target_path} and there was
+no commit, and the queue entry was not updated: {what it printed}." Then stop. Do not
+retry silently and do not edit the entry by hand. A refusal here usually means
+another session holds the lock, and running it again is the whole fix. The entry
+stays at `In Progress`, which is wrong but visible, and that is better than a
+hand-written entry nothing can trust.
+
+Then say so plainly and stop:
+
+> "The fix is written to {target_path}. There was no commit, because {root.path} is not a git repository, so there is nothing to revert through and /revert-fix cannot help here. The entry is 'fix applied, watching'."
+
+This is what the ancestor skill did, at `foundations/bug-fix-loop/apply-fixes/SKILL.md` Step 8.
 
 Commit message format rules:
 - `{target}` — the name from the `target` field in the queue entry
@@ -334,10 +385,16 @@ Commit message format rules:
 - `[queue:{id}]` — full queue entry id (e.g., `queue:2026-04-23T13-29-20-daily-brief`)
 - Never git push as part of this skill. Pushing is a separate deliberate action.
 
-**If git commit errors:**
+**If git commit errors** inside a root that *is* a git repository, which is a
+different case from the root not being one at all:
 > "The fix is written to disk but the git commit failed: {error}. Should I try the commit again, or revert the file to its original state?"
 
 Do NOT change the queue entry status until the user's response. Do NOT assume the file should stay — it's written without a commit and is in a limbo state.
+
+The two paths differ because the options differ. A commit that failed inside a real
+repository can be retried, and the original content is recoverable through git, so
+asking is worth the pause. A root that is not a repository offers neither, so there
+is nothing to ask and the entry gets its terminal state instead of a question.
 
 **Capture the commit hash:**
 ```bash
@@ -383,7 +440,21 @@ Wait for the user's answer. If they say "leave them", they stay Open. Do not aut
 **Show closing summary:**
 
 ```
-Fix committed. Queue entry {id} is now "fix applied, watching".
-Try it in a real session. When it works, run /list-bugs and update the entry to Resolved.
-Commit: {hash} ({repo})
+Fix committed locally. Queue entry {id} is now "fix applied, watching".
+Commit: {hash} ({repo}), on branch {branch}, not pushed.
+Next: push the branch and open a PR. Until that merges and the plugin is updated, this fix is on this machine only and no session will load it.
+Then try it for real. When it works, run /list-bugs and update the entry to Resolved.
 ```
+
+Get the branch with `git -C {repo_root} rev-parse --abbrev-ref HEAD`.
+
+**Say "not pushed" every time, and never leave it implied.** This skill does not push,
+by the deliberate decision above, and `"fix applied, watching"` reads as shipped and
+under observation. On 2026-08-02 two fixes were committed here and sat on one laptop
+with no push and no PR, their entries claiming they were live, and it took a separate
+audit to find them. The status cannot carry that distinction, so this line has to.
+
+If the commit is on the repository's default branch rather than a feature branch, say
+that too, since it changes what pushing means:
+
+> "This committed straight onto {branch}. If you would rather it went through review, move it to a branch before pushing."
