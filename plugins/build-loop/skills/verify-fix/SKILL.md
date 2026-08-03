@@ -222,10 +222,14 @@ that rule or was written by hand.
 
 For a `plugin`-kind entry, `plugin.json` is rarely where the fix landed, so it is a poor thing
 to verify against. When the entry's status is `"fix applied, watching"` its notes carry the
-commit hash, and `git -C {repo_root} show {hash}` is the honest source for what changed. Offer
-that first and fall back to the resolved file:
+commit hash, and that commit is the honest source for what changed.
 
-> "This is a plugin-level entry, so there is no single target file. The fix was committed as {hash}. Do you want the diff from that commit instead? That shows what actually changed."
+**Name that command for the user to run. Do not offer to run it.** `allowed-tools` has no
+`Bash(git:*)` and must not gain it: this skill is the review gate, and the one thing it must be
+unable to do is commit. Step S4 already hands git commands to the user for the same reason, so
+say:
+
+> "This is a plugin-level entry, so there is no single target file, and I am showing {resolved file} instead. The fix was committed as {hash}. To see what actually changed, run: git -C {repo_root} show {hash}"
 
 Then read the resolved file using the Read tool. Display:
 
