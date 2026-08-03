@@ -362,7 +362,26 @@ git -C <root.path> add <target_path relative to root.path>
 git -C <root.path> commit -m "fix({target}): {one-line summary of fix} [queue:{id}]"
 ```
 
-If the root is not itself a git repository, `git -C` fails. Do not search upwards
+**If either command fails, establish which failure it is before choosing a branch:**
+
+```bash
+git -C <root.path> rev-parse --is-inside-work-tree
+```
+
+`true` means the root is a git repository and the commit failed for some other reason,
+so take the commit-error branch further down, which asks the user whether to retry or
+revert and changes nothing. Anything else, a non-zero exit or any other output, means
+there is no repository, so take the next branch.
+
+Run this test rather than reading "git failed" as "no repository". The two branches now
+have opposite consequences: one is terminal and writes a factual claim into the audit
+trail that four downstream readers branch on, the other asks a question and changes
+nothing. A bad pathspec, a held index lock, a rejecting pre-commit hook, or nothing
+staged to commit would all otherwise be recorded as "not a git repository", which is
+both false and final. Before this change both branches ended in "say so and stop", so
+confusing them cost nothing. That is no longer true, which is why the test is here.
+
+If the root is not itself a git repository, do not search upwards
 for some other repository to commit into, and **do not stop here.** Step 7 already
 wrote the file, and stopping cannot unwrite it, so stopping leaves the entry at
 `In Progress` while the change is live on disk. A status that says the work is
@@ -425,8 +444,10 @@ Commit message format rules:
 - `[queue:{id}]` — full queue entry id (e.g., `queue:2026-04-23T13-29-20-daily-brief`)
 - Never git push as part of this skill. Pushing is a separate deliberate action.
 
-**If git commit errors** inside a root that *is* a git repository, which is a
-different case from the root not being one at all:
+**If git commit errors** inside a root that *is* a git repository, meaning
+`rev-parse --is-inside-work-tree` printed `true` in the test above. This is where every
+git failure other than a missing repository lands, including a bad pathspec, a held
+index lock, a rejecting hook, and nothing staged:
 > "The fix is written to disk but the git commit failed: {error}. Should I try the commit again, or revert the file to its original state?"
 
 Do NOT change the queue entry status until the user's response. Do NOT assume the file should stay — it's written without a commit and is in a limbo state.
