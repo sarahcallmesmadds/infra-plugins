@@ -38,12 +38,12 @@ Determine the human-readable `filter_label`:
 2. If the `ls` returns nothing (no output, no files, or directory does not exist): print "Queue is empty, nothing to show." and stop. Do NOT error.
 3. For each `.json` file listed, read it with the Read tool.
 4. For each file, attempt to parse its contents as JSON:
-   - If parsing succeeds: extract `target`, `target_kind`, `what_happened`, `status`, `created_at`, `what_expected`, `target_path`, `dedup_key`, `type` fields. Apply the read-time defaults from SCHEMA.md so an older entry never crashes this view: a missing `type` reads as `"primary"`, a missing `target` reads from `skill`, a missing `target_path` reads from `skill_path`, and a missing `target_kind` reads as `"skill"`.
-   - If parsing fails for any reason: create a synthetic entry with `target: "(malformed)"`, `target_kind: "(error)"`, `what_happened: "file {filename} could not be parsed"`, `status: "(error)"`, `created_at: "?"`, `type: "(error)"`. Do not hide broken entries — the user needs to see them so they can fix them.
+   - If parsing succeeds: extract `id`, `parent_id`, `target`, `target_kind`, `what_happened`, `status`, `created_at`, `what_expected`, `target_path`, `dedup_key`, `type` fields. `id` and `parent_id` are what Step 5 and the index in point 6 match on, so a run that skips them has nothing to match and will render empty or invented parent details. Apply the read-time defaults from SCHEMA.md so an older entry never crashes this view: a missing `type` reads as `"primary"`, a missing `target` reads from `skill`, a missing `target_path` reads from `skill_path`, and a missing `target_kind` reads as `"skill"`.
+   - If parsing fails for any reason: create a synthetic entry with `id: null`, `parent_id: null`, `target: "(malformed)"`, `target_kind: "(error)"`, `what_happened: "file {filename} could not be parsed"`, `status: "(error)"`, `created_at: "?"`, `type: "(error)"`. Do not hide broken entries — the user needs to see them so they can fix them.
 5. If a file read fails (permission denied, etc.): treat as a parse failure — list it as `(error)` with the filename and continue. Never stop processing remaining files.
-6. Build a status index from **every** entry read, before any filtering happens: a map from each entry's `id` to its `status`. Build it first, because a dep-review's parent is usually Resolved by the time the review can be done, and a Resolved parent is dropped by the default filter while its status is still needed here.
+6. Build a parent index from **every** entry read, before any filtering happens: a map from each entry's `id` to both its `status` and its `target`. Carry the `target` as well as the status, because Step 5 names the parent and a parent dropped by the filter is not available to look up later. Build the index first, for the same reason: a dep-review's parent is usually Resolved by the time the review can be done, and a Resolved parent is dropped by the default filter while its status and name are both still needed here.
 7. Resolve each `dep-review` entry against that index and classify it:
-   - Look up `parent_id` and record what it points at as `parent_status`. A missing `parent_id`, or one naming an entry that is not on disk, reads as `parent_status = "(unknown)"`.
+   - Look up `parent_id` in that index and record what it points at as `parent_status` and `parent_target`. A missing `parent_id`, or one naming an entry that is not on disk, reads as `parent_status = "(unknown)"` and `parent_target = "(unknown)"`.
    - **waiting** when `parent_status` is `Open` or `In Progress`. The parent bug is still unfixed, so no change exists yet whose impact could be reviewed.
    - **answerable** for every other `parent_status`, `(unknown)` included. A finished parent means the fix landed and the review can be done now. An unknown parent is surfaced rather than hidden, because a dep-review pointing at nothing is itself worth seeing.
    - A `primary` entry is never waiting, and neither is an `(error)` entry.
@@ -52,9 +52,9 @@ Determine the human-readable `filter_label`:
 ### Step 3 — Sort
 
 Sort the surviving entries in this order:
-1. **Actionability band:** `primary` first, then answerable `dep-review`, then waiting `dep-review`. This is what keeps the view leading with work that can actually be started. A waiting dep-review is a real item, but it is blocked on something else in the queue, so it sits below everything that is not.
-2. **Status order within a band:** `Open` → `In Progress` → `Resolved` → `Won't Fix` → `(error)` last.
-3. **`created_at` ascending within each status group**, oldest first, since older means more urgent.
+1. **Status order:** `Open` → `In Progress` → `Resolved` → `Won't Fix` → `(error)` last. Status stays the top key so open work always leads, whatever the filter. Sorting by band first would put a Resolved primary above an Open dep-review under `/list-bugs all`, which is the opposite of the point.
+2. **Actionability band within a status group:** `primary` first, then answerable `dep-review`, then waiting `dep-review`. This is what makes the open group lead with work that can actually be started. A waiting dep-review is a real item, but it is blocked on something else in the queue, so it sits below everything that is not.
+3. **`created_at` ascending within each band**, oldest first, since older means more urgent.
 
 For `(error)` entries, sort by filename ascending as a fallback.
 
@@ -98,7 +98,7 @@ names work that cannot be started yet.
 
 1. The oldest `Open` **primary**, by lowest `created_at`.
 2. If there is no open primary, the oldest `Open` **answerable dep-review**.
-3. If the only open entries are waiting dep-reviews, print the blocked block below instead of a spotlight.
+3. If the only open entries are waiting dep-reviews, print the blocked block below instead of a spotlight. Count `W_open` = waiting dep-reviews whose status is `Open`. Use that, not the `W` from Step 4, which counts every status the filter let through and would name more items than the block goes on to list.
 4. If there are zero `Open` entries at all, skip this step entirely.
 
 For cases 1 and 2, print a spotlight block:
@@ -118,9 +118,9 @@ For case 3, where every open entry is a dep-review waiting on an unfixed parent,
 instead. It says what to do next rather than presenting a blocked item as the urgent one:
 
 ```
-**Nothing open can be started yet.** All {W} open items are dep-reviews waiting on a parent fix that has not landed:
+**Nothing open can be started yet.** All {W_open} open items are dep-reviews waiting on a parent fix that has not landed:
 
-- {target}, waiting on {parent target} (`{parent_id}`, status {parent_status})
+- {target}, waiting on {parent_target} (`{parent_id}`, status {parent_status})
 
 Fix a parent first. `/apply-fix` offers up its dep-reviews once the fix commits, so these are not lost by sitting here.
 ```
@@ -138,4 +138,4 @@ Always end with this exact line, regardless of what was shown above:
 - If `what_happened` or `what_expected` fields are missing from an entry, substitute `"(missing)"` rather than crashing.
 - If `created_at` is missing or unparseable, treat as `"?"` for display and sort these entries last within their status group.
 - If the `type` field is missing from an entry (Phase 1 v1 entries), render it as `"primary"`. Never display an empty column.
-- If a dep-review's `parent_id` is missing, or names an entry that is not on disk, treat it as answerable with `parent_status = "(unknown)"`. Never drop it and never crash. A dep-review whose parent has vanished is a real problem, and hiding it is how it stays one.
+- If a dep-review's `parent_id` is missing, or names an entry that is not on disk, treat it as answerable with `parent_status` and `parent_target` both `"(unknown)"`. Never drop it and never crash. A dep-review whose parent has vanished is a real problem, and hiding it is how it stays one.
