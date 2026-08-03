@@ -88,7 +88,12 @@ Do NOT ask about kind as its own question. It is a guess you show in the draft a
 Also try to fill, without asking:
 
 - **where** — a marketplace, repository, or root name if one was named. Empty string otherwise.
+- **source** — one filesystem path, if the user named material the build will read from: a spec, an existing implementation, a document. Empty string otherwise, which is the common case.
 - **blocked_by** — free text if the user said something has to happen first. Empty string otherwise.
+
+**`where` and `source` are not the same thing and must not be conflated.** `where` is the destination and routinely does not exist yet. `source` is material that has to exist for the item to be buildable, and it is the only one that gets path-checked. If the user names a single place that is both, record it as `where` and leave `source` empty; a destination that is missing is normal and warning about it would be noise.
+
+Do not put a path in `source` that you inferred rather than heard. An empty `source` means "nothing extra to read", which is true of most items and is a better default than a guess that later reports itself broken.
 
 Rule: ask at most ONE question in this whole step. If their last message already answered it, do not re-ask.
 
@@ -162,10 +167,17 @@ Kind: {kind}
 What: {what}
 Why: {why, or "(not given)"}
 Where: {where, or "(not decided)"}
+Source: {source, or "(nothing to read)"}
 Blocked by: {blocked_by, or "nothing"}
 
 Write it? (y / edit / skip)
 ```
+
+If `source` is non-empty, `stat` it before showing the draft. If it does not resolve, show the draft with the path marked and let them decide:
+
+> "Source not found: {source}. Writing it anyway is fine, and the list will keep showing this warning until the path resolves or the field is cleared."
+
+Do not refuse the write and do not clear the field for them. A path that is right but not fetched yet is a normal state, and silently emptying a field the user typed is worse than carrying a visible warning.
 
 On their response:
 
@@ -191,6 +203,7 @@ kind:            {kind}
 what:            {what}
 why:             {why, or ""}
 where:           {where, or ""}
+source:          {source, or ""}
 blocked_by:      {blocked_by, or ""}
 session_id:      current session ID, or ""
 session_cwd:     current working directory, or ""
@@ -279,9 +292,30 @@ Set `filter_label` to "Open + In Progress", "All", "Open only", "Built only", or
 
 Items with a missing or unparseable `created_at` sort last within their group.
 
-## Step L4 — Render
+## Step L4 — Check recorded sources
 
-Count `N` after filtering. If `N` is zero, print "No {filter_label} items on the to-build list." and go to Step L5.
+For every item that survived the filter and has a non-empty `source`, check that the path resolves. Expand a leading `~` first.
+
+Collect the paths into one command rather than running `stat` per item, so a list of thirty does not cost thirty tool calls:
+
+```bash
+for p in {each source path, shell-quoted}; do
+  [ -e "$p" ] && echo "OK   $p" || echo "GONE $p"
+done
+```
+
+Read the result back and mark each item `source_ok` or `source_gone`. An item with an empty `source` is neither, and never appears in the warning block below.
+
+Two rules about what this check may conclude:
+
+- **Only `source` is checked.** Not `where`, not a path mentioned in `what` or `why`. `where` is a destination and is expected to be missing before the thing is built, so checking it would report the normal case as a fault.
+- **A missing source does not change the item's status.** It is still `Open`, it is still shown in its usual place in the table, and it is still buildable, because most items carry enough in `what` to be built without the source. The warning says a recorded pointer went stale, not that the work is blocked. Use `blocked_by` when the work genuinely cannot start.
+
+If the check itself fails to run, say so once and render the table without the warning block. An unreadable check is not evidence that a path is gone.
+
+## Step L5 — Render
+
+Count `N` after filtering. If `N` is zero, print "No {filter_label} items on the to-build list." and go to Step L6.
 
 Otherwise:
 
@@ -311,7 +345,22 @@ Then, if any shown item has a non-empty `blocked_by`, list those beneath the tab
 - {title}: {blocked_by}
 ```
 
-## Step L5 — Footer
+Then, if any item that survived the filter is marked `source_gone`, list those beneath the table too, whether or not it made the 20 rendered rows. One line per item, and nothing at all when every source resolves:
+
+```
+**Sources not found:**
+- {title}: {source}
+```
+
+Follow that block with this line, once, whatever the count:
+
+"A missing source does not block the item. Build it from its own description, or point it at something that exists."
+
+Do not print the block, the heading, or a reassurance that everything resolved when no item is marked `source_gone`. Silence is the correct output for a healthy list, and a line saying all sources are fine on every single invocation trains the reader to skip the place the real warning appears.
+
+The `Sources not found` list is not truncated at 20 the way the table is. It is short by nature, and an item cut from the bottom of the table can still have a dead source worth seeing.
+
+## Step L6 — Footer
 
 Always end with this line:
 
