@@ -79,11 +79,27 @@ Example: `"Committed: abc1234 to personal"` → hash is `abc1234`.
 
   > "There is nothing to revert. The entry records: {the Not committed: note}. No commit exists, so there is no earlier version for git to restore, and undoing it means putting the file back by hand.
   >
-  > `/apply-fix {id}` will not do it either: it stops on any entry already at 'fix applied, watching'. To have it write the reverse change, first reopen this entry:
-  >
-  > node \"${CLAUDE_PLUGIN_ROOT}/scripts/queue.js\" update {id} --status Open --note-file {path to a note saying why}
-  >
-  > Or log the reversal as its own correction with `/flag-issue`, which is the better record if the original fix was simply wrong."
+  > `/apply-fix {id}` will not do it either: it stops on any entry already at 'fix applied, watching'. Shall I reopen this entry so it can propose the reverse change? Or log the reversal as its own correction with `/flag-issue`, which is the better record if the original fix was simply wrong."
+
+  If they say reopen, **run it yourself.** `Bash(node:*)` is in `allowed-tools`, so there is no
+  reason to hand the user a command, and one reason not to: `${CLAUDE_PLUGIN_ROOT}` is set by
+  the plugin runtime and is empty in an ordinary shell, so a quoted command carrying it expands
+  to `node "/scripts/queue.js"` and fails with a missing file. Never print that variable in text
+  addressed to the user. Where a command genuinely has to be handed over, substitute every value
+  first, the way `/verify-fix` hands over `git -C {repo_root} log`.
+
+  ```bash
+  node "${CLAUDE_PLUGIN_ROOT}/scripts/queue.js" update {id} --status Open --note "Reopened to write a reverse change. The original was written without a commit, so there is nothing to revert."
+  ```
+
+  `--note` rather than `--note-file` because that sentence is fixed text with nothing
+  interpolated into it, which is the same reason the `Reverted:` note further down uses `--note`.
+  This skill also has no per-run scratch directory and does not grant `mktemp`, unlike
+  `/apply-fix` and `/verify-fix`, so a note here has to be fixed text rather than a file.
+
+  If the call exits non-zero, say what it printed and that the entry is still at
+  `fix applied, watching`. Then stop either way: writing the reverse change is `/apply-fix`'s
+  job, not this skill's.
 
   Stop. Do not suggest `git log`, which cannot run usefully in a directory that is not a repository.
 
