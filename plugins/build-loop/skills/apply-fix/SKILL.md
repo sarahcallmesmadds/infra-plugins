@@ -187,23 +187,43 @@ and a `plugin`-kind entry may record one. `/flag-issue` requires a plugin to be
 recorded as `plugins/{target}/.claude-plugin/plugin.json`, so an entry holding the
 bare directory predates that rule or was written by hand.
 
-- If it is a **file**, read it and carry on.
+**Every stop in this step must reopen the entry first.** Step 2 set it to
+`In Progress`, and stopping without restoring that leaves the entry claiming a session
+is working on it when none is. It then vanishes from the open list and the next run
+meets the `In Progress` prompt instead of a clean entry. That is the same limbo Step 8
+below exists to remove, so it cannot be reintroduced here. Every other early exit in
+this skill restores it, at Step 3, Step 6 and Step 7.
+
+Before any of the stops below:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/queue.js" update {id} --status Open --note-file {scratch}/note-{id}.txt
+```
+
+with the note recording why, for example `Target path could not be resolved to a file:
+{target_path} is a directory`. If that call exits non-zero, say "The entry was not
+reopened: {what it printed}" and name the status it is stuck at, so the limbo is at
+least visible. Do not retry silently.
+
+- If it is a **file**, read it and carry on. No status change.
 - If it is a **directory** and `target_kind` is `plugin`, the fix cannot be a
-  full-file write against a directory. Say which file the entry should have held
-  and stop, rather than guessing which file inside the plugin the fix belongs in:
+  full-file write against a directory. Reopen the entry, then say which file it should
+  have held, rather than guessing which file inside the plugin the fix belongs in:
 
-  > "Can't apply a fix to {target_path}, which is a directory. A plugin entry should point at .claude-plugin/plugin.json, and a fix that belongs in one file inside the plugin needs an entry naming that file. Fix the entry's path, or run /audit-deps to rebuild it."
+  > "Can't apply a fix to {target_path}, which is a directory. A plugin entry should point at .claude-plugin/plugin.json, and a fix that belongs in one file inside the plugin needs an entry naming that file. Fix the entry's path, or run /audit-deps to rebuild it. The entry is back to Open."
 
-- If it is a **directory** and `target_kind` is anything else, stop the same way. There is no convention to guess with.
+- If it is a **directory** and `target_kind` is anything else, reopen and stop the same way. There is no convention to guess with.
 
-`/verify-fix` Step S3 resolves the same way, and Mode A of it depends on this read
-having happened, so a directory that slips through here fails there instead.
+`/verify-fix` Step S3 also resolves the path before reading, but it substitutes
+`.claude-plugin/plugin.json` for a `plugin`-kind directory and carries on, because it
+only reads. Here the fix is a full-file write, which a directory cannot take, so this
+stops instead. The two differ deliberately.
 
 Read the file at `{target_path}` in full using the Read tool. Read the entire file — not just the section you plan to change. You need the full content to:
 - Understand the surrounding context
 - Write the complete updated file back in Step 7 (full-file Write, not patch)
 
-If the path resolves to nothing: say "Can't find the target file at {target_path}. Is this path correct?" Stop. Use that only for a path that is absent, not for one that exists and is a directory, because asking whether a correct path is correct sends the reader to check the one thing that is not wrong.
+If the path resolves to nothing: reopen the entry as above, then say "Can't find the target file at {target_path}. Is this path correct? The entry is back to Open." Use that only for a path that is absent, not for one that exists and is a directory, because asking whether a correct path is correct sends the reader to check the one thing that is not wrong.
 
 ---
 
