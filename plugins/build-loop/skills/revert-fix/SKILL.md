@@ -29,6 +29,24 @@ Look at `$ARGUMENTS`:
 
 - **If $ARGUMENTS is empty**: list all entries across all `.json` files where `status == "fix applied, watching"`. Ask the user to pick. Do not proceed until they pick one.
 
+**Annotate every list this step shows, not just one of them.** That means the
+multi-match list under the target-name bullet as well as the empty-argument list.
+Read each candidate's notes and label it by its **last** marker, since notes are
+append-only and an entry can carry both (see SCHEMA.md, note markers):
+
+| Last marker in note order | Label |
+|---|---|
+| `Committed:` | no label, this is the revertible case |
+| `Not committed:` | `(no commit, nothing to revert)` |
+| no marker at all | `(no commit recorded)` |
+
+`"fix applied, watching"` does not imply a commit. `/apply-fix` lands there after
+writing a file whose root is not a git repository, and `/verify-fix` lands there after
+a standalone pass on an `In Progress` entry. Step 2's status guard passes for all of
+them, because the status genuinely is `fix applied, watching`, so an unlabelled list
+lets someone choose an entry Step 3 will then refuse. The point of labelling is that
+the refusal comes before the choice rather than after it.
+
 ---
 
 ## Step 2 — Guard on status
@@ -43,7 +61,11 @@ Read the queue entry JSON using the Read tool.
 
 ## Step 3 — Find the commit hash
 
-Scan the entry's `notes[]` array for an object where `text` starts with `"Committed:"`.
+Scan the entry's `notes[]` array in order for objects whose `text` starts with
+`"Committed:"` or `"Not committed:"`, and take the **last** one. Notes are append-only,
+so an entry that was written without a repository and later committed carries both, and
+the older `Not committed:` describes a state that has since changed. Deciding on the
+first match found refuses to revert a commit that exists.
 
 Extract the hash from that string. The format is:
 ```
@@ -51,7 +73,37 @@ Extract the hash from that string. The format is:
 ```
 Example: `"Committed: abc1234 to personal"` → hash is `abc1234`.
 
-- If no `Committed:` note is found in `notes[]`: say "I can't find a commit hash in this queue entry's notes. The commit hash is normally stored by /apply-fix after committing. You may need to find the commit manually with: `git -C {repo_root} log --oneline | head -10`" Stop.
+- If that last marker is **`Committed:`**, extract the hash from it as above and continue, even if an earlier `Not committed:` note also exists. The commit is the newer fact.
+
+- If that last marker is **`Not committed:`**, there is nothing to revert and no commit to search for. `/apply-fix` Step 8 writes that marker when it wrote the file and the root was not a git repository. Quote the note rather than restating its reason, which keeps this correct if the wording gains other cases:
+
+  > "There is nothing to revert. The entry records: {the Not committed: note}. No commit exists, so there is no earlier version for git to restore, and undoing it means putting the file back by hand.
+  >
+  > `/apply-fix {id}` will not do it either: it stops on any entry already at 'fix applied, watching'. Shall I reopen this entry so it can propose the reverse change? Or log the reversal as its own correction with `/flag-issue`, which is the better record if the original fix was simply wrong."
+
+  If they say reopen, **run it yourself.** `Bash(node:*)` is in `allowed-tools`, so there is no
+  reason to hand the user a command, and one reason not to: `${CLAUDE_PLUGIN_ROOT}` is set by
+  the plugin runtime and is empty in an ordinary shell, so a quoted command carrying it expands
+  to `node "/scripts/queue.js"` and fails with a missing file. Never print that variable in text
+  addressed to the user. Where a command genuinely has to be handed over, substitute every value
+  first, the way `/verify-fix` hands over `git -C {repo_root} log`.
+
+  ```bash
+  node "${CLAUDE_PLUGIN_ROOT}/scripts/queue.js" update {id} --status Open --note "Reopened to write a reverse change. The original was written without a commit, so there is nothing to revert."
+  ```
+
+  `--note` rather than `--note-file` because that sentence is fixed text with nothing
+  interpolated into it, which is the same reason the `Reverted:` note further down uses `--note`.
+  This skill also has no per-run scratch directory and does not grant `mktemp`, unlike
+  `/apply-fix` and `/verify-fix`, so a note here has to be fixed text rather than a file.
+
+  If the call exits non-zero, say what it printed and that the entry is still at
+  `fix applied, watching`. Then stop either way: writing the reverse change is `/apply-fix`'s
+  job, not this skill's.
+
+  Stop. Do not suggest `git log`, which cannot run usefully in a directory that is not a repository.
+
+- If no `Committed:` note is found and no `Not committed:` note explains why: say "I can't find a commit hash in this queue entry's notes, and nothing records why. The commit hash is normally stored by /apply-fix after committing, and `/verify-fix` can also leave this status with no hash after a standalone pass. You may need to find the commit manually with: `git -C {repo_root} log --oneline | head -10`" Stop.
 
 ---
 

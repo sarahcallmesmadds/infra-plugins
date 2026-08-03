@@ -182,11 +182,56 @@ would not say which is at risk. Keep the two fields apart everywhere else.
 
 ## Step 4 — Read the target file
 
+**Resolve `{target_path}` to a file first.** The Read tool cannot read a directory,
+and a `plugin`-kind entry may record one. `/flag-issue` requires a plugin to be
+recorded as `plugins/{target}/.claude-plugin/plugin.json`, so an entry holding the
+bare directory predates that rule or was written by hand.
+
+**Every stop in this step must reopen the entry first.** Step 2 set it to
+`In Progress`, and stopping without restoring that leaves the entry claiming a session
+is working on it when none is. It then vanishes from the open list and the next run
+meets the `In Progress` prompt instead of a clean entry. That is the same limbo Step 8
+below exists to remove, so it cannot be reintroduced here. Every other early exit in
+this skill restores it, at Step 3, Step 6 and Step 7.
+
+Before any of the stops below, **write the note to a scratch file first**, reading:
+
+> Target path could not be resolved to a file: {target_path} is {a directory | absent}
+
+Then:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/queue.js" update {id} --status Open --note-file {scratch}/note-{id}.txt
+```
+
+The write is not optional and is easy to skip because the command reads as
+self-contained. `queue.js` fails on a `--note-file` that does not exist, and this call is
+the one reopening the entry, so skipping the write leaves it at `In Progress`, which is the
+limbo this whole block exists to prevent. Step 7 and Step 8 both spell the write out for
+the same reason.
+
+If that call exits non-zero, say "The entry was not reopened: {what it printed}" and name
+the status it is stuck at, so the limbo is at least visible. Do not retry silently.
+
+- If it is a **file**, read it and carry on. No status change.
+- If it is a **directory** and `target_kind` is `plugin`, the fix cannot be a
+  full-file write against a directory. Reopen the entry, then say which file it should
+  have held, rather than guessing which file inside the plugin the fix belongs in:
+
+  > "Can't apply a fix to {target_path}, which is a directory. A plugin entry should point at .claude-plugin/plugin.json, and a fix that belongs in one file inside the plugin needs an entry naming that file. Fix the entry's path, or run /audit-deps to rebuild it. The entry is back to Open."
+
+- If it is a **directory** and `target_kind` is anything else, reopen and stop the same way. There is no convention to guess with.
+
+`/verify-fix` Step S3 also resolves the path before reading, but it substitutes
+`.claude-plugin/plugin.json` for a `plugin`-kind directory and carries on, because it
+only reads. Here the fix is a full-file write, which a directory cannot take, so this
+stops instead. The two differ deliberately.
+
 Read the file at `{target_path}` in full using the Read tool. Read the entire file — not just the section you plan to change. You need the full content to:
 - Understand the surrounding context
 - Write the complete updated file back in Step 7 (full-file Write, not patch)
 
-If the file is not found: say "Can't find the target file at {target_path}. Is this path correct?" Stop.
+If the path resolves to nothing: reopen the entry as above, then say "Can't find the target file at {target_path}. Is this path correct? The entry is back to Open." Use that only for a path that is absent, not for one that exists and is a directory, because asking whether a correct path is correct sends the reader to check the one thing that is not wrong.
 
 ---
 
@@ -325,8 +370,81 @@ git -C <root.path> add <target_path relative to root.path>
 git -C <root.path> commit -m "fix({target}): {one-line summary of fix} [queue:{id}]"
 ```
 
-If the root is not itself a git repository, `git -C` fails. Say so and stop,
-rather than searching upwards for some other repository to commit into.
+**If either command fails, establish which failure it is before choosing a branch:**
+
+```bash
+git -C <root.path> rev-parse --is-inside-work-tree
+```
+
+`true` means the root is a git repository and the commit failed for some other reason,
+so take the commit-error branch further down, which asks the user whether to retry or
+revert and changes nothing. Anything else, a non-zero exit or any other output, means
+there is no repository, so take the next branch.
+
+Run this test rather than reading "git failed" as "no repository". The two branches now
+have opposite consequences: one is terminal and writes a factual claim into the audit
+trail that four downstream readers branch on, the other asks a question and changes
+nothing. A bad pathspec, a held index lock, a rejecting pre-commit hook, or nothing
+staged to commit would all otherwise be recorded as "not a git repository", which is
+both false and final. Before this change both branches ended in "say so and stop", so
+confusing them cost nothing. That is no longer true, which is why the test is here.
+
+If the root is not itself a git repository, do not search upwards
+for some other repository to commit into, and **do not stop here.** Step 7 already
+wrote the file, and stopping cannot unwrite it, so stopping leaves the entry at
+`In Progress` while the change is live on disk. A status that says the work is
+unfinished when the file has already changed is the half-finished state the 0.3.1
+status cleanup existed to remove.
+
+Skip the commit and give the entry a terminal state describing what is actually
+true, in one call. The note is free text, so it goes through a file rather than a
+shell argument, the same as every other note this skill writes:
+
+Write the note to a scratch file in `{scratch}`, the per-run directory from the top
+of this skill, exactly as the Step 7 failure note does. Not a bare `mktemp`, which
+ignores the template this skill spells out in full for a stated reason, and not a
+fixed name under `/tmp`.
+
+**The note must read exactly this, starting with `Not committed:`:**
+
+> Not committed: written to {target_path}, {repo} is not a git repository
+
+The prefix is load-bearing and is the counterpart to `Committed:`. `/verify-fix` and
+`/revert-fix` both branch on it, because `"fix applied, watching"` no longer implies a
+commit and **the absence of a hash does not identify why.** `/verify-fix` Step S4's
+standalone PASS path also promotes an entry to this status with no hash, so a tool
+that guesses the reason from a missing hash will tell someone their repository is not
+a git repository when it is. A fixed prefix is what makes the two cases
+distinguishable rather than merely both hashless.
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/queue.js" update {id} \
+  --status "fix applied, watching" \
+  --note-file {scratch}/note-{id}.txt
+```
+
+There is no commit hash, so record none rather than an invented or empty-looking
+one.
+
+If that call exits non-zero, say "The fix is written to {target_path} and there was
+no commit, and the queue entry was not updated: {what it printed}." Then stop. Do not
+retry silently and do not edit the entry by hand. A refusal here usually means
+another session holds the lock, and running it again is the whole fix. The entry
+stays at `In Progress`, which is wrong but visible, and that is better than a
+hand-written entry nothing can trust.
+
+Then say so plainly:
+
+> "The fix is written to {target_path}. There was no commit, because {root.path} is not a git repository, so there is nothing for /revert-fix to undo. The entry is 'fix applied, watching', which means /apply-fix will refuse it from here: if this fix needs changing, run /revert-fix {id} and it will offer to reopen the entry, or log the correction fresh with /flag-issue."
+
+**Then go to "Surface dep-review entries" below, and stop after it.** Do not skip it.
+Step 7 wrote the file on this path exactly as it does on the commit path, so whatever
+else the change might have broken is equally exposed, and the presence of a commit has
+nothing to do with it. Skipping the closing summary is right, since there is no hash or
+branch to report, but skipping the dependents warning would leave related entries
+sitting unnoticed in the queue after a live change.
+
+This is what the ancestor skill did, at `foundations/bug-fix-loop/apply-fixes/SKILL.md` Step 8.
 
 Commit message format rules:
 - `{target}` — the name from the `target` field in the queue entry
@@ -334,10 +452,18 @@ Commit message format rules:
 - `[queue:{id}]` — full queue entry id (e.g., `queue:2026-04-23T13-29-20-daily-brief`)
 - Never git push as part of this skill. Pushing is a separate deliberate action.
 
-**If git commit errors:**
+**If git commit errors** inside a root that *is* a git repository, meaning
+`rev-parse --is-inside-work-tree` printed `true` in the test above. This is where every
+git failure other than a missing repository lands, including a bad pathspec, a held
+index lock, a rejecting hook, and nothing staged:
 > "The fix is written to disk but the git commit failed: {error}. Should I try the commit again, or revert the file to its original state?"
 
 Do NOT change the queue entry status until the user's response. Do NOT assume the file should stay — it's written without a commit and is in a limbo state.
+
+The two paths differ because the options differ. A commit that failed inside a real
+repository can be retried, and the original content is recoverable through git, so
+asking is worth the pause. A root that is not a repository offers neither, so there
+is nothing to ask and the entry gets its terminal state instead of a question.
 
 **Capture the commit hash:**
 ```bash
@@ -383,7 +509,38 @@ Wait for the user's answer. If they say "leave them", they stay Open. Do not aut
 **Show closing summary:**
 
 ```
-Fix committed. Queue entry {id} is now "fix applied, watching".
-Try it in a real session. When it works, run /list-bugs and update the entry to Resolved.
-Commit: {hash} ({repo})
+Fix committed locally. Queue entry {id} is now "fix applied, watching".
+Commit: {hash} ({repo}), on branch {branch}, not pushed.
+{liveness}
+Then try it for real. When it works, run /list-bugs and update the entry to Resolved.
 ```
+
+`{liveness}` depends on the **kind** of the root named by the entry's `repo`, because the
+two answers are opposite and getting it wrong either way misleads:
+
+| Root kind | `{liveness}` |
+|---|---|
+| `skill`, `hook`, `command` | `This is live for your next session already, since it was written straight into {root.path}. Pushing is about keeping it, not about loading it.` |
+| `plugin-repo` | `Nothing will load this yet. Push the branch, open a PR, and after it merges run claude plugin marketplace update and claude plugin update, since the installed copy is served from the plugin cache and not from this checkout.` |
+
+The defaults at the top of this step are `personal` at `~/.claude/skills`, `hooks` at
+`~/.claude/hooks` and `commands` at `~/.claude/commands`. A write into any of those is
+picked up by the next session with no push, no PR and no install, so telling someone it
+is inert would have them stop testing a change that is already active. A `plugin-repo`
+root is the opposite: the running copy comes from the cache, so the checkout can be
+committed and the machine still runs the old file.
+
+Either way the commit is local, and that part is said above in both cases.
+
+Get the branch with `git -C {repo_root} rev-parse --abbrev-ref HEAD`.
+
+**Say "not pushed" every time, and never leave it implied.** This skill does not push,
+by the deliberate decision above, and `"fix applied, watching"` reads as shipped and
+under observation. On 2026-08-02 two fixes were committed here and sat on one laptop
+with no push and no PR, their entries claiming they were live, and it took a separate
+audit to find them. The status cannot carry that distinction, so this line has to.
+
+If the commit is on the repository's default branch rather than a feature branch, say
+that too, since it changes what pushing means:
+
+> "This committed straight onto {branch}. If you would rather it went through review, move it to a branch before pushing."

@@ -126,12 +126,22 @@ Work out `{file_state}` before writing anything:
 | Called from | State of the target file | `{file_state}` |
 |---|---|---|
 | Mode A, within `/apply-fix` | Never written. Verification happens before the write. | `The target file was never written.` |
-| Mode B, standalone | Already written and committed in an earlier session. | `The fix is already committed, so the target file still carries it until it is reverted.` |
+| Mode B, entry is `In Progress` | Started in an earlier session and possibly never written. | `Whether the target file was written is unknown: the entry was still In Progress.` |
+| Mode B, last marker is `Committed:` | Already written and committed in an earlier session. | `The fix is already committed, so the target file still carries it until it is reverted.` |
+| Mode B, last marker is `Not committed:` | Written, never committed, because its root is not a git repository. | `The fix was written to the target file and never committed, so the file carries it and there is no commit to restore from.` |
+| Mode B, `fix applied, watching` with no marker in any note | Written at some point, with no record of whether it was committed. | `The target file was written and the entry records no commit either way.` |
 
-Getting this wrong writes a false audit trail. Mode B exists to re-review a fix
-from a previous session, which by definition was applied, and the branch below
-offers to help restore that file precisely because it did change. A note saying
-the file is untouched would contradict the offer sitting next to it.
+Getting this wrong writes a false audit trail. The branch below offers to help restore
+the file precisely because it did change, so a note saying the file is untouched would
+contradict the offer sitting next to it.
+
+**Pick the row by status first, then by marker.** Mode B does not imply the fix was
+applied. Step S1 accepts `In Progress` as well, and `/apply-fix` sets that at its Step 2,
+well before the Step 7 write, so a session interrupted between those two points leaves an
+entry whose file was never touched. Choosing on marker alone drops that case into the
+no-marker row and records that the file was written, which is the false audit trail this
+paragraph is about. `In Progress` says the write is unknown rather than guessing either
+way, because nothing on the entry distinguishes interrupted-before from interrupted-after.
 
 Set the status back to `"Open"` and record the attempt, in one call:
 
@@ -187,7 +197,11 @@ When /verify-fix is invoked directly (not from within /apply-fix), it works inde
 
 Check the loaded entry's status:
 
-- **"fix applied, watching"**: The fix was already approved and committed. Say: "This fix was already committed at {commit-hash from notes}. Do you want to review the change retroactively? I can show you the diff from that commit." Wait for confirmation before proceeding.
+- **"fix applied, watching"**, whose **last** note marker is `Committed:` and carries a hash: The fix was approved and committed. Say: "This fix was already committed at {commit-hash from notes}. Do you want to review the change retroactively? I can show you the diff from that commit." Wait for confirmation before proceeding.
+- **"fix applied, watching"** whose **last** note marker is **`Not committed:`**: `/apply-fix` Step 8 writes that marker when it wrote the file and had nowhere to commit it. Quote the reason from the note rather than restating it, since the note carries the actual `{target_path}` and `{repo}`. Say: "This fix was written and never committed. The entry records: {the Not committed: note}. There is no diff to show, so there is nothing to compare. I can show you what is in the file now. If the fix turns out to be wrong, /revert-fix {id} will offer to reopen the entry so /apply-fix can write a corrected one, since /apply-fix refuses an entry already at this status." Then go to **Step S2**, which re-presents what the fix was for, and on to S3.
+- **"fix applied, watching"** with **no** marker in any note: say "This entry is 'fix applied, watching' but records no commit and no reason. I can show you what is in the file now, though I cannot tell you whether it was committed." Then go to **Step S2** and on to S3.
+
+  **Do not infer a cause from a missing hash.** Step S4's own standalone PASS path below promotes an `In Progress` entry to this status with a note and no hash, so hashless entries arise here as well as from a missing repository. Guessing tells someone their repository is not a git repository when it is. And read the notes before asserting a hash at all: printing `{commit-hash}` unsubstituted is the failure this skill forbids in Step S3.
 - **"In Progress"**: The fix was started but not committed (session may have been interrupted). Proceed to Step S2.
 - **"Open"**: Say "This entry hasn't had a fix proposed yet. Run /apply-fix {id} to start the fix process." Stop.
 - Any other status: Say "This entry is {status}. Nothing to verify." Stop.
@@ -221,12 +235,14 @@ that rule or was written by hand.
 4. If it is a **directory** and `target_kind` is anything else, stop and use the directory branch in Error handling. Do not guess at a file.
 
 For a `plugin`-kind entry, `plugin.json` is rarely where the fix landed, so it is a poor thing
-to verify against. When the entry's status is `"fix applied, watching"` its notes carry the
-commit hash, and that commit is the honest source for what changed.
+to verify against. Where a commit exists, that commit is the honest source for what changed.
 
-**Only when the status is `"fix applied, watching"` and the notes actually carry a hash.** Step
-S2 and S3 are also reached from `"In Progress"`, where no commit exists yet, so this line is
-conditional and not something to print for every plugin entry.
+**Only when the status is `"fix applied, watching"` and the entry's *last* note marker is
+`Committed:`.** Two other cases reach here and neither has a commit describing the file as it
+is now. S2 and S3 are also reached from `"In Progress"`, where no commit exists yet. And an
+entry committed once, then reopened and re-applied into a root with no repository, carries the
+old `Committed:` hash underneath a newer `Not committed:` marker, so a hash is present and
+stale. Gate on the last marker, never on hash presence. See SCHEMA.md, note markers.
 
 When the guard holds, **name the command for the user to run rather than offering to run it.**
 `allowed-tools` has no `Bash(git:*)` and must not gain it: this skill is the review gate, and
@@ -235,9 +251,10 @@ for the same reason. Say:
 
 > "This is a plugin-level entry, so there is no single target file, and I am showing {resolved file} instead. The fix was committed as {hash}. To see what actually changed, run: git -C {repo_root} show {hash}"
 
-When the status is `"In Progress"`, or the notes hold no hash, **omit this line entirely** and
-show the resolved file on its own. Never print `{hash}` unsubstituted, which is what a
-command with a missing value looks like to the person asked to run it.
+When the status is `"In Progress"`, or the last marker is `Not committed:`, or there is no
+marker at all, **omit this line entirely** and show the resolved file on its own. Never print
+`{hash}` unsubstituted, which is what a command with a missing value looks like to the person
+asked to run it, and never print a hash the newer marker has superseded.
 
 Then read the resolved file using the Read tool. Display:
 
@@ -264,10 +281,24 @@ Same three response types as Step V3:
 
 - **"no"** (FAIL in standalone mode):
   Follow Step V4 fail path (set status back to `"Open"`, append failure note),
-  using the **Mode B** value of `{file_state}`. The fix reached the file in an
-  earlier session, so a note claiming it is untouched would contradict the offer
-  on the next line.
-  Additionally display: "Should I help restore the target file to its pre-fix state? To check what the file looked like before: git -C {repo_root} log --oneline -5, find the commit with [queue:{id}] in the message, then run /revert-fix {id} to undo it."
+  using the **Mode B** row of `{file_state}` that matches this entry's notes. The fix
+  reached the file in an earlier session, so a note claiming it is untouched would
+  contradict the offer on the next line. Pick the row by the note, not by assuming a
+  commit: writing "already committed" onto an entry that was never committed puts a
+  false audit trail on the record, which is the exact thing this table exists to stop.
+
+  **Then offer a restore only if a `Committed:` note exists:**
+
+  > "Should I help restore the target file to its pre-fix state? To check what the file looked like before: git -C {repo_root} log --oneline -5, find the commit with [queue:{id}] in the message, then run /revert-fix {id} to undo it."
+
+  With a `Not committed:` note, there is no commit and `git log` cannot run usefully in
+  a directory that is not a repository, so say this instead:
+
+  > "There is no commit to restore from, because this was written without one. Undoing it means editing {target_path} back by hand. The entry is back to Open, so /apply-fix {id} can now propose a corrected fix."
+
+  With neither note, say the restore path is unknown rather than picking one:
+
+  > "The entry records no commit, so I cannot tell you whether git can restore this. Check `git -C {repo_root} log --oneline -5` for a commit mentioning [queue:{id}]. If there is none, the file has to go back by hand."
 
 - **"retry: {instructions}"** (REVISE in standalone mode):
   "To revise this fix, run /apply-fix {id}. It will pick up the In Progress entry and you can guide it with your instructions."
