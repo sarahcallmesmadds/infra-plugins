@@ -102,10 +102,17 @@ After the table (or after the "no items" message), pick what gets the spotlight,
 order. A waiting dep-review never takes it while any other open entry exists, because it
 names work that cannot be started yet.
 
-1. The oldest `Open` **primary**, by lowest `created_at`.
-2. If there is no open primary, the oldest `Open` **answerable dep-review**.
-3. If the only open entries are waiting dep-reviews, print the blocked block below instead of a spotlight. Count `W_open` = waiting dep-reviews whose status is `Open`. Use that, not the `W` from Step 4, which counts every status the filter let through and would name more items than the block goes on to list.
-4. If there are zero `Open` entries at all, skip this step entirely.
+**Every case below draws only from the filtered and sorted entries, the same rows the table
+just rendered.** Never from the parent index built in Step 2 point 6. That index deliberately
+holds every entry on disk, including ones the filter dropped, because it exists to look up
+parents. Selecting from it would spotlight an item that is not in the table, which is what
+`/list-bugs resolved` and `/list-bugs wontfix` would do: no row on screen is `Open`, so those
+runs must print no spotlight at all rather than reaching past the filter for one.
+
+1. The oldest `Open` **primary** among the filtered entries, by lowest `created_at`.
+2. If no filtered entry is an open primary, the oldest `Open` **answerable dep-review** among them.
+3. If the only `Open` filtered entries are waiting dep-reviews, print the blocked block below instead of a spotlight. Count `W_open` = filtered waiting dep-reviews whose status is `Open`. Use that, not the `W` from Step 4, which counts every status the filter let through and would name more items than the block goes on to list.
+4. If no filtered entry has status `Open`, skip this step entirely. This is the normal outcome for `resolved` and `wontfix`.
 
 For cases 1 and 2, print a spotlight block:
 
@@ -118,7 +125,8 @@ For cases 1 and 2, print a spotlight block:
 - File: `~/.claude/build-loop/queue/{filename}`
 ```
 
-If there are zero `Open` entries (after filtering), skip this block entirely.
+Case 4 above covers when this block is skipped. It is stated once, in the numbered list, so
+the scope of the selection and the condition for skipping it cannot drift apart.
 
 For case 3, where every open entry is a dep-review waiting on an unfixed parent, print this
 instead of a spotlight. It says what to do next rather than presenting a blocked item as the
