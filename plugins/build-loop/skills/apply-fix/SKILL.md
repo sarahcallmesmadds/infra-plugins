@@ -353,10 +353,22 @@ Skip the commit and give the entry a terminal state describing what is actually
 true, in one call. The note is free text, so it goes through a file rather than a
 shell argument, the same as every other note this skill writes:
 
-Write it into `{scratch}`, the per-run directory from the top of this skill, the
-same as the Step 7 failure note. Not a bare `mktemp`, which ignores the template
-this skill spells out in full for a stated reason, and not a fixed name under
-`/tmp`.
+Write the note to a scratch file in `{scratch}`, the per-run directory from the top
+of this skill, exactly as the Step 7 failure note does. Not a bare `mktemp`, which
+ignores the template this skill spells out in full for a stated reason, and not a
+fixed name under `/tmp`.
+
+**The note must read exactly this, starting with `Not committed:`:**
+
+> Not committed: written to {target_path}, {repo} is not a git repository
+
+The prefix is load-bearing and is the counterpart to `Committed:`. `/verify-fix` and
+`/revert-fix` both branch on it, because `"fix applied, watching"` no longer implies a
+commit and **the absence of a hash does not identify why.** `/verify-fix` Step S4's
+standalone PASS path also promotes an entry to this status with no hash, so a tool
+that guesses the reason from a missing hash will tell someone their repository is not
+a git repository when it is. A fixed prefix is what makes the two cases
+distinguishable rather than merely both hashless.
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/scripts/queue.js" update {id} \

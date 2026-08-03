@@ -29,7 +29,7 @@ Look at `$ARGUMENTS`:
 
 - **If $ARGUMENTS is empty**: list all entries across all `.json` files where `status == "fix applied, watching"`. Ask the user to pick. Do not proceed until they pick one.
 
-  Mark any entry whose notes hold no commit hash as `(no commit, nothing to revert)` in that list. This status does not imply a commit: `/apply-fix` also lands here after writing a file whose root is not a git repository. Offering such an entry as an equal choice invites the user to pick something this skill cannot act on, and Step 3 would then stop after they had chosen.
+  Mark any entry carrying a `Not committed:` note as `(no commit, nothing to revert)` in that list, and any entry with neither that nor a `Committed:` note as `(no commit recorded)`. This status does not imply a commit: `/apply-fix` lands here after writing a file whose root is not a git repository, and `/verify-fix` lands here after a standalone pass on an `In Progress` entry. Offering either as an equal choice invites the user to pick something this skill cannot act on, and Step 3 would then stop after they had chosen.
 
 ---
 
@@ -53,13 +53,19 @@ Extract the hash from that string. The format is:
 ```
 Example: `"Committed: abc1234 to personal"` → hash is `abc1234`.
 
-- If a note says the fix was **written without a commit**, there is nothing to revert and no commit to search for. `/apply-fix` Step 8 records this when the target's root is not a git repository: the file was written, the entry reached `fix applied, watching`, and no commit exists. Say:
+- If a note starts with **`Not committed:`**, there is nothing to revert and no commit to search for. `/apply-fix` Step 8 writes that marker when it wrote the file and the root was not a git repository. Quote the note rather than restating its reason, which keeps this correct if the wording gains other cases:
 
-  > "There is nothing to revert. This fix was written straight to {target_path} and never committed, because {repo} is not a git repository, so there is no commit and no earlier version for git to restore. To undo it you would have to edit the file back by hand. If you want that, /apply-fix {id} can propose the reverse change with the same approval gate."
+  > "There is nothing to revert. The entry records: {the Not committed: note}. No commit exists, so there is no earlier version for git to restore, and undoing it means putting the file back by hand.
+  >
+  > `/apply-fix {id}` will not do it either: it stops on any entry already at 'fix applied, watching'. To have it write the reverse change, first reopen this entry:
+  >
+  > node \"${CLAUDE_PLUGIN_ROOT}/scripts/queue.js\" update {id} --status Open --note-file {path to a note saying why}
+  >
+  > Or log the reversal as its own correction with `/flag-issue`, which is the better record if the original fix was simply wrong."
 
   Stop. Do not suggest `git log`, which cannot run usefully in a directory that is not a repository.
 
-- If no `Committed:` note is found and nothing explains why: say "I can't find a commit hash in this queue entry's notes. The commit hash is normally stored by /apply-fix after committing. You may need to find the commit manually with: `git -C {repo_root} log --oneline | head -10`" Stop.
+- If no `Committed:` note is found and no `Not committed:` note explains why: say "I can't find a commit hash in this queue entry's notes, and nothing records why. The commit hash is normally stored by /apply-fix after committing, and `/verify-fix` can also leave this status with no hash after a standalone pass. You may need to find the commit manually with: `git -C {repo_root} log --oneline | head -10`" Stop.
 
 ---
 

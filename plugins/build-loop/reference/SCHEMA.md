@@ -250,8 +250,30 @@ Writers always emit the v5 field names. An old entry that gets its status update
 | `In Progress` | `/apply-fix` is actively working on this correction. |
 | `Resolved` | Fix applied AND verified. |
 | `Won't Fix` | The user explicitly deferred or declined this correction. |
-| `fix applied, watching` | The user approved the diff and the fix was committed. Live but not yet confirmed in a real session. The user closes this to `Resolved` after using the thing. |
+| `fix applied, watching` | The fix reached the target file and is not yet confirmed in a real session. The user closes this to `Resolved` after using the thing. **This does not imply a commit.** See the note markers below. |
 | `fix attempted / unresolved` | **Retired in 0.3.1. Do not write this.** Readers still accept it, because entries written earlier carry it. A rejected diff or a failed write now leaves the entry `Open` and records the attempt in `notes`. The status was removed rather than added to `/list-bugs`, because it described a bug that was still open while making it invisible to every filter that lists open work. |
+
+### Note markers on `fix applied, watching`
+
+Three skills write this status and it reaches the same place by more than one route, so
+the status alone cannot say whether a commit exists. A note prefix carries that, and
+readers must branch on the prefix rather than on whether a hash happens to be present.
+
+| Prefix | Written by | Means |
+|--------|-----------|-------|
+| `Committed:` | `/apply-fix` Step 8 | A commit exists. Format `Committed: {hash} to {repo}`. `/revert-fix` parses the hash out of this. |
+| `Not committed:` | `/apply-fix` Step 8 | The file was written and there was nowhere to commit it. Format `Not committed: written to {target_path}, {repo} is not a git repository`. Nothing to revert and no diff to show. |
+| neither | `/verify-fix` Step S4 standalone PASS | Promoted from `In Progress` on the user's say-so, with no commit either way. The reason is genuinely unknown. |
+
+**Absence of a hash does not identify the reason.** A reader that treats every hashless
+entry as the no-repository case will tell someone their repository is not a git
+repository when it is, because the standalone verify path produces hashless entries
+too. `/verify-fix` Step S1 and `/revert-fix` Steps 1 and 3 each carry all three
+branches.
+
+A local commit is also not a pushed one. `/apply-fix` never pushes, by deliberate
+decision, so an entry at this status with a `Committed:` note may still exist only on
+one machine. Its closing summary says so explicitly, because no status can.
 
 ---
 
