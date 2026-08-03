@@ -126,7 +126,9 @@ Work out `{file_state}` before writing anything:
 | Called from | State of the target file | `{file_state}` |
 |---|---|---|
 | Mode A, within `/apply-fix` | Never written. Verification happens before the write. | `The target file was never written.` |
-| Mode B, standalone | Already written and committed in an earlier session. | `The fix is already committed, so the target file still carries it until it is reverted.` |
+| Mode B, standalone, entry has a `Committed:` note | Already written and committed in an earlier session. | `The fix is already committed, so the target file still carries it until it is reverted.` |
+| Mode B, standalone, entry has a `Not committed:` note | Written, never committed, because its root is not a git repository. | `The fix was written to the target file and never committed, so the file carries it and there is no commit to restore from.` |
+| Mode B, standalone, neither note | Written at some point, with no record of whether it was committed. | `The target file was written and the entry records no commit either way.` |
 
 Getting this wrong writes a false audit trail. Mode B exists to re-review a fix
 from a previous session, which by definition was applied, and the branch below
@@ -268,10 +270,24 @@ Same three response types as Step V3:
 
 - **"no"** (FAIL in standalone mode):
   Follow Step V4 fail path (set status back to `"Open"`, append failure note),
-  using the **Mode B** value of `{file_state}`. The fix reached the file in an
-  earlier session, so a note claiming it is untouched would contradict the offer
-  on the next line.
-  Additionally display: "Should I help restore the target file to its pre-fix state? To check what the file looked like before: git -C {repo_root} log --oneline -5, find the commit with [queue:{id}] in the message, then run /revert-fix {id} to undo it."
+  using the **Mode B** row of `{file_state}` that matches this entry's notes. The fix
+  reached the file in an earlier session, so a note claiming it is untouched would
+  contradict the offer on the next line. Pick the row by the note, not by assuming a
+  commit: writing "already committed" onto an entry that was never committed puts a
+  false audit trail on the record, which is the exact thing this table exists to stop.
+
+  **Then offer a restore only if a `Committed:` note exists:**
+
+  > "Should I help restore the target file to its pre-fix state? To check what the file looked like before: git -C {repo_root} log --oneline -5, find the commit with [queue:{id}] in the message, then run /revert-fix {id} to undo it."
+
+  With a `Not committed:` note, there is no commit and `git log` cannot run usefully in
+  a directory that is not a repository, so say this instead:
+
+  > "There is no commit to restore from, because this was written without one. Undoing it means editing {target_path} back by hand. The entry is back to Open, so /apply-fix {id} can now propose a corrected fix."
+
+  With neither note, say the restore path is unknown rather than picking one:
+
+  > "The entry records no commit, so I cannot tell you whether git can restore this. Check `git -C {repo_root} log --oneline -5` for a commit mentioning [queue:{id}]. If there is none, the file has to go back by hand."
 
 - **"retry: {instructions}"** (REVISE in standalone mode):
   "To revise this fix, run /apply-fix {id}. It will pick up the In Progress entry and you can guide it with your instructions."

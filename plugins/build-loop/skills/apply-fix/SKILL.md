@@ -406,9 +406,16 @@ another session holds the lock, and running it again is the whole fix. The entry
 stays at `In Progress`, which is wrong but visible, and that is better than a
 hand-written entry nothing can trust.
 
-Then say so plainly and stop:
+Then say so plainly:
 
 > "The fix is written to {target_path}. There was no commit, because {root.path} is not a git repository, so there is nothing to revert through and /revert-fix cannot help here. The entry is 'fix applied, watching'."
+
+**Then go to "Surface dep-review entries" below, and stop after it.** Do not skip it.
+Step 7 wrote the file on this path exactly as it does on the commit path, so whatever
+else the change might have broken is equally exposed, and the presence of a commit has
+nothing to do with it. Skipping the closing summary is right, since there is no hash or
+branch to report, but skipping the dependents warning would leave related entries
+sitting unnoticed in the queue after a live change.
 
 This is what the ancestor skill did, at `foundations/bug-fix-loop/apply-fixes/SKILL.md` Step 8.
 
