@@ -76,6 +76,13 @@ const POLL_MS = 25;
 // thing that defeats it.
 class QueueError extends Error {}
 
+// Losing the lock mid-write is recoverable, unlike every other failure here:
+// the work can simply be done again against fresh state. It gets its own type
+// so locked() can retry exactly this and nothing else.
+class LockLostError extends QueueError {}
+
+const LOCK_ATTEMPTS = 3;
+
 function fail(message) {
   throw new QueueError(message);
 }
@@ -91,6 +98,34 @@ function sleep(ms) {
 // own lock from somebody else's. The pid alone is not enough: pids are reused,
 // and the case that matters is precisely the one where an old process is gone.
 const OWNER = `${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}`;
+
+// What the lock is at one moment: which directory, when it was last touched,
+// and who claims it. This is what tells "the lock I judged stale" apart from
+// "a different lock that has replaced it since", a distinction rename cannot
+// make on its own because it takes whatever is at the path.
+function lockIdentity() {
+  try {
+    const st = fs.statSync(LOCK);
+    let owner = null;
+    try { owner = fs.readFileSync(path.join(LOCK, 'owner'), 'utf8'); } catch { /* not written yet */ }
+    return { ino: st.ino, dev: st.dev, mtimeMs: st.mtimeMs, owner };
+  } catch {
+    return null;
+  }
+}
+
+function sameLock(a, b) {
+  return Boolean(a && b && a.ino === b.ino && a.dev === b.dev
+    && a.mtimeMs === b.mtimeMs && a.owner === b.owner);
+}
+
+function holdingLock() {
+  try {
+    return fs.readFileSync(path.join(LOCK, 'owner'), 'utf8') === OWNER;
+  } catch {
+    return false;
+  }
+}
 
 function acquire() {
   const deadline = Date.now() + WAIT_MS;
@@ -133,14 +168,13 @@ function acquire() {
       if (error.code !== 'EEXIST') throw error;
 
       // Someone else holds it, or nobody does and the directory is a leftover.
-      let age = 0;
-      try {
-        age = Date.now() - fs.statSync(LOCK).mtimeMs;
-      } catch {
+      const judged = lockIdentity();
+      if (!judged) {
         // It vanished between the failed mkdir and the stat, so it is free now.
         waitOrGiveUp('the lock kept appearing and vanishing');
         continue;
       }
+      const age = Date.now() - judged.mtimeMs;
       if (age > STALE_MS) {
         // Take it over by renaming it, never by deleting it in place.
         //
@@ -155,6 +189,18 @@ function acquire() {
         // A rename is atomic and has exactly one winner: whoever renames it
         // owns the takeover, and the loser gets ENOENT and goes back round to
         // find the winner's lock and wait for it properly.
+        // The rename still has to be told which lock to move, and deciding a
+        // lock is stale is a separate call from moving it. Between the two the
+        // lock can be taken over by somebody else and replaced with a live one,
+        // and rename takes whatever is at the path. Without this check a
+        // process moves a brand-new lock aside and deletes it, putting two
+        // writers in the critical section at once. That is the same corruption
+        // the rename was introduced to prevent, arriving through the check
+        // instead of through the delete.
+        if (!sameLock(judged, lockIdentity())) {
+          waitOrGiveUp('the stale lock was replaced before it could be moved aside');
+          continue;
+        }
         const aside = `${LOCK}.stale.${OWNER}`;
         try {
           fs.renameSync(LOCK, aside);
@@ -195,11 +241,21 @@ function release() {
 // finally, one thrown error leaves every future write blocked until the lock
 // goes stale.
 function locked(fn) {
-  acquire();
-  try {
-    return fn();
-  } finally {
-    release();
+  for (let attempt = 1; ; attempt += 1) {
+    acquire();
+    try {
+      return fn();
+    } catch (error) {
+      if (!(error instanceof LockLostError)) throw error;
+      if (attempt >= LOCK_ATTEMPTS) {
+        fail(`queue.js: the queue lock was taken over by another session ${LOCK_ATTEMPTS} times running, so nothing was written. Try again, or remove ${LOCK} if you are certain no other session is running.`);
+      }
+      // Round again. fn re-reads the entry inside the new lock, so the retry
+      // works from what is on disk now rather than from the copy that was
+      // read before the lock was lost.
+    } finally {
+      release();
+    }
   }
 }
 
@@ -275,6 +331,15 @@ function readEntry(id, dir = QUEUE) {
 // is on what is about to land rather than on what was composed, because those
 // are only the same thing if the serialization worked.
 function writeEntry(id, entry, dir = QUEUE) {
+  // Refuse to write without the lock. The check in acquire narrows the takeover
+  // race but cannot close it: there is no compare-and-swap for a rename, so two
+  // adjacent syscalls are still two syscalls. This is what makes the remainder
+  // harmless. A writer whose lock was taken over read the entry before the other
+  // writer's change landed, so writing now would overwrite it silently while
+  // both processes reported success.
+  if (!holdingLock()) {
+    throw new LockLostError('queue.js: the queue lock was taken over by another session mid-write. Nothing was written.');
+  }
   const target = entryPath(id, dir);
   const tmp = `${target}.${process.pid}.tmp`;
   const text = JSON.stringify(entry, null, 2) + '\n';
