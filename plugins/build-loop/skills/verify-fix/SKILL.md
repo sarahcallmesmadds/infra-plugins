@@ -224,12 +224,20 @@ For a `plugin`-kind entry, `plugin.json` is rarely where the fix landed, so it i
 to verify against. When the entry's status is `"fix applied, watching"` its notes carry the
 commit hash, and that commit is the honest source for what changed.
 
-**Name that command for the user to run. Do not offer to run it.** `allowed-tools` has no
-`Bash(git:*)` and must not gain it: this skill is the review gate, and the one thing it must be
-unable to do is commit. Step S4 already hands git commands to the user for the same reason, so
-say:
+**Only when the status is `"fix applied, watching"` and the notes actually carry a hash.** Step
+S2 and S3 are also reached from `"In Progress"`, where no commit exists yet, so this line is
+conditional and not something to print for every plugin entry.
+
+When the guard holds, **name the command for the user to run rather than offering to run it.**
+`allowed-tools` has no `Bash(git:*)` and must not gain it: this skill is the review gate, and
+the one thing it must be unable to do is commit. Step S4 already hands git commands to the user
+for the same reason. Say:
 
 > "This is a plugin-level entry, so there is no single target file, and I am showing {resolved file} instead. The fix was committed as {hash}. To see what actually changed, run: git -C {repo_root} show {hash}"
+
+When the status is `"In Progress"`, or the notes hold no hash, **omit this line entirely** and
+show the resolved file on its own. Never print `{hash}` unsubstituted, which is what a
+command with a missing value looks like to the person asked to run it.
 
 Then read the resolved file using the Read tool. Display:
 
