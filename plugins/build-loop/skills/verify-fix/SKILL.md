@@ -210,7 +210,36 @@ Correct output would look like: {correct_example}
 
 ### Step S3 — Show what's currently in the target file
 
-Read `{target_path}` using the Read tool. Display:
+**Resolve `{target_path}` to a readable file first.** The Read tool cannot read a directory,
+and a `plugin`-kind entry may record one. `/flag-issue` requires a plugin to be recorded as
+`plugins/{target}/.claude-plugin/plugin.json`, so an entry holding the bare directory predates
+that rule or was written by hand.
+
+1. Check what the path is: `ls -d {target_path}` tells you it exists, and `ls -d {target_path}/` succeeding on a path without a trailing slash in the entry tells you it is a directory.
+2. If it is a **file**, read it and carry on.
+3. If it is a **directory** and `target_kind` is `plugin`, read `{target_path}/.claude-plugin/plugin.json` instead. Say which file you substituted and why, so the user can see the entry is imprecise: "The entry records the plugin directory, so I am showing `.claude-plugin/plugin.json`."
+4. If it is a **directory** and `target_kind` is anything else, stop and use the directory branch in Error handling. Do not guess at a file.
+
+For a `plugin`-kind entry, `plugin.json` is rarely where the fix landed, so it is a poor thing
+to verify against. When the entry's status is `"fix applied, watching"` its notes carry the
+commit hash, and that commit is the honest source for what changed.
+
+**Only when the status is `"fix applied, watching"` and the notes actually carry a hash.** Step
+S2 and S3 are also reached from `"In Progress"`, where no commit exists yet, so this line is
+conditional and not something to print for every plugin entry.
+
+When the guard holds, **name the command for the user to run rather than offering to run it.**
+`allowed-tools` has no `Bash(git:*)` and must not gain it: this skill is the review gate, and
+the one thing it must be unable to do is commit. Step S4 already hands git commands to the user
+for the same reason. Say:
+
+> "This is a plugin-level entry, so there is no single target file, and I am showing {resolved file} instead. The fix was committed as {hash}. To see what actually changed, run: git -C {repo_root} show {hash}"
+
+When the status is `"In Progress"`, or the notes hold no hash, **omit this line entirely** and
+show the resolved file on its own. Never print `{hash}` unsubstituted, which is what a
+command with a missing value looks like to the person asked to run it.
+
+Then read the resolved file using the Read tool. Display:
 
 ```
 Here's what the target file currently looks like at the relevant section:
@@ -249,5 +278,10 @@ Same three response types as Step V3:
 ## Error handling
 
 - **Queue entry not found**: "No queue entry found at {path}. Check the ID and try again." Stop.
-- **Target file not found (Step S3)**: "Can't find the target file at {target_path}. Is this path correct?" Show what IS in the queue entry and ask if the user wants to update the path.
+- **Target file not found (Step S3)**: "Can't find the target file at {target_path}. Is this path correct?" Show what IS in the queue entry and ask if the user wants to update the path. Use this only when the path resolves to nothing. A path that exists and is a directory is the next case, and asking whether a correct path is correct sends the user looking in the wrong place.
+- **Target path is a directory (Step S3)**: the path is right and the assumption that it names a file is wrong, so say that rather than blaming the path. For a `plugin`-kind entry with no `.claude-plugin/plugin.json` under it, and for any other kind:
+
+  > "Can't read the target for {id}. target_path is the directory {target_path}, and a {target_kind} entry should point at a file. Fix the entry's path, or run /audit-deps to rebuild it."
+
+  For a `plugin`-kind entry name the file it should have held: "a plugin entry should point at `.claude-plugin/plugin.json`". Show what is in the queue entry either way, and do not proceed to Step S4 with nothing displayed.
 - **The write fails**: report what `queue.js` printed. It leaves no partial file and the entry retains its previous status. A refusal usually means another session holds the lock, so the remedy is to run it again.
