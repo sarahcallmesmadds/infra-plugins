@@ -19,9 +19,17 @@ so most pickups are a paste.
 "${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js find "<slug>" --json
 ```
 
-That returns the match and, when there is none, every path it tried. Show the
-tried list if nothing matched; the search order is exactly what someone needs to
-see at that moment.
+That returns the match and, when there is none, every path it tried plus a
+`stale` object. Show the tried list if nothing matched; the search order is
+exactly what someone needs to see at that moment.
+
+**When `stale` is present, lead with it.** It holds the path the index recorded,
+which is the only location nothing else can guess, and reporting the guesses alone
+is how a moved project reads as a handoff that never existed. `stale.state` says
+which it is: `gone` means the directory is still there and the document is not, so
+it was deleted or renamed; `unreachable` means the directory went too, so the
+project moved or its volume is not mounted, and you cannot tell which from here.
+Never describe an `unreachable` handoff as lost.
 
 If the match is an archived handoff, open the summary with:
 
@@ -112,5 +120,9 @@ List them newest first with their age, and ask which.
 **The slug matches more than one.** Show every match with its path and date and
 ask which. Never pick for them.
 
-**No match.** Show the paths that were tried, then the three most recent
-handoffs as alternatives, and offer to take a direct path instead.
+**No match.** If `stale` is set, say what it recorded and what state that path is
+in first, per Step 1. Then show the paths that were tried, then the three most
+recent handoffs as alternatives, and offer to take a direct path instead. A
+recorded path that no longer resolves is a different situation from nothing having
+been written, and the remedies differ: one wants `projectRoots` extended or the
+entry forgotten, the other wants a new wrap.

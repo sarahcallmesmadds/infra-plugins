@@ -18,6 +18,8 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
+const config = require('./config');
+
 const DEFAULT_STALE_DAYS = 30;
 
 function handoffRoot(home = os.homedir()) {
@@ -90,13 +92,25 @@ function writeTarget(cwd, topicSlug, home = os.homedir()) {
 // else. Wrap wrote the file and reported success, pickup looked in one place
 // and reported that nothing existed. Both were working as written.
 //
-// No amount of adding candidate directories fixes that, it just moves the line
-// between people it works for and people it does not. The writer is the only
-// thing that knows where the file went, so the writer records it.
+// Guessing more directories does not fix that, it just moves the line between
+// people it works for and people it does not. The writer is the only thing that
+// knows where the file went, so the writer records it.
+//
+// `projectRoots` in the config is not a retreat from that. It is a list the user
+// states rather than one this file invents, it defaults to the single `~/Projects`
+// that was hardcoded, and it exists for the two cases the index cannot cover: a
+// person whose code has never been under `~/Projects`, and a repo moved between
+// two roots after its entry was written. The index stays the authority on where
+// a handoff actually is.
 //
 // The index is a convenience, never an authority. Every lookup checks the file
 // is still there, so a moved or deleted project degrades to "not found"
 // instead of to a confident path that resolves to nothing.
+//
+// Degrading to "not found" is correct and was also how a stale entry became
+// indistinguishable from a handoff that never existed. `staleRecord` below
+// reports the recorded path on a miss so the failure can name it, without
+// `findHandoff` ever handing back a path that resolves to nothing.
 
 function indexPath(home = os.homedir()) {
   return path.join(handoffRoot(home), 'index.json');
@@ -197,8 +211,10 @@ function forgetHandoff(slug, home = os.homedir()) {
 //
 // That is the worst thing this file could do. The index holds the one location
 // that cannot be reconstructed: a project handoff can be anywhere, the guessed
-// paths only cover ~/Projects/<slug>, and the writer is the only thing that
-// ever knew where the file went. Losing the entry does not lose the document,
+// paths reach only `<root>/<slug>/HANDOFF.md` for the configured roots, and the
+// writer is the only thing that ever knew where the file actually went. More
+// roots narrow that gap without closing it, since a repo can sit outside every
+// one of them. Losing the entry does not lose the document,
 // it loses the ability to find it by name, which is the entire point.
 //
 // So the file is only treated as gone when the directory that would contain it
@@ -257,15 +273,47 @@ function slugify(text) {
 //
 // Returned rather than resolved so the skill can show what it looked at when
 // nothing matches, which is the moment a person needs to know the order.
+function projectRoots(home = os.homedir()) {
+  const configured = config.load(home).projectRoots;
+  return configured.map((root) => (root.startsWith('~/')
+    ? path.join(home, root.slice(2))
+    : root));
+}
+
 function searchPaths(slug, home = os.homedir()) {
   const s = slugify(slug);
   if (!s) return [];
   return [
     { path: path.join(handoffRoot(home), `HANDOFF-${s}.md`), kind: 'central' },
-    { path: path.join(home, 'Projects', s, 'HANDOFF.md'), kind: 'project' },
+    // One candidate per configured root, in configured order. With the default
+    // single root this is the one path it always was, so nothing changes for
+    // anyone who has not opted in.
+    ...projectRoots(home).map((root) => ({ path: path.join(root, s, 'HANDOFF.md'), kind: 'project' })),
     { path: path.join(handoffRoot(home), `${s}-pause.md`), kind: 'pause' },
     { path: path.join(archiveRoot(home), `HANDOFF-${s}.md`), kind: 'archived' },
   ];
+}
+
+// The recorded path when the index holds one and the document is not there.
+//
+// `findHandoff` deliberately degrades a stale entry to "not found", because the
+// index is a convenience and never an authority. That is right, and it is also
+// how a stale entry became indistinguishable from a handoff that never existed:
+// the miss listed the guessed candidates and never mentioned the one path that
+// had actually been recorded. Reporting is separate from resolution so the miss
+// can name it without `findHandoff` ever returning a path that resolves to
+// nothing.
+//
+// `state` carries the distinction `entryState` already draws. `gone` means the
+// containing directory is right there and the file is not in it. `unreachable`
+// means the directory is missing too, which cannot tell a deleted project from
+// an unmounted volume, so the caller must not describe it as lost.
+function staleRecord(slug, home = os.homedir()) {
+  const recorded = readIndex(home)[slugify(slug)];
+  if (!recorded || !recorded.path) return null;
+  const state = entryState(recorded);
+  if (state === 'present') return null;
+  return { path: recorded.path, kind: recorded.kind || 'project', state };
 }
 
 function findHandoff(slug, home = os.homedir()) {
@@ -444,7 +492,9 @@ module.exports = {
   memoryDir,
   writeTarget,
   slugify,
+  projectRoots,
   searchPaths,
+  staleRecord,
   findHandoff,
   archiveStale,
   recentHandoffs,

@@ -107,6 +107,23 @@ const DEFAULTS = {
   // into a session log.
   memoryBudget: {},
 
+  // Where repositories live, for finding a project handoff by name.
+  //
+  // A project handoff sits next to the work, so reconstructing its path from a
+  // slug means knowing the parent directory. `~/Projects` was hardcoded, which
+  // is the same mistake `coreTools` above was written to avoid: it worked for
+  // one person's layout and silently found nothing for everyone else's.
+  //
+  // This is not a licence to guess more directories. The index remains the only
+  // authority on where a handoff actually went, because the writer is the only
+  // thing that ever knew. This list exists so someone whose code lives in
+  // `~/src` is not stuck with a lookup that cannot reach it, and so a repo moved
+  // between two configured roots is still findable by name.
+  //
+  // A leading `~/` is expanded. Entries that are not usable strings are dropped,
+  // and an empty list falls back to `~/Projects` rather than searching nothing.
+  projectRoots: ['~/Projects'],
+
   // Show the health segment even when the cache is older than the age above.
   //
   // On by default, and marked as stale when it is. A count with no freshness is
@@ -143,6 +160,15 @@ function load(home = os.homedir()) {
   merged.coreTools = merged.coreTools
     .filter((t) => t && typeof t === 'object' && (t.label || t.match))
     .map((t) => ({ label: String(t.label || t.match), match: String(t.match || t.label) }));
+
+  // Same rule for roots: drop what cannot be used, and never end up with an
+  // empty list, because searching nowhere finds nothing and looks identical to
+  // a handoff that does not exist.
+  if (!Array.isArray(merged.projectRoots)) merged.projectRoots = DEFAULTS.projectRoots;
+  merged.projectRoots = merged.projectRoots
+    .filter((r) => typeof r === 'string' && r.trim())
+    .map((r) => r.trim());
+  if (!merged.projectRoots.length) merged.projectRoots = [...DEFAULTS.projectRoots];
 
   return merged;
 }
