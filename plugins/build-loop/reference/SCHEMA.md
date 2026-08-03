@@ -270,7 +270,8 @@ entry as the no-repository case will tell someone their repository is not a git
 repository when it is, because the standalone verify path produces hashless entries
 too.
 
-Four places branch on these markers, and all four need all three cases:
+Every place that reads these markers has to handle all three of the cases above. The
+places that read them:
 
 - `/verify-fix` Step S1, choosing what to say and whether to offer a diff
 - `/verify-fix` Step V4, choosing the `{file_state}` row written into the failure note. Getting this one wrong puts a false audit trail on the record someone reads when something has gone wrong.
