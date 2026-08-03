@@ -126,14 +126,22 @@ Work out `{file_state}` before writing anything:
 | Called from | State of the target file | `{file_state}` |
 |---|---|---|
 | Mode A, within `/apply-fix` | Never written. Verification happens before the write. | `The target file was never written.` |
+| Mode B, entry is `In Progress` | Started in an earlier session and possibly never written. | `Whether the target file was written is unknown: the entry was still In Progress.` |
 | Mode B, last marker is `Committed:` | Already written and committed in an earlier session. | `The fix is already committed, so the target file still carries it until it is reverted.` |
 | Mode B, last marker is `Not committed:` | Written, never committed, because its root is not a git repository. | `The fix was written to the target file and never committed, so the file carries it and there is no commit to restore from.` |
-| Mode B, no marker in any note | Written at some point, with no record of whether it was committed. | `The target file was written and the entry records no commit either way.` |
+| Mode B, `fix applied, watching` with no marker in any note | Written at some point, with no record of whether it was committed. | `The target file was written and the entry records no commit either way.` |
 
-Getting this wrong writes a false audit trail. Mode B exists to re-review a fix
-from a previous session, which by definition was applied, and the branch below
-offers to help restore that file precisely because it did change. A note saying
-the file is untouched would contradict the offer sitting next to it.
+Getting this wrong writes a false audit trail. The branch below offers to help restore
+the file precisely because it did change, so a note saying the file is untouched would
+contradict the offer sitting next to it.
+
+**Pick the row by status first, then by marker.** Mode B does not imply the fix was
+applied. Step S1 accepts `In Progress` as well, and `/apply-fix` sets that at its Step 2,
+well before the Step 7 write, so a session interrupted between those two points leaves an
+entry whose file was never touched. Choosing on marker alone drops that case into the
+no-marker row and records that the file was written, which is the false audit trail this
+paragraph is about. `In Progress` says the write is unknown rather than guessing either
+way, because nothing on the entry distinguishes interrupted-before from interrupted-after.
 
 Set the status back to `"Open"` and record the attempt, in one call:
 
