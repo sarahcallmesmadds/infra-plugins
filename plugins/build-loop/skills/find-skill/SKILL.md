@@ -31,29 +31,37 @@ Scan the configured roots, the same set the rest of this plugin uses. Read
 and no `roots` is read as roots of kind `skill`. If the file does not exist, use
 the default root `{ "name": "personal", "path": "~/.claude/skills", "kind": "skill" }`.
 
-**Only roots of kind `skill` are scanned here.** This skill routes between
-skills, and a hook root holds executable files with no frontmatter to read. The
-bug queue covers hooks and commands; routing does not.
+**Roots of kind `skill` and kind `plugin-repo` are scanned here.** Both hold
+skills, in different layouts. A hook or command root is not scanned: it holds
+executable files with no frontmatter to read, and the bug queue covers those
+while routing does not.
 
-Check those roots exist before scanning them, and scope the check the same way:
+Check those roots exist before scanning them, and scope the check the same way.
+`--kind` takes one value, so this is two calls:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/scripts/roots.js" check --kind skill
+node "${CLAUDE_PLUGIN_ROOT}/scripts/roots.js" check --kind plugin-repo
 ```
 
-`--kind skill` matters here. Without it the check answers about hook and command
-roots too, and this skill never looks in those, so it would warn about a missing
+Scoping matters here. An unscoped check answers about hook and command roots
+too, and this skill never looks in those, so it would warn about a missing
 hooks directory to someone who asked which skill to use.
 
-- Exit 0, carry on.
-- Exit 3, a skill root someone configured is gone. Say so before routing.
+Read the two together, because either kind of root is somewhere to scan:
+
+- Exit 0 from either, carry on. There is somewhere to look.
+- Exit 3 from either, a root someone configured is gone. Say so before routing.
 - Exit 5, a default location is absent. Nobody configured that path, so do not
   frame it as something having gone missing. Carry on.
-- Exit 4, there are no skill roots to read. Say that the inventory is empty
-  because there is nowhere to look, not because nothing is installed, and stop.
-  On a machine with no config file this is what an absent `~/.claude/skills`
-  produces, and it is not a fault: nobody chose that path either, so describe it
-  as nothing being configured rather than as something having gone.
+- Exit 4 from **both**, there is nowhere to read at all. Say that the inventory
+  is empty because there is nowhere to look, not because nothing is installed,
+  and stop. On a machine with no config file this is what an absent
+  `~/.claude/skills` produces, and it is not a fault: nobody chose that path
+  either, so describe it as nothing being configured rather than as something
+  having gone. Exit 4 from only one of the two is ordinary and says nothing: a
+  machine that keeps its skills in a plugin checkout has no root of kind
+  `skill`, and one that keeps them loose has no `plugin-repo`.
 - Exit 1, the config could not be read. Relay what it said and stop.
 
 Every one of those messages arrives on stdout, including exit 1.
@@ -63,10 +71,13 @@ that cannot be read makes it report an empty inventory in the same words it
 would use for a machine with nothing installed. Those are different answers and
 the difference is the thing worth saying. Never invent a skill to fill the gap.
 
-For each skill root, scan both `<root.path>/*/SKILL.md` and
-`<root.path>/*/*/SKILL.md`, so a repository that nests the definition one
-level deeper is still found. Routing to a skill that exists but sits in a
-second root is the whole reason the config has more than one entry.
+The layout to scan depends on the root's kind. For a root of kind `skill`, scan
+both `<root.path>/*/SKILL.md` and `<root.path>/*/*/SKILL.md`, so a repository
+that nests the definition one level deeper is still found. For a root of kind
+`plugin-repo`, scan `<root.path>/plugins/*/skills/*/SKILL.md`, which is where a
+plugin checkout keeps them, one level deeper again. `flag-issue` resolves
+targets in a plugin-repo the same way. Routing to a skill that exists but sits
+in a second root is the whole reason the config has more than one entry.
 
 For each file, extract from the YAML frontmatter:
 
@@ -105,15 +116,21 @@ else:
             "build-loop.config.json has no usable roots. roots.js check says why."
         )
 
-# Only skill roots have a SKILL.md to read. A hook root would yield nothing and
-# a command root would yield files whose frontmatter means something different.
-roots = [r for r in roots if r.get("kind", "skill") == "skill"]
+# Skill roots and plugin-repo roots both hold SKILL.md files, in different
+# layouts. A hook root would yield nothing and a command root would yield files
+# whose frontmatter means something different, so neither is scanned.
+PATTERNS = {
+    # <root>/<skill>/SKILL.md and <root>/<skill>/skill/SKILL.md
+    "skill": ("*/SKILL.md", "*/*/SKILL.md"),
+    # <root>/plugins/<plugin>/skills/<skill>/SKILL.md
+    "plugin-repo": ("plugins/*/skills/*/SKILL.md",),
+}
+roots = [r for r in roots if r.get("kind", "skill") in PATTERNS]
 
 seen, skills = set(), []
 for root in roots:
     base = os.path.expanduser(root["path"])
-    # Both layouts: <root>/<skill>/SKILL.md and <root>/<skill>/skill/SKILL.md
-    for pattern in ("*/SKILL.md", "*/*/SKILL.md"):
+    for pattern in PATTERNS[root.get("kind", "skill")]:
         for path in sorted(glob.glob(os.path.join(base, pattern))):
             if path in seen:
                 continue
@@ -136,9 +153,13 @@ for root in roots:
                     key = k.strip()
                     v = v.strip()
                     fm[key] = "" if v in (">", "|", ">-", "|-") else v.strip('"').strip("'")
-            # The skill name is the first directory below the root, so the
-            # nested layout does not report every skill as "skill".
-            rel = os.path.relpath(path, base).split(os.sep)[0]
+            # In a skill root the name is the first directory below the root, so
+            # the nested layout does not report every skill as "skill". In a
+            # plugin-repo the first directory is always "plugins", so the name is
+            # the directory holding the file instead.
+            rel = (os.path.basename(os.path.dirname(path))
+                   if root.get("kind", "skill") == "plugin-repo"
+                   else os.path.relpath(path, base).split(os.sep)[0])
             skills.append({
                 "name": fm.get("name", rel),
                 "description": fm.get("description", ""),
