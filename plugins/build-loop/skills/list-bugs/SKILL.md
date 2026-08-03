@@ -56,17 +56,21 @@ Sort the surviving entries in this order:
 2. **Actionability band within a status group:** `primary` first, then answerable `dep-review`, then waiting `dep-review`. This is what makes the open group lead with work that can actually be started. A waiting dep-review is a real item, but it is blocked on something else in the queue, so it sits below everything that is not.
 3. **`created_at` ascending within each band**, oldest first, since older means more urgent.
 
-For `(error)` entries, sort by filename ascending as a fallback.
+An `(error)` entry sits in no band. Its status is `(error)`, which key 1 already sorts last, so
+key 2 never applies to it. Sort those by filename ascending, since a file that would not parse
+has no `created_at` to sort on.
 
 ### Step 4 — Render the table
 
 Count `N` = number of entries after filtering and sorting. Then count the bands within it:
-`P` = primaries, `A` = answerable dep-reviews, `W` = waiting dep-reviews.
+`P` = primaries, `A` = answerable dep-reviews, `W` = waiting dep-reviews, `E` = unreadable
+`(error)` entries. Every row falls in exactly one of the four, so `P + A + W + E` must equal
+`N`. If it does not, a band was missed and the header will not reconcile against the table.
 
 Build `{breakdown}`, which stops a queue full of blocked reviews from reading as a queue
 full of bugs:
-- If `A` and `W` are both zero, `{breakdown}` is the empty string, and the header reads exactly as it always did.
-- Otherwise `{breakdown}` is `, ` followed by the non-zero counts among `{P} primary`, `{A} dep-review ready`, and `{W} dep-review waiting`, joined with `, `. Omit any segment whose count is zero.
+- If `A`, `W` and `E` are all zero, `{breakdown}` is the empty string, and the header reads exactly as it always did.
+- Otherwise `{breakdown}` is `, ` followed by the non-zero counts among `{P} primary`, `{A} dep-review ready`, `{W} dep-review waiting`, and `{E} unreadable`, joined with `, `. Omit any segment whose count is zero.
 
 If `N == 0`: print "No {filter_label} items in the queue." and skip to Step 5.
 
@@ -83,7 +87,7 @@ Then add one row per entry (up to 20 rows):
 - **Target column:** `target` field value, falling back to the `skill` field for entries written before schema v5
 - **Kind column:** `target_kind` field value, or `skill` when the field is absent
 - **What happened column:** truncate `what_happened` to 60 characters; append `...` if truncated. Escape any literal `|` character as `\|` so the Markdown table doesn't break.
-- **Type column:** the value from the entry, defaulting to `"primary"` if missing (per Step 2 point 4). Show `"primary"`, `"dep-review"`, `"dep-review (waiting)"`, or `"(error)"`. Marking the waiting ones is what lets the header count be reconciled row by row. This column does not affect filtering, but it does affect sort, through the band in Step 3.
+- **Type column:** the value from the entry, defaulting to `"primary"` if missing (per Step 2 point 4). Show `"primary"`, `"dep-review"`, `"dep-review (waiting)"`, or `"(error)"`. Marking the waiting ones is what lets the header count be reconciled row by row, and that reconciliation only holds because the breakdown counts `(error)` rows too. This column does not affect filtering, but it does affect sort, through the band in Step 3.
 - **Status column:** `status` field value
 - **Date column:** first 10 characters of `created_at` (format: `YYYY-MM-DD`). If `created_at` is `"?"`, show `?`.
 
@@ -115,13 +119,24 @@ For cases 1 and 2, print a spotlight block:
 If there are zero `Open` entries (after filtering), skip this block entirely.
 
 For case 3, where every open entry is a dep-review waiting on an unfixed parent, print this
-instead. It says what to do next rather than presenting a blocked item as the urgent one:
+instead of a spotlight. It says what to do next rather than presenting a blocked item as the
+urgent one. Open with this line:
 
 ```
 **Nothing open can be started yet.** All {W_open} open items are dep-reviews waiting on a parent fix that has not landed:
+```
 
+Then add **one bullet per waiting entry**, all `W_open` of them, so the list below the count
+is as long as the count claims. One bullet against a stated count of nine is the failure this
+spells out to avoid:
+
+```
 - {target}, waiting on {parent_target} (`{parent_id}`, status {parent_status})
+```
 
+Then close with this line:
+
+```
 Fix a parent first. `/apply-fix` offers up its dep-reviews once the fix commits, so these are not lost by sitting here.
 ```
 
