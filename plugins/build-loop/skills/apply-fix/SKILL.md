@@ -194,16 +194,24 @@ meets the `In Progress` prompt instead of a clean entry. That is the same limbo 
 below exists to remove, so it cannot be reintroduced here. Every other early exit in
 this skill restores it, at Step 3, Step 6 and Step 7.
 
-Before any of the stops below:
+Before any of the stops below, **write the note to a scratch file first**, reading:
+
+> Target path could not be resolved to a file: {target_path} is {a directory | absent}
+
+Then:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/scripts/queue.js" update {id} --status Open --note-file {scratch}/note-{id}.txt
 ```
 
-with the note recording why, for example `Target path could not be resolved to a file:
-{target_path} is a directory`. If that call exits non-zero, say "The entry was not
-reopened: {what it printed}" and name the status it is stuck at, so the limbo is at
-least visible. Do not retry silently.
+The write is not optional and is easy to skip because the command reads as
+self-contained. `queue.js` fails on a `--note-file` that does not exist, and this call is
+the one reopening the entry, so skipping the write leaves it at `In Progress`, which is the
+limbo this whole block exists to prevent. Step 7 and Step 8 both spell the write out for
+the same reason.
+
+If that call exits non-zero, say "The entry was not reopened: {what it printed}" and name
+the status it is stuck at, so the limbo is at least visible. Do not retry silently.
 
 - If it is a **file**, read it and carry on. No status change.
 - If it is a **directory** and `target_kind` is `plugin`, the fix cannot be a
@@ -427,7 +435,7 @@ hand-written entry nothing can trust.
 
 Then say so plainly:
 
-> "The fix is written to {target_path}. There was no commit, because {root.path} is not a git repository, so there is nothing to revert through and /revert-fix cannot help here. The entry is 'fix applied, watching'."
+> "The fix is written to {target_path}. There was no commit, because {root.path} is not a git repository, so there is nothing for /revert-fix to undo. The entry is 'fix applied, watching', which means /apply-fix will refuse it from here: if this fix needs changing, run /revert-fix {id} and it will offer to reopen the entry, or log the correction fresh with /flag-issue."
 
 **Then go to "Surface dep-review entries" below, and stop after it.** Do not skip it.
 Step 7 wrote the file on this path exactly as it does on the commit path, so whatever
