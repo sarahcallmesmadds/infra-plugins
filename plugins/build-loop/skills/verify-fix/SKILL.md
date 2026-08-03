@@ -187,7 +187,8 @@ When /verify-fix is invoked directly (not from within /apply-fix), it works inde
 
 Check the loaded entry's status:
 
-- **"fix applied, watching"**: The fix was already approved and committed. Say: "This fix was already committed at {commit-hash from notes}. Do you want to review the change retroactively? I can show you the diff from that commit." Wait for confirmation before proceeding.
+- **"fix applied, watching"**, with a `Committed:` note carrying a hash: The fix was approved and committed. Say: "This fix was already committed at {commit-hash from notes}. Do you want to review the change retroactively? I can show you the diff from that commit." Wait for confirmation before proceeding.
+- **"fix applied, watching"** with **no** commit hash in the notes: this status does not imply a commit. `/apply-fix` Step 8 also lands here when the root is not a git repository, writing the file and recording that it was not committed. Say: "This fix was written to {target_path} and never committed, because its root is not a git repository. There is no diff to show and `/revert-fix` cannot undo it. I can show you what is in the file now." Then go to Step S3 rather than offering a commit that does not exist. Read the notes before asserting a hash: printing `{commit-hash}` unsubstituted is the same failure this skill forbids in Step S3.
 - **"In Progress"**: The fix was started but not committed (session may have been interrupted). Proceed to Step S2.
 - **"Open"**: Say "This entry hasn't had a fix proposed yet. Run /apply-fix {id} to start the fix process." Stop.
 - Any other status: Say "This entry is {status}. Nothing to verify." Stop.

@@ -29,6 +29,8 @@ Look at `$ARGUMENTS`:
 
 - **If $ARGUMENTS is empty**: list all entries across all `.json` files where `status == "fix applied, watching"`. Ask the user to pick. Do not proceed until they pick one.
 
+  Mark any entry whose notes hold no commit hash as `(no commit, nothing to revert)` in that list. This status does not imply a commit: `/apply-fix` also lands here after writing a file whose root is not a git repository. Offering such an entry as an equal choice invites the user to pick something this skill cannot act on, and Step 3 would then stop after they had chosen.
+
 ---
 
 ## Step 2 — Guard on status
@@ -51,7 +53,13 @@ Extract the hash from that string. The format is:
 ```
 Example: `"Committed: abc1234 to personal"` → hash is `abc1234`.
 
-- If no `Committed:` note is found in `notes[]`: say "I can't find a commit hash in this queue entry's notes. The commit hash is normally stored by /apply-fix after committing. You may need to find the commit manually with: `git -C {repo_root} log --oneline | head -10`" Stop.
+- If a note says the fix was **written without a commit**, there is nothing to revert and no commit to search for. `/apply-fix` Step 8 records this when the target's root is not a git repository: the file was written, the entry reached `fix applied, watching`, and no commit exists. Say:
+
+  > "There is nothing to revert. This fix was written straight to {target_path} and never committed, because {repo} is not a git repository, so there is no commit and no earlier version for git to restore. To undo it you would have to edit the file back by hand. If you want that, /apply-fix {id} can propose the reverse change with the same approval gate."
+
+  Stop. Do not suggest `git log`, which cannot run usefully in a directory that is not a repository.
+
+- If no `Committed:` note is found and nothing explains why: say "I can't find a commit hash in this queue entry's notes. The commit hash is normally stored by /apply-fix after committing. You may need to find the commit manually with: `git -C {repo_root} log --oneline | head -10`" Stop.
 
 ---
 

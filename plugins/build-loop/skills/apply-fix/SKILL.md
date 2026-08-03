@@ -353,14 +353,15 @@ Skip the commit and give the entry a terminal state describing what is actually
 true, in one call. The note is free text, so it goes through a file rather than a
 shell argument, the same as every other note this skill writes:
 
+Write it into `{scratch}`, the per-run directory from the top of this skill, the
+same as the Step 7 failure note. Not a bare `mktemp`, which ignores the template
+this skill spells out in full for a stated reason, and not a fixed name under
+`/tmp`.
+
 ```bash
-NOTE=$(mktemp)
-cat > "$NOTE" <<'EOF'
-Written to {target_path} (no commit, not inside a git repo)
-EOF
 node "${CLAUDE_PLUGIN_ROOT}/scripts/queue.js" update {id} \
   --status "fix applied, watching" \
-  --note-file "$NOTE"
+  --note-file {scratch}/note-{id}.txt
 ```
 
 There is no commit hash, so record none rather than an invented or empty-looking
