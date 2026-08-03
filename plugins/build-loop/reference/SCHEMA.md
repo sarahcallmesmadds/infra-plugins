@@ -268,8 +268,14 @@ readers must branch on the prefix rather than on whether a hash happens to be pr
 **Absence of a hash does not identify the reason.** A reader that treats every hashless
 entry as the no-repository case will tell someone their repository is not a git
 repository when it is, because the standalone verify path produces hashless entries
-too. `/verify-fix` Step S1 and `/revert-fix` Steps 1 and 3 each carry all three
-branches.
+too.
+
+Four places branch on these markers, and all four need all three cases:
+
+- `/verify-fix` Step S1, choosing what to say and whether to offer a diff
+- `/verify-fix` Step V4, choosing the `{file_state}` row written into the failure note. Getting this one wrong puts a false audit trail on the record someone reads when something has gone wrong.
+- `/revert-fix` Step 1, labelling **every** candidate list it shows, both the multi-match one and the empty-argument one, so a refusal comes before the choice rather than after it
+- `/revert-fix` Step 3, deciding whether there is a commit to find
 
 A local commit is also not a pushed one. `/apply-fix` never pushes, by deliberate
 decision, so an entry at this status with a `Committed:` note may still exist only on

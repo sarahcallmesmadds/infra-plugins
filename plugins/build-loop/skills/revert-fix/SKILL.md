@@ -29,7 +29,22 @@ Look at `$ARGUMENTS`:
 
 - **If $ARGUMENTS is empty**: list all entries across all `.json` files where `status == "fix applied, watching"`. Ask the user to pick. Do not proceed until they pick one.
 
-  Mark any entry carrying a `Not committed:` note as `(no commit, nothing to revert)` in that list, and any entry with neither that nor a `Committed:` note as `(no commit recorded)`. This status does not imply a commit: `/apply-fix` lands here after writing a file whose root is not a git repository, and `/verify-fix` lands here after a standalone pass on an `In Progress` entry. Offering either as an equal choice invites the user to pick something this skill cannot act on, and Step 3 would then stop after they had chosen.
+**Annotate every list this step shows, not just one of them.** That means the
+multi-match list under the target-name bullet as well as the empty-argument list.
+Read each candidate's notes and label it:
+
+| Notes | Label |
+|---|---|
+| a `Committed:` note | no label, this is the revertible case |
+| a `Not committed:` note | `(no commit, nothing to revert)` |
+| neither | `(no commit recorded)` |
+
+`"fix applied, watching"` does not imply a commit. `/apply-fix` lands there after
+writing a file whose root is not a git repository, and `/verify-fix` lands there after
+a standalone pass on an `In Progress` entry. Step 2's status guard passes for all of
+them, because the status genuinely is `fix applied, watching`, so an unlabelled list
+lets someone choose an entry Step 3 will then refuse. The point of labelling is that
+the refusal comes before the choice rather than after it.
 
 ---
 
