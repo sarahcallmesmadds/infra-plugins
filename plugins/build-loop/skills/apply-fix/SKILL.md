@@ -482,9 +482,26 @@ Wait for the user's answer. If they say "leave them", they stay Open. Do not aut
 ```
 Fix committed locally. Queue entry {id} is now "fix applied, watching".
 Commit: {hash} ({repo}), on branch {branch}, not pushed.
-Next: push the branch and open a PR. Until that merges and the plugin is updated, this fix is on this machine only and no session will load it.
+{liveness}
 Then try it for real. When it works, run /list-bugs and update the entry to Resolved.
 ```
+
+`{liveness}` depends on the **kind** of the root named by the entry's `repo`, because the
+two answers are opposite and getting it wrong either way misleads:
+
+| Root kind | `{liveness}` |
+|---|---|
+| `skill`, `hook`, `command` | `This is live for your next session already, since it was written straight into {root.path}. Pushing is about keeping it, not about loading it.` |
+| `plugin-repo` | `Nothing will load this yet. Push the branch, open a PR, and after it merges run claude plugin marketplace update and claude plugin update, since the installed copy is served from the plugin cache and not from this checkout.` |
+
+The defaults at the top of this step are `personal` at `~/.claude/skills`, `hooks` at
+`~/.claude/hooks` and `commands` at `~/.claude/commands`. A write into any of those is
+picked up by the next session with no push, no PR and no install, so telling someone it
+is inert would have them stop testing a change that is already active. A `plugin-repo`
+root is the opposite: the running copy comes from the cache, so the checkout can be
+committed and the machine still runs the old file.
+
+Either way the commit is local, and that part is said above in both cases.
 
 Get the branch with `git -C {repo_root} rev-parse --abbrev-ref HEAD`.
 

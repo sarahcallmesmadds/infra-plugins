@@ -285,7 +285,8 @@ Every place that reads these markers has to handle all three of the cases above.
 places that read them:
 
 - `/verify-fix` Step S1, choosing what to say and whether to offer a diff
-- `/verify-fix` Step V4, choosing the `{file_state}` row written into the failure note. Getting this one wrong puts a false audit trail on the record someone reads when something has gone wrong.
+- `/verify-fix` Step S3, deciding whether to name a commit for a `plugin`-kind entry. Hash presence is not the test: an entry committed once and later re-applied into a root with no repository carries an old `Committed:` hash under a newer `Not committed:`, and printing that hash describes a state the file has left.
+- `/verify-fix` Step V4, choosing the `{file_state}` row written into the failure note. Getting this one wrong puts a false audit trail on the record someone reads when something has gone wrong. Pick by status first: an `In Progress` entry may never have been written at all.
 - `/revert-fix` Step 1, labelling **every** candidate list it shows, both the multi-match one and the empty-argument one, so a refusal comes before the choice rather than after it
 - `/revert-fix` Step 3, deciding whether there is a commit to find
 
