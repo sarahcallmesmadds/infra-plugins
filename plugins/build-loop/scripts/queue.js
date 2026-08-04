@@ -101,6 +101,13 @@ function loosely(value) {
   return String(value).toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
+// A status as it should appear in a message. JSON.stringify(undefined) is
+// undefined rather than a string, so a missing status used to print as a bare
+// word that read like a value somebody had typed.
+function showStatus(value) {
+  return value === undefined ? '(none)' : JSON.stringify(value);
+}
+
 // Each value quoted, because `fix applied, watching` contains a comma and a
 // comma-joined list of them cannot be read back.
 function statusList(values) {
@@ -477,7 +484,24 @@ function writeEntry(id, entry, dir = QUEUE) {
   // Rewriting a bad status as itself is allowed and is a no-op. It introduces
   // no value that was not already there, and refusing it would put the entry
   // right back in the trap this paragraph is about.
-  if (entry && entry.status !== undefined && entry.status !== statusOnDisk(id, dir)) {
+  // A brand-new entry must carry one. `status` is required by both schemas, and
+  // an entry without it matches no filter in /list-bugs, which is the same
+  // invisibility this whole change exists to prevent. `create` used to write one
+  // happily and `lint` then reported it as broken, so the tool accepted
+  // something it went on to call a fault.
+  //
+  // An entry already on disk without a status is left alone, for the same reason
+  // legacy values are: it can still be annotated while somebody decides what it
+  // should be. Absent is preserved, never introduced.
+  const existed = fs.existsSync(entryPath(id, dir));
+  if (entry && entry.status === undefined) {
+    if (!existed) {
+      fail(
+        `queue.js: a new entry needs a status, and this one has none. Nothing was written.`
+        + `\n  Valid: ${statusList(statusesFor(listNameFor(dir)).write)}`
+      );
+    }
+  } else if (entry && entry.status !== statusOnDisk(id, dir)) {
     checkStatus(entry.status, listNameFor(dir));
   }
 
@@ -608,7 +632,16 @@ function cmdCreate(args) {
   // This one runs before the lock is taken, so a composed file with a bad
   // status is refused without making anyone else wait for it. The gate would
   // catch it either way.
-  if (entry.status !== undefined) checkStatus(entry.status, args.list);
+  // Refused before the lock is taken, so a bad composed file does not make
+  // anyone wait. The gate in writeEntry enforces the same two rules and is what
+  // makes them unavoidable; this is the early, cheaper copy.
+  if (entry.status === undefined) {
+    fail(
+      'queue.js: a new entry needs a status, and this one has none. Nothing was written.'
+      + `\n  Valid: ${statusList(statusesFor(args.list).write)}`
+    );
+  }
+  checkStatus(entry.status, args.list);
 
   return locked(() => {
     if (fs.existsSync(entryPath(entry.id, dir))) {
@@ -750,7 +783,7 @@ function cmdLint(args) {
 
   for (const [file, status, near] of bad) {
     const hint = near ? `  (did you mean ${JSON.stringify(near)}?)` : '';
-    process.stdout.write(`off-enum  ${file}  status=${JSON.stringify(status)}${hint}\n`);
+    process.stdout.write(`off-enum  ${file}  status=${showStatus(status)}${hint}\n`);
   }
   for (const [file, status] of retired) {
     process.stdout.write(`retired   ${file}  status=${JSON.stringify(status)}  (valid on read, refused on write)\n`);
@@ -762,7 +795,7 @@ function cmdLint(args) {
     process.stdout.write(`every status in ${args.list === undefined ? 'queue' : args.list} is in the enum\n`);
     return 0;
   }
-  process.stdout.write(`\n${bad.length} entr${bad.length === 1 ? 'y' : 'ies'} carry a status no reader matches. Fix with: queue.js update <id> --status <valid>\n`);
+  process.stdout.write(`\n${bad.length} ${bad.length === 1 ? 'entry carries' : 'entries carry'} a status no reader matches. Fix with: queue.js update <id> --status <valid>\n`);
   return 3;
 }
 
@@ -819,4 +852,9 @@ if (require.main === module) {
   process.exitCode = code;
 }
 
-module.exports = { main, LOCK, QUEUE };
+// STATUSES is exported for one reason: it is a second copy of the enums written
+// out in SCHEMA.md and SCHEMA-BUILD.md, and a test compares the two. Without
+// that comparison, adding a status to a schema and forgetting this Map would
+// make the new value unwritable rather than merely undocumented, which is a
+// worse failure than the one before this file validated anything.
+module.exports = { main, LOCK, QUEUE, STATUSES };

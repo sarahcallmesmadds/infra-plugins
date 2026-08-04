@@ -297,6 +297,102 @@ check('a legacy entry cannot be moved to a different bad status', () => {
   assert.strictEqual(statusOnDisk(home, 'p5'), 'Wontfix');
 });
 
+// --- a new entry must carry a status ---------------------------------------
+
+check('create refuses an entry with no status at all', () => {
+  // Found in review. Both guards asked whether a status was present before
+  // checking it, so an entry with none went straight to disk and `lint` then
+  // reported it as broken. The tool accepted something it went on to call a
+  // fault, and `status` is required by both schemas.
+  const home = sandbox();
+  const file = path.join(home, 'e.json');
+  fs.writeFileSync(file, JSON.stringify({ id: 'z1', notes: [] }));
+  const r = run(home, ['create', file, '--dedup-window', '0']);
+  assert.notStrictEqual(r.code, 0, 'an entry with no status was created');
+  assert.ok(/needs a status/.test(r.out), `wrong diagnosis: ${r.out}`);
+  assert.ok(
+    !fs.existsSync(path.join(home, '.claude', 'build-loop', 'queue', 'z1.json')),
+    'the entry was written despite the refusal'
+  );
+});
+
+check('an entry already on disk without a status stays editable', () => {
+  // Absent is preserved, never introduced, for the same reason a legacy value
+  // is: it can be annotated while somebody decides what it should be.
+  const home = sandbox();
+  const p = path.join(home, '.claude', 'build-loop', 'queue', 'z2.json');
+  fs.writeFileSync(p, JSON.stringify({ id: 'z2', notes: [] }));
+  const note = path.join(home, 'n.txt');
+  fs.writeFileSync(note, 'still deciding');
+  const r = run(home, ['update', 'z2', '--note-file', note]);
+  assert.strictEqual(r.code, 0, `a note-only update was refused: ${r.out}`);
+});
+
+check('lint names a missing status readably rather than as a bare word', () => {
+  // JSON.stringify(undefined) is undefined, not a string, so this printed
+  // `status=undefined`, which reads like a value somebody typed.
+  const home = sandbox();
+  fs.writeFileSync(
+    path.join(home, '.claude', 'build-loop', 'queue', 'z3.json'),
+    JSON.stringify({ id: 'z3' })
+  );
+  const r = run(home, ['lint']);
+  assert.strictEqual(r.code, 3);
+  assert.ok(/status=\(none\)/.test(r.out), `unreadable report: ${r.out}`);
+  assert.ok(!/status=undefined/.test(r.out), `still prints a bare undefined: ${r.out}`);
+  assert.ok(/1 entry carries/.test(r.out), `subject and verb disagree: ${r.out}`);
+});
+
+// --- the enums here and the enums in the schemas are one thing --------------
+
+check('every status in the schema docs is writable by queue.js', () => {
+  // Raised in review. The Map in queue.js is a second copy of the tables in
+  // SCHEMA.md and SCHEMA-BUILD.md, and nothing tied them together. Adding a
+  // status to a schema and forgetting the Map now makes that value unwritable
+  // rather than merely undocumented, which is a harder failure than the one
+  // that existed before this file validated anything.
+  const { STATUSES } = require('../plugins/build-loop/scripts/queue.js');
+  const docs = [
+    ['queue', 'SCHEMA.md'],
+    ['to-build', 'SCHEMA-BUILD.md'],
+  ];
+  for (const [list, file] of docs) {
+    const text = fs.readFileSync(
+      path.join(__dirname, '..', 'plugins', 'build-loop', 'reference', file), 'utf8'
+    );
+    const at = text.indexOf('## Status Enum');
+    assert.notStrictEqual(at, -1, `${file} has no Status Enum section to compare against`);
+
+    // The first contiguous table after the heading. SCHEMA.md carries a second
+    // table in the same section for the note markers, and pulling its rows in
+    // would compare statuses against `Committed:`.
+    const lines = text.slice(at).split('\n');
+    const documented = [];
+    let started = false;
+    for (const line of lines.slice(1)) {
+      const isRow = line.startsWith('|');
+      if (!isRow && started) break;
+      if (!isRow) continue;
+      started = true;
+      const cell = line.match(/^\|\s*`([^`]+)`/);
+      if (cell) documented.push(cell[1]);
+    }
+    assert.ok(documented.length >= 4, `parsed only ${documented.length} rows from ${file}`);
+
+    const known = new Set([...STATUSES.get(list).write, ...STATUSES.get(list).retired]);
+    const undocumented = [...known].filter((s) => !documented.includes(s));
+    const unknown = documented.filter((s) => !known.has(s));
+    assert.deepStrictEqual(
+      unknown, [],
+      `${file} documents ${JSON.stringify(unknown)}, which queue.js will refuse to write`
+    );
+    assert.deepStrictEqual(
+      undocumented, [],
+      `queue.js accepts ${JSON.stringify(undocumented)} for ${list}, which ${file} does not document`
+    );
+  }
+});
+
 // --- the retired value -----------------------------------------------------
 
 check('the retired status is refused on write but not called invalid', () => {
