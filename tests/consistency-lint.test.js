@@ -32,7 +32,7 @@ const { spawnSync } = require('child_process');
 const ROOT = path.join(__dirname, '..');
 const HOOK = path.join(ROOT, 'plugins', 'slop-check', 'hooks', 'consistency-lint.js');
 const {
-  staleCounts, survivingText, brokenOwnRule, replacedFragments, isDistinctive,
+  staleCounts, survivingText, brokenOwnRule, replacedFragments, isDistinctive, ruleChange,
 } = require(path.join(ROOT, 'plugins', 'slop-check', 'scripts', 'consistency.js'));
 
 let failed = 0;
@@ -449,6 +449,35 @@ check('an edit that introduces a breach of a stated rule reports it', () => {
   const advice = adviceFrom(run(editEvent(file, 'A line.', 'A line — with one.')));
   assert.ok(advice, 'an em dash added by this very edit was not reported');
   assert.match(advice, /line 3/);
+});
+
+check('editing beside a rule line is not the same as introducing the rule', () => {
+  // The scoping had one exception, for a rule the edit added, and the
+  // exception was tested by asking whether the rule's line fell inside the
+  // edited span. An Edit routinely carries surrounding lines so its match is
+  // unique, so an untouched rule sentence landed inside the span constantly
+  // and every old breach in the file came back as this edit's doing. The noise
+  // the scoping was added to stop, arriving through the exception to it.
+  const body = ['# Doc', '', 'Never use em dashes.', '', 'Old one — here.', '', 'Old two — here.', ''].join('\n');
+  const file = write('beside.md', body);
+
+  const span = 'Never use em dashes.\n\nOld one — here.';
+  assert.strictEqual(run(editEvent(file, span, span)).stdout, '',
+    'an edit spanning the unchanged rule line re-reported every old breach');
+
+  // Stated on the detector too, so this cannot pass because the hook went
+  // quiet for some unrelated reason.
+  assert.deepStrictEqual(ruleChange('em-dash', span, span), { addedRule: false, addedBreach: false });
+});
+
+check('an edit that adds a breach reports that breach', () => {
+  const file = write('addedbreach.md', ['Never use em dashes.', '', 'A new line — here.', ''].join('\n'));
+  const advice = adviceFrom(run(editEvent(file, 'A new line.', 'A new line — here.')));
+  assert.ok(advice, 'an em dash this edit added was not reported');
+  assert.match(advice, /line 3/);
+
+  // Changing the text around a breach that was already there is not adding one.
+  assert.deepStrictEqual(ruleChange('em-dash', 'a — b', 'a — c'), { addedRule: false, addedBreach: false });
 });
 
 check('an edit that introduces the rule reports every breach, however far', () => {

@@ -29,7 +29,7 @@ const path = require('path');
 const { readEvent, advise } = require(path.join(__dirname, '..', 'scripts', 'hook-io.js'));
 const { loadConfig } = require(path.join(__dirname, '..', 'scripts', 'config.js'));
 const {
-  staleCounts, survivingText, brokenOwnRule,
+  staleCounts, survivingText, brokenOwnRule, ruleChange,
 } = require(path.join(__dirname, '..', 'scripts', 'consistency.js'));
 
 // Files nobody should be told about. A handoff is a session note whose counts
@@ -220,12 +220,26 @@ readEvent((event) => {
   // not already there. So after a deletion every breach is one that was in the
   // file before, and the author has already seen it.
   for (const broken of isDeletion ? [] : brokenOwnRule(content)) {
-    // A rule the edit itself introduced is reported in full, however far the
-    // breaches are from it. Adding "never use em dashes" to a file already
-    // full of them is a contradiction the edit created, and every one of them
-    // is news.
-    const ruleIsNew = touches(range, broken.statedAt, broken.statedAt);
-    const lines = ruleIsNew ? broken.lines : broken.lines.filter((n) => touches(range, n, n));
+    // What this edit did to the rule, not what it happened to sit beside.
+    //
+    // This used to ask whether the line stating the rule fell inside the
+    // edited span, and call that "introduced". An Edit routinely carries
+    // surrounding lines so its match is unique, so an untouched rule sentence
+    // landed inside the span constantly and every old breach in the file came
+    // back as though this edit caused it. That is the noise the scoping was
+    // added to stop, arriving through the one exception to it.
+    //
+    // A Write has no before, so all of it is that write's doing.
+    const whole = event.tool_name === 'Write';
+    const change = whole ? null : ruleChange(broken.name, input.old_string, input.new_string);
+
+    // Adding "never use em dashes" to a file already full of them is a
+    // contradiction this edit created, and every one of them is news.
+    if (!whole && !change.addedRule && !change.addedBreach) continue;
+
+    const lines = whole || change.addedRule
+      ? broken.lines
+      : broken.lines.filter((n) => touches(range, n, n));
     if (!lines.length) continue;
 
     issues.push(

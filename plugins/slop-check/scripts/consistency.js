@@ -556,6 +556,10 @@ function brokenOwnRule(text) {
         name: rule.name,
         what: rule.what,
         statedAt: statedAt[0] + 1,
+        // Every line stating it, not only the first. A file can say the same
+        // thing in a frontmatter description and again in the body, and a
+        // caller asking "did this edit add the rule" needs all of them.
+        statedLines: statedAt.map((n) => n + 1),
         lines: breaches,
       });
     }
@@ -563,8 +567,35 @@ function brokenOwnRule(text) {
   return found;
 }
 
+// What an edit did to a rule, as opposed to what it sat near.
+//
+// The hook used to ask whether the line stating the rule fell inside the
+// edited span, and called that "the edit introduced the rule". Those are not
+// the same thing. An Edit routinely carries surrounding lines in old_string
+// and new_string so the match is unique, so an unchanged rule sentence lands
+// inside the span constantly, and every pre-existing breach in the file was
+// then reported as though this edit had caused it.
+//
+// Introduced means absent before and present after. Nothing else does.
+//
+// `addedBreach` counts rather than tests, because an edit can leave a breach
+// standing while changing the line around it, and a test would call that new.
+function ruleChange(name, oldString, newString) {
+  const rule = SELF_RULES.find((r) => r.name === name);
+  const before = typeof oldString === 'string' ? oldString : '';
+  const after = typeof newString === 'string' ? newString : '';
+  if (!rule) return { addedRule: false, addedBreach: false };
+
+  const breaches = (text) => (text.match(new RegExp(rule.breaks.source, 'g')) || []).length;
+  return {
+    addedRule: rule.states.test(after) && !rule.states.test(before),
+    addedBreach: breaches(after) > breaches(before),
+  };
+}
+
 module.exports = {
   staleCounts,
+  ruleChange,
   survivingText,
   brokenOwnRule,
   // Exported for the tests, which pin the pieces that produced false positives.
