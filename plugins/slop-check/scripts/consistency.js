@@ -389,6 +389,34 @@ function replacedFragments(before, after) {
   return [before.slice(from, to)];
 }
 
+// The fragment as a whole token, rather than as any run of characters.
+//
+// A bare substring search reports "Step 4" as surviving on a line that says
+// "Step 41". Renaming "Step 4" to "Step 5" then sends the writer to correct
+// text that was already right, and a renumbering is the shape this check fires
+// on most, which is exactly where 4 and 41 sit in the same file.
+//
+// The length floor in isDistinctive was written for this hazard and does not
+// reach it. "Step 4" is six characters, clears the floor, and is still a
+// prefix of "Step 41".
+//
+// A boundary is only added on an end that is a word character, because a
+// fragment ending in punctuation has one already. Backticks count as part of
+// the token: `queue.js` and queue.js inside a longer name are different
+// things.
+//
+// Deliberately not treating a dot as a boundary. "Step 4.2" does contain
+// "Step 4", and when step 4 becomes step 5 its substeps have to move too, so
+// reporting it is right. Adding a dot to the boundary would also stop
+// "Step 4." at the end of a sentence from matching, and that is a real
+// leftover.
+function wholeToken(needle) {
+  const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const before = /^[\w`]/.test(needle) ? '(?<![\\w`])' : '';
+  const after = /[\w`]$/.test(needle) ? '(?![\\w`])' : '';
+  return new RegExp(before + escaped + after);
+}
+
 // Text replaced here and left standing there.
 //
 // Only ever called for an Edit, because only an Edit says what the old text
@@ -417,8 +445,9 @@ function survivingText(content, oldString, newString) {
 
     const needle = fragment.trim();
     const lines = [];
+    const re = wholeToken(needle);
     content.split('\n').forEach((line, i) => {
-      if (line.includes(needle)) lines.push(i + 1);
+      if (re.test(line)) lines.push(i + 1);
     });
     if (lines.length) found.push({ fragment: needle, lines });
   }

@@ -339,6 +339,31 @@ check('an estimate is not a count', () => {
   }
 });
 
+check('a longer token that merely starts the same way is not a leftover', () => {
+  // "Step 4" was reported as surviving on a line reading "Step 41", which sends
+  // the writer to correct text that is already right. Renumbering is the shape
+  // this check fires on most, so 4 and 41 in one file is the likely case rather
+  // than a contrived one. The length floor in isDistinctive was written for
+  // this hazard and does not reach it: "Step 4" is six characters.
+  const file = write('steps.md', ['# Doc', '', '## Step 5: Review', 'See Step 41 for the rest.', ''].join('\n'));
+  assert.strictEqual(run(editEvent(file, '## Step 4: Review', '## Step 5: Review')).stdout, '',
+    '"Step 41" was reported as a surviving copy of "Step 4"');
+
+  // And the leftover it is actually for still reports.
+  const real = write('steps-real.md', ['# Doc', '', '## Step 5: Review', 'See Step 4 for the rest.', ''].join('\n'));
+  const advice = adviceFrom(run(editEvent(real, '## Step 4: Review', '## Step 5: Review')));
+  assert.ok(advice, 'a genuine leftover stopped being reported');
+  assert.match(advice, /line 4/);
+
+  // Two shapes that must survive the boundary. A fragment at the end of a
+  // sentence has punctuation after it, and a substep has to move when its
+  // parent does, so both are real.
+  assert.strictEqual(survivingText('Go to Step 4.\n', '## Step 4: Review', '## Step 5: Review').length, 1,
+    'a leftover at the end of a sentence stopped matching');
+  assert.strictEqual(survivingText('See Step 4.2.\n', '## Step 4: Review', '## Step 5: Review').length, 1,
+    'a substep of the renamed step stopped matching');
+});
+
 check('a file with hundreds of breaches does not produce hundreds of numbers', () => {
   // One archived file in her own work states a rule against em dashes and then
   // breaks it on 509 lines. The advice goes into the conversation and is paid

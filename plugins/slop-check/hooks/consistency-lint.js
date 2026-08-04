@@ -59,6 +59,17 @@ function ignored(filePath) {
   return filePath.split(path.sep).includes('node_modules');
 }
 
+// The manifest matcher is a regex against the tool name, so an unanchored
+// `Write|Edit` also selects MultiEdit and NotebookEdit, which this then drops
+// on the next line. Harmless, and it made the manifest claim a reach the code
+// does not have, so the matcher is anchored and these two agree.
+//
+// Neither is a coverage gap worth closing here. NotebookEdit takes
+// `notebook_path` and only ever edits an .ipynb, so it cannot produce the
+// markdown this reads, and it carries no `file_path` at all. MultiEdit is not
+// in the current tool set. If one returns, the two checks that need no
+// old_string could be run for it, and that is a change to make when there is
+// something to test it against.
 readEvent((event) => {
   if (event.tool_name !== 'Write' && event.tool_name !== 'Edit') return;
 
