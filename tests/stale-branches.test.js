@@ -724,6 +724,85 @@ check('the force path re-checks each branch immediately before deleting it', () 
     'and one branch at a time, so a change part way through cannot reach a branch already cleared');
 });
 
+// The number of explanation lines varies: a branch cleared by merge evidence
+// gets a needs-force line, one cleared by ancestry does not. A caller counting
+// from the top runs prose as a shell command.
+check('the delete command is the last line of verify output, whatever else is printed', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lastline-'));
+  const g = (...a) => execFileSync('git', ['-C', dir, ...a], { encoding: 'utf8', stdio: 'pipe' });
+  execFileSync('git', ['init', '-q', '-b', 'main', dir], { stdio: 'pipe' });
+  g('config', 'user.email', 'test@example.com');
+  g('config', 'user.name', 'test');
+  fs.writeFileSync(path.join(dir, 'f.txt'), 'base\n');
+  g('add', '.'); g('commit', '-qm', 'base');
+
+  // Cleared by ancestry: no needs-force line.
+  g('branch', 'plain', 'main');
+
+  // Cleared by merge evidence: gets one.
+  g('checkout', '-qb', 'squashed');
+  fs.appendFileSync(path.join(dir, 'f.txt'), 'work\n');
+  g('commit', '-qam', 'work');
+  g('checkout', '-q', 'main');
+  g('merge', '-q', '--squash', 'squashed');
+  g('commit', '-qm', 'squashed (#3)');
+
+  for (const name of ['plain', 'squashed']) {
+    const out = execFileSync('node', [CLI, '--cwd', dir, '--verify', name], { encoding: 'utf8' });
+    const lines = out.split('\n').filter(Boolean);
+    assert.ok(/^git branch -d /.test(lines[lines.length - 1]),
+      `the last line must be the command for ${name}, got:\n${out}`);
+  }
+
+  // And the two really do print a different number of lines, or this proves nothing.
+  const a = execFileSync('node', [CLI, '--cwd', dir, '--verify', 'plain'], { encoding: 'utf8' }).split('\n').filter(Boolean).length;
+  const b = execFileSync('node', [CLI, '--cwd', dir, '--verify', 'squashed'], { encoding: 'utf8' }).split('\n').filter(Boolean).length;
+  assert.notStrictEqual(a, b, 'the line count must vary, which is why counting from the top is wrong');
+
+  // The skill must say so rather than naming a line number.
+  const skill = fs.readFileSync(path.join(ROOT, 'skills', 'stale-branches', 'SKILL.md'), 'utf8');
+  assert.ok(/last line/.test(skill), 'the skill must point at the last line');
+  assert.ok(!/command on the second/.test(skill), 'and must not tell the reader to take the second line');
+
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// HEAD can be unborn in a repository that is otherwise fine. Probing it made a
+// modern git report itself as too old and switched the detection off entirely.
+check('an unborn HEAD does not make a modern git look too old', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'orphan-'));
+  const g = (...a) => execFileSync('git', ['-C', dir, ...a], { encoding: 'utf8', stdio: 'pipe' });
+  execFileSync('git', ['init', '-q', '-b', 'main', dir], { stdio: 'pipe' });
+  g('config', 'user.email', 'test@example.com');
+  g('config', 'user.name', 'test');
+  fs.writeFileSync(path.join(dir, 'f.txt'), 'base\n');
+  g('add', '.'); g('commit', '-qm', 'base');
+
+  g('checkout', '-qb', 'squashed');
+  fs.appendFileSync(path.join(dir, 'f.txt'), 'work\n');
+  g('commit', '-qam', 'work');
+  g('checkout', '-q', 'main');
+  g('merge', '-q', '--squash', 'squashed');
+  g('commit', '-qm', 'squashed (#3)');
+
+  // Now sit on a branch with no commits, which is a normal thing to do.
+  g('checkout', '-q', '--orphan', 'brand-new');
+
+  let modern = true;
+  try { g('merge-tree', '--write-tree', 'main', 'main'); } catch (_) { modern = false; }
+
+  const r = collect.localBranches(dir);
+  if (modern) {
+    assert.strictEqual(r.mergeCheckUnavailable, false,
+      'an unborn HEAD is not a git version problem and must not be reported as one');
+    const squashed = r.branches.find((b) => b.name === 'squashed');
+    assert.strictEqual(squashed.merged, true,
+      'and the detection must still run for every other branch');
+  }
+
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 // ------------------------------------------- what the remote path counts ----
 //
 // Both of these were live bugs in the first version of the squash-merge fix,

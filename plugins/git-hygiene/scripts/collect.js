@@ -60,11 +60,17 @@ function isGitRepo(cwd) {
 // result was that on those machines every squash-merged branch was reported as
 // unmerged with nothing saying the question had never been asked.
 //
-// Probed once per run rather than assumed. Merging HEAD into itself is trivial
+// Probed once per run rather than assumed. Merging a ref into itself is trivial
 // and cheap on any version that has the form at all, so the probe answers
 // exactly the question, whether this git can be asked.
-function supportsWriteTree(cwd) {
-  return tryRun('git', ['-C', cwd, 'merge-tree', '--write-tree', 'HEAD', 'HEAD']) !== null;
+//
+// Probed against the default branch and not against HEAD. HEAD can be unborn in
+// a repository that is otherwise fine, right after `git checkout --orphan`, and
+// then the probe fails for a reason that has nothing to do with the version and
+// the run reports a modern git as too old. The default branch is a ref this
+// caller has already resolved.
+function supportsWriteTree(cwd, ref) {
+  return tryRun('git', ['-C', cwd, 'merge-tree', '--write-tree', ref, ref]) !== null;
 }
 
 // opts.deadline is an epoch milliseconds value. Counting commits costs one git
@@ -141,7 +147,12 @@ function localBranches(cwd, opts) {
   // Asked once, not once per branch. When this git cannot answer, the loop
   // below does not pretend to have asked: `mergeCheckUnavailable` comes back
   // and the caller says so.
-  const canCompare = supportsWriteTree(cwd);
+  //
+  // Only asked when there is something to compare against. With no readable
+  // default tree the comparison cannot run either way, and reporting that as a
+  // git version problem would send someone to upgrade a git that is fine.
+  const versionOk = defTree ? supportsWriteTree(cwd, def) : null;
+  const canCompare = !!defTree && versionOk === true;
 
   const branches = rows.map((line) => {
     const [name, date] = line.split('\t');
@@ -192,7 +203,10 @@ function localBranches(cwd, opts) {
     };
   });
 
-  return { defaultBranch: def, branches, truncated, mergeCheckUnavailable: !canCompare };
+  // Specifically "this git is too old", not "the comparison did not run". The
+  // note the caller prints tells someone to check their git version, and that
+  // is only the right advice for one of those.
+  return { defaultBranch: def, branches, truncated, mergeCheckUnavailable: versionOk === false };
 }
 
 // --------------------------------------------------------------- remote ----
@@ -416,6 +430,23 @@ function remoteBranch(repo, name) {
   // Every pull request whose head is this exact commit. Unreadable stays
   // unreadable: no evidence either way, so hasOpenPR fails safe into true and
   // merged fails safe into false, the same directions the listing uses.
+  //
+  // GitHub documents this endpoint as returning "the merged pull request that
+  // introduced the commit", and, "if the commit is not present in the default
+  // branch, will only return open pull requests". A squash-merged branch tip is
+  // exactly a commit not present in the default branch, so on that reading this
+  // would find nothing and disagree with the listing.
+  //
+  // Checked against a real one rather than trusted either way. Branch
+  // feat/consistency-lint in sarahcallmesmadds/plugins, squash merged as #56:
+  // `git merge-base --is-ancestor <tip> origin/main` fails, confirming the tip
+  // is genuinely unreachable from the default branch, and this endpoint still
+  // returns #56 as merged into main with a matching head sha. The caveat
+  // describes commits inside a pull request, not the head commit the pull
+  // request was opened from, which is the only one asked about here.
+  //
+  // If that ever changes, the fallback is the same `pulls?state=closed&base=`
+  // query the listing uses, at the pagination cost this function avoids.
   //
   // `commits/{sha}/pulls` returns pull requests that CONTAIN the commit, not
   // only those whose head it is, so `head.sha` is compared here explicitly. The

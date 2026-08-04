@@ -118,7 +118,15 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/cli.js" --repo {owner/name} --verify {name}
 
 The full `${CLAUDE_PLUGIN_ROOT}` form, as everywhere else in this skill. This command runs in the user's own repository, which has no `scripts/` directory of ours, so a relative path exits with a module error rather than with 0 or 3 and the branching below has nothing to match.
 
-**Exit 0** means still safe. It prints the reason on the first line and the exact delete command on the second. Run that command as printed.
+**Exit 0** means still safe. **The delete command is the last line of the output. Run that line exactly, and do not count lines from the top.**
+
+Everything above the last line is explanation, and how many lines of it there are varies: a branch cleared by merge evidence gets an extra `needs-force:` line that a branch cleared by ancestry does not. Taking "the second line" would run that prose as a shell command.
+
+```
+squashed is safe to delete: already in the default branch
+needs-force: git branch -d will refuse this. ...      <- explanation, varies
+git branch -d squashed                                <- always last, always the command
+```
 
 **Exit 3** means do not delete. It says why on stderr. Report that verbatim and move to the next branch. Do not ask again in this run.
 
