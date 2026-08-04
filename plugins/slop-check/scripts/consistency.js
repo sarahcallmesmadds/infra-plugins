@@ -567,6 +567,29 @@ function withoutBackticks(line) {
   return line.replace(/`/g, '');
 }
 
+// The only two places that decide what a line does about a rule.
+//
+// There used to be a second pair inside ruleChange, matching the raw line.
+// The moment brokenOwnRule learned to normalise for code spans the two drifted
+// apart, and drifted in both directions at once: a rule added with backticks
+// read as "no rule added", and an em dash added inside a code span read as "a
+// breach added". Four of six review findings on this feature landed in this
+// check, and this split is what most of them were.
+//
+// So there is one definition of each question now, and both callers ask it
+// here. Normalising one can no longer disagree with the other, because there
+// is no other.
+//
+// Why the two normalise differently is the whole point and is not an
+// oversight. See withoutCodeSpans and withoutBackticks.
+function statesRule(rule, line) {
+  return rule.states.test(withoutBackticks(line));
+}
+
+function breaksRule(rule, line) {
+  return rule.breaks.test(withoutCodeSpans(line));
+}
+
 function brokenOwnRule(text) {
   const lines = text.split('\n');
   const inExample = exampleLines(lines);
@@ -575,7 +598,7 @@ function brokenOwnRule(text) {
   for (const rule of SELF_RULES) {
     const statedAt = [];
     lines.forEach((line, i) => {
-      if (!inExample[i] && rule.states.test(withoutBackticks(line))) statedAt.push(i);
+      if (!inExample[i] && statesRule(rule, line)) statedAt.push(i);
     });
     if (!statedAt.length) continue;
 
@@ -583,9 +606,7 @@ function brokenOwnRule(text) {
     lines.forEach((line, i) => {
       if (inExample[i]) return;
       if (statedAt.includes(i)) return;
-      // The breach test drops whole code spans; the rule test above drops only
-      // the backticks. See the two helpers for why those are opposite jobs.
-      if (rule.breaks.test(withoutCodeSpans(line))) breaches.push(i + 1);
+      if (breaksRule(rule, line)) breaches.push(i + 1);
     });
 
     if (breaches.length) {
@@ -623,9 +644,15 @@ function ruleChange(name, oldString, newString) {
   const after = typeof newString === 'string' ? newString : '';
   if (!rule) return { addedRule: false, addedBreach: false };
 
-  const breaches = (text) => (text.match(new RegExp(rule.breaks.source, 'g')) || []).length;
+  // Line by line and through the same two questions the file scan asks, so a
+  // change to either is a change to both. Counting rather than testing,
+  // because an edit can rewrite the text around a breach that was already
+  // there and a test would call that new.
+  const stated = (text) => text.split('\n').some((line) => statesRule(rule, line));
+  const breaches = (text) => text.split('\n').filter((line) => breaksRule(rule, line)).length;
+
   return {
-    addedRule: rule.states.test(after) && !rule.states.test(before),
+    addedRule: stated(after) && !stated(before),
     addedBreach: breaches(after) > breaches(before),
   };
 }

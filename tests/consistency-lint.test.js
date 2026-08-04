@@ -504,6 +504,33 @@ check('editing beside a rule line is not the same as introducing the rule', () =
   assert.deepStrictEqual(ruleChange('em-dash', span, span), { addedRule: false, addedBreach: false });
 });
 
+check('the edit test and the file scan ask the same question', () => {
+  // There used to be two definitions of "states the rule" and "breaks the
+  // rule": one in brokenOwnRule, one in ruleChange. The moment the file scan
+  // learned to normalise for code spans they drifted, and in both directions
+  // at once. This is the check that the split is gone rather than repaired.
+  //
+  // Adding the rule with the phrase marked up is adding the rule.
+  assert.deepStrictEqual(ruleChange('em-dash', 'Something else.', 'Never use `em dashes`.'),
+    { addedRule: true, addedBreach: false },
+    'a rule added with backticks was not seen as added, so the file it contradicts went unreported');
+
+  // Quoting the character in a code span is showing it, not using it, and the
+  // file scan has said so since the round before this one.
+  assert.deepStrictEqual(ruleChange('em-dash', 'Show inline.', 'Show `a — b` inline.'),
+    { addedRule: false, addedBreach: false },
+    'an em dash inside a code span counted as a breach, so an old breach elsewhere was blamed on this edit');
+
+  // The pairing stated directly: whatever the file scan calls a breach on a
+  // line, the edit test has to agree with, or one of them is wrong again.
+  for (const line of ['plain — here', 'span `a — b` only', 'both `a — b` and — here', 'nothing at all']) {
+    const scanSaysBreach = brokenOwnRule(`Never use em dashes.\n\n${line}\n`).length > 0;
+    const editSaysBreach = ruleChange('em-dash', '', line).addedBreach;
+    assert.strictEqual(editSaysBreach, scanSaysBreach,
+      `the two disagree about ${JSON.stringify(line)}: scan=${scanSaysBreach} edit=${editSaysBreach}`);
+  }
+});
+
 check('an edit that adds a breach reports that breach', () => {
   const file = write('addedbreach.md', ['Never use em dashes.', '', 'A new line — here.', ''].join('\n'));
   const advice = adviceFrom(run(editEvent(file, 'A new line.', 'A new line — here.')));

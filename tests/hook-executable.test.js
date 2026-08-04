@@ -16,17 +16,25 @@
 // test and the thing the user runs were two different programs.
 //
 // This walks every hooks.json rather than naming files, so a hook added
-// tomorrow is covered without anyone remembering this exists. It reads the
-// mode from the git index rather than from the filesystem, because the index
-// is what other people clone: a chmod that is never committed fixes the
-// machine it was run on and nothing else.
+// tomorrow is covered without anyone remembering this exists. It checks the
+// mode in the git index and on disk: the index is what other people clone, so
+// a chmod that is never committed fixes one machine, and the working tree is
+// what the shell here will actually consult.
+//
+// Nothing in this file executes a hook. An earlier version did, and running
+// session-start.js runs its whole main(), which reads ~/.claude, shells out to
+// git across every configured root, and can leave a detached process behind.
+// A unit suite has no business reaching outside the repository, and none of
+// that was needed: fs.accessSync with X_OK asks the operating system the same
+// question the shell asks before running a file.
 
 'use strict';
 
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
-const { execFileSync, spawnSync } = require('child_process');
+const os = require('os');
+const { execFileSync } = require('child_process');
 
 const ROOT = path.join(__dirname, '..');
 
@@ -151,28 +159,55 @@ check('a matcher that only lists tool names uses the exact-string form', () => {
     + `${[...new Set(regexy)].join('\n        ')}`);
 });
 
-check('the hooks actually execute when run the way the harness runs them', () => {
-  // The assertion the mode check exists for, made end to end: spawn each hook
-  // as a bare path with no interpreter, exactly as a shell would, and require
-  // it not to die on startup. Every hook here fails open, so a well-formed
-  // event it does not care about is a clean exit 0.
+check('every directly-invoked hook is executable on disk as well as in the index', () => {
+  // The index mode is what other people clone; this is what the shell on this
+  // machine will actually consult. Both, because a chmod that is never
+  // committed fixes one machine, and a committed mode that a checkout did not
+  // apply fixes none.
   //
-  // A file without the executable bit gives EACCES here, which is what the
-  // whole suite missed by spawning `node <path>` instead.
-  const event = JSON.stringify({
-    hook_event_name: 'PostToolUse',
-    tool_name: 'Read',
-    tool_input: { file_path: '/nonexistent/probe.txt' },
-  });
-
-  const broken = [];
+  // This replaced a version that spawned every hook for real, which was a bad
+  // idea in a way that had nothing to do with what it was testing. Running
+  // session-start.js runs its whole main(): it reads ~/.claude, shells out to
+  // git across every configured root, and can leave a detached mcp-refresh
+  // behind. A unit suite reached outside the repository and could leave a
+  // process running on the developer's machine, and it was slow and
+  // non-deterministic with it.
+  //
+  // fs.accessSync with X_OK asks the operating system the same question the
+  // shell asks before it runs the file, which is the whole of what the old
+  // check was for, without executing anything.
+  const notExecutable = [];
   for (const hook of declaredHooks().filter((h) => !h.viaInterpreter)) {
-    const proc = spawnSync(path.join(ROOT, hook.file), [], { input: event, encoding: 'utf8' });
-    if (proc.error) broken.push(`${hook.file}: ${proc.error.code || proc.error.message}`);
-    else if (proc.status !== 0) broken.push(`${hook.file}: exited ${proc.status} ${(proc.stderr || '').trim().split('\n')[0]}`);
+    const full = path.join(ROOT, hook.file);
+    if (!fs.existsSync(full)) continue;   // reported by its own check above
+    try {
+      fs.accessSync(full, fs.constants.X_OK);
+    } catch {
+      notExecutable.push(`${hook.file} is not executable on disk`);
+    }
   }
-  assert.deepStrictEqual(broken, [], `a hook cannot be executed as a command:\n        ${broken.join('\n        ')}`);
+  assert.deepStrictEqual(notExecutable, [],
+    `the shell would refuse to run a hook this repository declares:\n        ${notExecutable.join('\n        ')}`);
 });
+
+check('a hook with no executable bit is actually caught', () => {
+  // The assertion above passes on a healthy tree whether it works or not, so
+  // it is exercised here against a file built to fail it. Nothing in the
+  // repository is touched: this is a throwaway in a temp directory.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hook-mode-'));
+  const file = path.join(dir, 'probe.js');
+  fs.writeFileSync(file, '#!/usr/bin/env node\nprocess.exit(0);\n', { mode: 0o644 });
+
+  assert.throws(() => fs.accessSync(file, fs.constants.X_OK),
+    'accessSync did not refuse a file with no executable bit, so the check above proves nothing');
+
+  fs.chmodSync(file, 0o755);
+  assert.doesNotThrow(() => fs.accessSync(file, fs.constants.X_OK),
+    'accessSync refuses a file that is executable, so the check above would fail on a healthy tree');
+
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 
 console.log(`\n${ran} checks, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);
