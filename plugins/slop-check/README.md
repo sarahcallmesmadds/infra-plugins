@@ -9,12 +9,27 @@ it afterwards, because that is the part that actually went missing.
 
 This looks for the evidence that nobody did.
 
-## Two things
+## Three things
 
 **A hook that holds the line on your own writing.** Em dashes and runs of very
 short sentences are blocked in the assistant's output, so it has to rewrite
 before the turn ends. These are enforced rather than suggested, because a rule
 you have to restate every session is not a rule.
+
+**A hook that catches a markdown file contradicting itself**, the moment it is
+written. It warns and never blocks. Three checks, all of them about the file
+and nothing outside it:
+
+| Check | The fault |
+|---|---|
+| a stated count | "checks four things" sitting above a table of five |
+| surviving text | a value corrected here and left standing three lines down |
+| a broken own rule | a file that says "no em dashes" and then uses one |
+
+The count fault landed three times in three days here, each time caught by
+somebody reading carefully, which is not a control. The surviving-text check
+runs on an edit only, because an edit is the only thing that says what the old
+text was.
 
 **A skill, `slop-check`, that reads anything.** Your draft, a document someone
 sent you, a pull request, a chart, a scope doc. It names the specific lines and
