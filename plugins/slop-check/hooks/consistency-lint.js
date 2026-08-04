@@ -29,7 +29,7 @@ const path = require('path');
 const { readEvent, advise } = require(path.join(__dirname, '..', 'scripts', 'hook-io.js'));
 const { loadConfig } = require(path.join(__dirname, '..', 'scripts', 'config.js'));
 const {
-  staleCounts, survivingText, brokenOwnRule, ruleChange,
+  staleCounts, survivingText, brokenOwnRule, ruleChange, editStanding,
 } = require(path.join(__dirname, '..', 'scripts', 'consistency.js'));
 
 // Files nobody should be told about. A handoff is a session note whose counts
@@ -71,6 +71,27 @@ function changedRange(content, input) {
 
   const start = content.slice(0, first).split('\n').length;
   return { start, end: start + needle.split('\n').length - 1 };
+}
+
+// Did the tool call this event describes actually fail?
+//
+// The documented lifecycle says it cannot have: `PostToolUse` fires "after a
+// tool call succeeds", a denial goes to `PermissionRequest` or
+// `PermissionDenied`, and a failure goes to `PostToolUseFailure`. Read from the
+// hooks reference, not recalled, because the question was raised in review and
+// a guess either way was worth nothing.
+//
+// Guarded anyway, and asymmetrically. A positive signal of failure is believed;
+// a missing or unfamiliar `tool_response` is not read as failure. That way a
+// harness that shapes the field differently, or drops it, leaves the hook
+// exactly as it behaves today. The opposite polarity, requiring proof of
+// success, would silence the whole check the first time the field changed
+// shape, and a check that quietly stops running is the failure this plugin
+// already shipped once in `guardrails`.
+function toolFailed(event) {
+  const response = event.tool_response;
+  if (!response || typeof response !== 'object') return false;
+  return response.success === false || response.is_error === true;
 }
 
 // Would this edit have had anything to do with that finding?
@@ -155,6 +176,7 @@ readEvent((event) => {
   const filePath = input.file_path;
   if (!filePath || !filePath.endsWith('.md')) return;
   if (ignored(filePath)) return;
+  if (toolFailed(event)) return;
 
   // The write may not have landed. Nothing to say about a file that is not
   // there, and reading the event's own copy of the content instead would be
@@ -165,6 +187,15 @@ readEvent((event) => {
   } catch {
     return;
   }
+
+  // An Edit whose new text is nowhere in the file did not land here. The
+  // documented lifecycle says a denied or errored call never reaches this hook
+  // at all, so the case that remains is a file changed by something else in
+  // between. Either way every finding in it is older than this event, and the
+  // whole-file fallback below would otherwise report the lot. Absence is the
+  // evidence; an ambiguous match is not, and is left to fail towards reporting.
+  const standing = event.tool_name === 'Edit' ? editStanding(content, input) : { landed: true, text: null };
+  if (!standing.landed) return;
 
   const issues = [];
 
@@ -230,8 +261,20 @@ readEvent((event) => {
     // added to stop, arriving through the one exception to it.
     //
     // A Write has no before, so all of it is that write's doing.
+    //
+    // For an Edit the before is rebuilt in full and both documents go through
+    // the same scan. Handing over the fragments instead is what produced the
+    // seventh finding: an example added inside a fence counted as a breach to
+    // the edit test and as no breach to the file scan, and the gap below let an
+    // untouched line through on the strength of it.
     const whole = event.tool_name === 'Write';
-    const change = whole ? null : ruleChange(broken.name, input.old_string, input.new_string);
+
+    // No rebuilt before, no comparison, nothing said. Reached by an edit that
+    // landed in more than one place, where what changed cannot be pinned down
+    // well enough to blame anything on it.
+    if (!whole && standing.text === null) continue;
+
+    const change = whole ? null : ruleChange(broken.name, standing.text, content);
 
     // Adding "never use em dashes" to a file already full of them is a
     // contradiction this edit created, and every one of them is news.

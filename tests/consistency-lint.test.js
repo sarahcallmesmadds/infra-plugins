@@ -32,7 +32,7 @@ const { spawnSync } = require('child_process');
 const ROOT = path.join(__dirname, '..');
 const HOOK = path.join(ROOT, 'plugins', 'slop-check', 'hooks', 'consistency-lint.js');
 const {
-  staleCounts, survivingText, brokenOwnRule, replacedFragments, isDistinctive, ruleChange,
+  staleCounts, survivingText, brokenOwnRule, replacedFragments, isDistinctive, ruleChange, editStanding,
 } = require(path.join(ROOT, 'plugins', 'slop-check', 'scripts', 'consistency.js'));
 
 let failed = 0;
@@ -523,12 +523,170 @@ check('the edit test and the file scan ask the same question', () => {
 
   // The pairing stated directly: whatever the file scan calls a breach on a
   // line, the edit test has to agree with, or one of them is wrong again.
-  for (const line of ['plain — here', 'span `a — b` only', 'both `a — b` and — here', 'nothing at all']) {
-    const scanSaysBreach = brokenOwnRule(`Never use em dashes.\n\n${line}\n`).length > 0;
-    const editSaysBreach = ruleChange('em-dash', '', line).addedBreach;
+  //
+  // The first four cases are the ones this test shipped with, and they are all
+  // single plain lines. That is how the seventh finding got through: the two
+  // sides also disagreed about a fenced example and about the rule sentence
+  // itself, and nothing here asked. The rest of the list is those gaps.
+  const bodies = [
+    'plain — here',
+    'span `a — b` only',
+    'both `a — b` and — here',
+    'nothing at all',
+    // A fence is where you show the fault. Neither side may call it a breach.
+    '```\nbad — example\n```',
+    '~~~\nbad — example\n~~~',
+    'before\n\n```\nbad — example\n```\n\nafter',
+    // Four spaces after a blank line is the other kind of example.
+    '\n    bad — example',
+    // A fence that also contains the rule sentence still states nothing.
+    '```\nNever use em dashes — ever.\n```',
+    // Real prose next to a shown one: the prose counts, the fence does not.
+    'real — breach\n\n```\nshown — only\n```',
+  ];
+  for (const body of bodies) {
+    const scanSaysBreach = brokenOwnRule(`Never use em dashes.\n\n${body}\n`).length > 0;
+    const editSaysBreach = ruleChange('em-dash', '', body).addedBreach;
     assert.strictEqual(editSaysBreach, scanSaysBreach,
-      `the two disagree about ${JSON.stringify(line)}: scan=${scanSaysBreach} edit=${editSaysBreach}`);
+      `the two disagree about ${JSON.stringify(body)}: scan=${scanSaysBreach} edit=${editSaysBreach}`);
   }
+
+  // The other half of the same asymmetry. The scan never counts the line that
+  // states the rule as breaking it; the edit test used to, so adding the rule
+  // and the em dash in one sentence reported a breach the scan denied.
+  assert.deepStrictEqual(ruleChange('em-dash', 'x', 'Never use em dashes — ever.'),
+    { addedRule: true, addedBreach: false },
+    'the sentence stating the rule counted as breaking it, which the file scan has never done');
+  assert.deepStrictEqual(brokenOwnRule('Never use em dashes — ever.'), [],
+    'the file scan changed its mind about the rule sentence, so the pairing above is now wrong');
+});
+
+check('adding an example does not re-report an untouched line', () => {
+  // The seventh review finding, at the level it was reported. A file states the
+  // rule and already breaks it on line 5. The edit appends a fenced example,
+  // which is not a breach by the file scan's own rules, and touches nothing
+  // else. Line 5 is not this edit's doing and must not come back.
+  //
+  // Measured, not hypothetical: 36 of 833 markdown Edit calls in her history
+  // added a fenced block, so this fired on roughly one edit in 23.
+  const before = ['# Style', '', 'Never use em dashes.', '', 'Already wrong — here.', ''].join('\n');
+  const oldStr = 'Already wrong — here.';
+  const newStr = 'Already wrong — here.\n\n```\nbad — example\n```';
+  const file = write('fenced-example.md', before.replace(oldStr, newStr));
+
+  assert.strictEqual(adviceFrom(run(editEvent(file, oldStr, newStr))), null,
+    'an edit that only added an example was blamed for a contradiction that was already there');
+});
+
+check('an edit that did not land says nothing', () => {
+  // A denied or errored call does not reach a PostToolUse hook at all: the
+  // documented lifecycle sends those to PermissionRequest and
+  // PostToolUseFailure. What is left is a file something else changed in
+  // between, where the new text is nowhere on disk. Nothing found in it can be
+  // attributed to this event, and every check would otherwise fall back to the
+  // whole file, which is the noisiest answer available.
+  //
+  // The count check is what this is asserted through, deliberately. The rule
+  // check goes quiet here for its own reason, having no before to rebuild, so a
+  // test written against that one passes whether this guard exists or not and
+  // says nothing about it. Two guards covering each other is how the round
+  // before this shipped three assertions with nothing under them.
+  const file = write('never-landed.md', ['It runs two checks:', '', '- a', '- b', '- c', ''].join('\n'));
+
+  assert.ok(adviceFrom(run(editEvent(file, '- b', '- b'))),
+    'the fixture stopped producing a finding, so the assertion below proves nothing');
+  assert.strictEqual(adviceFrom(run(editEvent(file, 'anything', 'text that is nowhere in the file'))), null,
+    'an edit whose text never reached the file was still blamed for what the file already said');
+});
+
+check('editStanding answers both questions separately', () => {
+  // Asserted directly rather than through the hook. Each guard below is one an
+  // end-to-end test agrees with for its own reasons, the rule check going quiet
+  // without a before regardless, so a suite that only drives the hook stays
+  // green with any of them deleted. That is how the previous round shipped
+  // three assertions with nothing underneath them.
+  const file = 'alpha\nbravo\ncharlie\n';
+
+  // The ordinary case: the whole prior document, not the fragment.
+  assert.deepStrictEqual(editStanding('alpha\ndelta\ncharlie\n', { old_string: 'bravo', new_string: 'delta' }),
+    { landed: true, text: 'alpha\nbravo\ncharlie\n' },
+    'a rebuilt before must be the whole file with the old text put back');
+
+  // Not on disk as written: the edit did not land here.
+  assert.deepStrictEqual(editStanding(file, { old_string: 'x', new_string: 'nowhere in the file' }),
+    { landed: false, text: null });
+
+  // Landed, but not rebuildable. Both of these must keep `landed` true, or the
+  // other two checks stop running on an edit that really did happen.
+  assert.deepStrictEqual(editStanding('a\na\n', { old_string: 'b', new_string: 'a' }),
+    { landed: true, text: null }, 'an ambiguous match must not be rebuilt from a guessed occurrence');
+  assert.deepStrictEqual(editStanding(file, { old_string: 'b', new_string: 'alpha', replace_all: true }),
+    { landed: true, text: null }, 'a replace_all edit must not be rebuilt by replacing every occurrence');
+
+  // A deletion carries no new text to find, so it is taken at its word.
+  assert.deepStrictEqual(editStanding(file, { old_string: 'bravo\n', new_string: '' }),
+    { landed: true, text: null });
+});
+
+check('a replace_all edit is not credited with a rule that was already stated', () => {
+  // Why the guard above is not merely cautious. Rebuilding a replace_all turns
+  // every copy of the new text back into the old, including copies that were
+  // there before the edit. Here that erases the file's own statement of the
+  // rule from the reconstructed before, so an untouched rule reads as one this
+  // edit introduced, and introducing a rule reports every breach in the file
+  // however far away it is.
+  const file = write('replace-all-rule.md', [
+    'Never use em dashes.', '', 'Already wrong — here.', '', 'Never use em dashes.', '',
+  ].join('\n'));
+
+  const event = editEvent(file, 'plain', 'Never use em dashes.');
+  event.tool_input.replace_all = true;
+  assert.strictEqual(adviceFrom(run(event)), null,
+    'a replace_all edit was credited with stating a rule the file already stated, and blamed for every breach in it');
+});
+
+check('an edit that cannot be rebuilt makes no claim about a rule', () => {
+  // Landed, but in more than one place, so the document it replaced cannot be
+  // reconstructed. The other two checks still run and fail towards reporting;
+  // this one cannot, because "did this edit add a breach" has no meaning
+  // without a before, and answering it against an empty before calls every
+  // breach in the file new.
+  const file = write('unrebuildable.md', ['# Style', '', 'Never use em dashes.', '', 'Already wrong — here.', '', 'x', '', 'x', ''].join('\n'));
+
+  assert.strictEqual(adviceFrom(run(editEvent(file, 'y', 'x'))), null,
+    'an edit that could not be placed blamed itself for a contradiction that was already there');
+
+  const all = editEvent(file, 'x', 'x');
+  all.tool_input.replace_all = true;
+  assert.strictEqual(adviceFrom(run(all)), null,
+    'a replace_all edit blamed itself for a contradiction that was already there');
+});
+
+check('a tool call that reports failure says nothing', () => {
+  // Belt to the above, and unreachable by the documented lifecycle. Written so
+  // that the same event without the failure signal does speak, or it would pass
+  // on the strength of some other silence.
+  const file = write('reported-failure.md', ['# Style', '', 'Never use em dashes.', '', 'Already wrong — here.', ''].join('\n'));
+  const claimed = () => editEvent(file, 'Already wrong.', 'Already wrong — here.');
+
+  assert.ok(adviceFrom(run(claimed())), 'the fixture stopped producing a finding, so the assertions below prove nothing');
+
+  for (const response of [
+    { success: false, error: "The user doesn't want to proceed with this tool use." },
+    { is_error: true, content: 'String to replace not found in file.' },
+  ]) {
+    const event = claimed();
+    event.tool_response = response;
+    assert.strictEqual(adviceFrom(run(event)), null,
+      `a tool call reporting ${JSON.stringify(response)} still produced advice`);
+  }
+
+  // Asymmetric on purpose. A missing or unfamiliar tool_response must leave the
+  // hook exactly as it behaves without one, or an unrelated harness change
+  // silences the check instead of loosening it.
+  const ok = claimed();
+  ok.tool_response = { filePath: file, somethingUnfamiliar: true };
+  assert.ok(adviceFrom(run(ok)), 'an unrecognised tool_response shape silenced the hook');
 });
 
 check('an edit that adds a breach reports that breach', () => {

@@ -580,6 +580,10 @@ function withoutBackticks(line) {
 // here. Normalising one can no longer disagree with the other, because there
 // is no other.
 //
+// Unifying the predicates was not enough on its own, and the seventh finding
+// was the proof: *which* lines get asked was still duplicated. That lives in
+// `ruleLines` now, for the same reason and in the same way.
+//
 // Why the two normalise differently is the whole point and is not an
 // oversight. See withoutCodeSpans and withoutBackticks.
 function statesRule(rule, line) {
@@ -590,37 +594,61 @@ function breaksRule(rule, line) {
   return rule.breaks.test(withoutCodeSpans(line));
 }
 
-function brokenOwnRule(text) {
+// What one text does about one rule: the lines stating it, the lines breaking
+// it. Line numbers, 1-based.
+//
+// This is the third thing the two callers had their own copy of, and the last.
+// `statesRule` and `breaksRule` were unified a round ago, but *which lines they
+// were asked about* was not, and that is where the seventh finding landed: the
+// file scan skipped examples and skipped the rule sentence itself, while the
+// edit test asked every line of the fragment. So an em dash added inside a
+// fenced example read as a new breach to one and as no breach at all to the
+// other, and the disagreement blamed an untouched line for it.
+//
+// Both exclusions are decisions with reasons, and both belong to the question
+// rather than to either caller:
+//
+//   examples        a fence is where you demonstrate the fault. The file that
+//                   quotes an em dash while banning them is the one explaining
+//                   the rule, and it is not breaking it.
+//   the rule itself a sentence stating the rule and using the character in the
+//                   same breath states it on the line it breaks. Reporting that
+//                   means the plugin's own docs and her memory files fire first
+//                   and forever.
+//
+// Asked in one place now, so neither can drift from the other again.
+function ruleLines(rule, text) {
   const lines = text.split('\n');
   const inExample = exampleLines(lines);
+  const statedAt = [];
+  const breaches = [];
+
+  lines.forEach((line, i) => {
+    if (inExample[i]) return;
+    if (statesRule(rule, line)) { statedAt.push(i + 1); return; }
+    if (breaksRule(rule, line)) breaches.push(i + 1);
+  });
+
+  return { statedAt, breaches };
+}
+
+function brokenOwnRule(text) {
   const found = [];
 
   for (const rule of SELF_RULES) {
-    const statedAt = [];
-    lines.forEach((line, i) => {
-      if (!inExample[i] && statesRule(rule, line)) statedAt.push(i);
-    });
-    if (!statedAt.length) continue;
+    const { statedAt, breaches } = ruleLines(rule, text);
+    if (!statedAt.length || !breaches.length) continue;
 
-    const breaches = [];
-    lines.forEach((line, i) => {
-      if (inExample[i]) return;
-      if (statedAt.includes(i)) return;
-      if (breaksRule(rule, line)) breaches.push(i + 1);
+    found.push({
+      name: rule.name,
+      what: rule.what,
+      statedAt: statedAt[0],
+      // Every line stating it, not only the first. A file can say the same
+      // thing in a frontmatter description and again in the body, and a
+      // caller asking "did this edit add the rule" needs all of them.
+      statedLines: statedAt,
+      lines: breaches,
     });
-
-    if (breaches.length) {
-      found.push({
-        name: rule.name,
-        what: rule.what,
-        statedAt: statedAt[0] + 1,
-        // Every line stating it, not only the first. A file can say the same
-        // thing in a frontmatter description and again in the body, and a
-        // caller asking "did this edit add the rule" needs all of them.
-        statedLines: statedAt.map((n) => n + 1),
-        lines: breaches,
-      });
-    }
   }
   return found;
 }
@@ -638,31 +666,88 @@ function brokenOwnRule(text) {
 //
 // `addedBreach` counts rather than tests, because an edit can leave a breach
 // standing while changing the line around it, and a test would call that new.
-function ruleChange(name, oldString, newString) {
-  const rule = SELF_RULES.find((r) => r.name === name);
-  const before = typeof oldString === 'string' ? oldString : '';
-  const after = typeof newString === 'string' ? newString : '';
-  if (!rule) return { addedRule: false, addedBreach: false };
+//
+// **Whole files, not the edit's fragments.** This used to be handed
+// `old_string` and `new_string` directly, and that is unfixable rather than
+// merely wrong: whether a line sits inside a fenced example is a fact about the
+// document, and a fragment can begin in the middle of a fence. No amount of
+// example detection inside a fragment can recover what a fragment does not
+// contain. Passing the file as it was and the file as it is asks the identical
+// question of two complete documents, and the disagreement has nowhere left to
+// live. The caller reconstructs the before; see `previousContent` in the hook.
+// Where an edit stands against the file on disk: did it land, and can the
+// document it replaced be rebuilt.
+//
+// Two questions and not one, because they have different consequences and
+// answering them in two places is how the seventh finding got in. "Did not
+// land" means nothing in the file is that event's doing and no check should
+// speak. "Landed but cannot be rebuilt" means the other checks still run on
+// their own terms, and only the rule check, which needs a before to compare
+// against, sits out.
+//
+//   landed  the new text is on disk as written. A deletion has no new text to
+//           look for and is taken at its word; the caller's deletion path
+//           handles it.
+//   text    the whole prior document, rebuilt by putting `old_string` back
+//           where `new_string` now sits, ready for `ruleChange`.
+//
+// Here rather than in the hook so both answers can be asserted directly. Every
+// guard below is one an end-to-end test agrees with for its own reasons, which
+// means a suite driving only the hook stays green with any of them deleted.
+//
+// No rebuild on `replace_all`. Every occurrence of `new_string` would have to
+// be one this edit created, and a document that already held the text would
+// rebuild into a before that never existed: the copies that were always there
+// get turned into `old_string` too, so a rule those copies state reads as one
+// this edit introduced, and every breach in the file is then reported as its
+// doing. Measured before deciding: **0 of 833 markdown Edit calls in her
+// history set `replace_all`**, so the case being declined has not once
+// occurred.
+//
+// No rebuild on an ambiguous match either. Which occurrence the edit made is
+// unknowable, and while putting the text back at the wrong one leaves the same
+// set of lines in almost every case, "almost" is doing real work there: either
+// string may carry a fence marker, and moving one of those changes which lines
+// count as an example for the whole rest of the document.
+function editStanding(content, input) {
+  const needle = input.new_string;
+  const replacement = input.old_string;
+  const noRebuild = { landed: true, text: null };
+  if (typeof needle !== 'string' || typeof replacement !== 'string') return noRebuild;
+  if (needle === '') return noRebuild;
 
-  // Line by line and through the same two questions the file scan asks, so a
-  // change to either is a change to both. Counting rather than testing,
-  // because an edit can rewrite the text around a breach that was already
-  // there and a test would call that new.
-  const stated = (text) => text.split('\n').some((line) => statesRule(rule, line));
-  const breaches = (text) => text.split('\n').filter((line) => breaksRule(rule, line)).length;
+  const first = content.indexOf(needle);
+  if (first === -1) return { landed: false, text: null };
+  if (input.replace_all) return noRebuild;
+  if (content.indexOf(needle, first + 1) !== -1) return noRebuild;
 
   return {
-    addedRule: stated(after) && !stated(before),
-    addedBreach: breaches(after) > breaches(before),
+    landed: true,
+    text: content.slice(0, first) + replacement + content.slice(first + needle.length),
+  };
+}
+
+function ruleChange(name, beforeText, afterText) {
+  const rule = SELF_RULES.find((r) => r.name === name);
+  if (!rule) return { addedRule: false, addedBreach: false };
+
+  const before = ruleLines(rule, typeof beforeText === 'string' ? beforeText : '');
+  const after = ruleLines(rule, typeof afterText === 'string' ? afterText : '');
+
+  return {
+    addedRule: after.statedAt.length > 0 && before.statedAt.length === 0,
+    addedBreach: after.breaches.length > before.breaches.length,
   };
 }
 
 module.exports = {
   staleCounts,
   ruleChange,
+  editStanding,
   survivingText,
   brokenOwnRule,
   // Exported for the tests, which pin the pieces that produced false positives.
+  ruleLines,
   listAt,
   countIn,
   announcedCount,
