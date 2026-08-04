@@ -482,6 +482,62 @@ check('merge evidence never rescues an unknown aheadBy', () => {
   assert.ok(out.keep[0].keepReasons.includes('merge-state-unknown'));
 });
 
+// The local default branch is a local ref, and right after a pull request
+// merges it is behind by exactly the merge being asked about. Comparing only
+// against it kept branches that were genuinely merged, and only --repo cleared
+// them. Found while verifying the fix above, in a separate session.
+check('a branch merged into origin/main is cleared even when local main is behind', () => {
+  const origin = fs.mkdtempSync(path.join(os.tmpdir(), 'origin-'));
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'work-'));
+  execFileSync('git', ['init', '-q', '--bare', '-b', 'main', origin]);
+
+  const g = (...args) => execFileSync('git', ['-C', work, ...args], { encoding: 'utf8', stdio: 'pipe' });
+  // stdio piped because cloning an empty bare repository warns, and a warning
+  // in the middle of passing test output reads as a failure.
+  execFileSync('git', ['clone', '-q', origin, work], { stdio: 'pipe' });
+  g('config', 'user.email', 'test@example.com');
+  g('config', 'user.name', 'test');
+
+  fs.writeFileSync(path.join(work, 'f.txt'), 'base\n');
+  g('add', '.');
+  g('commit', '-qm', 'base');
+  g('push', '-q', '-u', 'origin', 'main');
+
+  g('checkout', '-qb', 'feature');
+  fs.writeFileSync(path.join(work, 'new.txt'), 'work\n');
+  g('add', '.');
+  g('commit', '-qm', 'the work');
+
+  // Squash-merge it and publish, exactly as merging a pull request would.
+  g('checkout', '-q', 'main');
+  g('merge', '-q', '--squash', 'feature');
+  g('commit', '-qm', 'feature (#7)');
+  g('push', '-q', 'origin', 'main');
+
+  // Then put the local default branch back where it was. This is the state of
+  // any checkout that has not pulled since the merge, which is the normal one.
+  g('reset', '-q', '--hard', 'HEAD~1');
+
+  const localTip = g('rev-parse', 'main').trim();
+  const remoteTip = g('rev-parse', 'origin/main').trim();
+  assert.notStrictEqual(localTip, remoteTip, 'local main must be behind origin/main, or this test proves nothing');
+
+  const r = collect.localBranches(work);
+  const feature = r.branches.find((b) => b.name === 'feature');
+
+  assert.ok(feature.aheadBy > 0, 'the branch must still look unmerged by ancestry');
+  assert.strictEqual(feature.merged, true, 'a branch merged into origin/main should carry merge evidence');
+  assert.ok(/origin\/main/.test(feature.mergedVia || ''),
+    `the reason should name which ref carried it, got ${JSON.stringify(feature.mergedVia)}`);
+
+  const out = classify(r.branches, {}, Date.now());
+  assert.ok(out.safe.map((b) => b.name).includes('feature'),
+    'a branch merged upstream is safe even when this checkout has not pulled');
+
+  fs.rmSync(origin, { recursive: true, force: true });
+  fs.rmSync(work, { recursive: true, force: true });
+});
+
 // ------------------------------------------- what the remote path counts ----
 //
 // Both of these were live bugs in the first version of the squash-merge fix,

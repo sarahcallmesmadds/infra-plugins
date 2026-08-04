@@ -94,6 +94,23 @@ function localBranches(cwd, opts) {
   // falls back to ancestry alone.
   const defTree = tryRun('git', ['-C', cwd, 'rev-parse', `${def}^{tree}`]);
 
+  // And the remote-tracking copy, when it exists and has moved on from the
+  // local one. `def` above is a local branch name, stripped of its `origin/`
+  // prefix, so the comparison would otherwise run against whatever this
+  // checkout last pulled. Immediately after a pull request merges, the local
+  // default branch is behind by exactly the merge you are asking about, and
+  // that is precisely when someone runs this.
+  //
+  // Merged into either one is real evidence: both mean the work exists
+  // somewhere that is not this branch. Skipped when the two agree, which is the
+  // steady state, so it costs nothing in the common case.
+  const remoteDef = `origin/${def}`;
+  const remoteDefTree = tryRun('git', ['-C', cwd, 'rev-parse', `${remoteDef}^{tree}`]);
+  const compareAgainst = [{ ref: def, tree: defTree, label: 'already in the default branch' }];
+  if (remoteDefTree && remoteDefTree !== defTree) {
+    compareAgainst.push({ ref: remoteDef, tree: remoteDefTree, label: `already in ${remoteDef}` });
+  }
+
   const branches = listed.split('\n').filter(Boolean).map((line) => {
     const [name, date] = line.split('\t');
     let aheadBy = null;
@@ -118,11 +135,15 @@ function localBranches(cwd, opts) {
       // Only worth asking when ancestry already said "unmerged". A conflicting
       // merge exits non-zero, `tryRun` returns null, and the branch is kept.
       // Not knowing is never rounded up into permission to delete.
-      if (aheadBy !== null && aheadBy > 0 && defTree) {
-        const t = tryRun('git', ['-C', cwd, 'merge-tree', '--write-tree', def, name]);
-        if (t !== null && t.split('\n')[0] === defTree) {
-          merged = true;
-          mergedVia = 'already in the default branch';
+      if (aheadBy !== null && aheadBy > 0) {
+        for (const target of compareAgainst) {
+          if (!target.tree) continue;
+          const t = tryRun('git', ['-C', cwd, 'merge-tree', '--write-tree', target.ref, name]);
+          if (t !== null && t.split('\n')[0] === target.tree) {
+            merged = true;
+            mergedVia = target.label;
+            break;
+          }
         }
       }
     }
