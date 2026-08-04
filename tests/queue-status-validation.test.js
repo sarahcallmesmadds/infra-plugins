@@ -143,6 +143,51 @@ check('--field status=X is validated too', () => {
   assert.strictEqual(statusOnDisk(home, 'c'), 'Open');
 });
 
+check('--json status=FILE is validated too', () => {
+  // The fourth door, found in review after the first three were guarded at
+  // their call sites. `--json` assigns a parsed value straight onto the entry,
+  // so it bypassed every check. It is the reason the guard moved into
+  // writeEntry, where no route can go around it.
+  const home = sandbox();
+  seed(home, 'c2');
+  const file = path.join(home, 's.json');
+  fs.writeFileSync(file, '"Wontfix"');
+  const r = run(home, ['update', 'c2', '--json', `status=${file}`]);
+  assert.notStrictEqual(r.code, 0, '--json bypassed the status check');
+  assert.strictEqual(statusOnDisk(home, 'c2'), 'Open');
+});
+
+check('a status that is not a string is refused, and said to be a type fault', () => {
+  // Only --json can express this. Reporting an object as an unrecognised
+  // status would name the wrong fault.
+  const home = sandbox();
+  seed(home, 'c3');
+  for (const [json, word] of [['{"a":1}', 'object'], ['["Open"]', 'an array'], ['3', 'number']]) {
+    const file = path.join(home, 'v.json');
+    fs.writeFileSync(file, json);
+    const r = run(home, ['update', 'c3', '--json', `status=${file}`]);
+    assert.notStrictEqual(r.code, 0, `${json} was accepted as a status`);
+    assert.ok(/has to be a string/.test(r.out), `wrong diagnosis for ${json}: ${r.out}`);
+    assert.ok(r.out.includes(word), `did not name the type for ${json}: ${r.out}`);
+  }
+  assert.strictEqual(statusOnDisk(home, 'c3'), 'Open');
+});
+
+check('the guard is in writeEntry, not spread across the call sites', () => {
+  // Structural, and the point of the fix. Three call-site guards were written
+  // and a fourth route was missed, so the property worth pinning is that the
+  // check sits where every write must pass rather than at each way in.
+  const source = fs.readFileSync(
+    path.join(__dirname, '..', 'plugins', 'build-loop', 'scripts', 'queue.js'), 'utf8'
+  );
+  const body = source.slice(source.indexOf('function writeEntry'));
+  const end = body.indexOf('\n}');
+  assert.ok(
+    /checkStatus\(entry\.status/.test(body.slice(0, end)),
+    'writeEntry does not check the status, so a new option can route around it'
+  );
+});
+
 check('create refuses a composed entry carrying a bad status', () => {
   const home = sandbox();
   const file = entryFile(home, 'queue', 'd', 'Wontfix');

@@ -107,12 +107,29 @@ function statusList(values) {
   return values.map((v) => JSON.stringify(v)).join(', ');
 }
 
+// Which list a directory belongs to, so the one gate in writeEntry can pick the
+// right enum from the only thing it is given.
+function listNameFor(dir) {
+  for (const [name, d] of LISTS) if (d === dir) return name;
+  return 'queue';
+}
+
 function checkStatus(value, listName) {
   const spec = statusesFor(listName);
   if (!spec) return value; // dirFor has already refused an unknown list.
   if (spec.write.includes(value)) return value;
 
   const list = listName === undefined ? 'queue' : String(listName);
+
+  // `--json status=FILE` can hand over anything JSON can express. An object
+  // compared against the enum is simply absent from it, and would otherwise be
+  // reported as an unrecognised status when the real fault is its type.
+  if (typeof value !== 'string') {
+    fail(
+      `queue.js: a status has to be a string, got ${Array.isArray(value) ? 'an array' : typeof value}. `
+      + `Nothing was written.\n  Valid: ${statusList(spec.write)}`
+    );
+  }
   if (spec.retired.includes(value)) {
     fail(
       `queue.js: ${JSON.stringify(value)} is retired and must not be written. `
@@ -408,6 +425,14 @@ function writeEntry(id, entry, dir = QUEUE) {
   if (!holdingLock()) {
     throw new LockLostError('queue.js: the queue lock was taken over by another session mid-write. Nothing was written.');
   }
+  // The one gate. Guarding the call sites instead meant guarding `--status`,
+  // `--field status=` and `create`, and missing `--json status=FILE`, which
+  // assigns a parsed value straight onto the entry. Review found that fourth
+  // door, and a fifth would have been added the same way by whoever adds the
+  // next option. Every write goes through here, so this is the only place the
+  // check cannot be routed around.
+  if (entry && entry.status !== undefined) checkStatus(entry.status, listNameFor(dir));
+
   const target = entryPath(id, dir);
   const tmp = `${target}.${process.pid}.tmp`;
   const text = JSON.stringify(entry, null, 2) + '\n';
@@ -435,7 +460,10 @@ function cmdUpdate(args) {
     const before = Array.isArray(entry.notes) ? entry.notes.length : 0;
     const ts = nowISO();
 
-    if (args.status) entry.status = checkStatus(args.status, args.list);
+    // Not validated here. writeEntry is the single gate, and a check at this
+    // call site would suggest the other three routes are covered by their own,
+    // which is exactly the reasoning that missed `--json status=FILE`.
+    if (args.status) entry.status = args.status;
 
     // --resolution FILE is the same thing as --json resolution=FILE, kept
     // because it is the common case and reads better at the call site.
@@ -466,12 +494,7 @@ function cmdUpdate(args) {
     for (const pair of args.field || []) {
       const at = pair.indexOf('=');
       if (at < 1) fail(`queue.js: --field wants key=value, got ${pair}`);
-      const key = checkKey(pair.slice(0, at));
-      let value = pair.slice(at + 1);
-      // `--field status=X` is a second way in, and validating only `--status`
-      // would leave the door it was meant to close standing open next to it.
-      if (key === 'status') value = checkStatus(value, args.list);
-      entry[key] = value;
+      entry[checkKey(pair.slice(0, at))] = pair.slice(at + 1);
     }
 
     // Appended, never rebuilt. The notes array is the audit trail and is read
@@ -533,9 +556,10 @@ function cmdCreate(args) {
   }
   if (!entry.id) fail('queue.js: the entry has no id, so there is nowhere to write it.');
   checkId(entry.id);
-  // The third writer. A composed file carries a status like any other field,
-  // so validating the two update paths and not this one would leave the
-  // easiest route in unguarded.
+  // Kept as well as the gate in writeEntry, and the only call site that is.
+  // This one runs before the lock is taken, so a composed file with a bad
+  // status is refused without making anyone else wait for it. The gate would
+  // catch it either way.
   if (entry.status !== undefined) checkStatus(entry.status, args.list);
 
   return locked(() => {

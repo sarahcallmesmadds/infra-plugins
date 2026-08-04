@@ -253,12 +253,24 @@ Writers always emit the v5 field names. An old entry that gets its status update
 | `fix applied, watching` | The fix reached the target file and is not yet confirmed in a real session. The user closes this to `Resolved` after using the thing. **This does not imply a commit.** See the note markers below. |
 | `fix attempted / unresolved` | **Retired in 0.3.1. Do not write this.** Readers still accept it, because entries written earlier carry it. A rejected diff or a failed write now leaves the entry `Open` and records the attempt in `notes`. The status was removed rather than added to `/list-bugs`, because it described a bug that was still open while making it invisible to every filter that lists open work. |
 
-**This enum is enforced, as of 0.5.6.** `queue.js` refuses any other value on
-every path that can set a status: `--status`, `--field status=`, and the composed
-file handed to `create`. It refuses rather than corrects, even when the value is
-one character off, because guessing what somebody meant and writing it is how a
-wrong status arrives without anyone deciding to put it there. The suggestion is
-printed and the write is still refused.
+**This enum is enforced, as of 0.5.6.** `queue.js` checks the status inside
+`writeEntry`, which every write passes through, so no option can route around it.
+That includes `--status`, `--field status=`, `--json status=FILE` and the
+composed file handed to `create`.
+
+The check was first written at those call sites instead, and review found the
+fourth one, `--json`, unguarded: it assigns a parsed value straight onto the
+entry. Guarding each way in is a list that has to be extended by whoever adds the
+next option, and the claim "every path is covered" was already wrong when it was
+written. One gate at the write is the version that stays true.
+
+A status must also be a string. Only `--json` can express anything else, and an
+object reported as an unrecognised status would name the wrong fault.
+
+It refuses rather than corrects, even when the value is one character off,
+because guessing what somebody meant and writing it is how a wrong status
+arrives without anyone deciding to put it there. The suggestion is printed and
+the write is still refused.
 
 `fix attempted / unresolved` is refused on write and accepted on read, which is
 what the row below has always said.
