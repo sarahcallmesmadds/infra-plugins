@@ -493,6 +493,12 @@ function writeEntry(id, entry, dir = QUEUE) {
   // An entry already on disk without a status is left alone, for the same reason
   // legacy values are: it can still be annotated while somebody decides what it
   // should be. Absent is preserved, never introduced.
+  // The `!existed` arm is unreachable through the CLI as this stands: `create`
+  // refuses a status-less entry before the lock is taken, and `update` cannot
+  // reach a file that does not exist. Mutation testing confirmed it, so no test
+  // covers it and none is claimed to. It is kept because this is the gate, and
+  // the gate holding only for the routes that exist today is how the `--json`
+  // hole was created in the first place.
   const existed = fs.existsSync(entryPath(id, dir));
   if (entry && entry.status === undefined) {
     if (!existed) {
