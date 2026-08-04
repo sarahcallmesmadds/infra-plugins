@@ -68,8 +68,13 @@ function isGitRepo(cwd) {
 // comparison below. The deadline is still checked once per branch and still
 // bounds the loop; the effect of the extra call is that a run under pressure
 // truncates a little earlier, which errs towards keeping.
+//
+// opts.only restricts the work to a single named branch, for the re-check that
+// runs immediately before a delete. Same facts, same rules, one branch: without
+// it, deleting twenty branches rescans the whole repository twenty times.
 function localBranches(cwd, opts) {
   const deadline = (opts && opts.deadline) || null;
+  const only = (opts && opts.only) || null;
   let truncated = false;
   const current = tryRun('git', ['-C', cwd, 'branch', '--show-current']) || '';
 
@@ -111,7 +116,10 @@ function localBranches(cwd, opts) {
     compareAgainst.push({ ref: remoteDef, tree: remoteDefTree, label: `already in ${remoteDef}` });
   }
 
-  const branches = listed.split('\n').filter(Boolean).map((line) => {
+  const rows = listed.split('\n').filter(Boolean)
+    .filter((line) => only === null || line.split('\t')[0] === only);
+
+  const branches = rows.map((line) => {
     const [name, date] = line.split('\t');
     let aheadBy = null;
     let merged = false;
@@ -321,4 +329,66 @@ function remoteBranches(repo) {
   return { defaultBranch: def, branches, prsUnknown };
 }
 
-module.exports = { isGitRepo, localBranches, remoteBranches, tryRun, ghJSON, ghLines, toLines };
+// One branch, for the re-check immediately before a delete.
+//
+// Not `remoteBranches` filtered afterwards. That version lists every branch,
+// then walks every closed pull request against the default branch, and doing it
+// once per branch being deleted turns a twenty-branch cleanup into twenty full
+// scans and twenty paginations. The listing needs the whole picture; this does
+// not.
+//
+// Four calls, fixed, whatever the size of the repository. The merge evidence
+// comes from `commits/{sha}/pulls`, which asks the question directly: which
+// pull requests have this exact commit as their head. That is the same pair of
+// conditions the listing applies, merged and into the default branch, asked of
+// one commit instead of filtered out of all of them.
+function remoteBranch(repo, name) {
+  const meta = ghJSON(['api', `repos/${repo}`]);
+  if (!meta || !meta.default_branch) return { defaultBranch: null, branch: null, error: `cannot read repos/${repo}` };
+  const def = meta.default_branch;
+
+  const head = ghJSON(['api', `repos/${repo}/branches/${encodeURIComponent(name)}`,
+    '--jq', '{sha: .commit.sha, d: .commit.commit.committer.date}']);
+  // Gone since the listing, which is a reason not to delete rather than an
+  // error. verifyOne turns a null branch into "not here any more".
+  if (!head || !head.sha) return { defaultBranch: def, branch: null };
+
+  let aheadBy = null;
+  if (name === def) {
+    aheadBy = 0;
+  } else {
+    const cmp = ghJSON(['api', `repos/${repo}/compare/${encodeURIComponent(def)}...${encodeURIComponent(name)}`, '--jq', '{a: .ahead_by}']);
+    if (cmp && typeof cmp.a === 'number') aheadBy = cmp.a;
+  }
+
+  // Every pull request whose head is this exact commit. Unreadable stays
+  // unreadable: no evidence either way, so hasOpenPR fails safe into true and
+  // merged fails safe into false, the same directions the listing uses.
+  const pulls = ghJSON(['api', `repos/${repo}/commits/${head.sha}/pulls`,
+    '--jq', '[.[] | {n: .number, base: .base.ref, merged: (.merged_at != null), state: .state}]']);
+
+  let hasOpenPR = true;
+  let mergedNum;
+  if (Array.isArray(pulls)) {
+    hasOpenPR = pulls.some((p) => p.state === 'open');
+    const mergedIntoDefault = pulls.filter((p) => p.merged && p.base === def).map((p) => p.n);
+    if (mergedIntoDefault.length) mergedNum = Math.min(...mergedIntoDefault);
+  }
+
+  return {
+    defaultBranch: def,
+    branch: {
+      name,
+      lastCommitDate: head.d || null,
+      aheadBy,
+      merged: mergedNum !== undefined,
+      mergedVia: mergedNum === undefined ? null : `merged in #${mergedNum}`,
+      isDefault: name === def,
+      isCurrent: false,
+      hasOpenPR,
+      remote: true,
+    },
+  };
+}
+
+module.exports = { isGitRepo, localBranches, remoteBranches, remoteBranch, tryRun, ghJSON, ghLines, toLines };

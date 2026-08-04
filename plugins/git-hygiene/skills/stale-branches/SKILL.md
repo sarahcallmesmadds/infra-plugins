@@ -112,9 +112,11 @@ Do not compose your own re-check. An ancestry count is not the question any more
 For each branch, one at a time, never batched:
 
 ```bash
-node scripts/cli.js --verify {name}              # a local checkout
-node scripts/cli.js --repo {owner/name} --verify {name}    # on GitHub
+node "${CLAUDE_PLUGIN_ROOT}/scripts/cli.js" --verify {name}
+node "${CLAUDE_PLUGIN_ROOT}/scripts/cli.js" --repo {owner/name} --verify {name}
 ```
+
+The full `${CLAUDE_PLUGIN_ROOT}` form, as everywhere else in this skill. This command runs in the user's own repository, which has no `scripts/` directory of ours, so a relative path exits with a module error rather than with 0 or 3 and the branching below has nothing to match.
 
 **Exit 0** means still safe. It prints the reason on the first line and the exact delete command on the second. Run that command as printed.
 

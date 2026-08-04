@@ -607,6 +607,57 @@ check('verify never composes a force delete, whatever the evidence', () => {
     'cli.js must not build a -D command either, or the guard just moved file');
 });
 
+// The skill's commands run in the user's repository, which has no scripts/
+// directory of ours. A relative path exits with a module error, which is
+// neither 0 nor 3, so the documented branching has nothing to match and an
+// approved cleanup silently deletes nothing.
+check('every command in the skill names the plugin root, not a relative path', () => {
+  const skill = fs.readFileSync(path.join(ROOT, 'skills', 'stale-branches', 'SKILL.md'), 'utf8');
+  const calls = skill.split('\n').filter((l) => /^\s*node\s/.test(l));
+  assert.ok(calls.length > 0, 'expected some node invocations to check');
+  for (const line of calls) {
+    assert.ok(/CLAUDE_PLUGIN_ROOT/.test(line),
+      `a relative path cannot resolve from the user's own repository:\n  ${line.trim()}`);
+  }
+});
+
+// Re-checking twenty branches must not rescan the repository twenty times.
+check('the single-branch re-check collects one branch, not all of them', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'only-'));
+  const g = (...a) => execFileSync('git', ['-C', dir, ...a], { encoding: 'utf8', stdio: 'pipe' });
+  execFileSync('git', ['init', '-q', '-b', 'main', dir], { stdio: 'pipe' });
+  g('config', 'user.email', 'test@example.com');
+  g('config', 'user.name', 'test');
+  fs.writeFileSync(path.join(dir, 'f.txt'), 'base\n');
+  g('add', '.'); g('commit', '-qm', 'base');
+  for (const b of ['one', 'two', 'three', 'four']) g('branch', b, 'main');
+
+  const all = collect.localBranches(dir);
+  assert.ok(all.branches.length >= 5, 'the full listing should still see every branch');
+
+  const one = collect.localBranches(dir, { only: 'three' });
+  assert.strictEqual(one.branches.length, 1, 'the re-check should collect only the branch it was asked about');
+  assert.strictEqual(one.branches[0].name, 'three');
+
+  // Same facts, not a cheaper approximation of them.
+  const fromAll = all.branches.find((b) => b.name === 'three');
+  assert.strictEqual(one.branches[0].aheadBy, fromAll.aheadBy);
+  assert.strictEqual(one.branches[0].merged, fromAll.merged);
+
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+check('a remote re-check asks about one commit rather than paginating every closed pull request', () => {
+  assert.strictEqual(typeof collect.remoteBranch, 'function',
+    'a single-branch remote collector must exist, or --verify falls back to the full scan');
+  const src = fs.readFileSync(CLI, 'utf8');
+  assert.ok(/opts\.verify\s*\?\s*collect\.remoteBranch/.test(src),
+    '--verify must use the single-branch collector, not filter the full listing afterwards');
+  const collectSrc = fs.readFileSync(path.join(ROOT, 'scripts', 'collect.js'), 'utf8');
+  assert.ok(/commits\/\$\{head\.sha\}\/pulls/.test(collectSrc),
+    'merge evidence for one branch comes from the pull requests on its head commit');
+});
+
 // ------------------------------------------- what the remote path counts ----
 //
 // Both of these were live bugs in the first version of the squash-merge fix,

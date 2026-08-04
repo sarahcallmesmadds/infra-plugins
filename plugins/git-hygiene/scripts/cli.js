@@ -167,19 +167,25 @@ function main() {
     branches = snapshot.branches;
     where = snapshot.where || opts.input;
   } else if (opts.repo) {
-    const r = collect.remoteBranches(opts.repo);
+    // --verify asks about one branch, so it collects one branch. The full
+    // listing walks every closed pull request in the repository, and running
+    // that once per branch being deleted is the difference between four API
+    // calls and a full pagination per deletion.
+    const r = opts.verify
+      ? collect.remoteBranch(opts.repo, opts.verify)
+      : collect.remoteBranches(opts.repo);
     if (r.error || !r.defaultBranch) {
       process.stderr.write(`Could not read ${opts.repo} from GitHub. Is gh logged in, and does the repo exist?\n`);
       process.exit(2);
     }
-    branches = r.branches;
+    branches = opts.verify ? (r.branch ? [r.branch] : []) : r.branches;
     where = opts.repo;
   } else {
     if (!collect.isGitRepo(opts.cwd)) {
       process.stderr.write('Not inside a git repository. Pass --repo owner/name to check a repository on GitHub instead.\n');
       process.exit(2);
     }
-    const r = collect.localBranches(opts.cwd);
+    const r = collect.localBranches(opts.cwd, opts.verify ? { only: opts.verify } : undefined);
     if (!r.defaultBranch) {
       process.stderr.write('Could not work out the default branch, so nothing can be compared against it. Nothing was classified.\n');
       process.exit(2);
