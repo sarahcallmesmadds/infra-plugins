@@ -450,6 +450,79 @@ check('leaving the option off still changes nothing and succeeds', () => {
   assert.strictEqual(statusOnDisk(home, 'y4'), 'Open');
 });
 
+// --- a file that parses but holds no entry ---------------------------------
+//
+// `JSON.parse` accepts `null`, `3`, `"x"` and `[]`. None is an entry. Property
+// access on most yields undefined and passes quietly; on `null` it throws. So
+// the four characters `null` in one file used to take down whatever was reading
+// the directory. Review found it in `lint`; it was in four places.
+
+function junk(home, name, text, list = 'queue') {
+  fs.writeFileSync(path.join(home, '.claude', 'build-loop', list, `${name}.json`), text);
+}
+
+check('lint survives a file holding null and still reports the real fault', () => {
+  // The reported case. It aborted the scan, so entries after the bad file were
+  // never examined, and it exited on the generic failure code rather than the
+  // deliberate 3, which is what tells a caller a finding from a crash.
+  const home = sandbox();
+  junk(home, 'bad', 'null');
+  junk(home, 'ok', JSON.stringify({ id: 'ok', status: 'Wontfix' }));
+  const r = run(home, ['lint']);
+  assert.strictEqual(r.code, 3, `expected the finding code, got ${r.code}: ${r.out}`);
+  assert.ok(/off-enum {2}ok\.json/.test(r.out), `the real fault was not reported: ${r.out}`);
+  assert.ok(/unreadable 1 file/.test(r.out), `the junk file was not counted: ${r.out}`);
+  assert.ok(!/TypeError/.test(r.out), `it crashed: ${r.out}`);
+});
+
+check('lint treats every non-entry shape as unreadable', () => {
+  const home = sandbox();
+  const shapes = { a: 'null', b: '[]', c: '3', d: '"x"', e: 'true' };
+  for (const [name, text] of Object.entries(shapes)) junk(home, name, text);
+  const r = run(home, ['lint']);
+  assert.strictEqual(r.code, 0, `nothing here is a status fault, so exit 0 was expected: ${r.out}`);
+  assert.ok(
+    /unreadable 5 file/.test(r.out),
+    `expected all five counted as unreadable: ${r.out}`
+  );
+});
+
+check('one corrupt neighbour does not block every new entry', () => {
+  // The worst of the four and not the one reported. create's duplicate scan
+  // reads every neighbour, and it crashed on this one, so a single bad file
+  // anywhere in the directory stopped all writes. The loop already had a
+  // `catch { continue }` meant to tolerate a bad neighbour; the fault was
+  // after the parse rather than in it.
+  const home = sandbox();
+  junk(home, 'bad', 'null');
+  const file = path.join(home, 'n.json');
+  fs.writeFileSync(file, JSON.stringify({ id: 'fresh', status: 'Open', dedup_key: 'a::b', notes: [] }));
+  const r = run(home, ['create', file]);
+  assert.strictEqual(r.code, 0, `a corrupt neighbour blocked an unrelated create: ${r.out}`);
+});
+
+check('update and show refuse a non-entry rather than crashing', () => {
+  const home = sandbox();
+  junk(home, 'bad', 'null');
+  for (const args of [['update', 'bad', '--status', 'Open'], ['show', 'bad']]) {
+    const r = run(home, args);
+    assert.strictEqual(r.code, 1, `${args[0]} gave ${r.code}: ${r.out}`);
+    assert.ok(/does not hold an entry/.test(r.out), `unclear message from ${args[0]}: ${r.out}`);
+    assert.ok(/it holds null/.test(r.out), `the message does not say what it found: ${r.out}`);
+    assert.ok(!/TypeError/.test(r.out), `${args[0]} crashed: ${r.out}`);
+  }
+});
+
+check('create refuses a composed file that parses to a non-entry', () => {
+  const home = sandbox();
+  const file = path.join(home, 'nul.json');
+  fs.writeFileSync(file, 'null');
+  const r = run(home, ['create', file]);
+  assert.strictEqual(r.code, 1, `expected a refusal, got ${r.code}: ${r.out}`);
+  assert.ok(/does not hold an entry/.test(r.out), `unclear message: ${r.out}`);
+  assert.ok(!/TypeError/.test(r.out), `it crashed: ${r.out}`);
+});
+
 // --- the retired value -----------------------------------------------------
 
 check('the retired status is refused on write but not called invalid', () => {

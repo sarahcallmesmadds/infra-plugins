@@ -101,6 +101,28 @@ function loosely(value) {
   return String(value).toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
+// `JSON.parse` accepts `null`, `3`, `"x"` and `[]` as valid JSON, and none of
+// them is an entry. Property access on most of them yields undefined and passes
+// quietly, but on `null` it throws, so a single file containing the four
+// characters `null` used to take down whatever was reading the directory.
+//
+// Review found it in `lint`. It was in four places: `lint` aborted its scan and
+// exited on the generic failure code rather than its deliberate 3, `update`
+// crashed reading `.notes`, `create` crashed reading `.id`, and worst of the
+// four, `create`'s duplicate scan crashed on a *neighbour*, so one corrupt file
+// anywhere in the directory blocked every new entry. That loop already had a
+// `catch { continue }` written to tolerate a bad neighbour, and it did not,
+// because the fault is after the parse rather than in it.
+function describe(value) {
+  if (value === null) return 'null';
+  if (Array.isArray(value)) return 'an array';
+  return `a ${typeof value}`;
+}
+
+function isEntry(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
 // A status as it should appear in a message. JSON.stringify(undefined) is
 // undefined rather than a string, so a missing status used to print as a bare
 // word that read like a value somebody had typed.
@@ -429,11 +451,16 @@ function readEntry(id, dir = QUEUE) {
   } catch {
     fail(`queue.js: no entry at ${p}`);
   }
+  let parsed;
   try {
-    return JSON.parse(raw);
+    parsed = JSON.parse(raw);
   } catch (error) {
     fail(`queue.js: ${p} is not valid JSON and was left alone: ${error.message}`);
   }
+  if (!isEntry(parsed)) {
+    fail(`queue.js: ${p} parses but does not hold an entry, it holds ${describe(parsed)}. It was left alone.`);
+  }
+  return parsed;
 }
 
 // Writes through a tempfile in the same directory, so the move is atomic and a
@@ -644,6 +671,9 @@ function cmdCreate(args) {
   } catch (error) {
     fail(`queue.js: ${from} is not valid JSON: ${error.message}. Nothing was written.`);
   }
+  if (!isEntry(entry)) {
+    fail(`queue.js: ${from} parses but does not hold an entry, it holds ${describe(entry)}. Nothing was written.`);
+  }
   if (!entry.id) fail('queue.js: the entry has no id, so there is nowhere to write it.');
   checkId(entry.id);
   // Kept as well as the gate in writeEntry, and the only call site that is.
@@ -675,6 +705,9 @@ function cmdCreate(args) {
         } catch {
           continue; // A malformed neighbour is list-bugs' problem, not this one.
         }
+        // And one that parses to something other than an entry is the same
+        // kind of neighbour. Skipping is what the catch above already intends.
+        if (!isEntry(other)) continue;
         if (other.dedup_key !== entry.dedup_key) continue;
         const at = Date.parse(other.created_at);
         // An unparseable date counts as a match. Treating it as "long ago"
@@ -783,6 +816,13 @@ function cmdLint(args) {
     try {
       entry = JSON.parse(fs.readFileSync(path.join(dir, file), 'utf8'));
     } catch {
+      unreadable += 1;
+      continue;
+    }
+    // Counted with the unreadable rather than crashing the scan. The command
+    // promises it does not diagnose an unreadable file as a status fault, and
+    // a file holding `null` is unreadable in every sense that matters here.
+    if (!isEntry(entry)) {
       unreadable += 1;
       continue;
     }
