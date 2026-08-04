@@ -130,15 +130,28 @@ function checkStatus(value, listName) {
       + `Nothing was written.\n  Valid: ${statusList(spec.write)}`
     );
   }
-  if (spec.retired.includes(value)) {
+  // Loose match, so this covers the exact retired value and any misspelling of
+  // it in one branch. It used to be an exact check, with the retired values also
+  // sitting in the near-miss search below, so `Fix Attempted / Unresolved` was
+  // told "Did you mean fix attempted / unresolved?" and refused again when the
+  // person did exactly that. A suggestion that cannot be accepted is worse than
+  // none: it costs a second attempt to learn nothing.
+  const nearRetired = spec.retired.find((s) => loosely(s) === loosely(value));
+  if (nearRetired) {
+    const resembles = value === nearRetired
+      ? `${JSON.stringify(value)} is retired and must not be written.`
+      : `${JSON.stringify(value)} matches the retired status ${JSON.stringify(nearRetired)}, which must not be written.`;
     fail(
-      `queue.js: ${JSON.stringify(value)} is retired and must not be written. `
+      `queue.js: ${resembles} `
       + `Entries written before it was retired still carry it and are still read. `
+      + `A rejected diff or a failed write leaves the entry "Open" with the attempt recorded in notes. `
       + `Nothing was written.\n  Valid: ${statusList(spec.write)}`
     );
   }
 
-  const near = [...spec.write, ...spec.retired].find((s) => loosely(s) === loosely(value));
+  // Suggestions come from the writable values only. Anything else sends the
+  // reader somewhere that refuses them.
+  const near = spec.write.find((s) => loosely(s) === loosely(value));
   const hint = near ? `\n  Did you mean ${JSON.stringify(near)}?` : '';
   fail(
     `queue.js: ${JSON.stringify(value)} is not a status for the ${list} list. `
@@ -723,7 +736,10 @@ function cmdLint(args) {
       retired.push([file, status]);
       continue;
     }
-    const near = [...spec.write, ...spec.retired].find((s) => loosely(s) === loosely(status));
+    // Writable values only, for the same reason as checkStatus: the line below
+    // ends with an update command, and suggesting a value that command refuses
+    // makes the report a dead end.
+    const near = spec.write.find((s) => loosely(s) === loosely(status));
     bad.push([file, status, near]);
   }
 

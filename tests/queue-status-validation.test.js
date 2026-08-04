@@ -308,6 +308,57 @@ check('the retired status is refused on write but not called invalid', () => {
   assert.ok(!/Did you mean/.test(r.out), 'a retired value should not be suggested as a correction');
 });
 
+check('a suggestion, when followed, is accepted', () => {
+  // The property worth pinning, rather than the wording. Advice that fails when
+  // taken costs a second attempt and teaches nothing. Every suggested value is
+  // applied here and has to work.
+  const home = sandbox();
+  seed(home, 'q1');
+  const suggested = /Did you mean "((?:[^"\\]|\\.)*)"\?/;
+  const wrong = ['Wontfix', 'wont fix', 'RESOLVED', 'in progress', 'openn', 'Fix Applied, Watching'];
+  let seen = 0;
+  for (const value of wrong) {
+    const r = run(home, ['update', 'q1', '--status', value]);
+    assert.notStrictEqual(r.code, 0, `${value} was accepted`);
+    const match = r.out.match(suggested);
+    if (!match) continue;
+    seen += 1;
+    const applied = run(home, ['update', 'q1', '--status', match[1].replace(/\\"/g, '"')]);
+    assert.strictEqual(
+      applied.code, 0,
+      `refusing ${JSON.stringify(value)} suggested ${JSON.stringify(match[1])}, which is itself refused: ${applied.out}`
+    );
+  }
+  assert.ok(seen >= 3, `expected several suggestions to test, saw ${seen}`);
+});
+
+check('a misspelt retired status is not offered the retired value', () => {
+  // It used to be. The near-miss search included the retired values, so this
+  // said `Did you mean "fix attempted / unresolved"?` and then refused exactly
+  // that when the person typed it.
+  const home = sandbox();
+  seed(home, 'q2');
+  for (const value of ['fix attempted/unresolved', 'Fix Attempted / Unresolved']) {
+    const r = run(home, ['update', 'q2', '--status', value]);
+    assert.notStrictEqual(r.code, 0, `${value} was accepted`);
+    assert.ok(!/Did you mean/.test(r.out), `sent to a dead end for ${value}: ${r.out}`);
+    assert.ok(/retired/.test(r.out), `did not explain it is retired for ${value}: ${r.out}`);
+    assert.ok(/leaves the entry "Open"/.test(r.out), `gave no way forward for ${value}: ${r.out}`);
+  }
+});
+
+check('lint never suggests a value its own fix command would refuse', () => {
+  const home = sandbox();
+  plant(home, 'q3', 'Fix Attempted / Unresolved');
+  const r = run(home, ['lint']);
+  assert.strictEqual(r.code, 3, `expected an off-enum finding, got ${r.code}: ${r.out}`);
+  const match = r.out.match(/did you mean "((?:[^"\\]|\\.)*)"\?/);
+  if (match) {
+    const applied = run(home, ['update', 'q3', '--status', match[1]]);
+    assert.strictEqual(applied.code, 0, `lint suggested ${match[1]}, which update refuses: ${applied.out}`);
+  }
+});
+
 check('lint reports a retired status without failing the run', () => {
   // SCHEMA.md says readers still accept it, so calling it a fault would tell
   // somebody their correct history is corrupt.
