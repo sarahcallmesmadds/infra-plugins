@@ -133,7 +133,7 @@ function listAt(lines, from, inExample = null) {
     const HEADER_RULE = /^\s*\|[\s|:-]*-[\s|:-]*\|?\s*$/;
     const hasHeader = rows.length > 1 && HEADER_RULE.test(rows[1]);
     const count = hasHeader ? rows.length - 2 : rows.length;
-    return count > 0 ? { kind: 'table', count } : null;
+    return count > 0 ? { kind: 'table', count, to: i - 1 } : null;
   }
 
   if (/^\s*([-*]|\d+\.)\s/.test(lines[i])) {
@@ -171,7 +171,7 @@ function listAt(lines, from, inExample = null) {
       if (here === indent && /^\s*([-*]|\d+\.)\s/.test(line)) items++;
       else if (here === indent) break;
     }
-    return items > 1 ? { kind: 'list', count: items } : null;
+    return items > 1 ? { kind: 'list', count: items, to: i - 1 } : null;
   }
 
   return null;
@@ -234,8 +234,22 @@ function countIn(line) {
 // The cost is a stale count in a two-count sentence going unnoticed. That is
 // the right way round: this fails a build, and a guard that fails on correct
 // prose gets switched off, after which it catches nothing at all.
+// A count that points backwards is not announcing what comes next.
+//
+// "that build path and those five steps, which is what the handout describes"
+// sits above a four-row table of files and was reported as claiming five of
+// them. "those" refers to something already named; a sentence introducing the
+// list below it does not use it. Found by sweeping her markdown, not by a test.
+//
+// Narrow on purpose. "these five steps:" genuinely can introduce a list, so it
+// is not here, and the general problem of deciding which list a sentence means
+// is the one every previous round of this file lost.
+const REFERS_BACK = /\b(those|the same)\s+$/i;
+
 function announcedCount(line) {
-  const candidates = countIn(line).filter((c) => LIST_NOUNS.has(c.noun));
+  const candidates = countIn(line)
+    .filter((c) => LIST_NOUNS.has(c.noun))
+    .filter((c) => !REFERS_BACK.test(line.slice(0, line.indexOf(c.text))));
   return candidates.length === 1 ? candidates[0] : null;
 }
 
@@ -289,6 +303,11 @@ function staleCounts(text) {
       kind: list.kind,
       count: list.count,
       ok: list.count === stated.value,
+      // The whole span this finding is about, sentence through last row, so a
+      // caller can ask whether an edit touched any of it. 1-indexed, matching
+      // `line`.
+      from: i + 1,
+      to: list.to + 1,
     });
   }
   return problems;
@@ -386,7 +405,20 @@ function replacedFragments(before, after) {
     from -= grown[0].length;
   }
 
-  return [before.slice(from, to)];
+  // Drop punctuation that only ends the sentence.
+  //
+  // The word-growing class has to hold a dot, or "queue.js" is cut at the dot
+  // and searched for as "queue". The cost is that a name at the end of a
+  // sentence takes the full stop with it, so renaming "queue.js" in
+  // "Renamed to queue.js." goes looking for "queue.js." and misses every
+  // other mention, which have no full stop after them. That is the most
+  // ordinary shape there is and it made the check silent on it.
+  //
+  // Only trailing, and never all of it: a fragment that is nothing but
+  // punctuation is left as it was rather than emptied.
+  const fragment = before.slice(from, to);
+  const trimmed = fragment.replace(/[.,;:!?]+$/, '');
+  return [trimmed.trim() ? trimmed : fragment];
 }
 
 // The fragment as a whole token, rather than as any run of characters.

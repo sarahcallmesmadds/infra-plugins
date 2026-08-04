@@ -53,6 +53,43 @@ function where(lines) {
   return `${lines.length} lines, starting ${shown}`;
 }
 
+// The lines this edit landed on, or null when that cannot be pinned down.
+//
+// Null means check the whole file, which is the safe answer: reporting a
+// finding twice is a nuisance, and missing one is the thing this exists to
+// prevent. So every uncertain case fails towards reporting.
+//
+// A Write has no range at all. It replaces the file, so all of it is new.
+function changedRange(content, input) {
+  if (input.replace_all) return null;            // many regions, not one
+  const needle = input.new_string;
+  if (typeof needle !== 'string' || needle === '') return null;
+
+  const first = content.indexOf(needle);
+  if (first === -1) return null;                 // not on disk as written
+  if (content.indexOf(needle, first + 1) !== -1) return null;  // ambiguous
+
+  const start = content.slice(0, first).split('\n').length;
+  return { start, end: start + needle.split('\n').length - 1 };
+}
+
+// Would this edit have had anything to do with that finding?
+//
+// Without this, the two whole-file checks re-report every pre-existing
+// contradiction on every subsequent edit to the file. Measured against her own
+// history: MEMORY.md was written 28 times and states a rule it breaks on 68
+// lines, so the same advice would have gone into the conversation 28 times,
+// costing tokens each time and being ignored by the second.
+//
+// A span rather than a line, because the count check is about a sentence and
+// the list under it, and adding a row to that list is exactly how the sentence
+// goes stale. Scoping to the edited line alone would miss the case the check
+// was written for.
+function touches(range, from, to) {
+  if (!range) return true;
+  return !(to < range.start || from > range.end);
+}
+
 function ignored(filePath) {
   if (IGNORED_NAMES.has(path.basename(filePath))) return true;
   // Not ours, and not the author's problem either.
@@ -93,8 +130,12 @@ readEvent((event) => {
 
   const issues = [];
 
+  // A Write makes the whole file new, so there is nothing to narrow to.
+  const range = event.tool_name === 'Edit' ? changedRange(content, input) : null;
+
   for (const problem of staleCounts(content)) {
     if (problem.ok) continue;
+    if (!touches(range, problem.from, problem.to)) continue;
     issues.push(
       `Line ${problem.line} says "${problem.stated}" directly above a `
       + `${problem.kind} of ${problem.count}. Correct the number, or drop it: `
@@ -114,9 +155,17 @@ readEvent((event) => {
   }
 
   for (const broken of brokenOwnRule(content)) {
+    // A rule the edit itself introduced is reported in full, however far the
+    // breaches are from it. Adding "never use em dashes" to a file already
+    // full of them is a contradiction the edit created, and every one of them
+    // is news.
+    const ruleIsNew = touches(range, broken.statedAt, broken.statedAt);
+    const lines = ruleIsNew ? broken.lines : broken.lines.filter((n) => touches(range, n, n));
+    if (!lines.length) continue;
+
     issues.push(
       `Line ${broken.statedAt} states a rule against ${broken.what}, and there `
-      + `is one on ${where(broken.lines)}. Fix the text, or drop the rule if it no longer holds.`
+      + `is one on ${where(lines)}. Fix the text, or drop the rule if it no longer holds.`
     );
   }
 

@@ -331,12 +331,45 @@ check('a fraction is not a count', () => {
   assert.deepStrictEqual(staleCounts(text).filter((c) => !c.ok), [], 'a fraction was read as a count');
 });
 
+check('a count that points backwards is not announcing the list', () => {
+  // "that build path and those five steps, which is what the handout
+  // describes" sits above a four-row table of files, and was reported as
+  // claiming five of them. "those" refers to something already named.
+  const back = ['that build path and those five steps, which the handout describes',
+    '', '| a | b |', '|---|---|', '| 1 | 2 |', '| 3 | 4 |', '| 5 | 6 |', '| 7 | 8 |'].join('\n');
+  assert.deepStrictEqual(staleCounts(back).filter((c) => !c.ok), [], '"those five steps" was read as announcing the table');
+
+  // Narrow on purpose. "these" can genuinely introduce a list, so it is not
+  // covered, and an ordinary announcement is untouched.
+  const ordinary = ['It runs five steps:', '', '- a', '- b', '- c'].join('\n');
+  assert.strictEqual(staleCounts(ordinary).filter((c) => !c.ok).length, 1, 'the guard silenced an ordinary announcement');
+  const these = ['These five steps matter:', '', '- a', '- b', '- c'].join('\n');
+  assert.strictEqual(staleCounts(these).filter((c) => !c.ok).length, 1, '"these" was swept up with "those"');
+});
+
 check('an estimate is not a count', () => {
   for (const hedge of ['up to', 'about', 'at least', 'roughly', 'around']) {
     const text = [`It shows ${hedge} 8 options:`, '', '- a', '- b'].join('\n');
     assert.deepStrictEqual(staleCounts(text).filter((c) => !c.ok), [],
       `"${hedge} 8 options" was treated as an exact claim`);
   }
+});
+
+check('a name at the end of a sentence does not take the full stop with it', () => {
+  // The word-growing class holds a dot, or "queue.js" is cut at the dot and
+  // searched for as "queue". That made a name at the end of a sentence absorb
+  // the full stop, so renaming it went looking for "queue.js." and missed
+  // every other mention, none of which have a full stop after them. The most
+  // ordinary shape there is, and the check was silent on it.
+  const [fragment] = replacedFragments('Renamed to queue.js.', 'Renamed to store.js.');
+  assert.strictEqual(fragment.trim(), 'queue.js', `fragment kept its sentence punctuation: ${JSON.stringify(fragment)}`);
+
+  const hits = survivingText('See queue.js for the rest.\n', 'Renamed to queue.js.', 'Renamed to store.js.');
+  assert.strictEqual(hits.length, 1, 'a leftover mention without a full stop after it was missed');
+
+  // The dot inside the name still has to survive, or this searches for
+  // "queue" and matches "queue-runner" and "queuing".
+  assert.ok(fragment.includes('.js'), 'the dot inside the name was trimmed too');
 });
 
 check('a longer token that merely starts the same way is not a leftover', () => {
@@ -376,6 +409,105 @@ check('a file with hundreds of breaches does not produce hundreds of numbers', (
   assert.ok(advice, 'a file breaking its own rule 200 times was not reported');
   assert.match(advice, /200 lines, starting/);
   assert.ok(advice.length < 600, `the advice ran to ${advice.length} characters`);
+});
+
+// --- only what this edit could have caused ----------------------------------
+
+check('an edit far from an existing contradiction says nothing about it', () => {
+  // Without this, the two whole-file checks re-report every pre-existing
+  // finding on every later edit to the file. MEMORY.md in her own history was
+  // written 28 times while stating a rule it breaks on 68 lines, so the same
+  // advice would have gone into the conversation 28 times.
+  const before = [
+    'It runs two checks:',
+    '',
+    '- a',
+    '- b',
+    '- c',
+    '',
+    'A paragraph far below, which is the one being edited.',
+    '',
+  ].join('\n');
+  const file = write('faraway.md', before.replace('A paragraph far below', 'A paragraph well below'));
+  assert.strictEqual(run(editEvent(file, 'A paragraph far below', 'A paragraph well below')).stdout, '',
+    'an untouched contradiction elsewhere in the file was reported again');
+});
+
+check('an edit that creates the contradiction still reports it', () => {
+  // The case the whole check exists for: a row is added to the list and the
+  // sentence above it is not updated. The sentence is outside the edited text,
+  // so a narrower rule keyed on the changed line alone would miss it. The span
+  // runs from the sentence to the end of the list, which is why it does not.
+  const file = write('grew.md', ['It runs two checks:', '', '- a', '- b', '- c', ''].join('\n'));
+  const advice = adviceFrom(run(editEvent(file, '- b', '- b\n- c')));
+  assert.ok(advice, 'adding a row to the list did not re-check the count above it');
+  assert.match(advice, /two checks/);
+});
+
+check('an edit that introduces a breach of a stated rule reports it', () => {
+  const file = write('newbreach.md', ['Never use em dashes.', '', 'A line — with one.', ''].join('\n'));
+  const advice = adviceFrom(run(editEvent(file, 'A line.', 'A line — with one.')));
+  assert.ok(advice, 'an em dash added by this very edit was not reported');
+  assert.match(advice, /line 3/);
+});
+
+check('an edit that introduces the rule reports every breach, however far', () => {
+  // Adding "never use em dashes" to a file already full of them is a
+  // contradiction this edit created, so all of it is news even though the
+  // breaches are nowhere near the change.
+  const lines = ['# Doc', ''];
+  for (let i = 0; i < 5; i++) lines.push(`Line ${i} — with one.`);
+  lines.push('', 'Never use em dashes.', '');
+  const file = write('newrule.md', lines.join('\n'));
+
+  const advice = adviceFrom(run(editEvent(file, 'Never use dashes.', 'Never use em dashes.')));
+  assert.ok(advice, 'a rule added to a file that already breaks it was not reported');
+  assert.match(advice, /lines 3, 4, 5, 6, 7/);
+});
+
+check('an edit that cannot be located checks the whole file', () => {
+  // Every uncertain case fails towards reporting, because a repeated finding
+  // is a nuisance and a missed one is the thing this exists to prevent.
+  const file = write('ambiguous.md', ['It runs two checks:', '', '- a', '- b', '- c', '', 'x', '', 'x', ''].join('\n'));
+
+  // replace_all: many regions, not one.
+  const all = editEvent(file, 'x', 'x');
+  all.tool_input.replace_all = true;
+  assert.ok(adviceFrom(run(all)), 'a replace_all edit did not fall back to the whole file');
+
+  // new_string appearing twice: which one landed is unknowable.
+  assert.ok(adviceFrom(run(editEvent(file, 'y', 'x'))), 'an ambiguous edit did not fall back to the whole file');
+});
+
+check('a Write is always checked in full', () => {
+  const file = write('written.md', ['It runs two checks:', '', '- a', '- b', '- c', ''].join('\n'));
+  assert.ok(adviceFrom(run(writeEvent(file))), 'a Write stopped being checked in full');
+});
+
+check('surviving text is searched inside code examples, unlike the other two', () => {
+  // The asymmetry is deliberate and was not obvious, so it is pinned here.
+  //
+  // The other two checks skip fenced blocks because a fence is where you
+  // demonstrate the fault: an example of a stale count, or of the forbidden
+  // character. A fence is not demonstrating anything for this check, it is
+  // using the value. Renaming queue.js to store.js and leaving `node
+  // scripts/queue.js` in a code block is the most ordinary version of exactly
+  // the fault this looks for, and skipping fences would silence it.
+  //
+  // Measured: of the 11 real firings across 790 edits in her transcripts, none
+  // were inside a fence, so this has cost nothing so far either way.
+  const content = ['# Doc', '', 'Renamed to store.js.', '', '```', 'node scripts/queue.js lint', '```', ''].join('\n');
+  const hits = survivingText(content, 'Renamed to queue.js.', 'Renamed to store.js.');
+  assert.strictEqual(hits.length, 1, 'a stale reference inside a code block was skipped');
+  assert.deepStrictEqual(hits[0].lines, [6]);
+
+  // A backtick is part of the token, so a fragment taken from `queue.js` in
+  // prose does not match a bare queue.js in a code block. That is the same
+  // rule that keeps `x` and x apart everywhere else here, and it costs this
+  // case. Recorded rather than argued with: widening it is a change to make
+  // against a real example, not a hypothetical one.
+  const quoted = survivingText(content, 'Renamed to `queue.js`.', 'Renamed to `store.js`.');
+  assert.strictEqual(quoted.length, 0, 'the backtick rule has changed, which may now be the better behaviour');
 });
 
 // --- false positives on real work -------------------------------------------
