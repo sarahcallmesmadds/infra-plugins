@@ -658,6 +658,72 @@ check('a remote re-check asks about one commit rather than paginating every clos
     'merge evidence for one branch comes from the pull requests on its head commit');
 });
 
+// `merge-tree --write-tree` needs git 2.38. On older git it exits non-zero,
+// tryRun returns null, and every squash-merged branch silently stays in Keep,
+// which is the exact problem this work exists to fix, reported as a clean run.
+check('an old git is reported rather than silently doing nothing', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'scripts', 'collect.js'), 'utf8');
+  assert.ok(/supportsWriteTree/.test(src),
+    'the comparison must be probed, not assumed, or an old git looks like a clean result');
+  assert.ok(/mergeCheckUnavailable/.test(src),
+    'and the answer has to reach the caller, or nothing can say the check was skipped');
+
+  const cliSrc = fs.readFileSync(CLI, 'utf8');
+  assert.ok(/mergeCheckUnavailable/.test(cliSrc),
+    'the command must say the comparison was unavailable rather than print a shorter list');
+  assert.ok(/2\.38/.test(cliSrc),
+    'and name the version, so the reader can tell whether it applies to them');
+});
+
+// The probe itself, driven for real. Passes on any git; on 2.38 and newer it
+// also proves the probe does not report a capable git as incapable.
+check('the write-tree probe agrees with what this git can actually do', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'probe-'));
+  const g = (...a) => execFileSync('git', ['-C', dir, ...a], { encoding: 'utf8', stdio: 'pipe' });
+  execFileSync('git', ['init', '-q', '-b', 'main', dir], { stdio: 'pipe' });
+  g('config', 'user.email', 'test@example.com');
+  g('config', 'user.name', 'test');
+  fs.writeFileSync(path.join(dir, 'f.txt'), 'base\n');
+  g('add', '.'); g('commit', '-qm', 'base');
+
+  let real = true;
+  try { g('merge-tree', '--write-tree', 'HEAD', 'HEAD'); } catch (_) { real = false; }
+
+  const r = collect.localBranches(dir);
+  assert.strictEqual(r.mergeCheckUnavailable, !real,
+    'the reported capability must match what git actually does here');
+
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// "Gone" and "could not look" are different facts and only one of them is
+// about the branch. Telling someone mid-cleanup that a branch vanished invites
+// them to assume the work went with it.
+check('a lookup that failed is not reported as a branch that vanished', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'scripts', 'collect.js'), 'utf8');
+  assert.ok(/unreadable/.test(src), 'an unreadable listing must be distinguishable from an empty one');
+  const cliSrc = fs.readFileSync(CLI, 'utf8');
+  assert.ok(/lookup && lookup\.unreadable/.test(cliSrc),
+    'verify must branch on it, or every failure reads as "not in this repository any more"');
+  assert.ok(/nothing is known either way/.test(cliSrc),
+    'and say plainly that nothing was learned');
+});
+
+// The force group is the one running without git's own reachability check, and
+// the user's approval covers the group rather than each branch, so the verdict
+// is arbitrarily old by the time -D runs.
+check('the force path re-checks each branch immediately before deleting it', () => {
+  const skill = fs.readFileSync(path.join(ROOT, 'skills', 'stale-branches', 'SKILL.md'), 'utf8');
+  const section = skill.slice(skill.indexOf('needs-force:'));
+  const verifyAt = section.indexOf('--verify');
+  const forceAt = section.indexOf('branch -D');
+  assert.ok(verifyAt !== -1, 'the force path must re-verify');
+  assert.ok(verifyAt < forceAt,
+    'the re-check has to come before the force delete, not after the group was approved');
+  assert.ok(/one at a time/.test(section),
+    'and one branch at a time, so a change part way through cannot reach a branch already cleared');
+});
+
 // ------------------------------------------- what the remote path counts ----
 //
 // Both of these were live bugs in the first version of the squash-merge fix,

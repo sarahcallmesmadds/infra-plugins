@@ -132,7 +132,18 @@ Run the printed `-d` anyway and let it refuse. Then, **once for the whole group 
 
 > "{n} of these were squash merges, so `git branch -d` refused them. That is expected: it only checks whether the commits are reachable, and a squash merge rewrites them. Each one was verified another way, by {the reason `--verify` printed}. The work is in the default branch either way. Deleting them needs `git branch -D`. Say go and I will run it on those {n}."
 
-Only on an explicit yes, run `git branch -D {name}` for the branches in that group and no others. If they say no, leave them and say what is left.
+Only on an explicit yes. Then, **for each branch in that group, one at a time**, run `--verify` again immediately before its `-D`:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/cli.js" --verify {name}
+git branch -D {name}
+```
+
+Exit 0, delete it. Anything else, skip that branch, say what the check reported, and carry on with the rest.
+
+The second check is not paperwork. The user's approval covers the group, and answering it takes as long as it takes, so the verdict that earned each branch its place in that group is by then arbitrarily old. This is also the one group running without git's own reachability check, which everything else in the local flow leans on. A branch that gained commits while the question sat unanswered is exactly what `-D` destroys with no recovery.
+
+Ask once, check each. If they say no, leave them all and say what is left.
 
 Never present this as git disagreeing with the classification. It is not a disagreement. Git was asked a question it cannot answer for a squash-merged branch, and the tool already answered it a different way.
 

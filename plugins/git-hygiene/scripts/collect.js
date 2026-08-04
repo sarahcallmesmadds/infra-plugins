@@ -54,6 +54,19 @@ function isGitRepo(cwd) {
   return tryRun('git', ['-C', cwd, 'rev-parse', '--is-inside-work-tree']) === 'true';
 }
 
+// `merge-tree --write-tree` arrived in git 2.38. Older installations, Ubuntu
+// 22.04 LTS among them, exit non-zero on it, and `tryRun` turns that into null,
+// which is indistinguishable here from "this branch really does have work". The
+// result was that on those machines every squash-merged branch was reported as
+// unmerged with nothing saying the question had never been asked.
+//
+// Probed once per run rather than assumed. Merging HEAD into itself is trivial
+// and cheap on any version that has the form at all, so the probe answers
+// exactly the question, whether this git can be asked.
+function supportsWriteTree(cwd) {
+  return tryRun('git', ['-C', cwd, 'merge-tree', '--write-tree', 'HEAD', 'HEAD']) !== null;
+}
+
 // opts.deadline is an epoch milliseconds value. Counting commits costs one git
 // call per branch, so on a repository with hundreds of branches the total is
 // unbounded even when each individual call is fast. A caller that has to finish
@@ -90,7 +103,13 @@ function localBranches(cwd, opts) {
   }
   if (!def) return { defaultBranch: null, branches: [] };
 
+  // `unreadable` rather than an empty list, because a caller asking about one
+  // branch cannot otherwise tell "looked, and it is gone" from "could not
+  // look". Both mean do not delete; only one of them means the branch is gone,
+  // and saying the wrong one invites someone to assume the work was already
+  // tidied away.
   const listed = tryRun('git', ['-C', cwd, 'for-each-ref', '--format=%(refname:short)%09%(committerdate:iso-strict)', 'refs/heads/']);
+  if (listed === null) return { defaultBranch: def, branches: [], unreadable: true };
   if (!listed) return { defaultBranch: def, branches: [] };
 
   // The default branch's own tree, read once. A branch whose merge into `def`
@@ -119,6 +138,11 @@ function localBranches(cwd, opts) {
   const rows = listed.split('\n').filter(Boolean)
     .filter((line) => only === null || line.split('\t')[0] === only);
 
+  // Asked once, not once per branch. When this git cannot answer, the loop
+  // below does not pretend to have asked: `mergeCheckUnavailable` comes back
+  // and the caller says so.
+  const canCompare = supportsWriteTree(cwd);
+
   const branches = rows.map((line) => {
     const [name, date] = line.split('\t');
     let aheadBy = null;
@@ -143,7 +167,7 @@ function localBranches(cwd, opts) {
       // Only worth asking when ancestry already said "unmerged". A conflicting
       // merge exits non-zero, `tryRun` returns null, and the branch is kept.
       // Not knowing is never rounded up into permission to delete.
-      if (aheadBy !== null && aheadBy > 0) {
+      if (aheadBy !== null && aheadBy > 0 && canCompare) {
         for (const target of compareAgainst) {
           if (!target.tree) continue;
           const t = tryRun('git', ['-C', cwd, 'merge-tree', '--write-tree', target.ref, name]);
@@ -168,7 +192,7 @@ function localBranches(cwd, opts) {
     };
   });
 
-  return { defaultBranch: def, branches, truncated };
+  return { defaultBranch: def, branches, truncated, mergeCheckUnavailable: !canCompare };
 }
 
 // --------------------------------------------------------------- remote ----
@@ -198,6 +222,28 @@ function toLines(out) {
 
 function ghLines(args, opts) {
   return toLines(tryRun('gh', args, opts));
+}
+
+// The HTTP status, specifically, and not just success or failure.
+//
+// `gh api` exits non-zero on any 4xx, so `tryRun` collapses "this branch is
+// gone" and "your token expired" into the same null. Those are different facts
+// and only one of them is about the branch. execFileSync puts the response on
+// the error when the child exits non-zero, so the status is readable there;
+// `--include` is what puts the status line in it.
+//
+// Returns null when even that cannot be determined, which is its own answer:
+// nothing was learned.
+function ghStatus(args) {
+  const withHeaders = args.concat(['--silent', '--include']);
+  try {
+    run('gh', withHeaders);
+    return 200;
+  } catch (e) {
+    const text = `${(e && e.stdout) || ''}${(e && e.stderr) || ''}`;
+    const m = text.match(/HTTP\/[\d.]+\s+(\d{3})/);
+    return m ? parseInt(m[1], 10) : null;
+  }
 }
 
 function remoteBranches(repo) {
@@ -347,11 +393,17 @@ function remoteBranch(repo, name) {
   if (!meta || !meta.default_branch) return { defaultBranch: null, branch: null, error: `cannot read repos/${repo}` };
   const def = meta.default_branch;
 
+  // A 404 means gone since the listing. Expired auth, a rate limit, a network
+  // failure or unparseable output all also come back as null from `ghJSON`, and
+  // they are not the same thing. Both stop the delete; only one of them means
+  // the branch is gone, and telling someone mid-cleanup that a branch has
+  // vanished invites them to assume the work went with it.
   const head = ghJSON(['api', `repos/${repo}/branches/${encodeURIComponent(name)}`,
     '--jq', '{sha: .commit.sha, d: .commit.commit.committer.date}']);
-  // Gone since the listing, which is a reason not to delete rather than an
-  // error. verifyOne turns a null branch into "not here any more".
-  if (!head || !head.sha) return { defaultBranch: def, branch: null };
+  if (!head || !head.sha) {
+    const gone = ghStatus(['api', `repos/${repo}/branches/${encodeURIComponent(name)}`]) === 404;
+    return { defaultBranch: def, branch: null, missing: gone, unreadable: !gone };
+  }
 
   let aheadBy = null;
   if (name === def) {
@@ -364,14 +416,27 @@ function remoteBranch(repo, name) {
   // Every pull request whose head is this exact commit. Unreadable stays
   // unreadable: no evidence either way, so hasOpenPR fails safe into true and
   // merged fails safe into false, the same directions the listing uses.
-  const pulls = ghJSON(['api', `repos/${repo}/commits/${head.sha}/pulls`,
-    '--jq', '[.[] | {n: .number, base: .base.ref, merged: (.merged_at != null), state: .state}]']);
+  //
+  // `commits/{sha}/pulls` returns pull requests that CONTAIN the commit, not
+  // only those whose head it is, so `head.sha` is compared here explicitly. The
+  // looser reading would be safe on its own (a commit contained in a pull
+  // request merged into the default branch did reach the default branch) but it
+  // would let this clear a branch the listing kept, and the two disagreeing is
+  // the exact failure `--verify` exists to remove. Paginated for the same
+  // reason: an unpaginated page cap would truncate evidence and produce a
+  // different answer from the listing rather than the same one.
+  const pulls = ghLines(['api', `repos/${repo}/commits/${head.sha}/pulls`, '--paginate',
+    '--jq', '.[] | "\\(.number)\\t\\(.base.ref)\\t\\(.head.sha)\\t\\(.state)\\t\\(.merged_at != null)"']);
 
   let hasOpenPR = true;
   let mergedNum;
-  if (Array.isArray(pulls)) {
-    hasOpenPR = pulls.some((p) => p.state === 'open');
-    const mergedIntoDefault = pulls.filter((p) => p.merged && p.base === def).map((p) => p.n);
+  if (pulls !== null) {
+    const rows = pulls.map((l) => l.split('\t')).filter((r) => r.length === 5);
+    hasOpenPR = rows.some((r) => r[3] === 'open' && r[2] === head.sha);
+    const mergedIntoDefault = rows
+      .filter((r) => r[4] === 'true' && r[1] === def && r[2] === head.sha)
+      .map((r) => parseInt(r[0], 10))
+      .filter((n) => !Number.isNaN(n));
     if (mergedIntoDefault.length) mergedNum = Math.min(...mergedIntoDefault);
   }
 

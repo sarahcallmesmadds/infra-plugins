@@ -76,7 +76,7 @@ function age(b) {
   return `${b.ageDays} days old`;
 }
 
-function render(result, where) {
+function render(result, where, lookup) {
   const lines = [];
   const safe = result.safe.slice().sort((a, b) => (b.ageDays || 0) - (a.ageDays || 0));
   const keep = result.keep
@@ -101,6 +101,17 @@ function render(result, where) {
   }
   lines.push('');
 
+  // Said out loud rather than left to look like a clean result. Without the
+  // comparison, a squash-merged branch is indistinguishable here from one
+  // holding real work, and every one of them lands in Keep.
+  if (lookup && lookup.mergeCheckUnavailable) {
+    lines.push('');
+    lines.push('Note: this git cannot run `merge-tree --write-tree`, which needs 2.38 or newer,');
+    lines.push('so squash-merged branches could not be detected and are listed under Keep.');
+    lines.push('Nothing here is wrong, but the list may be longer than it needs to be.');
+    lines.push('`--repo owner/name` uses merged pull requests instead and does not need it.');
+  }
+
   if (keep.length) {
     lines.push(`Keep (${keep.length}) — deleting these would lose work:`);
     for (const b of keep) lines.push(`  ${b.name}  (${age(b)}) — ${reasonText(b)}`);
@@ -122,9 +133,19 @@ function render(result, where) {
 // Exit 3 means do not delete. A branch that has disappeared since the listing
 // lands here too, because something the caller cannot find is not something it
 // should be deleting.
-function verifyOne(result, name, repo) {
+function verifyOne(result, name, repo, lookup) {
   const b = result.all.find((x) => x.name === name);
   if (!b) {
+    // "Gone" and "could not look" both stop the delete, and only one of them
+    // is a fact about the branch. Reporting the wrong one during a cleanup
+    // reads as "already tidied", which is how someone stops looking for work
+    // that is still there.
+    if (lookup && lookup.unreadable) {
+      process.stderr.write(`Could not check ${name}, so it was not deleted. `
+        + 'This is not the same as the branch being gone: nothing could be read, '
+        + 'so nothing is known either way.\n');
+      return 3;
+    }
     process.stderr.write(`${name} is not in this repository any more. Nothing to delete.\n`);
     return 3;
   }
@@ -161,6 +182,7 @@ function main() {
 
   let branches;
   let where;
+  let lookup = null;
 
   if (opts.input) {
     const snapshot = JSON.parse(fs.readFileSync(opts.input, 'utf8'));
@@ -179,6 +201,7 @@ function main() {
       process.exit(2);
     }
     branches = opts.verify ? (r.branch ? [r.branch] : []) : r.branches;
+    lookup = r;
     where = opts.repo;
   } else {
     if (!collect.isGitRepo(opts.cwd)) {
@@ -191,19 +214,20 @@ function main() {
       process.exit(2);
     }
     branches = r.branches;
+    lookup = r;
     where = opts.cwd;
   }
 
   const result = classify(branches, { staleAfterDays: opts.staleAfter }, now);
 
   if (opts.verify) {
-    process.exit(verifyOne(result, opts.verify, opts.repo));
+    process.exit(verifyOne(result, opts.verify, opts.repo, lookup));
   }
 
   if (opts.json) {
     process.stdout.write(JSON.stringify({ where, safe: result.safe, keep: result.keep }, null, 2) + '\n');
   } else {
-    process.stdout.write(render(result, where) + '\n');
+    process.stdout.write(render(result, where, lookup) + '\n');
   }
 }
 
