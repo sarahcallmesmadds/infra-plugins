@@ -151,8 +151,18 @@ check('it never blocks, whatever it finds', () => {
 // --- what it declines to look at --------------------------------------------
 
 check('it ignores anything that is not markdown', () => {
-  const file = write('code.js', '// It runs two checks:\n// - a\n// - b\n// - c\n');
-  assert.strictEqual(run(writeEvent(file)).stdout, '');
+  // The content has to be text the detector would genuinely fire on, or this
+  // passes whether the extension is checked or not. The first version used
+  // markdown commented out with `//`, which no detector reads as a list, so
+  // deleting the extension check left every assertion green.
+  const text = 'It runs two checks:\n\n- a\n- b\n- c\n';
+  assert.strictEqual(staleCounts(text).filter((c) => !c.ok).length, 1,
+    'the fixture no longer trips the detector, so this proves nothing about the extension check');
+
+  for (const name of ['notes.txt', 'code.js', 'README']) {
+    const file = write(name, text);
+    assert.strictEqual(run(writeEvent(file)).stdout, '', `${name} was linted as markdown`);
+  }
 });
 
 check('it ignores a tool that is not Write or Edit', () => {
@@ -224,6 +234,15 @@ check('replacing a common word reports nothing', () => {
   assert.strictEqual(run(editEvent(file, 'the', 'a')).stdout, '');
   assert.strictEqual(isDistinctive('the'), false);
   assert.strictEqual(isDistinctive('and the'), false);
+
+  // The length floor, tested on its own. Everything above is refused for
+  // having no solid words, so all of it passed while the floor was deleted.
+  // A short string carrying a digit clears every other test in isDistinctive
+  // and is refused by the floor alone, which makes it the only case that
+  // pins it. `v2` as a substring is in "v20", "rev2" and "v2.1".
+  assert.strictEqual(isDistinctive('v2'), false, 'a two-character fragment is specific enough to search for');
+  assert.strictEqual(isDistinctive('#4'), false);
+  assert.strictEqual(isDistinctive('step 41'), true, 'the floor is now refusing fragments that are long enough');
 });
 
 check('a fragment is grown out to whole words before it is searched for', () => {
