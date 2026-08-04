@@ -127,17 +127,24 @@ function ignored(filePath) {
   return filePath.split(path.sep).includes('node_modules');
 }
 
-// The manifest matcher is a regex against the tool name, so an unanchored
-// `Write|Edit` also selects MultiEdit and NotebookEdit, which this then drops
-// on the next line. Harmless, and it made the manifest claim a reach the code
-// does not have, so the matcher is anchored and these two agree.
+// The manifest matcher is `Write|Edit`, which is an exact-string list and not
+// a regex.
 //
-// Neither is a coverage gap worth closing here. NotebookEdit takes
-// `notebook_path` and only ever edits an .ipynb, so it cannot produce the
-// markdown this reads, and it carries no `file_path` at all. MultiEdit is not
-// in the current tool set. If one returns, the two checks that need no
-// old_string could be run for it, and that is a change to make when there is
-// something to test it against.
+// Worth stating, because this was got wrong once and changed on the strength
+// of it. A matcher built only from letters, digits, `_`, `-`, spaces, `,` and
+// `|` is read as a list of exact names; anything holding another character
+// becomes an unanchored JavaScript regex. So `Write|Edit` matches those two
+// tools and nothing else, and never did select MultiEdit or NotebookEdit the
+// way a regex `Edit` would. It was briefly anchored to `^(Write|Edit)$` to fix
+// that, which was solving a problem that did not exist and made this the only
+// manifest in the repository not written the plain way.
+//
+// The tool-name check below stays regardless. It costs nothing and it means
+// the hook is correct whatever selected it.
+//
+// If MultiEdit ever appears, the two checks that need no old_string could run
+// for it. NotebookEdit never qualifies: it takes `notebook_path`, only edits
+// an .ipynb, and carries no `file_path` at all.
 readEvent((event) => {
   if (event.tool_name !== 'Write' && event.tool_name !== 'Edit') return;
 

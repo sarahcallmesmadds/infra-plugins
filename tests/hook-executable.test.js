@@ -123,6 +123,34 @@ check('every directly-invoked hook starts with a shebang', () => {
   assert.deepStrictEqual(noShebang, [], `a directly-invoked hook has no shebang:\n        ${noShebang.join('\n        ')}`);
 });
 
+check('a matcher that only lists tool names uses the exact-string form', () => {
+  // The matcher has two evaluation paths, and which one applies is decided by
+  // the characters in it. Letters, digits, `_`, `-`, spaces, `,` and `|` only:
+  // read as a list of exact names. Anything else: an unanchored JavaScript
+  // regex.
+  //
+  // So `Write|Edit` matches those two tools and nothing else, while a regex
+  // `Edit` would also match NotebookEdit. This slot was briefly written as
+  // `^(Write|Edit)$` to close a gap that the exact-string path had already
+  // closed, which made one manifest differ from every other for no gain.
+  //
+  // Anchoring is not wrong and a real regex may be wanted one day. This exists
+  // so that reaching for one is a decision somebody makes on purpose rather
+  // than a habit picked up from another language's matcher.
+  const EXACT_FORM = /^[\w\-, |]+$/;
+  const regexy = declaredHooks()
+    .map((h) => JSON.parse(fs.readFileSync(path.join(ROOT, h.manifest), 'utf8')))
+    .flatMap((parsed) => Object.entries(parsed.hooks || {})
+      .flatMap(([event, groups]) => groups
+        .filter((g) => typeof g.matcher === 'string' && !EXACT_FORM.test(g.matcher))
+        .map((g) => `${event}: ${JSON.stringify(g.matcher)}`)));
+
+  assert.deepStrictEqual([...new Set(regexy)], [],
+    'a matcher uses regex syntax where a plain list of names would do. If the regex is '
+    + 'deliberate, say so where it is declared and add it here:\n        '
+    + `${[...new Set(regexy)].join('\n        ')}`);
+});
+
 check('the hooks actually execute when run the way the harness runs them', () => {
   // The assertion the mode check exists for, made end to end: spawn each hook
   // as a bare path with no interpreter, exactly as a shell would, and require
