@@ -5,9 +5,22 @@
 // the only thing that decides whether deleting it loses work. A tool that
 // conflates the two eats months of unpushed work and reports success.
 //
-// So: `aheadBy` is the only input that can put a branch in the safe list, and
+// So: only positive evidence of a merge can put a branch in the safe list, and
 // anything uncertain fails into the unsafe list. There is deliberately no
 // option to override that, because the override is the bug.
+//
+// There are two kinds of positive evidence, and `merged` is the second one.
+// `aheadBy` reads ancestry, which a squash merge never creates: the branch is
+// rewritten into one new commit on the default branch, so its own commits stay
+// unreachable and `aheadBy` stays above zero permanently. In a repository that
+// squash-merges every pull request, ancestry alone can never clear a branch.
+// `merged` carries the other kind: a merged pull request, or a tree comparison
+// showing the branch adds nothing the default branch does not already have.
+//
+// This is not the override the paragraph above rules out. `merged` is positive
+// evidence, not a way to ignore the absence of it. A branch with no merge
+// evidence and `aheadBy` above zero is still kept, and an `aheadBy` we could
+// not determine is still kept whatever `merged` says.
 
 'use strict';
 
@@ -43,8 +56,13 @@ function daysBetween(thenISO, nowMs) {
 
 // branch: {
 //   name, lastCommitDate (ISO), aheadBy (int|null), isDefault, isCurrent,
-//   hasOpenPR (bool), remote (bool)
+//   hasOpenPR (bool), merged (bool), mergedVia (string|null), remote (bool)
 // }
+//
+// `merged` is positive evidence that the work is already in the default branch
+// by some route ancestry cannot see. `mergedVia` is the human-readable reason,
+// carried through so the caller can say WHICH route rather than asserting a
+// merge with nothing to check it against.
 //
 // `now` is passed in rather than read from the clock so the tests are not
 // time-dependent and so a caller can classify a snapshot taken earlier.
@@ -57,6 +75,8 @@ function classifyBranch(branch, config, now) {
     ageDays,
     stale: ageDays !== null && ageDays >= cfg.staleAfterDays,
     aheadBy: branch.aheadBy,
+    merged: !!branch.merged,
+    mergedVia: branch.mergedVia || null,
     safeToDelete: false,
     keepReasons: [],
   };
@@ -69,9 +89,13 @@ function classifyBranch(branch, config, now) {
   // The order matters. `null` means we could not work out the merge state,
   // which is not the same as zero and must never be treated as zero. A missing
   // comparison is the exact circumstance in which a wrong answer is expensive.
+  //
+  // `merged` is checked only against a non-zero `aheadBy`, never against a null
+  // one. Unknown ancestry plus a merge signal is still one fact missing, and
+  // this is the branch of the code where a wrong answer costs work.
   if (branch.aheadBy === null || branch.aheadBy === undefined) {
     out.keepReasons.push(KEEP.UNKNOWN);
-  } else if (branch.aheadBy > 0) {
+  } else if (branch.aheadBy > 0 && !out.merged) {
     out.keepReasons.push(KEEP.UNMERGED);
   }
 
@@ -89,11 +113,24 @@ function classify(branches, config, now) {
   };
 }
 
-// The delete command for a LOCAL branch. Always the lowercase `-d`.
+// The delete command for a LOCAL branch.
 //
 // `-d` refuses to delete a branch holding commits that are not merged, so git
-// itself is a second opinion on top of our classification. `-D` removes that
-// second opinion, which is why it is not reachable from here by any argument.
+// itself is a second opinion on top of our classification, and it is the
+// default here for that reason.
+//
+// That second opinion is ancestry-based, so it shares the exact blind spot the
+// `merged` signal exists to cover: it refuses a squash-merged branch every
+// time, however certain we are. Leaving `-d` as the only option meant every
+// branch the new signal cleared was listed as safe, approved by the user, and
+// then refused at the last step with a message saying git disagreed. Nothing
+// disagreed. Git was answering a question it cannot answer for that branch.
+//
+// This file still never produces `-D`, and there is no argument that makes it.
+// The refusal is real and it is the user's to override, not ours to route
+// around: `cli.js --verify` reports that the refusal is expected and says why,
+// and the skill asks before forcing anything. A module that hands back `-D`
+// removes a decision from a person who should be making it.
 function localDeleteCommand(name) {
   if (typeof name !== 'string' || name.trim() === '' || name.startsWith('-')) {
     throw new Error(`refusing to build a delete command for branch name: ${JSON.stringify(name)}`);

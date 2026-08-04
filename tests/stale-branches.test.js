@@ -399,6 +399,455 @@ check('outside a repo with no --repo, it explains rather than reporting nothing'
   assert.ok(!/Safe to delete \(0\)/.test(stderr), 'must not imply it looked and found nothing');
 });
 
+// ------------------------------------------------------- squash merges ----
+//
+// A squash merge rewrites a branch into one new commit on the default branch,
+// so the branch's own commits never become ancestors and `aheadBy` stays above
+// zero for good. In a repository that squash-merges every pull request that
+// made the plugin unable to clear a single branch: six merged branches, four of
+// them with merged pull requests, all reported as "N commits not in the default
+// branch". Reported 2026-08-04.
+//
+// Driven against a real repository rather than a fixture, because the thing
+// under test is what git reports, and a fixture would only record what we
+// already believe it reports.
+
+check('a squash-merged branch is safe to delete, an unmerged one is not', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'squash-'));
+  const g = (...args) => execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8' });
+
+  execFileSync('git', ['init', '-q', '-b', 'main', dir]);
+  g('config', 'user.email', 'test@example.com');
+  g('config', 'user.name', 'test');
+  fs.writeFileSync(path.join(dir, 'f.txt'), 'line1\n');
+  g('add', '.');
+  g('commit', '-qm', 'base');
+
+  // Three commits, the shape a squash collapses into one.
+  g('checkout', '-qb', 'feature');
+  for (const line of ['line2', 'line3', 'line4']) {
+    fs.appendFileSync(path.join(dir, 'f.txt'), `${line}\n`);
+    g('commit', '-qam', `part ${line}`);
+  }
+
+  g('checkout', '-q', 'main');
+  g('merge', '-q', '--squash', 'feature');
+  g('commit', '-qm', 'feature (#42)');
+
+  // The default branch moves on afterwards, so the two trees are not equal by
+  // accident. Without this the test would pass for the wrong reason.
+  fs.writeFileSync(path.join(dir, 'g.txt'), 'unrelated\n');
+  g('add', '.');
+  g('commit', '-qm', 'later work on main');
+
+  // A branch holding work that genuinely is not in main.
+  g('checkout', '-qb', 'real-work', 'main');
+  fs.writeFileSync(path.join(dir, 'h.txt'), 'not in main\n');
+  g('add', '.');
+  g('commit', '-qm', 'real unmerged work');
+  g('checkout', '-q', 'main');
+
+  const r = collect.localBranches(dir);
+  const byName = Object.fromEntries(r.branches.map((b) => [b.name, b]));
+
+  // If this ever stops holding, the squash is no longer being simulated and
+  // everything below passes without proving anything.
+  assert.ok(byName.feature.aheadBy > 0,
+    `a squash merge must still leave aheadBy above zero, got ${byName.feature.aheadBy}`);
+
+  assert.strictEqual(byName.feature.merged, true, 'squash-merged branch should carry merge evidence');
+  assert.strictEqual(byName['real-work'].merged, false, 'a branch with unmerged work must not');
+
+  const out = classify(r.branches, {}, Date.now());
+  const safe = out.safe.map((b) => b.name);
+  const keep = out.keep.map((b) => b.name);
+
+  assert.ok(safe.includes('feature'),
+    `squash-merged branch should be safe, got safe=${safe} keep=${keep}`);
+  assert.ok(keep.includes('real-work'), 'unmerged work must be kept');
+  assert.ok(!safe.includes('real-work'), 'unmerged work must never be offered for deletion');
+
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// The guard on the new signal. `merged` answers "is this work already in the
+// default branch"; it does not answer "did we manage to look". An unknown
+// aheadBy means we did not look, and that must still keep.
+check('merge evidence never rescues an unknown aheadBy', () => {
+  const out = classify([
+    { name: 'x', lastCommitDate: d(1), aheadBy: null, merged: true, mergedVia: 'merged in #1',
+      isDefault: false, isCurrent: false, hasOpenPR: false },
+  ], {}, NOW);
+  assert.strictEqual(out.safe.length, 0, 'unknown ancestry plus a merge signal is still one fact missing');
+  assert.ok(out.keep[0].keepReasons.includes('merge-state-unknown'));
+});
+
+// The local default branch is a local ref, and right after a pull request
+// merges it is behind by exactly the merge being asked about. Comparing only
+// against it kept branches that were genuinely merged, and only --repo cleared
+// them. Found while verifying the fix above, in a separate session.
+check('a branch merged into origin/main is cleared even when local main is behind', () => {
+  const origin = fs.mkdtempSync(path.join(os.tmpdir(), 'origin-'));
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'work-'));
+  execFileSync('git', ['init', '-q', '--bare', '-b', 'main', origin]);
+
+  const g = (...args) => execFileSync('git', ['-C', work, ...args], { encoding: 'utf8', stdio: 'pipe' });
+  // stdio piped because cloning an empty bare repository warns, and a warning
+  // in the middle of passing test output reads as a failure.
+  execFileSync('git', ['clone', '-q', origin, work], { stdio: 'pipe' });
+  g('config', 'user.email', 'test@example.com');
+  g('config', 'user.name', 'test');
+
+  fs.writeFileSync(path.join(work, 'f.txt'), 'base\n');
+  g('add', '.');
+  g('commit', '-qm', 'base');
+  g('push', '-q', '-u', 'origin', 'main');
+
+  g('checkout', '-qb', 'feature');
+  fs.writeFileSync(path.join(work, 'new.txt'), 'work\n');
+  g('add', '.');
+  g('commit', '-qm', 'the work');
+
+  // Squash-merge it and publish, exactly as merging a pull request would.
+  g('checkout', '-q', 'main');
+  g('merge', '-q', '--squash', 'feature');
+  g('commit', '-qm', 'feature (#7)');
+  g('push', '-q', 'origin', 'main');
+
+  // Then put the local default branch back where it was. This is the state of
+  // any checkout that has not pulled since the merge, which is the normal one.
+  g('reset', '-q', '--hard', 'HEAD~1');
+
+  const localTip = g('rev-parse', 'main').trim();
+  const remoteTip = g('rev-parse', 'origin/main').trim();
+  assert.notStrictEqual(localTip, remoteTip, 'local main must be behind origin/main, or this test proves nothing');
+
+  const r = collect.localBranches(work);
+  const feature = r.branches.find((b) => b.name === 'feature');
+
+  assert.ok(feature.aheadBy > 0, 'the branch must still look unmerged by ancestry');
+  assert.strictEqual(feature.merged, true, 'a branch merged into origin/main should carry merge evidence');
+  assert.ok(/origin\/main/.test(feature.mergedVia || ''),
+    `the reason should name which ref carried it, got ${JSON.stringify(feature.mergedVia)}`);
+
+  const out = classify(r.branches, {}, Date.now());
+  assert.ok(out.safe.map((b) => b.name).includes('feature'),
+    'a branch merged upstream is safe even when this checkout has not pulled');
+
+  fs.rmSync(origin, { recursive: true, force: true });
+  fs.rmSync(work, { recursive: true, force: true });
+});
+
+// ------------------------------------------------ the re-check before delete ----
+//
+// The listing and the check that runs immediately before deleting have to ask
+// the same question. They did not: the skill re-read an ancestry count, which a
+// squash merge never brings to zero, so every branch the merge signal cleared
+// was offered, approved, then refused with a message saying something had
+// landed in between. Nothing had.
+check('--verify clears a squash-merged branch and asks for the delete that works', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'verify-'));
+  const g = (...a) => execFileSync('git', ['-C', dir, ...a], { encoding: 'utf8', stdio: 'pipe' });
+  execFileSync('git', ['init', '-q', '-b', 'main', dir], { stdio: 'pipe' });
+  g('config', 'user.email', 'test@example.com');
+  g('config', 'user.name', 'test');
+  fs.writeFileSync(path.join(dir, 'f.txt'), 'base\n');
+  g('add', '.'); g('commit', '-qm', 'base');
+
+  g('checkout', '-qb', 'squashed');
+  fs.appendFileSync(path.join(dir, 'f.txt'), 'work\n');
+  g('commit', '-qam', 'the work');
+  g('checkout', '-q', 'main');
+  g('merge', '-q', '--squash', 'squashed');
+  g('commit', '-qm', 'squashed (#9)');
+
+  g('checkout', '-qb', 'unmerged', 'main');
+  fs.writeFileSync(path.join(dir, 'h.txt'), 'not in main\n');
+  g('add', '.'); g('commit', '-qm', 'real work');
+  g('checkout', '-q', 'main');
+
+  const verify = (name) => {
+    try {
+      return { code: 0, out: execFileSync('node', [CLI, '--cwd', dir, '--verify', name], { encoding: 'utf8' }) };
+    } catch (e) {
+      return { code: e.status, out: (e.stdout || '') + (e.stderr || '') };
+    }
+  };
+
+  // git itself must refuse this branch, or the -D below is unnecessary and the
+  // test is not exercising the thing it was written for.
+  let refused = false;
+  try { g('branch', '-d', 'squashed'); } catch (_) { refused = true; }
+  assert.ok(refused, 'git branch -d must refuse a squash-merged branch, or this test proves nothing');
+
+  const ok = verify('squashed');
+  assert.strictEqual(ok.code, 0, `a squash-merged branch must still verify, got:\n${ok.out}`);
+  assert.ok(/needs-force:/.test(ok.out),
+    `-d is going to refuse this, and saying so is what stops it being reported as a disagreement:\n${ok.out}`);
+  assert.ok(/git branch -d squashed/.test(ok.out),
+    `the printed command stays -d; forcing is the user's call, not this tool's:\n${ok.out}`);
+  assert.ok(!/git branch -D/.test(ok.out), 'nothing here composes -D on the user\'s behalf');
+
+  const no = verify('unmerged');
+  assert.strictEqual(no.code, 3, 'a branch with unmerged work must not verify');
+  assert.ok(!/git branch/.test(no.out), 'a refused branch must not be handed a delete command');
+
+  const gone = verify('never-existed');
+  assert.strictEqual(gone.code, 3, 'a branch that is not there must not verify');
+
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// The needs-force line is advice to a human, never a command. The existing
+// guard above already pins that classify.js contains no -D; this pins that the
+// new verify path did not become a way around it.
+check('verify never composes a force delete, whatever the evidence', () => {
+  const cliSrc = fs.readFileSync(CLI, 'utf8');
+  assert.ok(!/'-D'|"-D"|branch -D/.test(cliSrc),
+    'cli.js must not build a -D command either, or the guard just moved file');
+});
+
+// The skill's commands run in the user's repository, which has no scripts/
+// directory of ours. A relative path exits with a module error, which is
+// neither 0 nor 3, so the documented branching has nothing to match and an
+// approved cleanup silently deletes nothing.
+check('every command in the skill names the plugin root, not a relative path', () => {
+  const skill = fs.readFileSync(path.join(ROOT, 'skills', 'stale-branches', 'SKILL.md'), 'utf8');
+  const calls = skill.split('\n').filter((l) => /^\s*node\s/.test(l));
+  assert.ok(calls.length > 0, 'expected some node invocations to check');
+  for (const line of calls) {
+    assert.ok(/CLAUDE_PLUGIN_ROOT/.test(line),
+      `a relative path cannot resolve from the user's own repository:\n  ${line.trim()}`);
+  }
+});
+
+// Re-checking twenty branches must not rescan the repository twenty times.
+check('the single-branch re-check collects one branch, not all of them', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'only-'));
+  const g = (...a) => execFileSync('git', ['-C', dir, ...a], { encoding: 'utf8', stdio: 'pipe' });
+  execFileSync('git', ['init', '-q', '-b', 'main', dir], { stdio: 'pipe' });
+  g('config', 'user.email', 'test@example.com');
+  g('config', 'user.name', 'test');
+  fs.writeFileSync(path.join(dir, 'f.txt'), 'base\n');
+  g('add', '.'); g('commit', '-qm', 'base');
+  for (const b of ['one', 'two', 'three', 'four']) g('branch', b, 'main');
+
+  const all = collect.localBranches(dir);
+  assert.ok(all.branches.length >= 5, 'the full listing should still see every branch');
+
+  const one = collect.localBranches(dir, { only: 'three' });
+  assert.strictEqual(one.branches.length, 1, 'the re-check should collect only the branch it was asked about');
+  assert.strictEqual(one.branches[0].name, 'three');
+
+  // Same facts, not a cheaper approximation of them.
+  const fromAll = all.branches.find((b) => b.name === 'three');
+  assert.strictEqual(one.branches[0].aheadBy, fromAll.aheadBy);
+  assert.strictEqual(one.branches[0].merged, fromAll.merged);
+
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+check('a remote re-check asks about one commit rather than paginating every closed pull request', () => {
+  assert.strictEqual(typeof collect.remoteBranch, 'function',
+    'a single-branch remote collector must exist, or --verify falls back to the full scan');
+  const src = fs.readFileSync(CLI, 'utf8');
+  assert.ok(/opts\.verify\s*\?\s*collect\.remoteBranch/.test(src),
+    '--verify must use the single-branch collector, not filter the full listing afterwards');
+  const collectSrc = fs.readFileSync(path.join(ROOT, 'scripts', 'collect.js'), 'utf8');
+  assert.ok(/commits\/\$\{head\.sha\}\/pulls/.test(collectSrc),
+    'merge evidence for one branch comes from the pull requests on its head commit');
+});
+
+// `merge-tree --write-tree` needs git 2.38. On older git it exits non-zero,
+// tryRun returns null, and every squash-merged branch silently stays in Keep,
+// which is the exact problem this work exists to fix, reported as a clean run.
+check('an old git is reported rather than silently doing nothing', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'scripts', 'collect.js'), 'utf8');
+  assert.ok(/supportsWriteTree/.test(src),
+    'the comparison must be probed, not assumed, or an old git looks like a clean result');
+  assert.ok(/mergeCheckUnavailable/.test(src),
+    'and the answer has to reach the caller, or nothing can say the check was skipped');
+
+  const cliSrc = fs.readFileSync(CLI, 'utf8');
+  assert.ok(/mergeCheckUnavailable/.test(cliSrc),
+    'the command must say the comparison was unavailable rather than print a shorter list');
+  assert.ok(/2\.38/.test(cliSrc),
+    'and name the version, so the reader can tell whether it applies to them');
+});
+
+// The probe itself, driven for real. Passes on any git; on 2.38 and newer it
+// also proves the probe does not report a capable git as incapable.
+check('the write-tree probe agrees with what this git can actually do', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'probe-'));
+  const g = (...a) => execFileSync('git', ['-C', dir, ...a], { encoding: 'utf8', stdio: 'pipe' });
+  execFileSync('git', ['init', '-q', '-b', 'main', dir], { stdio: 'pipe' });
+  g('config', 'user.email', 'test@example.com');
+  g('config', 'user.name', 'test');
+  fs.writeFileSync(path.join(dir, 'f.txt'), 'base\n');
+  g('add', '.'); g('commit', '-qm', 'base');
+
+  let real = true;
+  try { g('merge-tree', '--write-tree', 'HEAD', 'HEAD'); } catch (_) { real = false; }
+
+  const r = collect.localBranches(dir);
+  assert.strictEqual(r.mergeCheckUnavailable, !real,
+    'the reported capability must match what git actually does here');
+
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// "Gone" and "could not look" are different facts and only one of them is
+// about the branch. Telling someone mid-cleanup that a branch vanished invites
+// them to assume the work went with it.
+check('a lookup that failed is not reported as a branch that vanished', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'scripts', 'collect.js'), 'utf8');
+  assert.ok(/unreadable/.test(src), 'an unreadable listing must be distinguishable from an empty one');
+  const cliSrc = fs.readFileSync(CLI, 'utf8');
+  assert.ok(/lookup && lookup\.unreadable/.test(cliSrc),
+    'verify must branch on it, or every failure reads as "not in this repository any more"');
+  assert.ok(/nothing is known either way/.test(cliSrc),
+    'and say plainly that nothing was learned');
+});
+
+// The force group is the one running without git's own reachability check, and
+// the user's approval covers the group rather than each branch, so the verdict
+// is arbitrarily old by the time -D runs.
+check('the force path re-checks each branch immediately before deleting it', () => {
+  const skill = fs.readFileSync(path.join(ROOT, 'skills', 'stale-branches', 'SKILL.md'), 'utf8');
+  const section = skill.slice(skill.indexOf('needs-force:'));
+  const verifyAt = section.indexOf('--verify');
+  const forceAt = section.indexOf('branch -D');
+  assert.ok(verifyAt !== -1, 'the force path must re-verify');
+  assert.ok(verifyAt < forceAt,
+    'the re-check has to come before the force delete, not after the group was approved');
+  assert.ok(/one at a time/.test(section),
+    'and one branch at a time, so a change part way through cannot reach a branch already cleared');
+});
+
+// The number of explanation lines varies: a branch cleared by merge evidence
+// gets a needs-force line, one cleared by ancestry does not. A caller counting
+// from the top runs prose as a shell command.
+check('the delete command is the last line of verify output, whatever else is printed', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lastline-'));
+  const g = (...a) => execFileSync('git', ['-C', dir, ...a], { encoding: 'utf8', stdio: 'pipe' });
+  execFileSync('git', ['init', '-q', '-b', 'main', dir], { stdio: 'pipe' });
+  g('config', 'user.email', 'test@example.com');
+  g('config', 'user.name', 'test');
+  fs.writeFileSync(path.join(dir, 'f.txt'), 'base\n');
+  g('add', '.'); g('commit', '-qm', 'base');
+
+  // Cleared by ancestry: no needs-force line.
+  g('branch', 'plain', 'main');
+
+  // Cleared by merge evidence: gets one.
+  g('checkout', '-qb', 'squashed');
+  fs.appendFileSync(path.join(dir, 'f.txt'), 'work\n');
+  g('commit', '-qam', 'work');
+  g('checkout', '-q', 'main');
+  g('merge', '-q', '--squash', 'squashed');
+  g('commit', '-qm', 'squashed (#3)');
+
+  for (const name of ['plain', 'squashed']) {
+    const out = execFileSync('node', [CLI, '--cwd', dir, '--verify', name], { encoding: 'utf8' });
+    const lines = out.split('\n').filter(Boolean);
+    assert.ok(/^git branch -d /.test(lines[lines.length - 1]),
+      `the last line must be the command for ${name}, got:\n${out}`);
+  }
+
+  // And the two really do print a different number of lines, or this proves nothing.
+  const a = execFileSync('node', [CLI, '--cwd', dir, '--verify', 'plain'], { encoding: 'utf8' }).split('\n').filter(Boolean).length;
+  const b = execFileSync('node', [CLI, '--cwd', dir, '--verify', 'squashed'], { encoding: 'utf8' }).split('\n').filter(Boolean).length;
+  assert.notStrictEqual(a, b, 'the line count must vary, which is why counting from the top is wrong');
+
+  // The skill must say so rather than naming a line number.
+  const skill = fs.readFileSync(path.join(ROOT, 'skills', 'stale-branches', 'SKILL.md'), 'utf8');
+  assert.ok(/last line/.test(skill), 'the skill must point at the last line');
+  assert.ok(!/command on the second/.test(skill), 'and must not tell the reader to take the second line');
+
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// HEAD can be unborn in a repository that is otherwise fine. Probing it made a
+// modern git report itself as too old and switched the detection off entirely.
+check('an unborn HEAD does not make a modern git look too old', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'orphan-'));
+  const g = (...a) => execFileSync('git', ['-C', dir, ...a], { encoding: 'utf8', stdio: 'pipe' });
+  execFileSync('git', ['init', '-q', '-b', 'main', dir], { stdio: 'pipe' });
+  g('config', 'user.email', 'test@example.com');
+  g('config', 'user.name', 'test');
+  fs.writeFileSync(path.join(dir, 'f.txt'), 'base\n');
+  g('add', '.'); g('commit', '-qm', 'base');
+
+  g('checkout', '-qb', 'squashed');
+  fs.appendFileSync(path.join(dir, 'f.txt'), 'work\n');
+  g('commit', '-qam', 'work');
+  g('checkout', '-q', 'main');
+  g('merge', '-q', '--squash', 'squashed');
+  g('commit', '-qm', 'squashed (#3)');
+
+  // Now sit on a branch with no commits, which is a normal thing to do.
+  g('checkout', '-q', '--orphan', 'brand-new');
+
+  let modern = true;
+  try { g('merge-tree', '--write-tree', 'main', 'main'); } catch (_) { modern = false; }
+
+  const r = collect.localBranches(dir);
+  if (modern) {
+    assert.strictEqual(r.mergeCheckUnavailable, false,
+      'an unborn HEAD is not a git version problem and must not be reported as one');
+    const squashed = r.branches.find((b) => b.name === 'squashed');
+    assert.strictEqual(squashed.merged, true,
+      'and the detection must still run for every other branch');
+  }
+
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// ------------------------------------------- what the remote path counts ----
+//
+// Both of these were live bugs in the first version of the squash-merge fix,
+// caught in review before it merged. Neither is reachable from the local path,
+// whose evidence is computed live against the branch's current tip, and both
+// end with a branch being offered for deletion while its commits exist nowhere
+// else. Source assertions rather than behavioural ones, matching how the rest
+// of the gh path is pinned here, because reaching it needs a live API.
+
+check('a merged pull request only counts when it merged into the default branch', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'scripts', 'collect.js'), 'utf8');
+  const line = src.split('\n').find((l) => l.includes('state=closed'));
+  assert.ok(line, 'expected a closed-PR query to check');
+  assert.ok(/base=/.test(line),
+    'merged_at says a pull request merged, not where it merged to. Without a base filter, '
+    + `stacked work merged into another branch counts as reaching the default branch:\n  ${line.trim()}`);
+});
+
+check('merge evidence is keyed on the merged commit, not the branch name', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'scripts', 'collect.js'), 'utf8');
+  assert.ok(/head\.sha/.test(src),
+    'a branch name outlives the commit that merged under it, so reusing a branch after its '
+    + 'pull request merged would read as merged while holding new work');
+  assert.ok(/tipSha/.test(src),
+    'the branch tip has to be collected for the evidence to be checked against it');
+  assert.ok(!/mergedBySha\.get\(name\)/.test(src),
+    'looking the evidence up by branch name is the bug these two tests exist for');
+});
+
+// The rendered header is a claim about why a branch is safe, and it stopped
+// being true once squash merges counted. Nothing bound the sample output to the
+// code, so it went stale silently the first time round.
+check('the README sample output matches what the command actually prints', () => {
+  const cliSrc = fs.readFileSync(CLI, 'utf8');
+  const readme = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8');
+
+  const m = cliSrc.match(/Safe to delete \(\$\{safe\.length\}\)(.*?)`\);/);
+  assert.ok(m, 'expected to find the safe-list header in cli.js');
+  const phrase = m[1].replace(/^[^A-Za-z]+/, '').replace(/:\s*$/, '').trim();
+  assert.ok(phrase.length > 0, 'expected a readable phrase in the safe-list header');
+
+  assert.ok(readme.includes(phrase),
+    `README shows a safe-list header the command no longer prints. Expected to find:\n  ${phrase}`);
+});
+
 fs.unlinkSync(fixture);
 
 process.stdout.write(failures === 0 ? '\nAll stale-branch tests passed.\n' : `\n${failures} test(s) failed.\n`);

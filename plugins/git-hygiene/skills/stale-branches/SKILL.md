@@ -8,7 +8,13 @@ allowed-tools: Read, Bash(node:*), Bash(git:*), Bash(gh:*), Bash(ls:*)
 
 You are finding branches that can be cleaned up, and deleting the ones the user approves.
 
-Everything here rests on one number: how many commits a branch has that are not already in the default branch. Zero means the work is safely in the default branch and the branch is just a label. One or more means those commits exist in exactly one place, and deleting the branch destroys them.
+Everything here rests on positive evidence that the work is already in the default branch. There are two kinds, and a branch needs only one.
+
+The first is a count: how many commits a branch has that are not already in the default branch. Zero means the work is safely there and the branch is just a label. One or more means those commits exist in exactly one place, and deleting the branch destroys them.
+
+The second exists because that count cannot see a squash merge, which rewrites a branch into one new commit and leaves the originals unreachable. In a repository that squash-merges every pull request the count never reaches zero, so a merged pull request into the default branch counts too, and on a local checkout so does a comparison showing the branch adds nothing the default branch does not already have.
+
+A branch with neither kind of evidence is kept, whatever its age.
 
 **Age is not the test.** A branch untouched since March with three unmerged commits is far more dangerous to delete than one from this morning with none. Old is why something is worth looking at. Merged is the only thing that makes it safe to remove.
 
@@ -99,41 +105,59 @@ Only on that explicit second phrasing, act. Even then, for a local branch use `g
 
 ## Step 5 — Delete
 
-### Local branches
+**Re-check each branch immediately before deleting it, and re-check it with the same command that listed it.** The listing may be minutes old by the time the user answers, and on the remote side the GitHub API deletes whatever ref you name with no second opinion at all.
+
+Do not compose your own re-check. An ancestry count is not the question any more: a squash merge never brings it to zero, so a check written that way refuses every branch the merge signal cleared and then reports it as though something landed in between. Nothing landed. The check asked a question the listing had already answered differently.
+
+For each branch, one at a time, never batched:
 
 ```bash
-git branch -d {name}
+node "${CLAUDE_PLUGIN_ROOT}/scripts/cli.js" --verify {name}
+node "${CLAUDE_PLUGIN_ROOT}/scripts/cli.js" --repo {owner/name} --verify {name}
 ```
 
-The lowercase `-d` refuses to delete a branch holding unmerged commits, so git independently checks the classification. If it refuses, that is a disagreement between git and this plugin and it is worth surfacing rather than working around:
+The full `${CLAUDE_PLUGIN_ROOT}` form, as everywhere else in this skill. This command runs in the user's own repository, which has no `scripts/` directory of ours, so a relative path exits with a module error rather than with 0 or 3 and the branching below has nothing to match.
 
-> "git refused to delete `{name}`, which means it thinks the branch still has unmerged work even though the comparison said otherwise. I have left it alone. Worth a look before forcing it."
+**Exit 0** means still safe. **The delete command is the last line of the output. Run that line exactly, and do not count lines from the top.**
 
-Never reach for `-D` to get past that.
+Everything above the last line is explanation, and how many lines of it there are varies: a branch cleared by merge evidence gets an extra `needs-force:` line that a branch cleared by ancestry does not. Taking "the second line" would run that prose as a shell command.
 
-### Remote branches
+```
+squashed is safe to delete: already in the default branch
+needs-force: git branch -d will refuse this. ...      <- explanation, varies
+git branch -d squashed                                <- always last, always the command
+```
 
-**Re-check each branch immediately before deleting it.** The GitHub API deletes whatever ref you name without checking whether it is merged, so there is no second opinion the way there is locally. The listing may also be minutes old by the time the user answers.
+**Exit 3** means do not delete. It says why on stderr. Report that verbatim and move to the next branch. Do not ask again in this run.
 
-For each branch, in order:
+Never check everything first and then delete everything, so a change part way through cannot affect a branch already cleared.
 
-1. Re-read the count:
+### When `--verify` prints a `needs-force:` line
 
-   ```bash
-   gh api repos/{owner/name}/compare/{default}...{branch} --jq '.ahead_by'
-   ```
+That line means `git branch -d` is going to refuse this branch and the refusal is expected. `-d` asks only whether the branch's commits are reachable from the default branch. A squash merge rewrites them into one new commit, so they never are, however certain the evidence is.
 
-2. If it is not exactly `0`, skip that branch and say so. Do not delete, do not ask again in this run:
+Run the printed `-d` anyway and let it refuse. Then, **once for the whole group rather than once per branch**:
 
-   > "Skipped `{name}`: it now has {n} commits not in {default}. It was safe when I listed it, so something landed in between."
+> "{n} of these were squash merges, so `git branch -d` refused them. That is expected: it only checks whether the commits are reachable, and a squash merge rewrites them. Each one was verified another way, by {the reason `--verify` printed}. The work is in the default branch either way. Deleting them needs `git branch -D`. Say go and I will run it on those {n}."
 
-3. If it is `0`, delete:
+Only on an explicit yes. Then, **for each branch in that group, one at a time**, run `--verify` again immediately before its `-D`:
 
-   ```bash
-   gh api -X DELETE repos/{owner/name}/git/refs/heads/{branch}
-   ```
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/cli.js" --verify {name}
+git branch -D {name}
+```
 
-Never batch the re-check and the deletes into one loop that checks everything first and then deletes everything. Check and delete one branch at a time, so a change part way through cannot affect a branch already cleared.
+Exit 0, delete it. Anything else, skip that branch, say what the check reported, and carry on with the rest.
+
+The second check is not paperwork. The user's approval covers the group, and answering it takes as long as it takes, so the verdict that earned each branch its place in that group is by then arbitrarily old. This is also the one group running without git's own reachability check, which everything else in the local flow leans on. A branch that gained commits while the question sat unanswered is exactly what `-D` destroys with no recovery.
+
+Ask once, check each. If they say no, leave them all and say what is left.
+
+Never present this as git disagreeing with the classification. It is not a disagreement. Git was asked a question it cannot answer for a squash-merged branch, and the tool already answered it a different way.
+
+Anything `--verify` did not clear is never deleted, with `-d` or `-D` or anything else. A refusal on a branch with no `needs-force:` line is a genuine disagreement and stops the run:
+
+> "git refused to delete `{name}` and nothing said to expect that. I have left it alone. Worth a look before forcing it."
 
 ---
 

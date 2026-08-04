@@ -37,8 +37,8 @@ You get something like this:
 ```
 sarahcallmesmadds/always-allow: 3 branches besides the default one.
 
-Safe to delete (1) — every commit is already in the default branch:
-  deploy/vercel-site  (105 days old)
+Safe to delete (1) — the default branch already has this work:
+  deploy/vercel-site  (105 days old, merged in #51)
 
 Keep (2) — deleting these would lose work:
   shop-redirect  (103 days old) — it has an open pull request, 1 commit not in the default branch
@@ -137,6 +137,36 @@ how you end up believing a repository is tidy.
 
 Nothing about age can ever move a branch into the safe list. There is no setting
 for that and there is not meant to be.
+
+## Upgrading to 0.2.0
+
+A squash merge now counts as evidence that a branch is merged.
+
+Before this, `aheadBy` was the only route into the safe list, and it reads
+ancestry. A squash merge rewrites a branch into one new commit on the default
+branch, so the branch's own commits never become reachable and the count never
+falls to zero. In a repository that squash-merges every pull request, the
+command could not clear a single branch, ever.
+
+Two new signals, one per collection path. On GitHub, a pull request merged into
+the default branch whose head is still the branch's tip. On a local checkout, a
+comparison showing that merging the branch into the default branch changes
+nothing, checked against `origin/<default>` as well, since a checkout that has
+not pulled since the merge is behind by exactly the merge you are asking about.
+
+Not an override. A branch with no merge evidence and unmerged commits is still
+kept, and an `aheadBy` that could not be determined is still kept whatever the
+new signal says.
+
+Two things to know:
+
+- `git branch -d` still refuses squash-merged branches, because it asks the
+  ancestry question too. That refusal is now reported as expected rather than
+  as a disagreement, and `/stale-branches` asks before forcing past it.
+- The local comparison needs git 2.38 or newer. On older git it is skipped,
+  every squash-merged branch stays in the Keep list, and the command says so
+  rather than looking like a clean result. `--repo owner/name` works on any
+  version.
 
 ## Upgrading to 0.1.1
 
