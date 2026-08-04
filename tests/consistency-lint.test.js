@@ -465,6 +465,52 @@ check('an edit that introduces the rule reports every breach, however far', () =
   assert.match(advice, /lines 3, 4, 5, 6, 7/);
 });
 
+check('deleting prose does not re-report old problems elsewhere', () => {
+  // A deletion sends new_string: "", so there is nothing to search the file
+  // for and the edit cannot be placed. Falling back to the whole file made a
+  // deletion the noisiest event there is: take one line out of a long document
+  // and every old contradiction in it comes back.
+  const file = write('deleted.md', [
+    'It runs two checks:',
+    '',
+    '- a',
+    '- b',
+    '- c',
+    '',
+    'Never use em dashes.',
+    '',
+    'A line — with one.',
+    '',
+  ].join('\n'));
+
+  // A paragraph of prose came out, well away from both findings, and took no
+  // list structure with it.
+  const event = editEvent(file, 'An unrelated sentence that was here.', '');
+  assert.strictEqual(run(event).stdout, '',
+    'deleting unrelated prose re-reported contradictions the author has already seen');
+});
+
+check('deleting a list item still re-checks the count above it', () => {
+  // The half of a deletion that genuinely creates the fault: the list gets
+  // shorter and the sentence announcing it does not change.
+  const file = write('shrunk.md', ['It runs four checks:', '', '- a', '- b', '- c', ''].join('\n'));
+  const advice = adviceFrom(run(editEvent(file, '- d\n', '')));
+  assert.ok(advice, 'removing a list item did not re-check the count above it');
+  assert.match(advice, /four checks/);
+});
+
+check('a deletion is never reported as breaking a stated rule', () => {
+  // Taking text out cannot put an em dash in, nor state a rule that was not
+  // already there, so every breach after a deletion predates it.
+  const file = write('deleted-rule.md', ['Never use em dashes.', '', 'A line — with one.', ''].join('\n'));
+  const event = editEvent(file, 'Another line — with one.\n', '');
+  const out = run(event).stdout;
+  if (out) {
+    assert.ok(!JSON.parse(out).hookSpecificOutput.additionalContext.includes('states a rule'),
+      'a pre-existing em dash was reported as though the deletion caused it');
+  }
+});
+
 check('an edit that cannot be located checks the whole file', () => {
   // Every uncertain case fails towards reporting, because a repeated finding
   // is a nuisance and a missed one is the thing this exists to prevent.

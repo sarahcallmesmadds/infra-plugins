@@ -77,9 +77,15 @@ function changedRange(content, input) {
 //
 // Without this, the two whole-file checks re-report every pre-existing
 // contradiction on every subsequent edit to the file. Measured against her own
-// history: MEMORY.md was written 28 times and states a rule it breaks on 68
+// history: MEMORY.md was touched 28 times while stating a rule it breaks on 68
 // lines, so the same advice would have gone into the conversation 28 times,
 // costing tokens each time and being ignored by the second.
+//
+// 24 of those 28 were Edits and are covered here. The other four were Writes
+// and are not, deliberately: a Write replaces the file, so all of it is new
+// and all of it is this write's doing. An earlier version of this comment said
+// "written 28 times", which read as though the fix missed the case it was
+// justified by. The split is stated now rather than the total.
 //
 // A span rather than a line, because the count check is about a sentence and
 // the list under it, and adding a row to that list is exactly how the sentence
@@ -88,6 +94,18 @@ function changedRange(content, input) {
 function touches(range, from, to) {
   if (!range) return true;
   return !(to < range.start || from > range.end);
+}
+
+// Could taking this text out have changed how long some list is?
+//
+// List markers and table rows are the direct way. A blank line counts too,
+// because removing one joins two lists into one and adding one splits them,
+// and the grouping is what gets counted.
+function couldChangeAList(removed) {
+  if (typeof removed !== 'string') return true;
+  return removed.split('\n').some((line) => (
+    /^\s*([-*]|\d+\.)\s/.test(line) || /^\s*\|/.test(line) || line.trim() === ''
+  ));
 }
 
 function ignored(filePath) {
@@ -133,8 +151,32 @@ readEvent((event) => {
   // A Write makes the whole file new, so there is nothing to narrow to.
   const range = event.tool_name === 'Edit' ? changedRange(content, input) : null;
 
+  // A deletion has no new text, so there is nothing to search the file for and
+  // `changedRange` cannot place it. Falling back to the whole file made a
+  // deletion the noisiest event there is, re-reporting every old contradiction
+  // in a long document every time a line came out of it.
+  //
+  // Placing it is not possible from the event: the file no longer holds the
+  // removed text and the event does not carry what surrounded it. What each
+  // check can do instead is say whether a deletion could have caused its kind
+  // of finding at all, which is a cheaper question and has a definite answer.
+  //
+  // Never observed: 0 of 804 markdown edits in her history had an empty
+  // new_string. Fixed because it is cheap and right, not because it was hurting.
+  const isDeletion = event.tool_name === 'Edit'
+    && input.new_string === ''
+    && typeof input.old_string === 'string'
+    && input.old_string !== '';
+
+  // Removing list items is a real way to make a count above them stale, so a
+  // deletion is checked. One that took no list structure with it cannot have
+  // changed any list's length, and every finding it would report is older than
+  // the edit.
+  const countsWorthChecking = !isDeletion || couldChangeAList(input.old_string);
+
   for (const problem of staleCounts(content)) {
     if (problem.ok) continue;
+    if (!countsWorthChecking) continue;
     if (!touches(range, problem.from, problem.to)) continue;
     issues.push(
       `Line ${problem.line} says "${problem.stated}" directly above a `
@@ -154,7 +196,10 @@ readEvent((event) => {
     }
   }
 
-  for (const broken of brokenOwnRule(content)) {
+  // Taking text out cannot put an em dash in, and cannot state a rule that was
+  // not already there. So after a deletion every breach is one that was in the
+  // file before, and the author has already seen it.
+  for (const broken of isDeletion ? [] : brokenOwnRule(content)) {
     // A rule the edit itself introduced is reported in full, however far the
     // breaches are from it. Adding "never use em dashes" to a file already
     // full of them is a contradiction the edit created, and every one of them
