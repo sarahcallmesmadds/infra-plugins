@@ -81,18 +81,28 @@ check('the list mode checks recorded sources', () => {
 });
 
 check('a leading ~ is expanded before the check', () => {
-  // `[ -e "~/x" ]` is false for every path, so without this the check reports
-  // every home-relative source as gone.
+  // `[ -e "~/x" ]` is false for every path, so without this every home-relative
+  // source reads as missing. The expansion happens in node, not in the shell.
   assert.ok(
-    /Expand a leading `~`/.test(toBuild),
-    'the source check does not say to expand ~, so ~-relative paths all read as missing'
+    /p\.startsWith\("~"\)\s*\?\s*h\s*\+\s*p\.slice\(1\)/.test(toBuild),
+    'the source check does not expand ~, so ~-relative paths all read as missing'
   );
 });
 
 check('the check is batched, not one tool call per item', () => {
   assert.ok(
-    /for p in .*\n\s*\[ -e "\$p" \]/.test(toBuild),
-    'the source check does not batch its paths into one command'
+    /process\.argv\.slice\(1\)/.test(toBuild),
+    'the source check does not take many paths in one command'
+  );
+});
+
+check('settled items are not source-checked', () => {
+  // Found in review. `/to-build all` and `/to-build built` would otherwise warn
+  // about Built and Dropped items, whose material is expected to be gone and
+  // where nothing is actionable.
+  assert.ok(
+    /Skip `Built` and `Dropped` items even when the filter asked for them/.test(toBuild),
+    'the source check runs on Built and Dropped items, where the warning is noise'
   );
 });
 
@@ -138,6 +148,68 @@ check('/built-check names exactly the fields it reads for paths', () => {
     /Only `what` and `why` are read for paths here\./.test(builtCheck),
     'built-check does not pin which fields its path sweep covers'
   );
+});
+
+// --- the class of fault this was, across every skill -----------------------
+
+check('no skill names a shell command its allowed-tools does not grant', () => {
+  // The bug in review: the source check was written as `stat` and a bare
+  // `for ... [ -e ]` loop, and to-build's allowed-tools grants neither. The
+  // step read perfectly and would have failed at the moment of use, which is
+  // the exact failure this whole change exists to prevent.
+  //
+  // The repository already pins one instance of this (queue-writes.test.js
+  // checks that callers of queue.js grant Bash(node:*)). This generalises it,
+  // so the next step written with an ungranted command fails here instead of
+  // in front of somebody.
+  const SKILLS = path.join(__dirname, '..', 'plugins');
+  const files = [];
+  for (const plugin of fs.readdirSync(SKILLS)) {
+    const dir = path.join(SKILLS, plugin, 'skills');
+    if (!fs.existsSync(dir)) continue;
+    for (const s of fs.readdirSync(dir)) {
+      const f = path.join(dir, s, 'SKILL.md');
+      if (fs.existsSync(f)) files.push([`${plugin}/${s}`, f]);
+    }
+  }
+  assert.ok(files.length > 0, 'found no skills to check, so this test proves nothing');
+
+  // Shell keywords and builtins are not commands a permission list names.
+  const BUILTIN = new Set([
+    'for', 'do', 'done', 'if', 'then', 'fi', 'else', 'elif', 'while', 'case',
+    'esac', 'echo', 'cd', 'exit', 'set', 'local', 'read', 'printf', 'return',
+  ]);
+
+  const offenders = [];
+  for (const [name, file] of files) {
+    const text = fs.readFileSync(file, 'utf8');
+    const frontmatter = text.slice(0, text.indexOf('---', 4));
+    const line = (frontmatter.match(/allowed-tools:\s*(.+)/) || [])[1];
+    if (!line) continue;
+    // A bare `Bash` grant, with no parenthesised command, permits everything.
+    if (/\bBash\b(?!\s*\()/.test(line)) continue;
+    const granted = new Set([...line.matchAll(/Bash\(([a-zA-Z0-9_.-]+):/g)].map((m) => m[1]));
+
+    const used = new Set();
+    for (const block of text.matchAll(/```bash\n([\s\S]*?)```/g)) {
+      // Strip quoted strings first, or the contents of a `node -e '...'`
+      // program read as commands. `const` is not a shell command.
+      const body = block[1].replace(/'[^']*'/g, "''").replace(/"[^"]*"/g, '""');
+      for (const raw of body.split('\n')) {
+        const stripped = raw.trim();
+        if (!stripped || stripped.startsWith('#')) continue;
+        for (const seg of stripped.split(/\|\||&&|\||;/)) {
+          const word = seg.trim().split(/\s/)[0];
+          if (!word || BUILTIN.has(word)) continue;
+          if (!/^[a-zA-Z][a-zA-Z0-9_.-]*$/.test(word)) continue;
+          used.add(word);
+        }
+      }
+    }
+    const missing = [...used].filter((c) => !granted.has(c)).sort();
+    if (missing.length) offenders.push(`${name}: runs ${missing.join(', ')} but grants ${[...granted].sort().join(', ') || '(nothing)'}`);
+  }
+  assert.deepStrictEqual(offenders, [], `\n  ${offenders.join('\n  ')}`);
 });
 
 // --- the printed text obeys the house style --------------------------------

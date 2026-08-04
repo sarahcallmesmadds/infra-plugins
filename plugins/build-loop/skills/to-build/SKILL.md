@@ -173,7 +173,13 @@ Blocked by: {blocked_by, or "nothing"}
 Write it? (y / edit / skip)
 ```
 
-If `source` is non-empty, `stat` it before showing the draft. If it does not resolve, show the draft with the path marked and let them decide:
+If `source` is non-empty, check it resolves before showing the draft, using the same command Step L4 uses:
+
+```bash
+node -e 'const fs=require("fs"),os=require("os"),h=os.homedir();for(const p of process.argv.slice(1)){const f=p.startsWith("~")?h+p.slice(1):p;console.log((fs.existsSync(f)?"OK  ":"GONE")+" "+p)}' {source, shell-quoted}
+```
+
+If it comes back `GONE`, show the draft with the path marked and let them decide:
 
 > "Source not found: {source}. Writing it anyway is fine, and the list will keep showing this warning until the path resolves or the field is cleared."
 
@@ -294,15 +300,15 @@ Items with a missing or unparseable `created_at` sort last within their group.
 
 ## Step L4 — Check recorded sources
 
-For every item that survived the filter and has a non-empty `source`, check that the path resolves. Expand a leading `~` first.
+Check the sources of items that survived the filter **and** hold status `Open` or `In Progress`. Skip `Built` and `Dropped` items even when the filter asked for them: their source material is expected to be gone or archived, and there is no future build for the warning to protect. Nothing about a settled item is made actionable by telling someone its spec moved.
 
-Collect the paths into one command rather than running `stat` per item, so a list of thirty does not cost thirty tool calls:
+Collect the paths into one command rather than one call per item, so a list of thirty does not cost thirty tool calls:
 
 ```bash
-for p in {each source path, shell-quoted}; do
-  [ -e "$p" ] && echo "OK   $p" || echo "GONE $p"
-done
+node -e 'const fs=require("fs"),os=require("os"),h=os.homedir();for(const p of process.argv.slice(1)){const f=p.startsWith("~")?h+p.slice(1):p;console.log((fs.existsSync(f)?"OK  ":"GONE")+" "+p)}' {each source path, shell-quoted}
 ```
+
+This runs through `node` rather than `stat` or a shell `for` loop because `Bash(node:*)` is in this skill's `allowed-tools` and neither of those is. A step that names a command the skill cannot run reads perfectly and fails at the moment of use, which is the one failure mode this whole change exists to prevent. It also expands `~` in code rather than in the shell, where `[ -e "~/x" ]` is false for every path, and it echoes each path back exactly as recorded so the warning quotes the field rather than a rewritten form of it.
 
 Read the result back and mark each item `source_ok` or `source_gone`. An item with an empty `source` is neither, and never appears in the warning block below.
 
@@ -345,7 +351,7 @@ Then, if any shown item has a non-empty `blocked_by`, list those beneath the tab
 - {title}: {blocked_by}
 ```
 
-Then, if any item that survived the filter is marked `source_gone`, list those beneath the table too, whether or not it made the 20 rendered rows. One line per item, and nothing at all when every source resolves:
+Then, if any item is marked `source_gone`, list those beneath the table too, whether or not it made the 20 rendered rows. Only `Open` and `In Progress` items carry that mark, per Step L4, so a `built` or `all` listing shows the block for its unfinished items and stays silent about the settled ones. One line per item, and nothing at all when every source resolves:
 
 ```
 **Sources not found:**
