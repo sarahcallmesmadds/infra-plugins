@@ -80,12 +80,20 @@ check('the list mode checks recorded sources', () => {
   );
 });
 
-check('a leading ~ is expanded before the check', () => {
+check('a leading ~ is expanded in every copy of the check', () => {
   // `[ -e "~/x" ]` is false for every path, so without this every home-relative
   // source reads as missing. The expansion happens in node, not in the shell.
-  assert.ok(
-    /p\.startsWith\("~"\)\s*\?\s*h\s*\+\s*p\.slice\(1\)/.test(toBuild),
-    'the source check does not expand ~, so ~-relative paths all read as missing'
+  //
+  // Counted rather than merely present. The one-liner appears twice, in Step A3
+  // and Step L4, and an earlier version of this assertion passed while one of
+  // the two had its expansion removed. "It appears somewhere" is not the claim
+  // worth making about a snippet that is duplicated.
+  const invocations = (toBuild.match(/process\.argv\.slice\(1\)/g) || []).length;
+  const expansions = (toBuild.match(/p\.startsWith\("~"\)\s*\?\s*h\s*\+\s*p\.slice\(1\)/g) || []).length;
+  assert.ok(invocations >= 2, `expected the check in both Step A3 and Step L4, found ${invocations}`);
+  assert.strictEqual(
+    expansions, invocations,
+    `${invocations} copies of the source check but only ${expansions} expand ~, so at least one reports every home-relative path as missing`
   );
 });
 
