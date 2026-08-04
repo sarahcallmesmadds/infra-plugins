@@ -61,6 +61,138 @@ function dirFor(name) {
   return LISTS.get(key);
 }
 
+// The status values each list accepts, keyed the same way as LISTS because the
+// two lists have entirely different enums and a value valid for one is wrong
+// for the other. `Built` is a to-build status and means nothing in the queue.
+//
+// This exists because `update` used to write whatever string it was handed. Two
+// queue entries sat on disk carrying `Wontfix`, which is not one of the six
+// values in SCHEMA.md, and no reader matches it: /list-bugs matches the literal
+// `Won't Fix` in its filter, in its sort order, and in the parent_status band
+// that decides whether a dep-review is answerable or waiting. So both entries
+// were invisible to the one filter written to show them, and nothing anywhere
+// errored. The status was wrong for four days and the file read fine.
+//
+// `retired` is accepted on read and refused on write. SCHEMA.md is explicit
+// that readers still take `fix attempted / unresolved` because entries written
+// before 0.3.1 carry it, so a lint that called it invalid would report correct
+// history as corruption.
+const STATUSES = new Map([
+  ['queue', {
+    write: ['Open', 'In Progress', 'Resolved', "Won't Fix", 'fix applied, watching'],
+    retired: ['fix attempted / unresolved'],
+  }],
+  ['to-build', {
+    write: ['Open', 'In Progress', 'Built', 'Dropped'],
+    retired: [],
+  }],
+]);
+
+function statusesFor(name) {
+  return STATUSES.get(name === undefined ? 'queue' : String(name));
+}
+
+// Compared with punctuation and case removed, so `Wontfix` finds `Won't Fix`
+// and `in progress` finds `In Progress`. This is only ever used to suggest,
+// never to silently accept: a near miss is still refused, because guessing what
+// somebody meant and writing it is how a wrong status gets in without anyone
+// deciding to put it there.
+function loosely(value) {
+  return String(value).toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+// `JSON.parse` accepts `null`, `3`, `"x"` and `[]` as valid JSON, and none of
+// them is an entry. Property access on most of them yields undefined and passes
+// quietly, but on `null` it throws, so a single file containing the four
+// characters `null` used to take down whatever was reading the directory.
+//
+// Review found it in `lint`. It was in four places: `lint` aborted its scan and
+// exited on the generic failure code rather than its deliberate 3, `update`
+// crashed reading `.notes`, `create` crashed reading `.id`, and worst of the
+// four, `create`'s duplicate scan crashed on a *neighbour*, so one corrupt file
+// anywhere in the directory blocked every new entry. That loop already had a
+// `catch { continue }` written to tolerate a bad neighbour, and it did not,
+// because the fault is after the parse rather than in it.
+function describe(value) {
+  if (value === null) return 'null';
+  if (Array.isArray(value)) return 'an array';
+  return `a ${typeof value}`;
+}
+
+function isEntry(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+// A status as it should appear in a message. JSON.stringify(undefined) is
+// undefined rather than a string, so a missing status used to print as a bare
+// word that read like a value somebody had typed.
+function showStatus(value) {
+  return value === undefined ? '(none)' : JSON.stringify(value);
+}
+
+// Each value quoted, because `fix applied, watching` contains a comma and a
+// comma-joined list of them cannot be read back.
+function statusList(values) {
+  return values.map((v) => JSON.stringify(v)).join(', ');
+}
+
+// Which list a directory belongs to, so the one gate in writeEntry can pick the
+// right enum from the only thing it is given.
+function listNameFor(dir) {
+  for (const [name, d] of LISTS) if (d === dir) return name;
+  return 'queue';
+}
+
+function checkStatus(value, listName) {
+  const spec = statusesFor(listName);
+  if (!spec) return value; // dirFor has already refused an unknown list.
+  if (spec.write.includes(value)) return value;
+
+  const list = listName === undefined ? 'queue' : String(listName);
+
+  // `--json status=FILE` can hand over anything JSON can express. An object
+  // compared against the enum is simply absent from it, and would otherwise be
+  // reported as an unrecognised status when the real fault is its type.
+  if (typeof value !== 'string') {
+    fail(
+      `queue.js: a status has to be a string, got ${Array.isArray(value) ? 'an array' : typeof value}. `
+      + `Nothing was written.\n  Valid: ${statusList(spec.write)}`
+    );
+  }
+  // Loose match, so this covers the exact retired value and any misspelling of
+  // it in one branch. It used to be an exact check, with the retired values also
+  // sitting in the near-miss search below, so `Fix Attempted / Unresolved` was
+  // told "Did you mean fix attempted / unresolved?" and refused again when the
+  // person did exactly that. A suggestion that cannot be accepted is worse than
+  // none: it costs a second attempt to learn nothing.
+  const nearRetired = spec.retired.find((s) => loosely(s) === loosely(value));
+  if (nearRetired) {
+    const resembles = value === nearRetired
+      ? `${JSON.stringify(value)} is retired and must not be written.`
+      : `${JSON.stringify(value)} matches the retired status ${JSON.stringify(nearRetired)}, which must not be written.`;
+    fail(
+      `queue.js: ${resembles} `
+      + `Entries written before it was retired still carry it and are still read. `
+      + `A rejected diff or a failed write leaves the entry "Open" with the attempt recorded in notes. `
+      + `Nothing was written.\n  Valid: ${statusList(spec.write)}`
+    );
+  }
+
+  // Writable values only. Unreachable for a retired value as this stands, since
+  // the loose branch above catches those first, so what actually fixed the
+  // dead-end suggestion was making that branch loose rather than exact. Kept
+  // because it is the correct list to search on its own terms and because the
+  // ordering above is not a thing to depend on silently. `cmdLint` does the
+  // same narrowing and there it is load-bearing, because its retired check is
+  // an exact one and a near miss falls through to the suggestion.
+  const near = spec.write.find((s) => loosely(s) === loosely(value));
+  const hint = near ? `\n  Did you mean ${JSON.stringify(near)}?` : '';
+  fail(
+    `queue.js: ${JSON.stringify(value)} is not a status for the ${list} list. `
+    + `Nothing was written.${hint}\n  Valid: ${statusList(spec.write)}`
+  );
+}
+
 // How long to wait for someone else's lock before giving up, and how old a lock
 // has to be before it is treated as abandoned. The wait is generous because the
 // work under a lock is one small file write, so anything approaching this means
@@ -319,17 +451,34 @@ function readEntry(id, dir = QUEUE) {
   } catch {
     fail(`queue.js: no entry at ${p}`);
   }
+  let parsed;
   try {
-    return JSON.parse(raw);
+    parsed = JSON.parse(raw);
   } catch (error) {
     fail(`queue.js: ${p} is not valid JSON and was left alone: ${error.message}`);
   }
+  if (!isEntry(parsed)) {
+    fail(`queue.js: ${p} parses but does not hold an entry, it holds ${describe(parsed)}. It was left alone.`);
+  }
+  return parsed;
 }
 
 // Writes through a tempfile in the same directory, so the move is atomic and a
 // crash mid-write cannot leave a half-file where the entry was. The parse check
 // is on what is about to land rather than on what was composed, because those
 // are only the same thing if the serialization worked.
+// The status currently stored for an id, or undefined when there is no file yet
+// or it cannot be read. Deliberately quiet: this only ever answers "is the
+// caller changing the status", and a file that cannot be read has no prior value
+// to preserve, so a new one has to be valid.
+function statusOnDisk(id, dir) {
+  try {
+    return JSON.parse(fs.readFileSync(entryPath(id, dir), 'utf8')).status;
+  } catch {
+    return undefined;
+  }
+}
+
 function writeEntry(id, entry, dir = QUEUE) {
   // Refuse to write without the lock. The check in acquire narrows the takeover
   // race but cannot close it: there is no compare-and-swap for a rename, so two
@@ -340,6 +489,55 @@ function writeEntry(id, entry, dir = QUEUE) {
   if (!holdingLock()) {
     throw new LockLostError('queue.js: the queue lock was taken over by another session mid-write. Nothing was written.');
   }
+  // The one gate. Guarding the call sites instead meant guarding `--status`,
+  // `--field status=` and `create`, and missing `--json status=FILE`, which
+  // assigns a parsed value straight onto the entry. Review found that fourth
+  // door, and a fifth would have been added the same way by whoever adds the
+  // next option. Every write goes through here, so this is the only place the
+  // check cannot be routed around.
+  //
+  // Only what this write CHANGES is checked. Validating unconditionally locked
+  // every legacy entry out of being edited at all: an entry carrying the retired
+  // `fix attempted / unresolved`, which SCHEMA.md says readers must still
+  // accept, could not be given a note, and neither could the off-enum entries
+  // `lint` exists to point at. The ones most in need of an annotation were the
+  // ones that could not receive one.
+  //
+  // Reading the prior value here rather than having callers pass it keeps the
+  // property that made this a gate: a new route cannot get it wrong by
+  // forgetting an argument. The read is inside the lock, so nothing can change
+  // between it and the write.
+  //
+  // Rewriting a bad status as itself is allowed and is a no-op. It introduces
+  // no value that was not already there, and refusing it would put the entry
+  // right back in the trap this paragraph is about.
+  // A brand-new entry must carry one. `status` is required by both schemas, and
+  // an entry without it matches no filter in /list-bugs, which is the same
+  // invisibility this whole change exists to prevent. `create` used to write one
+  // happily and `lint` then reported it as broken, so the tool accepted
+  // something it went on to call a fault.
+  //
+  // An entry already on disk without a status is left alone, for the same reason
+  // legacy values are: it can still be annotated while somebody decides what it
+  // should be. Absent is preserved, never introduced.
+  // The `!existed` arm is unreachable through the CLI as this stands: `create`
+  // refuses a status-less entry before the lock is taken, and `update` cannot
+  // reach a file that does not exist. Mutation testing confirmed it, so no test
+  // covers it and none is claimed to. It is kept because this is the gate, and
+  // the gate holding only for the routes that exist today is how the `--json`
+  // hole was created in the first place.
+  const existed = fs.existsSync(entryPath(id, dir));
+  if (entry && entry.status === undefined) {
+    if (!existed) {
+      fail(
+        `queue.js: a new entry needs a status, and this one has none. Nothing was written.`
+        + `\n  Valid: ${statusList(statusesFor(listNameFor(dir)).write)}`
+      );
+    }
+  } else if (entry && entry.status !== statusOnDisk(id, dir)) {
+    checkStatus(entry.status, listNameFor(dir));
+  }
+
   const target = entryPath(id, dir);
   const tmp = `${target}.${process.pid}.tmp`;
   const text = JSON.stringify(entry, null, 2) + '\n';
@@ -367,18 +565,33 @@ function cmdUpdate(args) {
     const before = Array.isArray(entry.notes) ? entry.notes.length : 0;
     const ts = nowISO();
 
-    if (args.status) entry.status = args.status;
+    // Not validated here. writeEntry is the single gate, and a check at this
+    // call site would suggest the other three routes are covered by their own,
+    // which is exactly the reasoning that missed `--json status=FILE`.
+    // `!== undefined`, not truthiness. `--status ""` used to be skipped here
+    // because an empty string is falsy, so the entry kept its old status and
+    // the command printed "updated" and exited 0 having changed nothing. The
+    // other two routes refuse it, so the three disagreed about the same value.
+    // An empty status is not a way of saying "leave it alone"; leaving the
+    // option off is.
+    if (args.status !== undefined) entry.status = args.status;
 
     // --resolution FILE is the same thing as --json resolution=FILE, kept
     // because it is the common case and reads better at the call site.
     const jsonFields = [...(args.json || [])];
-    if (args.resolution) jsonFields.push(`resolution=${args.resolution}`);
+    // Same shape, same reason. `--resolution ""` was silently ignored, where
+    // an empty filename should be reported as one that cannot be read.
+    if (args.resolution !== undefined) jsonFields.push(`resolution=${args.resolution}`);
 
     for (const pair of jsonFields) {
       const at = pair.indexOf('=');
       if (at < 1) fail(`queue.js: --json wants key=FILE, got ${pair}`);
       const key = checkKey(pair.slice(0, at));
       const file = pair.slice(at + 1);
+      // Named rather than left to render as nothing. `--resolution ""` reaches
+      // here as an empty filename, and "cannot read  for --json resolution"
+      // reads like a bug in the message rather than a fault in the input.
+      if (!file) fail(`queue.js: --json ${key} needs a filename and was given an empty one. Nothing was written.`);
       let raw;
       try {
         raw = fs.readFileSync(file, 'utf8');
@@ -458,8 +671,25 @@ function cmdCreate(args) {
   } catch (error) {
     fail(`queue.js: ${from} is not valid JSON: ${error.message}. Nothing was written.`);
   }
+  if (!isEntry(entry)) {
+    fail(`queue.js: ${from} parses but does not hold an entry, it holds ${describe(entry)}. Nothing was written.`);
+  }
   if (!entry.id) fail('queue.js: the entry has no id, so there is nowhere to write it.');
   checkId(entry.id);
+  // Kept as well as the gate in writeEntry, and the only call site that is.
+  // This one runs before the lock is taken, so a composed file with a bad
+  // status is refused without making anyone else wait for it. The gate would
+  // catch it either way.
+  // Refused before the lock is taken, so a bad composed file does not make
+  // anyone wait. The gate in writeEntry enforces the same two rules and is what
+  // makes them unavoidable; this is the early, cheaper copy.
+  if (entry.status === undefined) {
+    fail(
+      'queue.js: a new entry needs a status, and this one has none. Nothing was written.'
+      + `\n  Valid: ${statusList(statusesFor(args.list).write)}`
+    );
+  }
+  checkStatus(entry.status, args.list);
 
   return locked(() => {
     if (fs.existsSync(entryPath(entry.id, dir))) {
@@ -475,6 +705,9 @@ function cmdCreate(args) {
         } catch {
           continue; // A malformed neighbour is list-bugs' problem, not this one.
         }
+        // And one that parses to something other than an entry is the same
+        // kind of neighbour. Skipping is what the catch above already intends.
+        if (!isEntry(other)) continue;
         if (other.dedup_key !== entry.dedup_key) continue;
         const at = Date.parse(other.created_at);
         // An unparseable date counts as a match. Treating it as "long ago"
@@ -561,7 +794,84 @@ function parseArgs(argv) {
   return out;
 }
 
-const COMMANDS = { update: cmdUpdate, create: cmdCreate, show: cmdShow };
+// Reports entries already on disk whose status is not in the enum. Refusing bad
+// writes from here on does nothing about anything already stored, and the two
+// entries that prompted this had been wrong for four days before anyone looked.
+//
+// A retired status is reported separately and does not fail the run, because
+// SCHEMA.md says readers still accept it. Counting it as a fault would tell
+// somebody their correct history is broken.
+//
+// Exit 0 clean, 3 when something is off-enum, matching roots.js in using a
+// distinct code rather than 1, so a caller can tell a finding from a crash.
+function cmdLint(args) {
+  const dir = dirFor(args.list);
+  const list = args.list === undefined ? 'queue' : String(args.list);
+  const spec = statusesFor(args.list);
+  const bad = [];
+  const retired = [];
+  let unreadable = 0;
+
+  for (const file of listFiles(dir)) {
+    let entry;
+    try {
+      entry = JSON.parse(fs.readFileSync(path.join(dir, file), 'utf8'));
+    } catch {
+      unreadable += 1;
+      continue;
+    }
+    // Counted with the unreadable rather than crashing the scan. The command
+    // promises it does not diagnose an unreadable file as a status fault, and
+    // a file holding `null` is unreadable in every sense that matters here.
+    if (!isEntry(entry)) {
+      unreadable += 1;
+      continue;
+    }
+    const status = entry.status;
+    if (spec.write.includes(status)) continue;
+    if (spec.retired.includes(status)) {
+      retired.push([file, status]);
+      continue;
+    }
+    // Writable values only, for the same reason as checkStatus: the line below
+    // ends with an update command, and suggesting a value that command refuses
+    // makes the report a dead end.
+    const near = spec.write.find((s) => loosely(s) === loosely(status));
+    bad.push([file, status, near]);
+  }
+
+  // Ids, not filenames. The fix below takes an id, and `bad.json` is not one:
+  // pasting it gives "no entry at .../bad.json.json". The id is the filename
+  // stem by schema rule, so this is the same string with the suffix off.
+  const idOf = (file) => file.replace(/\.json$/, '');
+
+  for (const [file, status, near] of bad) {
+    const hint = near ? `  (did you mean ${JSON.stringify(near)}?)` : '';
+    process.stdout.write(`off-enum  ${idOf(file)}  status=${showStatus(status)}${hint}\n`);
+  }
+  for (const [file, status] of retired) {
+    process.stdout.write(`retired   ${idOf(file)}  status=${showStatus(status)}  (valid on read, refused on write)\n`);
+  }
+  if (unreadable) {
+    // Files rather than ids, deliberately. These did not parse into entries, so
+    // there is nothing to call an id and nothing to run a command against.
+    process.stdout.write(`unreadable ${unreadable} file(s), which this command does not diagnose\n`);
+  }
+  if (bad.length === 0) {
+    process.stdout.write(`every status in ${list} is in the enum\n`);
+    return 0;
+  }
+  // `--list` named every time, including for the default. cmdUpdate falls back
+  // to the queue when it is absent, so a fix copied out of a `--list to-build`
+  // run used to look for the id in the wrong place: "no entry at ...", or worse,
+  // a silent edit of an unrelated entry when the same id existed in both.
+  process.stdout.write(`\n${bad.length} ${bad.length === 1 ? 'entry carries' : 'entries carry'} a status no reader matches. Fix with: queue.js update <id> --status <valid> --list ${list}\n`);
+  return 3;
+}
+
+const COMMANDS = {
+  update: cmdUpdate, create: cmdCreate, show: cmdShow, lint: cmdLint,
+};
 
 function main(argv) {
   const command = argv[0];
@@ -574,6 +884,10 @@ function main(argv) {
       '              [--note-file FILE]  (free text: use this, not --note)',
       '              [--json key=FILE] [--field key=value]',
       '  create <file.json> [--dedup-window MINUTES]    add one, dedup under the same lock',
+      '  lint                                           report statuses no reader matches',
+      '',
+      '  A status is checked against the list it is written to. Exit 3 from lint',
+      '  means something on disk is off-enum.',
       '',
       '  --list queue (default) or to-build. Both live under ~/.claude/build-loop',
       '  and share one lock.',
@@ -608,4 +922,9 @@ if (require.main === module) {
   process.exitCode = code;
 }
 
-module.exports = { main, LOCK, QUEUE };
+// STATUSES is exported for one reason: it is a second copy of the enums written
+// out in SCHEMA.md and SCHEMA-BUILD.md, and a test compares the two. Without
+// that comparison, adding a status to a schema and forgetting this Map would
+// make the new value unwritable rather than merely undocumented, which is a
+// worse failure than the one before this file validated anything.
+module.exports = { main, LOCK, QUEUE, STATUSES };
