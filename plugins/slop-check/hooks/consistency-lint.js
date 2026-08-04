@@ -98,13 +98,26 @@ function touches(range, from, to) {
 
 // Could taking this text out have changed how long some list is?
 //
-// List markers and table rows are the direct way. A blank line counts too,
-// because removing one joins two lists into one and adding one splits them,
-// and the grouping is what gets counted.
+// Only list markers and table rows. A blank line was in here too, on the
+// reasoning that removing one joins two lists and adding one splits them, and
+// the grouping is what gets counted. That reasoning is sound and the rule was
+// still wrong: a real paragraph deletion carries its trailing blank line, so
+// "Some paragraph." plus its blank was let through. Ordinary prose deletion is
+// the commonest edit there is, which made the guard pass almost everything and
+// quietly restored the noise it was added to stop.
+//
+// The test written alongside it deleted a sentence with no newline, which is
+// the one paragraph shape that does not carry a blank. It was built to pass.
+//
+// What is given up: removing a blank line that sat between two lists, joining
+// them, can change a count and is no longer checked. That needs a deletion of
+// nothing but whitespace, between two lists, under a sentence counting one of
+// them. Against a warning on every paragraph anyone deletes, it is the better
+// trade.
 function couldChangeAList(removed) {
   if (typeof removed !== 'string') return true;
   return removed.split('\n').some((line) => (
-    /^\s*([-*]|\d+\.)\s/.test(line) || /^\s*\|/.test(line) || line.trim() === ''
+    /^\s*([-*]|\d+\.)\s/.test(line) || /^\s*\|/.test(line)
   ));
 }
 

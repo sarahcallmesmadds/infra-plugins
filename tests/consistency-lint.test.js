@@ -490,6 +490,45 @@ check('deleting prose does not re-report old problems elsewhere', () => {
     'deleting unrelated prose re-reported contradictions the author has already seen');
 });
 
+check('an edit that only changes punctuation is not a leftover of itself', () => {
+  // Caused by the trailing-punctuation trim added a round earlier, which is
+  // the shape where the fix is the next bug. When the only thing the edit
+  // changed was the punctuation after a word, the trim removes the one
+  // character that differed, so the fragment becomes exactly the text now
+  // standing at the edit site and the line reports itself.
+  const comma = write('punct.md', 'The release shipped 5 fixes,\n');
+  assert.strictEqual(run(editEvent(comma, 'The release shipped 5 fixes.', 'The release shipped 5 fixes,')).stdout, '',
+    'swapping a full stop for a comma was reported as an unfinished change');
+
+  const bang = write('punct2.md', 'Renamed to queue.js!\n');
+  assert.strictEqual(run(editEvent(bang, 'Renamed to queue.js.', 'Renamed to queue.js!')).stdout, '',
+    'swapping a full stop for an exclamation mark was reported as an unfinished change');
+
+  // Stated directly, because the hook path above can go quiet for other
+  // reasons and would then pass while this was broken.
+  assert.strictEqual(survivingText('The release shipped 5 fixes,\n',
+    'The release shipped 5 fixes.', 'The release shipped 5 fixes,').length, 0);
+
+  // And a real leftover, where the replacement does not contain the fragment,
+  // is untouched by the guard.
+  assert.strictEqual(survivingText('Those eight rounds hurt.\n', 'eight rounds', 'nine rounds').length, 1,
+    'the guard silenced a genuine leftover');
+});
+
+check('deleting an ordinary paragraph stays quiet, blank line and all', () => {
+  // The hole in the previous round's own fix. A blank line counted as list
+  // structure, on the sound reasoning that removing one joins two lists. But
+  // a real paragraph deletion carries its trailing blank, so the guard let
+  // through the commonest edit there is and quietly restored the noise it was
+  // added to stop.
+  //
+  // The test written alongside that fix deleted a sentence with no newline,
+  // the one paragraph shape that carries no blank. It was built to pass.
+  const file = write('para.md', ['It runs two checks:', '', '- a', '- b', '- c', '', ''].join('\n'));
+  assert.strictEqual(run(editEvent(file, 'An unrelated paragraph.\n\n', '')).stdout, '',
+    'deleting a paragraph with its trailing blank re-reported an old count');
+});
+
 check('deleting a list item still re-checks the count above it', () => {
   // The half of a deletion that genuinely creates the fault: the list gets
   // shorter and the sentence announcing it does not change.

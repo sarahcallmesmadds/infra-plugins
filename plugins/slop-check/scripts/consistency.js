@@ -476,6 +476,22 @@ function survivingText(content, oldString, newString) {
     if (!isDistinctive(fragment)) continue;
 
     const needle = fragment.trim();
+
+    // The replacement can still hold the fragment, and then the line just
+    // written matches and is reported as a leftover of itself.
+    //
+    // Trimming trailing punctuation is what did it. An edit whose only change
+    // was the punctuation after a word, a full stop to a comma, leaves the
+    // word standing, the trim removes the one character that differed, and
+    // the fragment is now exactly the text at the edit site. Every ordinary
+    // punctuation fix produced a note pointing at correct text.
+    //
+    // A fragment the replacement still contains cannot be evidence that
+    // something was left behind. The cost is a deliberate partial rename
+    // inside one edit, "use queue.js and queue.js" with only the first
+    // changed, going unreported. That is a thing somebody did on purpose,
+    // where this fires on a thing nobody did at all.
+    if (typeof newString === 'string' && wholeToken(needle).test(newString)) continue;
     const lines = [];
     const re = wholeToken(needle);
     content.split('\n').forEach((line, i) => {
