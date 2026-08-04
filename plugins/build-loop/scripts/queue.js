@@ -415,6 +415,18 @@ function readEntry(id, dir = QUEUE) {
 // crash mid-write cannot leave a half-file where the entry was. The parse check
 // is on what is about to land rather than on what was composed, because those
 // are only the same thing if the serialization worked.
+// The status currently stored for an id, or undefined when there is no file yet
+// or it cannot be read. Deliberately quiet: this only ever answers "is the
+// caller changing the status", and a file that cannot be read has no prior value
+// to preserve, so a new one has to be valid.
+function statusOnDisk(id, dir) {
+  try {
+    return JSON.parse(fs.readFileSync(entryPath(id, dir), 'utf8')).status;
+  } catch {
+    return undefined;
+  }
+}
+
 function writeEntry(id, entry, dir = QUEUE) {
   // Refuse to write without the lock. The check in acquire narrows the takeover
   // race but cannot close it: there is no compare-and-swap for a rename, so two
@@ -431,7 +443,25 @@ function writeEntry(id, entry, dir = QUEUE) {
   // door, and a fifth would have been added the same way by whoever adds the
   // next option. Every write goes through here, so this is the only place the
   // check cannot be routed around.
-  if (entry && entry.status !== undefined) checkStatus(entry.status, listNameFor(dir));
+  //
+  // Only what this write CHANGES is checked. Validating unconditionally locked
+  // every legacy entry out of being edited at all: an entry carrying the retired
+  // `fix attempted / unresolved`, which SCHEMA.md says readers must still
+  // accept, could not be given a note, and neither could the off-enum entries
+  // `lint` exists to point at. The ones most in need of an annotation were the
+  // ones that could not receive one.
+  //
+  // Reading the prior value here rather than having callers pass it keeps the
+  // property that made this a gate: a new route cannot get it wrong by
+  // forgetting an argument. The read is inside the lock, so nothing can change
+  // between it and the write.
+  //
+  // Rewriting a bad status as itself is allowed and is a no-op. It introduces
+  // no value that was not already there, and refusing it would put the entry
+  // right back in the trap this paragraph is about.
+  if (entry && entry.status !== undefined && entry.status !== statusOnDisk(id, dir)) {
+    checkStatus(entry.status, listNameFor(dir));
+  }
 
   const target = entryPath(id, dir);
   const tmp = `${target}.${process.pid}.tmp`;

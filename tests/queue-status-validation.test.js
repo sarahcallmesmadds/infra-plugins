@@ -231,6 +231,72 @@ check('each list still accepts its own values', () => {
   }
 });
 
+// --- legacy entries must stay editable -------------------------------------
+//
+// Found in review. Moving the guard into writeEntry made it validate on every
+// write, including writes that do not touch the status, so an entry already
+// carrying a bad or retired value could never be annotated again. The entries
+// most in need of a note were the only ones that could not receive one.
+//
+// The first version of this suite missed it because every fixture it seeded had
+// a valid status. A feature that exists for broken data has to be tested
+// against broken data.
+
+// Writes an entry straight to disk, bypassing queue.js. This is the only way to
+// produce the legacy state the checks below are about.
+function plant(home, id, status, list = 'queue') {
+  const p = path.join(home, '.claude', 'build-loop', list, `${id}.json`);
+  fs.writeFileSync(p, JSON.stringify({ id, status, notes: [] }, null, 2));
+  return p;
+}
+
+check('a note can be added to an entry carrying the retired status', () => {
+  const home = sandbox();
+  plant(home, 'p1', 'fix attempted / unresolved');
+  const note = path.join(home, 'n.txt');
+  fs.writeFileSync(note, 'still investigating');
+  const r = run(home, ['update', 'p1', '--note-file', note]);
+  assert.strictEqual(r.code, 0, `a note-only update was refused: ${r.out}`);
+  assert.strictEqual(statusOnDisk(home, 'p1'), 'fix attempted / unresolved', 'the legacy status was not preserved');
+});
+
+check('a note can be added to an entry carrying an off-enum status', () => {
+  // These are exactly the entries `lint` tells someone to go and look at.
+  const home = sandbox();
+  plant(home, 'p2', 'Wontfix');
+  const note = path.join(home, 'n.txt');
+  fs.writeFileSync(note, 'noticed by lint');
+  const r = run(home, ['update', 'p2', '--note-file', note]);
+  assert.strictEqual(r.code, 0, `a note-only update was refused: ${r.out}`);
+  assert.strictEqual(statusOnDisk(home, 'p2'), 'Wontfix');
+});
+
+check('any other field can be edited without touching the status', () => {
+  const home = sandbox();
+  plant(home, 'p3', 'Wontfix');
+  const r = run(home, ['update', 'p3', '--field', 'repo=plugins']);
+  assert.strictEqual(r.code, 0, `a field-only update was refused: ${r.out}`);
+});
+
+check('the remediation path works: a bad status can be corrected', () => {
+  // The whole point. If lint reports it and nothing can change it, the report
+  // is a dead end.
+  const home = sandbox();
+  plant(home, 'p4', 'Wontfix');
+  const r = run(home, ['update', 'p4', '--status', "Won't Fix"]);
+  assert.strictEqual(r.code, 0, `correcting an off-enum status was refused: ${r.out}`);
+  assert.strictEqual(statusOnDisk(home, 'p4'), "Won't Fix");
+});
+
+check('a legacy entry cannot be moved to a different bad status', () => {
+  // Preserving what is there is not the same as accepting anything new.
+  const home = sandbox();
+  plant(home, 'p5', 'Wontfix');
+  const r = run(home, ['update', 'p5', '--status', 'Nonsense']);
+  assert.notStrictEqual(r.code, 0, 'one bad status was swapped for another');
+  assert.strictEqual(statusOnDisk(home, 'p5'), 'Wontfix');
+});
+
 // --- the retired value -----------------------------------------------------
 
 check('the retired status is refused on write but not called invalid', () => {
