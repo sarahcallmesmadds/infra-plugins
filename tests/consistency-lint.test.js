@@ -284,6 +284,40 @@ check('the line stating the rule is not itself a breach of it', () => {
   assert.strictEqual(run(writeEvent(file)).stdout, '');
 });
 
+check('quoting the forbidden character inline is showing it, not using it', () => {
+  // The breach scan skipped fenced and indented blocks, on the reasoning that
+  // showing the character is how you document a rule about characters. An
+  // inline span is the other way of doing that and was not covered, so a file
+  // explaining its own rule was warned by it. The file most likely to quote an
+  // em dash while banning em dashes is the one explaining the rule, which made
+  // this plugin's own documentation the first thing it would have fired on.
+  const inline = write('inline.md', ['Never use em dashes.', '', 'The `—` character is banned in prose.', ''].join('\n'));
+  assert.strictEqual(run(writeEvent(inline)).stdout, '', 'a character quoted in backticks was read as a use of it');
+
+  const double = write('inline2.md', ['Never use em dashes.', '', 'Write ``a — b`` to show it.', ''].join('\n'));
+  assert.strictEqual(run(writeEvent(double)).stdout, '', 'a double-backtick span was not removed whole');
+
+  // A breach outside a span, on a line that also has a span, still counts.
+  const mixed = write('inline3.md', ['Never use em dashes.', '', 'The `x` marker — like this.', ''].join('\n'));
+  assert.ok(adviceFrom(run(writeEvent(mixed))), 'stripping spans swallowed a real breach on the same line');
+});
+
+check('marking up part of the rule does not stop it being the rule', () => {
+  // Found by writing the test above. The rule test ran against the raw line,
+  // and the pattern wants whitespace between "use" and "em" where a backtick
+  // was sitting, so a rule written this way was never detected at all and the
+  // file was held to nothing. Predates the code-span work.
+  //
+  // Removing whole spans would not fix it either: "Never use `em dashes`"
+  // becomes "Never use ." and the rule disappears a second way. The rule test
+  // drops only the backticks and keeps the words, which is the opposite of
+  // what the breach test needs.
+  const file = write('markup.md', ['Never use `em dashes`.', '', 'This reads well — and nobody edited it.', ''].join('\n'));
+  const advice = adviceFrom(run(writeEvent(file)));
+  assert.ok(advice, 'a rule written with backticks was never detected, so the file was held to nothing');
+  assert.match(advice, /line 3/);
+});
+
 check('a code example showing the forbidden character is left alone', () => {
   // Documenting a rule about a character means showing the character. This
   // plugin's own README does exactly that and would otherwise be the first

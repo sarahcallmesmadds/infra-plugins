@@ -532,6 +532,41 @@ const SELF_RULES = [
 //   Code examples. A fenced block showing what the forbidden thing looks like
 //   is the normal way to document a rule about characters. slop-check's own
 //   README does this and would otherwise be the first thing flagged.
+// A line with its inline code spans taken out.
+//
+// The breach scan already skipped fenced and indented blocks, because showing
+// the character is how you document a rule about characters. An inline span is
+// the other way of doing that and was not covered, so a file explaining its own
+// rule was warned by it: "The `-` character is banned in prose" read as a use
+// of the thing rather than a mention of it.
+//
+// The file most likely to quote an em dash while banning em dashes is the one
+// explaining the rule, which makes this plugin's own documentation and her
+// memory files the first things it would have fired on.
+//
+// Longer runs first, so ``a ` b`` is removed whole rather than leaving a
+// stranded backtick behind.
+function withoutCodeSpans(line) {
+  return line.replace(/``[^`]*``/g, '').replace(/`[^`]*`/g, '');
+}
+
+// The same line with the backtick characters gone and the words kept.
+//
+// The two tests want opposite things from a code span and neither wants what
+// the other does. Removing the span suits the breach test, where the point is
+// that a shown character is not a used one. It ruins the rule test: "Never use
+// `em dashes`" becomes "Never use ." and the file stops being held to a rule
+// it plainly states.
+//
+// Removing only the backticks is what the rule test wants. Marking up part of
+// a sentence does not stop it being the sentence. This also fixes a case that
+// was broken before any of it: the raw line does not match either, because the
+// pattern wants whitespace between "use" and "em" and finds a backtick, so a
+// rule written that way was never detected at all.
+function withoutBackticks(line) {
+  return line.replace(/`/g, '');
+}
+
 function brokenOwnRule(text) {
   const lines = text.split('\n');
   const inExample = exampleLines(lines);
@@ -540,7 +575,7 @@ function brokenOwnRule(text) {
   for (const rule of SELF_RULES) {
     const statedAt = [];
     lines.forEach((line, i) => {
-      if (!inExample[i] && rule.states.test(line)) statedAt.push(i);
+      if (!inExample[i] && rule.states.test(withoutBackticks(line))) statedAt.push(i);
     });
     if (!statedAt.length) continue;
 
@@ -548,7 +583,9 @@ function brokenOwnRule(text) {
     lines.forEach((line, i) => {
       if (inExample[i]) return;
       if (statedAt.includes(i)) return;
-      if (rule.breaks.test(line)) breaches.push(i + 1);
+      // The breach test drops whole code spans; the rule test above drops only
+      // the backticks. See the two helpers for why those are opposite jobs.
+      if (rule.breaks.test(withoutCodeSpans(line))) breaches.push(i + 1);
     });
 
     if (breaches.length) {
