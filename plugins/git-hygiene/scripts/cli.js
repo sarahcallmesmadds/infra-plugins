@@ -83,8 +83,10 @@ function render(result, where) {
   lines.push('');
 
   if (safe.length) {
-    lines.push(`Safe to delete (${safe.length}) — every commit is already in the default branch:`);
-    for (const b of safe) lines.push(`  ${b.name}  (${age(b)})`);
+    lines.push(`Safe to delete (${safe.length}) — the default branch already has this work:`);
+    for (const b of safe) {
+      lines.push(`  ${b.name}  (${age(b)}${b.mergedVia ? `, ${b.mergedVia}` : ''})`);
+    }
   } else {
     lines.push('Safe to delete (0).');
   }

@@ -399,6 +399,89 @@ check('outside a repo with no --repo, it explains rather than reporting nothing'
   assert.ok(!/Safe to delete \(0\)/.test(stderr), 'must not imply it looked and found nothing');
 });
 
+// ------------------------------------------------------- squash merges ----
+//
+// A squash merge rewrites a branch into one new commit on the default branch,
+// so the branch's own commits never become ancestors and `aheadBy` stays above
+// zero for good. In a repository that squash-merges every pull request that
+// made the plugin unable to clear a single branch: six merged branches, four of
+// them with merged pull requests, all reported as "N commits not in the default
+// branch". Reported 2026-08-04.
+//
+// Driven against a real repository rather than a fixture, because the thing
+// under test is what git reports, and a fixture would only record what we
+// already believe it reports.
+
+check('a squash-merged branch is safe to delete, an unmerged one is not', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'squash-'));
+  const g = (...args) => execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8' });
+
+  execFileSync('git', ['init', '-q', '-b', 'main', dir]);
+  g('config', 'user.email', 'test@example.com');
+  g('config', 'user.name', 'test');
+  fs.writeFileSync(path.join(dir, 'f.txt'), 'line1\n');
+  g('add', '.');
+  g('commit', '-qm', 'base');
+
+  // Three commits, the shape a squash collapses into one.
+  g('checkout', '-qb', 'feature');
+  for (const line of ['line2', 'line3', 'line4']) {
+    fs.appendFileSync(path.join(dir, 'f.txt'), `${line}\n`);
+    g('commit', '-qam', `part ${line}`);
+  }
+
+  g('checkout', '-q', 'main');
+  g('merge', '-q', '--squash', 'feature');
+  g('commit', '-qm', 'feature (#42)');
+
+  // The default branch moves on afterwards, so the two trees are not equal by
+  // accident. Without this the test would pass for the wrong reason.
+  fs.writeFileSync(path.join(dir, 'g.txt'), 'unrelated\n');
+  g('add', '.');
+  g('commit', '-qm', 'later work on main');
+
+  // A branch holding work that genuinely is not in main.
+  g('checkout', '-qb', 'real-work', 'main');
+  fs.writeFileSync(path.join(dir, 'h.txt'), 'not in main\n');
+  g('add', '.');
+  g('commit', '-qm', 'real unmerged work');
+  g('checkout', '-q', 'main');
+
+  const r = collect.localBranches(dir);
+  const byName = Object.fromEntries(r.branches.map((b) => [b.name, b]));
+
+  // If this ever stops holding, the squash is no longer being simulated and
+  // everything below passes without proving anything.
+  assert.ok(byName.feature.aheadBy > 0,
+    `a squash merge must still leave aheadBy above zero, got ${byName.feature.aheadBy}`);
+
+  assert.strictEqual(byName.feature.merged, true, 'squash-merged branch should carry merge evidence');
+  assert.strictEqual(byName['real-work'].merged, false, 'a branch with unmerged work must not');
+
+  const out = classify(r.branches, {}, Date.now());
+  const safe = out.safe.map((b) => b.name);
+  const keep = out.keep.map((b) => b.name);
+
+  assert.ok(safe.includes('feature'),
+    `squash-merged branch should be safe, got safe=${safe} keep=${keep}`);
+  assert.ok(keep.includes('real-work'), 'unmerged work must be kept');
+  assert.ok(!safe.includes('real-work'), 'unmerged work must never be offered for deletion');
+
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// The guard on the new signal. `merged` answers "is this work already in the
+// default branch"; it does not answer "did we manage to look". An unknown
+// aheadBy means we did not look, and that must still keep.
+check('merge evidence never rescues an unknown aheadBy', () => {
+  const out = classify([
+    { name: 'x', lastCommitDate: d(1), aheadBy: null, merged: true, mergedVia: 'merged in #1',
+      isDefault: false, isCurrent: false, hasOpenPR: false },
+  ], {}, NOW);
+  assert.strictEqual(out.safe.length, 0, 'unknown ancestry plus a merge signal is still one fact missing');
+  assert.ok(out.keep[0].keepReasons.includes('merge-state-unknown'));
+});
+
 fs.unlinkSync(fixture);
 
 process.stdout.write(failures === 0 ? '\nAll stale-branch tests passed.\n' : `\n${failures} test(s) failed.\n`);

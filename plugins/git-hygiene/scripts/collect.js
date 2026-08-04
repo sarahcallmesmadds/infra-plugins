@@ -1,8 +1,13 @@
 // Gathers branch facts, either from a local checkout or from GitHub.
 //
 // Both paths produce the same shape so `classify.js` never needs to know where
-// the data came from. The important field is `aheadBy`, and every path that
-// cannot determine it sets it to null rather than guessing a number.
+// the data came from. The important fields are `aheadBy` and `merged`, and
+// every path that cannot determine either one says so rather than guessing:
+// `aheadBy` becomes null, `merged` stays false.
+//
+// `merged` exists because `aheadBy` cannot see a squash merge. The two paths
+// answer it differently, since only one of them can reach GitHub. Locally it is
+// a tree comparison; remotely it is the merged pull request list.
 
 'use strict';
 
@@ -49,6 +54,11 @@ function isGitRepo(cwd) {
 // Branches not reached keep `aheadBy: null`, which classify.js treats as
 // unmerged. So a truncated run under-reports what is safe and never over-
 // reports it.
+//
+// A branch that ancestry calls unmerged costs a second call, the tree
+// comparison below. The deadline is still checked once per branch and still
+// bounds the loop; the effect of the extra call is that a run under pressure
+// truncates a little earlier, which errs towards keeping.
 function localBranches(cwd, opts) {
   const deadline = (opts && opts.deadline) || null;
   let truncated = false;
@@ -69,9 +79,17 @@ function localBranches(cwd, opts) {
   const listed = tryRun('git', ['-C', cwd, 'for-each-ref', '--format=%(refname:short)%09%(committerdate:iso-strict)', 'refs/heads/']);
   if (!listed) return { defaultBranch: def, branches: [] };
 
+  // The default branch's own tree, read once. A branch whose merge into `def`
+  // produces this exact tree adds nothing `def` does not already have. If this
+  // cannot be read the comparison is simply not attempted, and every branch
+  // falls back to ancestry alone.
+  const defTree = tryRun('git', ['-C', cwd, 'rev-parse', `${def}^{tree}`]);
+
   const branches = listed.split('\n').filter(Boolean).map((line) => {
     const [name, date] = line.split('\t');
     let aheadBy = null;
+    let merged = false;
+    let mergedVia = null;
     if (name === def) {
       aheadBy = 0;
     } else if (deadline !== null && Date.now() >= deadline) {
@@ -82,11 +100,29 @@ function localBranches(cwd, opts) {
       // are not reachable from `def`. That is exactly the question being asked.
       const n = tryRun('git', ['-C', cwd, 'rev-list', '--count', `${def}..${name}`]);
       if (n !== null && /^\d+$/.test(n)) aheadBy = parseInt(n, 10);
+
+      // Ancestry says nothing about a squash merge, which rewrites the branch
+      // into one new commit and leaves the originals unreachable. So ask the
+      // question that survives it: does merging this branch into `def` change
+      // `def` at all? An identical resulting tree means it does not.
+      //
+      // Only worth asking when ancestry already said "unmerged". A conflicting
+      // merge exits non-zero, `tryRun` returns null, and the branch is kept.
+      // Not knowing is never rounded up into permission to delete.
+      if (aheadBy !== null && aheadBy > 0 && defTree) {
+        const t = tryRun('git', ['-C', cwd, 'merge-tree', '--write-tree', def, name]);
+        if (t !== null && t.split('\n')[0] === defTree) {
+          merged = true;
+          mergedVia = 'already in the default branch';
+        }
+      }
     }
     return {
       name,
       lastCommitDate: date,
       aheadBy,
+      merged,
+      mergedVia,
       isDefault: name === def,
       isCurrent: name === current,
       hasOpenPR: false,
@@ -152,6 +188,30 @@ function remoteBranches(repo) {
   const prsUnknown = prs === null;
   const openPR = new Set(prs || []);
 
+  // Merged pull requests, this path's answer to the question the local path
+  // settles with a tree comparison. A squash merge closes the pull request as
+  // merged while leaving the branch's own commits unreachable, so this is the
+  // only signal here that survives it. The number comes back too, because
+  // "merged in #51" is checkable and a bare "merged" is not.
+  //
+  // Unreadable is not empty here either, but it fails the other way round from
+  // the open-PR list above: with no merged list, no branch gains the second
+  // signal and every one falls back to ancestry. That keeps too much rather
+  // than deleting too much, which is the direction this plugin errs in
+  // everywhere.
+  const mergedLines = ghLines(['api', `repos/${repo}/pulls?state=closed&per_page=100`, '--paginate',
+    '--jq', '.[] | select(.merged_at != null) | "\\(.head.ref)\\t\\(.number)"']);
+
+  // First merged PR wins. A branch name reused across several PRs is reported
+  // by whichever merged first, which is enough to establish that the name's
+  // work reached the default branch at least once. The per-branch tree state is
+  // still what ancestry reports; this only ever adds evidence.
+  const mergedPR = new Map();
+  for (const line of mergedLines || []) {
+    const [ref, num] = line.split('\t');
+    if (ref && num && !mergedPR.has(ref)) mergedPR.set(ref, num);
+  }
+
   const branches = names.map((name) => {
     let aheadBy = null;
     let lastCommitDate = null;
@@ -173,10 +233,14 @@ function remoteBranches(repo) {
       if (cmp && typeof cmp.a === 'number') aheadBy = cmp.a;
     }
 
+    const mergedNum = mergedPR.get(name);
+
     return {
       name,
       lastCommitDate,
       aheadBy,
+      merged: mergedNum !== undefined,
+      mergedVia: mergedNum === undefined ? null : `merged in #${mergedNum}`,
       isDefault: name === def,
       isCurrent: false,
       // When the PR list could not be read, every branch is treated as though
