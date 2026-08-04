@@ -149,8 +149,13 @@ function checkStatus(value, listName) {
     );
   }
 
-  // Suggestions come from the writable values only. Anything else sends the
-  // reader somewhere that refuses them.
+  // Writable values only. Unreachable for a retired value as this stands, since
+  // the loose branch above catches those first, so what actually fixed the
+  // dead-end suggestion was making that branch loose rather than exact. Kept
+  // because it is the correct list to search on its own terms and because the
+  // ordering above is not a thing to depend on silently. `cmdLint` does the
+  // same narrowing and there it is load-bearing, because its retired check is
+  // an exact one and a near miss falls through to the suggestion.
   const near = spec.write.find((s) => loosely(s) === loosely(value));
   const hint = near ? `\n  Did you mean ${JSON.stringify(near)}?` : '';
   fail(
