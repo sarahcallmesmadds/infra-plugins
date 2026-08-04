@@ -149,6 +149,8 @@ Count the commits this returns, across all roots, and keep the total. Step 7 nee
 
 **Read the item's own text first.** If `what` or `why` names an explicit filesystem path, `stat` that path and use it as evidence, whatever the item's `kind` is. An item that names a path has already said where to look, so the conventions below are the fallback for items that do not. This is the only disk evidence available for kind `other`, and it also catches items whose title slug does not match the filename that actually got built.
 
+**`source` is excluded from this sweep, deliberately.** It names material the build reads from, so it is a path that exists *before* the work starts and says nothing about whether the work happened. Stat'ing it and counting it as evidence would mark an item built the moment its spec was written. `where` is excluded for the mirror reason: it is a destination, and its existence is already covered by the kind conventions below rather than by the item's free text. Only `what` and `why` are read for paths here.
+
 Treat text as naming a path when it carries a `~/`, `/` or `./` prefix, or a bare filename with an extension. Expand `~` before the `stat`. When the path is a JSON file, read it and quote something from inside, since "the file exists" and "the file holds what the item asked for" are different findings. When nothing exists at the named path, that is a real "no sign of it" for that item rather than a reason to fall back to guessing.
 
 Then, for each open item, check whether something with its name exists in a plausible place. Use the item's `kind` to decide where to look, following the same conventions the bug queue uses:
