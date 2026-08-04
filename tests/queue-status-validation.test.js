@@ -393,6 +393,63 @@ check('every status in the schema docs is writable by queue.js', () => {
   }
 });
 
+// --- an empty value is a value, not an omission ----------------------------
+
+check('--status "" is refused rather than silently ignored', () => {
+  // Found in review. The assignment was gated on truthiness, so an empty string
+  // was skipped, the entry kept its old status, and the command printed
+  // "updated" and exited 0 having changed nothing. The other two routes refused
+  // the same value, so all three disagreed.
+  const home = sandbox();
+  seed(home, 'y1');
+  const r = run(home, ['update', 'y1', '--status', '']);
+  assert.notStrictEqual(r.code, 0, 'an empty status reported success');
+  assert.strictEqual(statusOnDisk(home, 'y1'), 'Open');
+});
+
+check('all three routes agree about an empty status', () => {
+  // The property behind the bug. Whatever a route does with a value, the other
+  // routes must do the same, or the one somebody happens to use decides the
+  // answer.
+  const home = sandbox();
+  seed(home, 'y2');
+  const file = path.join(home, 'empty.json');
+  fs.writeFileSync(file, '""');
+  const routes = [
+    ['--status', ['update', 'y2', '--status', '']],
+    ['--field', ['update', 'y2', '--field', 'status=']],
+    ['--json', ['update', 'y2', '--json', `status=${file}`]],
+  ];
+  for (const [name, args] of routes) {
+    const r = run(home, args);
+    assert.notStrictEqual(r.code, 0, `${name} accepted an empty status`);
+  }
+  assert.strictEqual(statusOnDisk(home, 'y2'), 'Open');
+});
+
+check('--resolution "" is reported rather than skipped', () => {
+  // The same truthiness shape on the option beside it, and the error names the
+  // empty filename instead of rendering it as nothing.
+  const home = sandbox();
+  seed(home, 'y3');
+  const r = run(home, ['update', 'y3', '--resolution', '']);
+  assert.notStrictEqual(r.code, 0, 'an empty resolution reported success');
+  assert.ok(/needs a filename/.test(r.out), `unclear message: ${r.out}`);
+  assert.ok(!/cannot read {2}for/.test(r.out), `the filename rendered as nothing: ${r.out}`);
+});
+
+check('leaving the option off still changes nothing and succeeds', () => {
+  // The distinction the fix rests on. Omitting --status means "leave it alone".
+  // Passing an empty one does not.
+  const home = sandbox();
+  seed(home, 'y4');
+  const note = path.join(home, 'n.txt');
+  fs.writeFileSync(note, 'note only');
+  const r = run(home, ['update', 'y4', '--note-file', note]);
+  assert.strictEqual(r.code, 0, `a note-only update was refused: ${r.out}`);
+  assert.strictEqual(statusOnDisk(home, 'y4'), 'Open');
+});
+
 // --- the retired value -----------------------------------------------------
 
 check('the retired status is refused on write but not called invalid', () => {

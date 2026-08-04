@@ -541,18 +541,30 @@ function cmdUpdate(args) {
     // Not validated here. writeEntry is the single gate, and a check at this
     // call site would suggest the other three routes are covered by their own,
     // which is exactly the reasoning that missed `--json status=FILE`.
-    if (args.status) entry.status = args.status;
+    // `!== undefined`, not truthiness. `--status ""` used to be skipped here
+    // because an empty string is falsy, so the entry kept its old status and
+    // the command printed "updated" and exited 0 having changed nothing. The
+    // other two routes refuse it, so the three disagreed about the same value.
+    // An empty status is not a way of saying "leave it alone"; leaving the
+    // option off is.
+    if (args.status !== undefined) entry.status = args.status;
 
     // --resolution FILE is the same thing as --json resolution=FILE, kept
     // because it is the common case and reads better at the call site.
     const jsonFields = [...(args.json || [])];
-    if (args.resolution) jsonFields.push(`resolution=${args.resolution}`);
+    // Same shape, same reason. `--resolution ""` was silently ignored, where
+    // an empty filename should be reported as one that cannot be read.
+    if (args.resolution !== undefined) jsonFields.push(`resolution=${args.resolution}`);
 
     for (const pair of jsonFields) {
       const at = pair.indexOf('=');
       if (at < 1) fail(`queue.js: --json wants key=FILE, got ${pair}`);
       const key = checkKey(pair.slice(0, at));
       const file = pair.slice(at + 1);
+      // Named rather than left to render as nothing. `--resolution ""` reaches
+      // here as an empty filename, and "cannot read  for --json resolution"
+      // reads like a bug in the message rather than a fault in the input.
+      if (!file) fail(`queue.js: --json ${key} needs a filename and was given an empty one. Nothing was written.`);
       let raw;
       try {
         raw = fs.readFileSync(file, 'utf8');
