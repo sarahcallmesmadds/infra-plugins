@@ -538,6 +538,75 @@ check('a branch merged into origin/main is cleared even when local main is behin
   fs.rmSync(work, { recursive: true, force: true });
 });
 
+// ------------------------------------------------ the re-check before delete ----
+//
+// The listing and the check that runs immediately before deleting have to ask
+// the same question. They did not: the skill re-read an ancestry count, which a
+// squash merge never brings to zero, so every branch the merge signal cleared
+// was offered, approved, then refused with a message saying something had
+// landed in between. Nothing had.
+check('--verify clears a squash-merged branch and asks for the delete that works', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'verify-'));
+  const g = (...a) => execFileSync('git', ['-C', dir, ...a], { encoding: 'utf8', stdio: 'pipe' });
+  execFileSync('git', ['init', '-q', '-b', 'main', dir], { stdio: 'pipe' });
+  g('config', 'user.email', 'test@example.com');
+  g('config', 'user.name', 'test');
+  fs.writeFileSync(path.join(dir, 'f.txt'), 'base\n');
+  g('add', '.'); g('commit', '-qm', 'base');
+
+  g('checkout', '-qb', 'squashed');
+  fs.appendFileSync(path.join(dir, 'f.txt'), 'work\n');
+  g('commit', '-qam', 'the work');
+  g('checkout', '-q', 'main');
+  g('merge', '-q', '--squash', 'squashed');
+  g('commit', '-qm', 'squashed (#9)');
+
+  g('checkout', '-qb', 'unmerged', 'main');
+  fs.writeFileSync(path.join(dir, 'h.txt'), 'not in main\n');
+  g('add', '.'); g('commit', '-qm', 'real work');
+  g('checkout', '-q', 'main');
+
+  const verify = (name) => {
+    try {
+      return { code: 0, out: execFileSync('node', [CLI, '--cwd', dir, '--verify', name], { encoding: 'utf8' }) };
+    } catch (e) {
+      return { code: e.status, out: (e.stdout || '') + (e.stderr || '') };
+    }
+  };
+
+  // git itself must refuse this branch, or the -D below is unnecessary and the
+  // test is not exercising the thing it was written for.
+  let refused = false;
+  try { g('branch', '-d', 'squashed'); } catch (_) { refused = true; }
+  assert.ok(refused, 'git branch -d must refuse a squash-merged branch, or this test proves nothing');
+
+  const ok = verify('squashed');
+  assert.strictEqual(ok.code, 0, `a squash-merged branch must still verify, got:\n${ok.out}`);
+  assert.ok(/needs-force:/.test(ok.out),
+    `-d is going to refuse this, and saying so is what stops it being reported as a disagreement:\n${ok.out}`);
+  assert.ok(/git branch -d squashed/.test(ok.out),
+    `the printed command stays -d; forcing is the user's call, not this tool's:\n${ok.out}`);
+  assert.ok(!/git branch -D/.test(ok.out), 'nothing here composes -D on the user\'s behalf');
+
+  const no = verify('unmerged');
+  assert.strictEqual(no.code, 3, 'a branch with unmerged work must not verify');
+  assert.ok(!/git branch/.test(no.out), 'a refused branch must not be handed a delete command');
+
+  const gone = verify('never-existed');
+  assert.strictEqual(gone.code, 3, 'a branch that is not there must not verify');
+
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// The needs-force line is advice to a human, never a command. The existing
+// guard above already pins that classify.js contains no -D; this pins that the
+// new verify path did not become a way around it.
+check('verify never composes a force delete, whatever the evidence', () => {
+  const cliSrc = fs.readFileSync(CLI, 'utf8');
+  assert.ok(!/'-D'|"-D"|branch -D/.test(cliSrc),
+    'cli.js must not build a -D command either, or the guard just moved file');
+});
+
 // ------------------------------------------- what the remote path counts ----
 //
 // Both of these were live bugs in the first version of the squash-merge fix,

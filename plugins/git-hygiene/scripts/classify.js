@@ -113,17 +113,24 @@ function classify(branches, config, now) {
   };
 }
 
-// The delete command for a LOCAL branch. Always the lowercase `-d`.
+// The delete command for a LOCAL branch.
 //
 // `-d` refuses to delete a branch holding commits that are not merged, so git
-// itself is a second opinion on top of our classification. `-D` removes that
-// second opinion, which is why it is not reachable from here by any argument.
+// itself is a second opinion on top of our classification, and it is the
+// default here for that reason.
 //
-// Note that git's own check is ancestry-based and so shares the blind spot
-// this file now works around: `-d` will refuse a squash-merged branch that we
-// correctly classify as safe. That is the right way round. A second opinion
-// that is more cautious than ours costs an argument; one that is less cautious
-// would cost work.
+// That second opinion is ancestry-based, so it shares the exact blind spot the
+// `merged` signal exists to cover: it refuses a squash-merged branch every
+// time, however certain we are. Leaving `-d` as the only option meant every
+// branch the new signal cleared was listed as safe, approved by the user, and
+// then refused at the last step with a message saying git disagreed. Nothing
+// disagreed. Git was answering a question it cannot answer for that branch.
+//
+// This file still never produces `-D`, and there is no argument that makes it.
+// The refusal is real and it is the user's to override, not ours to route
+// around: `cli.js --verify` reports that the refusal is expected and says why,
+// and the skill asks before forcing anything. A module that hands back `-D`
+// removes a decision from a person who should be making it.
 function localDeleteCommand(name) {
   if (typeof name !== 'string' || name.trim() === '' || name.startsWith('-')) {
     throw new Error(`refusing to build a delete command for branch name: ${JSON.stringify(name)}`);

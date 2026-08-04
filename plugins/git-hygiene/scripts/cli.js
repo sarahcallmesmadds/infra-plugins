@@ -8,6 +8,14 @@
 //   cli.js --input file.json      classify a saved snapshot (used by the tests)
 //   cli.js --stale-after 60       age in days at which a branch is marked stale
 //   cli.js --now 2026-07-27       fix "today", so output is reproducible
+//   cli.js --verify branch        re-check one branch immediately before deleting
+//
+// --verify exits 0 only when that branch is still safe, and prints the delete
+// command to use for it. It exists because the check that runs before a delete
+// must be the same check that produced the listing. The skill used to re-read
+// an ancestry count in prose, which a squash merge never satisfies, so every
+// branch the merge signal cleared was then refused at the last step and the
+// user was told something had landed in between. Nothing had.
 //
 // --stale-after sets the `stale` flag in --json output and nothing else. It does
 // NOT filter what is listed and it does NOT affect what is safe to delete. Every
@@ -24,11 +32,11 @@
 
 const fs = require('fs');
 const path = require('path');
-const { classify, DEFAULTS, KEEP } = require(path.join(__dirname, 'classify.js'));
+const { classify, DEFAULTS, KEEP, localDeleteCommand, remoteDeleteCommand } = require(path.join(__dirname, 'classify.js'));
 const collect = require(path.join(__dirname, 'collect.js'));
 
 function parseArgs(argv) {
-  const out = { json: false, repo: null, input: null, staleAfter: DEFAULTS.staleAfterDays, now: null, cwd: process.cwd() };
+  const out = { json: false, repo: null, input: null, staleAfter: DEFAULTS.staleAfterDays, now: null, cwd: process.cwd(), verify: null };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     if (a === '--json') out.json = true;
@@ -37,6 +45,7 @@ function parseArgs(argv) {
     else if (a === '--cwd') out.cwd = argv[++i];
     else if (a === '--stale-after') out.staleAfter = parseInt(argv[++i], 10);
     else if (a === '--now') out.now = argv[++i];
+    else if (a === '--verify') out.verify = argv[++i];
   }
   if (!Number.isFinite(out.staleAfter) || out.staleAfter < 0) out.staleAfter = DEFAULTS.staleAfterDays;
   return out;
@@ -102,6 +111,50 @@ function render(result, where) {
   return lines.join('\n');
 }
 
+// Re-check one branch and print the command that should delete it.
+//
+// Exit 0 means still safe, and stdout carries the reason followed by the exact
+// command. The caller runs what this decided rather than composing its own,
+// which is the whole point: a re-check that asks a different question from the
+// listing will disagree with it, and the disagreement gets reported to the user
+// as though something changed.
+//
+// Exit 3 means do not delete. A branch that has disappeared since the listing
+// lands here too, because something the caller cannot find is not something it
+// should be deleting.
+function verifyOne(result, name, repo) {
+  const b = result.all.find((x) => x.name === name);
+  if (!b) {
+    process.stderr.write(`${name} is not in this repository any more. Nothing to delete.\n`);
+    return 3;
+  }
+  if (!b.safeToDelete) {
+    process.stderr.write(`${name} is no longer safe to delete: ${reasonText(b)}. Nothing deleted.\n`);
+    return 3;
+  }
+
+  process.stdout.write(`${b.name} is safe to delete: ${b.mergedVia || 'every commit is already in the default branch'}\n`);
+
+  // A branch cleared by merge evidence rather than by ancestry will be refused
+  // by `git branch -d`, every time, because git asks only whether the commits
+  // are reachable and a squash merge rewrites them. Saying so here is the
+  // difference between an expected refusal and one reported to the user as
+  // though something changed underneath them.
+  //
+  // The command printed below is still `-d`. Forcing past a refusal is the
+  // user's decision and the skill asks for it; nothing in this tool composes
+  // `-D` on their behalf.
+  if (!repo && b.merged) {
+    process.stdout.write('needs-force: git branch -d will refuse this. It only checks whether the '
+      + 'commits are reachable from the default branch, and a squash merge rewrites them, so the '
+      + 'refusal is expected rather than a disagreement.\n');
+  }
+
+  const cmd = repo ? remoteDeleteCommand(repo, b.name) : localDeleteCommand(b.name);
+  process.stdout.write(`${cmd.join(' ')}\n`);
+  return 0;
+}
+
 function main() {
   const opts = parseArgs(process.argv.slice(2));
   const now = opts.now ? Date.parse(opts.now) : Date.now();
@@ -136,6 +189,10 @@ function main() {
   }
 
   const result = classify(branches, { staleAfterDays: opts.staleAfter }, now);
+
+  if (opts.verify) {
+    process.exit(verifyOne(result, opts.verify, opts.repo));
+  }
 
   if (opts.json) {
     process.stdout.write(JSON.stringify({ where, safe: result.safe, keep: result.keep }, null, 2) + '\n');

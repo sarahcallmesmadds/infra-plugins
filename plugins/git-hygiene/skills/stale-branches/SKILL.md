@@ -105,41 +105,38 @@ Only on that explicit second phrasing, act. Even then, for a local branch use `g
 
 ## Step 5 — Delete
 
-### Local branches
+**Re-check each branch immediately before deleting it, and re-check it with the same command that listed it.** The listing may be minutes old by the time the user answers, and on the remote side the GitHub API deletes whatever ref you name with no second opinion at all.
+
+Do not compose your own re-check. An ancestry count is not the question any more: a squash merge never brings it to zero, so a check written that way refuses every branch the merge signal cleared and then reports it as though something landed in between. Nothing landed. The check asked a question the listing had already answered differently.
+
+For each branch, one at a time, never batched:
 
 ```bash
-git branch -d {name}
+node scripts/cli.js --verify {name}              # a local checkout
+node scripts/cli.js --repo {owner/name} --verify {name}    # on GitHub
 ```
 
-The lowercase `-d` refuses to delete a branch holding unmerged commits, so git independently checks the classification. If it refuses, that is a disagreement between git and this plugin and it is worth surfacing rather than working around:
+**Exit 0** means still safe. It prints the reason on the first line and the exact delete command on the second. Run that command as printed.
 
-> "git refused to delete `{name}`, which means it thinks the branch still has unmerged work even though the comparison said otherwise. I have left it alone. Worth a look before forcing it."
+**Exit 3** means do not delete. It says why on stderr. Report that verbatim and move to the next branch. Do not ask again in this run.
 
-Never reach for `-D` to get past that.
+Never check everything first and then delete everything, so a change part way through cannot affect a branch already cleared.
 
-### Remote branches
+### When `--verify` prints a `needs-force:` line
 
-**Re-check each branch immediately before deleting it.** The GitHub API deletes whatever ref you name without checking whether it is merged, so there is no second opinion the way there is locally. The listing may also be minutes old by the time the user answers.
+That line means `git branch -d` is going to refuse this branch and the refusal is expected. `-d` asks only whether the branch's commits are reachable from the default branch. A squash merge rewrites them into one new commit, so they never are, however certain the evidence is.
 
-For each branch, in order:
+Run the printed `-d` anyway and let it refuse. Then, **once for the whole group rather than once per branch**:
 
-1. Re-read the count:
+> "{n} of these were squash merges, so `git branch -d` refused them. That is expected: it only checks whether the commits are reachable, and a squash merge rewrites them. Each one was verified another way, by {the reason `--verify` printed}. The work is in the default branch either way. Deleting them needs `git branch -D`. Say go and I will run it on those {n}."
 
-   ```bash
-   gh api repos/{owner/name}/compare/{default}...{branch} --jq '.ahead_by'
-   ```
+Only on an explicit yes, run `git branch -D {name}` for the branches in that group and no others. If they say no, leave them and say what is left.
 
-2. If it is not exactly `0`, skip that branch and say so. Do not delete, do not ask again in this run:
+Never present this as git disagreeing with the classification. It is not a disagreement. Git was asked a question it cannot answer for a squash-merged branch, and the tool already answered it a different way.
 
-   > "Skipped `{name}`: it now has {n} commits not in {default}. It was safe when I listed it, so something landed in between."
+Anything `--verify` did not clear is never deleted, with `-d` or `-D` or anything else. A refusal on a branch with no `needs-force:` line is a genuine disagreement and stops the run:
 
-3. If it is `0`, delete:
-
-   ```bash
-   gh api -X DELETE repos/{owner/name}/git/refs/heads/{branch}
-   ```
-
-Never batch the re-check and the deletes into one loop that checks everything first and then deletes everything. Check and delete one branch at a time, so a change part way through cannot affect a branch already cleared.
+> "git refused to delete `{name}` and nothing said to expect that. I have left it alone. Worth a look before forcing it."
 
 ---
 
