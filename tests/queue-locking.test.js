@@ -268,7 +268,10 @@ check('create refuses to overwrite an id that already exists', () => {
   return withHome((home) => {
     entry(home, 'taken', { dedup_key: 'thing::one' });
     const f = path.join(home, 'new.json');
-    fs.writeFileSync(f, JSON.stringify({ id: 'taken', created_at: new Date().toISOString(), dedup_key: 'thing::two', notes: [] }));
+    // `status` is required on a new entry, and that is checked before the lock
+    // is taken, so a fixture without one is refused for the wrong reason and
+    // never reaches the collision this case is about.
+    fs.writeFileSync(f, JSON.stringify({ id: 'taken', status: 'Open', created_at: new Date().toISOString(), dedup_key: 'thing::two', notes: [] }));
     assert.throws(() => run(home, ['create', f]), /already exists/);
     assert.strictEqual(read(home, 'taken').dedup_key, 'thing::one', 'the existing entry was overwritten');
   });
