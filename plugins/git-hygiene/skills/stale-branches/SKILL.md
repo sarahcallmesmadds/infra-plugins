@@ -8,7 +8,13 @@ allowed-tools: Read, Bash(node:*), Bash(git:*), Bash(gh:*), Bash(ls:*)
 
 You are finding branches that can be cleaned up, and deleting the ones the user approves.
 
-Everything here rests on one number: how many commits a branch has that are not already in the default branch. Zero means the work is safely in the default branch and the branch is just a label. One or more means those commits exist in exactly one place, and deleting the branch destroys them.
+Everything here rests on positive evidence that the work is already in the default branch. There are two kinds, and a branch needs only one.
+
+The first is a count: how many commits a branch has that are not already in the default branch. Zero means the work is safely there and the branch is just a label. One or more means those commits exist in exactly one place, and deleting the branch destroys them.
+
+The second exists because that count cannot see a squash merge, which rewrites a branch into one new commit and leaves the originals unreachable. In a repository that squash-merges every pull request the count never reaches zero, so a merged pull request into the default branch counts too, and on a local checkout so does a comparison showing the branch adds nothing the default branch does not already have.
+
+A branch with neither kind of evidence is kept, whatever its age.
 
 **Age is not the test.** A branch untouched since March with three unmerged commits is far more dangerous to delete than one from this morning with none. Old is why something is worth looking at. Merged is the only thing that makes it safe to remove.
 

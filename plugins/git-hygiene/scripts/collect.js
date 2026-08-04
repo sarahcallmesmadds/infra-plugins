@@ -22,6 +22,15 @@ const { execFileSync } = require('child_process');
 const PER_COMMAND_TIMEOUT_MS = 5000;
 const MAX_BUFFER = 8 * 1024 * 1024;
 
+// The one call that walks pages proportional to the repository's history rather
+// than to its branch count, so it gets its own longer limit. Even filtered to
+// pull requests targeting the default branch, a long-lived repository has a lot
+// of them. Timing out is safe (every branch falls back to ancestry and is kept)
+// but it silently disables the merge signal on exactly the large repositories
+// that need it, so the limit is set where that is unlikely rather than where it
+// matches the other calls.
+const MERGED_PR_TIMEOUT_MS = 20000;
+
 function run(cmd, args, opts) {
   return execFileSync(cmd, args, Object.assign({
     encoding: 'utf8',
@@ -158,8 +167,8 @@ function toLines(out) {
   return out.split('\n').map((s) => s.trim()).filter(Boolean);
 }
 
-function ghLines(args) {
-  return toLines(tryRun('gh', args));
+function ghLines(args, opts) {
+  return toLines(tryRun('gh', args, opts));
 }
 
 function remoteBranches(repo) {
@@ -167,14 +176,26 @@ function remoteBranches(repo) {
   if (!meta || !meta.default_branch) return { defaultBranch: null, branches: [], error: `cannot read repos/${repo}` };
   const def = meta.default_branch;
 
-  const names = ghLines(['api', `repos/${repo}/branches?per_page=100`, '--paginate', '--jq', '.[].name']);
+  // Name and current tip together, because merge evidence has to be checkable
+  // against the branch as it stands now. A merged pull request says something
+  // about the commit it merged and nothing about anything pushed since.
+  const nameLines = ghLines(['api', `repos/${repo}/branches?per_page=100`, '--paginate', '--jq', '.[] | "\\(.name)\\t\\(.commit.sha)"']);
 
   // A failed listing is not an empty listing. Returning [] here would report a
   // clean repository, which reads as good news and is unfalsifiable from the
   // output. Same principle as a null aheadBy in classify.js: not knowing is
   // never rounded down to nothing.
-  if (names === null) {
+  if (nameLines === null) {
     return { defaultBranch: def, branches: [], error: `could not list branches for ${repo}` };
+  }
+
+  const names = [];
+  const tipSha = new Map();
+  for (const line of nameLines) {
+    const [name, sha] = line.split('\t');
+    if (!name) continue;
+    names.push(name);
+    if (sha) tipSha.set(name, sha);
   }
 
   // One list call rather than one lookup per branch. A branch with an open PR
@@ -194,22 +215,43 @@ function remoteBranches(repo) {
   // only signal here that survives it. The number comes back too, because
   // "merged in #51" is checkable and a bare "merged" is not.
   //
+  // Two filters, and neither is optional:
+  //
+  // `base=<def>` because `merged_at` only says the pull request merged, not
+  // where it merged TO. Stacked work merging `feature-b` into `feature-a` sets
+  // `merged_at` on a pull request that never put anything in the default
+  // branch, and counting it would offer `feature-b` for deletion while its
+  // commits exist nowhere else.
+  //
+  // Keyed on `head.sha` rather than `head.ref` because a branch name outlives
+  // the commit that merged under it. Someone who reuses a branch after its
+  // pull request merged has a ref whose name matches a merged pull request and
+  // whose tip is new unmerged work. Matching the name alone would offer that
+  // branch for deletion, and remote deletion has no second opinion the way the
+  // local `-d` does. The evidence has to be about the commit the branch points
+  // at now, which is what the local path gets for free by computing its
+  // comparison live.
+  //
   // Unreadable is not empty here either, but it fails the other way round from
   // the open-PR list above: with no merged list, no branch gains the second
   // signal and every one falls back to ancestry. That keeps too much rather
   // than deleting too much, which is the direction this plugin errs in
   // everywhere.
-  const mergedLines = ghLines(['api', `repos/${repo}/pulls?state=closed&per_page=100`, '--paginate',
-    '--jq', '.[] | select(.merged_at != null) | "\\(.head.ref)\\t\\(.number)"']);
+  const mergedLines = ghLines(['api',
+    `repos/${repo}/pulls?state=closed&base=${encodeURIComponent(def)}&per_page=100`, '--paginate',
+    '--jq', '.[] | select(.merged_at != null) | "\\(.head.sha)\\t\\(.number)"'],
+  { timeout: MERGED_PR_TIMEOUT_MS });
 
-  // First merged PR wins. A branch name reused across several PRs is reported
-  // by whichever merged first, which is enough to establish that the name's
-  // work reached the default branch at least once. The per-branch tree state is
-  // still what ancestry reports; this only ever adds evidence.
-  const mergedPR = new Map();
+  // Lowest number wins where a commit merged more than once, which happens when
+  // a pull request is reopened against the same head or the same commit is
+  // taken by two pull requests. Any of them establishes the same fact; the
+  // first is the one a reader can find.
+  const mergedBySha = new Map();
   for (const line of mergedLines || []) {
-    const [ref, num] = line.split('\t');
-    if (ref && num && !mergedPR.has(ref)) mergedPR.set(ref, num);
+    const [sha, num] = line.split('\t');
+    if (!sha || !num) continue;
+    const existing = mergedBySha.get(sha);
+    if (existing === undefined || parseInt(num, 10) < parseInt(existing, 10)) mergedBySha.set(sha, num);
   }
 
   const branches = names.map((name) => {
@@ -233,7 +275,11 @@ function remoteBranches(repo) {
       if (cmp && typeof cmp.a === 'number') aheadBy = cmp.a;
     }
 
-    const mergedNum = mergedPR.get(name);
+    // Only when the branch still points at the commit that merged. A branch
+    // whose tip we could not read gains no evidence at all, same rule as
+    // everywhere else here.
+    const tip = tipSha.get(name);
+    const mergedNum = tip === undefined ? undefined : mergedBySha.get(tip);
 
     return {
       name,

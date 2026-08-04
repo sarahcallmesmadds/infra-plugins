@@ -482,6 +482,51 @@ check('merge evidence never rescues an unknown aheadBy', () => {
   assert.ok(out.keep[0].keepReasons.includes('merge-state-unknown'));
 });
 
+// ------------------------------------------- what the remote path counts ----
+//
+// Both of these were live bugs in the first version of the squash-merge fix,
+// caught in review before it merged. Neither is reachable from the local path,
+// whose evidence is computed live against the branch's current tip, and both
+// end with a branch being offered for deletion while its commits exist nowhere
+// else. Source assertions rather than behavioural ones, matching how the rest
+// of the gh path is pinned here, because reaching it needs a live API.
+
+check('a merged pull request only counts when it merged into the default branch', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'scripts', 'collect.js'), 'utf8');
+  const line = src.split('\n').find((l) => l.includes('state=closed'));
+  assert.ok(line, 'expected a closed-PR query to check');
+  assert.ok(/base=/.test(line),
+    'merged_at says a pull request merged, not where it merged to. Without a base filter, '
+    + `stacked work merged into another branch counts as reaching the default branch:\n  ${line.trim()}`);
+});
+
+check('merge evidence is keyed on the merged commit, not the branch name', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'scripts', 'collect.js'), 'utf8');
+  assert.ok(/head\.sha/.test(src),
+    'a branch name outlives the commit that merged under it, so reusing a branch after its '
+    + 'pull request merged would read as merged while holding new work');
+  assert.ok(/tipSha/.test(src),
+    'the branch tip has to be collected for the evidence to be checked against it');
+  assert.ok(!/mergedBySha\.get\(name\)/.test(src),
+    'looking the evidence up by branch name is the bug these two tests exist for');
+});
+
+// The rendered header is a claim about why a branch is safe, and it stopped
+// being true once squash merges counted. Nothing bound the sample output to the
+// code, so it went stale silently the first time round.
+check('the README sample output matches what the command actually prints', () => {
+  const cliSrc = fs.readFileSync(CLI, 'utf8');
+  const readme = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8');
+
+  const m = cliSrc.match(/Safe to delete \(\$\{safe\.length\}\)(.*?)`\);/);
+  assert.ok(m, 'expected to find the safe-list header in cli.js');
+  const phrase = m[1].replace(/^[^A-Za-z]+/, '').replace(/:\s*$/, '').trim();
+  assert.ok(phrase.length > 0, 'expected a readable phrase in the safe-list header');
+
+  assert.ok(readme.includes(phrase),
+    `README shows a safe-list header the command no longer prints. Expected to find:\n  ${phrase}`);
+});
+
 fs.unlinkSync(fixture);
 
 process.stdout.write(failures === 0 ? '\nAll stale-branch tests passed.\n' : `\n${failures} test(s) failed.\n`);

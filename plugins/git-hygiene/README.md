@@ -37,8 +37,8 @@ You get something like this:
 ```
 sarahcallmesmadds/always-allow: 3 branches besides the default one.
 
-Safe to delete (1) — every commit is already in the default branch:
-  deploy/vercel-site  (105 days old)
+Safe to delete (1) — the default branch already has this work:
+  deploy/vercel-site  (105 days old, merged in #51)
 
 Keep (2) — deleting these would lose work:
   shop-redirect  (103 days old) — it has an open pull request, 1 commit not in the default branch
