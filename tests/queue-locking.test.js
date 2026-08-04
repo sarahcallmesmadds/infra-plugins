@@ -570,8 +570,21 @@ check('a note that begins with dashes is stored as written', () => {
     assert.strictEqual(read(home, 'a1').notes[0].text, '--force was ignored');
 
     // The same rule swallowed any value beginning with dashes, not just notes.
-    run(home, ['update', 'a1', '--status', '--odd']);
-    assert.strictEqual(read(home, 'a1').status, '--odd');
+    run(home, ['update', 'a1', '--field', 'target=--odd']);
+    assert.strictEqual(read(home, 'a1').target, '--odd');
+
+    // This used to be asserted through `--status --odd`, which stored `--odd`
+    // as the status. Statuses are a validated enum now, so that assertion was
+    // asking for something deliberately illegal. The parser property it was
+    // really about survives, and the refusal proves it: the validator can only
+    // quote `--odd` back if the parser handed it over as a value rather than
+    // reading it as a flag.
+    assert.throws(
+      () => run(home, ['update', 'a1', '--status', '--odd']),
+      /"--odd" is not a status/,
+      'the parser read --odd as a flag instead of as the value of --status'
+    );
+    assert.strictEqual(read(home, 'a1').status, 'Open', 'the refused status was written anyway');
   });
 });
 

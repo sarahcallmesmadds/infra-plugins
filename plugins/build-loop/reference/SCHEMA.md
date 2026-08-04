@@ -253,6 +253,22 @@ Writers always emit the v5 field names. An old entry that gets its status update
 | `fix applied, watching` | The fix reached the target file and is not yet confirmed in a real session. The user closes this to `Resolved` after using the thing. **This does not imply a commit.** See the note markers below. |
 | `fix attempted / unresolved` | **Retired in 0.3.1. Do not write this.** Readers still accept it, because entries written earlier carry it. A rejected diff or a failed write now leaves the entry `Open` and records the attempt in `notes`. The status was removed rather than added to `/list-bugs`, because it described a bug that was still open while making it invisible to every filter that lists open work. |
 
+**This enum is enforced, as of 0.5.6.** `queue.js` refuses any other value on
+every path that can set a status: `--status`, `--field status=`, and the composed
+file handed to `create`. It refuses rather than corrects, even when the value is
+one character off, because guessing what somebody meant and writing it is how a
+wrong status arrives without anyone deciding to put it there. The suggestion is
+printed and the write is still refused.
+
+`fix attempted / unresolved` is refused on write and accepted on read, which is
+what the row below has always said.
+
+`queue.js lint` reports entries already on disk carrying a value no reader
+matches, and exits 3 when it finds one. Enforcing writes does nothing about what
+is already stored: the two entries that prompted this carried `Wontfix` for four
+days, and no filter in `/list-bugs` would have shown them.
+
+
 ### Note markers on `fix applied, watching`
 
 Three skills write this status and it reaches the same place by more than one route, so
