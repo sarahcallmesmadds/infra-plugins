@@ -806,6 +806,7 @@ function parseArgs(argv) {
 // distinct code rather than 1, so a caller can tell a finding from a crash.
 function cmdLint(args) {
   const dir = dirFor(args.list);
+  const list = args.list === undefined ? 'queue' : String(args.list);
   const spec = statusesFor(args.list);
   const bad = [];
   const retired = [];
@@ -839,21 +840,32 @@ function cmdLint(args) {
     bad.push([file, status, near]);
   }
 
+  // Ids, not filenames. The fix below takes an id, and `bad.json` is not one:
+  // pasting it gives "no entry at .../bad.json.json". The id is the filename
+  // stem by schema rule, so this is the same string with the suffix off.
+  const idOf = (file) => file.replace(/\.json$/, '');
+
   for (const [file, status, near] of bad) {
     const hint = near ? `  (did you mean ${JSON.stringify(near)}?)` : '';
-    process.stdout.write(`off-enum  ${file}  status=${showStatus(status)}${hint}\n`);
+    process.stdout.write(`off-enum  ${idOf(file)}  status=${showStatus(status)}${hint}\n`);
   }
   for (const [file, status] of retired) {
-    process.stdout.write(`retired   ${file}  status=${JSON.stringify(status)}  (valid on read, refused on write)\n`);
+    process.stdout.write(`retired   ${idOf(file)}  status=${showStatus(status)}  (valid on read, refused on write)\n`);
   }
   if (unreadable) {
+    // Files rather than ids, deliberately. These did not parse into entries, so
+    // there is nothing to call an id and nothing to run a command against.
     process.stdout.write(`unreadable ${unreadable} file(s), which this command does not diagnose\n`);
   }
   if (bad.length === 0) {
-    process.stdout.write(`every status in ${args.list === undefined ? 'queue' : args.list} is in the enum\n`);
+    process.stdout.write(`every status in ${list} is in the enum\n`);
     return 0;
   }
-  process.stdout.write(`\n${bad.length} ${bad.length === 1 ? 'entry carries' : 'entries carry'} a status no reader matches. Fix with: queue.js update <id> --status <valid>\n`);
+  // `--list` named every time, including for the default. cmdUpdate falls back
+  // to the queue when it is absent, so a fix copied out of a `--list to-build`
+  // run used to look for the id in the wrong place: "no entry at ...", or worse,
+  // a silent edit of an unrelated entry when the same id existed in both.
+  process.stdout.write(`\n${bad.length} ${bad.length === 1 ? 'entry carries' : 'entries carry'} a status no reader matches. Fix with: queue.js update <id> --status <valid> --list ${list}\n`);
   return 3;
 }
 

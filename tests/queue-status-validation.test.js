@@ -470,7 +470,9 @@ check('lint survives a file holding null and still reports the real fault', () =
   junk(home, 'ok', JSON.stringify({ id: 'ok', status: 'Wontfix' }));
   const r = run(home, ['lint']);
   assert.strictEqual(r.code, 3, `expected the finding code, got ${r.code}: ${r.out}`);
-  assert.ok(/off-enum {2}ok\.json/.test(r.out), `the real fault was not reported: ${r.out}`);
+  // The id, not `ok.json`. This asserted the filename until the report was
+  // corrected to print what its own fix command accepts.
+  assert.ok(/off-enum {2}ok {2}status/.test(r.out), `the real fault was not reported: ${r.out}`);
   assert.ok(/unreadable 1 file/.test(r.out), `the junk file was not counted: ${r.out}`);
   assert.ok(!/TypeError/.test(r.out), `it crashed: ${r.out}`);
 });
@@ -521,6 +523,45 @@ check('create refuses a composed file that parses to a non-entry', () => {
   assert.strictEqual(r.code, 1, `expected a refusal, got ${r.code}: ${r.out}`);
   assert.ok(/does not hold an entry/.test(r.out), `unclear message: ${r.out}`);
   assert.ok(!/TypeError/.test(r.out), `it crashed: ${r.out}`);
+});
+
+// --- lint's advice has to work when followed -------------------------------
+
+check("lint's printed fix works verbatim, on both lists", () => {
+  // Found in review. The command omitted --list, and cmdUpdate falls back to
+  // the queue, so a fix copied out of a `--list to-build` run looked for the id
+  // in the wrong place. It also printed `x.json` where the command wants a bare
+  // id, giving "no entry at .../x.json.json".
+  //
+  // Driven rather than pattern-matched: the command is taken out of the output,
+  // filled in, and run. That is the only assertion that cannot pass while the
+  // advice is broken.
+  for (const [list, bad, good] of [['queue', 'Wontfix', "Won't Fix"], ['to-build', 'Shipped', 'Dropped']]) {
+    const home = sandbox();
+    junk(home, 'thing', JSON.stringify({ id: 'thing', status: bad }), list);
+    const r = run(home, list === 'queue' ? ['lint'] : ['lint', '--list', list]);
+    assert.strictEqual(r.code, 3, `expected a finding on ${list}: ${r.out}`);
+
+    const printed = r.out.match(/Fix with: queue\.js (.+)/);
+    assert.ok(printed, `no fix command printed for ${list}: ${r.out}`);
+
+    const args = printed[1].trim().split(/\s+/)
+      .map((a) => (a === '<id>' ? 'thing' : a === '<valid>' ? good : a));
+    const applied = run(home, args);
+    assert.strictEqual(
+      applied.code, 0,
+      `lint on ${list} printed "${printed[1]}", which does not work: ${applied.out}`
+    );
+    assert.strictEqual(statusOnDisk(home, 'thing', list), good, `the fix hit the wrong entry on ${list}`);
+  }
+});
+
+check('lint reports ids, not filenames', () => {
+  const home = sandbox();
+  junk(home, 'thing', JSON.stringify({ id: 'thing', status: 'Wontfix' }));
+  const r = run(home, ['lint']);
+  assert.ok(/off-enum {2}thing {2}status/.test(r.out), `not reported as an id: ${r.out}`);
+  assert.ok(!/thing\.json/.test(r.out), `still printing a filename: ${r.out}`);
 });
 
 // --- the retired value -----------------------------------------------------
