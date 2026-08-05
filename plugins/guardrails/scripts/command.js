@@ -267,27 +267,50 @@ function removesUntrackedFiles(segment) {
   for (const raw of after.match(/(?:^|\s)--?[A-Za-z][^\s]*/g) || []) {
     const token = raw.trim();
     if (token === '--dry-run') return false;
+    // `--force` is the long spelling of `-f` and the only long form among the
+    // destructive options. Skipping every long token meant destructiveness was
+    // decided from short letters alone, so `git clean --force` ran unannounced
+    // while the identical `-f` was stopped. A rule that depends on which
+    // spelling somebody happens to use is not a rule.
+    if (token === '--force') { destructive = true; continue; }
     if (token.startsWith('--')) continue;
     const letters = token.slice(1);
     // A dry run anywhere in the command settles it, whatever else is asked
     // for. Nothing is deleted, so there is nothing to confirm.
     if (letters.includes('n')) return false;
-    if (/[dfx]/.test(letters)) destructive = true;
+    // `X` is uppercase and means "remove only the ignored files", which is
+    // still removing files. Matching lowercase alone let it through.
+    if (/[dfxX]/.test(letters)) destructive = true;
   }
   return destructive;
 }
 
-// Returns { verdict: 'allow' | 'confirm', reason, target }.
+// Returns { verdict: 'allow' | 'confirm', rule, reason, target }.
 //
-// Each family of rule reads its own switch, rather than the caller deciding
-// whether to call this at all. That was the previous arrangement and it meant
-// one setting governed two unrelated things: the hook only ran this when
-// blockDestructiveCommands was on, so switching off noisy delete prompts also
-// switched off the commit-hook rule, silently. A key that is absent counts as
-// on, so a config naming one setting keeps the rest.
-function checkCommand(command, config = {}) {
-  const stopDeletes = config.blockDestructiveCommands !== false;
-  const stopHookSkips = config.blockCommitHookSkip !== false;
+// This assesses. It does not decide policy, and it reads no on/off switch from
+// the config, only safeDeletePaths. Both of those were tried and each was
+// wrong in its own direction.
+//
+// Originally the hook decided whether to call this at all, gated on
+// blockDestructiveCommands, which meant one setting silently governed two
+// unrelated rules. Moving the switches in here fixed that and broke something
+// quieter: cli.js calls this for `check --command`, which is the on-demand
+// "is this safe" question behind the undo-possible skill and the whole Codex
+// surface, where no hook can run. With the switch inside, somebody who had
+// quietened the automatic prompts and then explicitly asked whether a delete
+// was safe was told yes. An advisory that agrees with whatever you configured
+// is not an advisory.
+//
+// So: always assess, and let the caller filter. `rules` names the families a
+// caller cares about, and the default is all of them, so asking the question
+// plainly gets the honest answer. Only bash-guard passes a filter, built from
+// the config, because only bash-guard is the thing being switched off.
+const ALL_RULES = ['destructive', 'commit-hook-skip'];
+
+function checkCommand(command, config = {}, options = {}) {
+  const rules = new Set(options.rules || ALL_RULES);
+  const stopDeletes = rules.has('destructive');
+  const stopHookSkips = rules.has('commit-hook-skip');
   const safePaths = config.safeDeletePaths || [];
   const line = firstLineOf(command);
   // Quoted text is only inert when nothing on the line will execute it.
@@ -306,6 +329,7 @@ function checkCommand(command, config = {}) {
         const shown = unsafe.join(', ');
         return {
           verdict: 'confirm',
+          rule: 'destructive',
           target: shown,
           reason:
             `Recursive force-delete of ${shown}. This cannot be undone.\n\n` +
@@ -320,6 +344,7 @@ function checkCommand(command, config = {}) {
     if (stopDeletes && removesUntrackedFiles(segment)) {
       return {
         verdict: 'confirm',
+        rule: 'destructive',
         target: source,
         reason:
           `git clean removes untracked files permanently.\n\nConfirm this is ` +
@@ -332,6 +357,7 @@ function checkCommand(command, config = {}) {
       if (entry.re.test(segment)) {
         return {
           verdict: 'confirm',
+          rule: 'destructive',
           target: source,
           reason:
             `${entry.what}.\n\nConfirm this is intended before running it. ` +
@@ -350,6 +376,7 @@ function checkCommand(command, config = {}) {
     if (stopHookSkips && GIT_COMMIT.test(segment) && skipsCommitHooks(segment)) {
       return {
         verdict: 'confirm',
+        rule: 'commit-hook-skip',
         target: source,
         reason:
           `git commit --no-verify skips every pre-commit and commit-msg hook.\n\n` +
@@ -367,6 +394,7 @@ function checkCommand(command, config = {}) {
 
 module.exports = {
   checkCommand,
+  ALL_RULES,
   isRecursiveForceDelete,
   deleteTargets,
   isDisposable,

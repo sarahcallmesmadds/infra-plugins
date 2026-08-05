@@ -106,6 +106,9 @@ const CASES = [
   ['git clean -fd', 'confirm', 'no dry run, so it deletes'],
   ['git clean -fdx', 'confirm', 'including ignored files'],
   ['git clean -f -d', 'confirm', 'the same, spelled separately'],
+  ['git clean --force', 'confirm', 'the long spelling deletes just the same'],
+  ['git clean --force --quiet', 'confirm', 'and with another long option beside it'],
+  ['git clean -X', 'confirm', 'uppercase X removes the ignored files'],
 ];
 
 let failed = 0;
@@ -116,34 +119,64 @@ for (const [command, expected, why] of CASES) {
   console.log(`${ok ? '  ok  ' : '  FAIL'} ${expected.padEnd(7)} ${why}\n         ${command}`);
 }
 
-// --- one switch per family of rule ---------------------------------------
+// --- this function assesses, it does not decide policy --------------------
 //
-// These two rules have nothing to do with each other. One is about not losing
-// work, the other about not walking past a check. They shipped sharing a
-// single switch, because the hook only called this function when
-// blockDestructiveCommands was on, so anybody turning off noisy delete prompts
-// lost the commit-hook rule as well and was told nothing about it.
-//
-// Each row below turns off exactly one and asserts the other still fires. An
-// absent key counts as on, which is what every case above this line relies on.
-const SWITCHES = [
-  [{ ...CONFIG, blockDestructiveCommands: false }, 'rm -rf ~/live', 'allow',
-    'deletes off: the delete is allowed'],
-  [{ ...CONFIG, blockDestructiveCommands: false }, 'git commit --no-verify -m "x"', 'confirm',
-    'deletes off: the commit-hook rule still fires'],
-  [{ ...CONFIG, blockCommitHookSkip: false }, 'git commit --no-verify -m "x"', 'allow',
-    'commit-hook rule off: the commit is allowed'],
-  [{ ...CONFIG, blockCommitHookSkip: false }, 'rm -rf ~/live', 'confirm',
-    'commit-hook rule off: the delete still fires'],
-  [{ ...CONFIG, blockDestructiveCommands: false }, 'git reset --hard', 'allow',
-    'deletes off: the git rules go with them'],
+// The on/off settings are not read here, and that is the point of these rows.
+// cli.js calls this for `check --command`, which is the on-demand "is this
+// safe" question behind the undo-possible skill and the whole Codex surface,
+// where no hook can run. When the switches lived in here, somebody who had
+// quietened the automatic prompts and then explicitly asked whether a delete
+// was safe got told yes. An advisory that agrees with your configuration is
+// not an advisory.
+const IGNORES_CONFIG = [
+  [{ ...CONFIG, blockDestructiveCommands: false }, 'rm -rf ~/live', 'confirm',
+    'asked plainly, a delete is still a delete'],
+  [{ ...CONFIG, blockCommitHookSkip: false }, 'git commit --no-verify -m "x"', 'confirm',
+    'and so is skipping the commit checks'],
 ];
 
-for (const [config, command, expected, why] of SWITCHES) {
+for (const [config, command, expected, why] of IGNORES_CONFIG) {
   const actual = checkCommand(command, config).verdict;
   const ok = actual === expected;
   if (!ok) failed += 1;
   console.log(`${ok ? '  ok  ' : '  FAIL'} ${expected.padEnd(7)} ${why}\n         ${command}`);
+}
+
+// --- filtering, which is the caller's job ---------------------------------
+//
+// The two families have nothing to do with each other. One is about not
+// losing work, the other about not walking past a check. They shipped sharing
+// a single switch, so anybody turning off noisy delete prompts lost the
+// commit-hook rule too and was told nothing about it. Each row turns off
+// exactly one and asserts the other still fires.
+const FILTERED = [
+  [['commit-hook-skip'], 'rm -rf ~/live', 'allow', 'deletes not asked about'],
+  [['commit-hook-skip'], 'git commit --no-verify -m "x"', 'confirm', 'the other family still fires'],
+  [['destructive'], 'git commit --no-verify -m "x"', 'allow', 'commit-hook rule not asked about'],
+  [['destructive'], 'rm -rf ~/live', 'confirm', 'the delete still fires'],
+  [['commit-hook-skip'], 'git reset --hard', 'allow', 'the git delete rules go together'],
+  [['commit-hook-skip'], 'git clean -fd', 'allow', 'clean goes with them'],
+];
+
+for (const [rules, command, expected, why] of FILTERED) {
+  const actual = checkCommand(command, CONFIG, { rules }).verdict;
+  const ok = actual === expected;
+  if (!ok) failed += 1;
+  console.log(`${ok ? '  ok  ' : '  FAIL'} ${expected.padEnd(7)} ${why}\n         ${command}`);
+}
+
+// Every confirm has to say which family it came from, or the hook cannot
+// filter and the whole arrangement above collapses back into one switch.
+for (const [command, rule] of [
+  ['rm -rf ~/live', 'destructive'],
+  ['git clean -fd', 'destructive'],
+  ['git reset --hard', 'destructive'],
+  ['git commit --no-verify -m "x"', 'commit-hook-skip'],
+]) {
+  const got = checkCommand(command, CONFIG).rule;
+  const ok = got === rule;
+  if (!ok) failed += 1;
+  console.log(`${ok ? '  ok  ' : '  FAIL'} rule    ${command} is ${rule}`);
 }
 
 // The reported target has to be the path as typed. It used to be the rest of
@@ -226,5 +259,5 @@ for (const raw of DEFAULTS.safeDeletePaths) {
   }
 }
 
-console.log(`\n${CASES.length + SWITCHES.length + 2 + walked} checks, ${failed} failed`);
+console.log(`\n${CASES.length + IGNORES_CONFIG.length + FILTERED.length + 4 + 2 + walked} checks, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

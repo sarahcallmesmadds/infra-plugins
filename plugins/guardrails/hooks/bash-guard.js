@@ -14,7 +14,7 @@ const path = require('path');
 const ROOT = path.join(__dirname, '..');
 const { readEvent, block } = require(path.join(ROOT, 'scripts', 'hook-io'));
 const { loadConfig } = require(path.join(ROOT, 'scripts', 'config'));
-const { checkCommand } = require(path.join(ROOT, 'scripts', 'command'));
+const { checkCommand, ALL_RULES } = require(path.join(ROOT, 'scripts', 'command'));
 
 const IS_GIT_COMMIT = /\bgit\s+(?:-[^\s]+(?:\s+[^\s-][^\s]*)?\s+)*commit\b/;
 
@@ -147,11 +147,22 @@ readEvent((event) => {
 
   // 1. Destructive commands, and commands that skip the commit hooks.
   //
-  // No switch is read here. checkCommand reads its own, one per family of
-  // rule, because gating the whole call on blockDestructiveCommands meant
-  // turning off delete prompts also turned off the commit-hook rule without
-  // saying so.
-  const verdict = checkCommand(command, config);
+  // The switches live here and nowhere else, one per family of rule. This
+  // hook is the thing being turned off, so this is where off means something.
+  //
+  // Two arrangements were wrong before this one. Gating the whole call on
+  // blockDestructiveCommands made one setting govern both families, so
+  // quietening delete prompts silently dropped the commit-hook rule. Moving
+  // the switches into checkCommand fixed that and reached somewhere it had no
+  // business being: cli.js asks the same function the on-demand "is this safe"
+  // question, and it started answering "safe" for a delete purely because the
+  // prompts were off. checkCommand assesses; only the caller being switched
+  // off applies a switch.
+  const rules = ALL_RULES.filter((rule) => (
+    rule === 'destructive' ? config.blockDestructiveCommands !== false
+      : config.blockCommitHookSkip !== false
+  ));
+  const verdict = checkCommand(command, config, { rules });
   if (verdict.verdict === 'confirm') {
     block(verdict.reason);
     return;

@@ -229,6 +229,71 @@ check('git clean -fd, which really does delete, is still denied', () => {
   assertDenies(runHook('git clean -fd'), 'git clean -fd');
 });
 
+// --- the switches, at the layer that owns them ----------------------------
+//
+// The rules above are checked against checkCommand directly. These go through
+// the hook with a real config file, because the hook is the thing being turned
+// off and the arrangement has been wrong twice: once with both families
+// sharing a switch, once with the switch reaching into the advisory that
+// cli.js and the Codex surface depend on.
+
+function hookWithConfig(settings, command) {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrails-cfg-'));
+  fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+  fs.writeFileSync(
+    path.join(home, '.claude', 'guardrails.config.json'),
+    JSON.stringify(settings)
+  );
+  const stdout = execFileSync(process.execPath, [HOOK], {
+    input: JSON.stringify({ tool_name: 'Bash', tool_input: { command } }),
+    encoding: 'utf8',
+    cwd: NOWHERE,
+    env: { ...process.env, HOME: home },
+  }).trim();
+  fs.rmSync(home, { recursive: true, force: true });
+  return stdout ? JSON.parse(stdout) : null;
+}
+
+check('turning off delete prompts leaves the commit-hook rule running', () => {
+  const off = { blockDestructiveCommands: false };
+  assert.strictEqual(hookWithConfig(off, 'rm -rf ~/live'), null, 'the delete was still blocked');
+  assertDenies(
+    hookWithConfig(off, 'git commit --no-verify -m "x"'),
+    'no-verify with deletes off'
+  );
+});
+
+check('turning off the commit-hook rule leaves delete prompts running', () => {
+  const off = { blockCommitHookSkip: false };
+  assert.strictEqual(
+    hookWithConfig(off, 'git commit --no-verify -m "x"'),
+    null,
+    'the commit was still blocked'
+  );
+  assertDenies(hookWithConfig(off, 'rm -rf ~/live'), 'delete with the commit rule off');
+});
+
+check('the on-demand check answers honestly with the prompts turned off', () => {
+  // The question people ask deliberately, and the only protection at all on a
+  // surface that cannot register hooks. It must not agree with the config.
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrails-cfg-'));
+  fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+  fs.writeFileSync(
+    path.join(home, '.claude', 'guardrails.config.json'),
+    JSON.stringify({ blockDestructiveCommands: false })
+  );
+  const cli = path.join(__dirname, '..', 'plugins', 'guardrails', 'scripts', 'cli.js');
+  const out = execFileSync(process.execPath, [cli, 'check', '--command', 'rm -rf ~/live'], {
+    encoding: 'utf8',
+    env: { ...process.env, HOME: home },
+  });
+  fs.rmSync(home, { recursive: true, force: true });
+  assert.ok(
+    out.includes('verdict: confirm'),
+    `asked plainly whether a delete was safe, it said: ${out.trim()}`
+  );
+});
+
 check('a commit run under another program is left alone', () => {
   // `nice -n 10` is not the commit asking to skip anything.
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrails-repo-'));
