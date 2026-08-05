@@ -104,9 +104,8 @@ function loosely(value) {
 }
 
 // Whether the status an entry is already sitting on means it was closed. Read
-// loosely and including the retired value, because this is asked about what is
-// on disk rather than about what somebody is trying to write, and what is on
-// disk includes `Wontfix` and `fix attempted / unresolved`.
+// loosely because this is asked about what is on disk rather than about what
+// somebody is trying to write, and what is on disk includes `Wontfix`.
 //
 // It exists for one question: is this write closing the entry, or repairing the
 // status of an entry that was closed already. Correcting `Wontfix` to `Won't
@@ -114,7 +113,10 @@ function loosely(value) {
 // remediation path `lint` prints, which is the whole reason `lint` reports a
 // bad status at all. An entry closed before any of this existed can still be
 // spelled correctly, and gains no obligation by being repaired.
-const CLOSED_ON_DISK = ['Resolved', "Won't Fix", 'fix attempted / unresolved'];
+// The retired `fix attempted / unresolved` is deliberately absent. Despite
+// being retired it describes an unresolved entry, so moving it to either
+// closed status is a real first closure and has to write a resolution.
+const CLOSED_ON_DISK = ['Resolved', "Won't Fix"];
 
 function alreadyClosed(status) {
   if (status === undefined || status === null) return false;
@@ -633,6 +635,8 @@ function writeEntry(id, entry, dir = QUEUE) {
   // this gate had just allowed to be reopened.
   if (listNameFor(dir) === 'queue' && entry && isClosed(entry.status) && (statusChanged || resolutionChanged)) {
     const read = normalise(entry.resolution);
+    const wasClosed = alreadyClosed(statusOnDisk(id, dir));
+    const pureClosedStatusRepair = statusChanged && !resolutionChanged && wasClosed;
 
     // Closing with nothing recorded. `queue.js update x --status Resolved`
     // against an entry whose resolution was null changed no resolution, so the
@@ -645,7 +649,7 @@ function writeEntry(id, entry, dir = QUEUE) {
     // misspelt status repaired, which is the same rule as everywhere else here.
     // Moving `Wontfix` to `Won't Fix` is not a closing act, and refusing it
     // would break the fix `lint` prints for the fault `lint` exists to find.
-    if (statusChanged && !alreadyClosed(statusOnDisk(id, dir)) && (!read || !read.outcome)) {
+    if (statusChanged && !wasClosed && (!read || !read.outcome)) {
       fail(
         `queue.js: closing ${id} as ${showStatus(entry.status)} needs a resolution saying what that meant.\n`
         + `  It currently records: ${JSON.stringify(entry.resolution === undefined ? null : entry.resolution)}\n`
@@ -655,7 +659,11 @@ function writeEntry(id, entry, dir = QUEUE) {
       );
     }
 
-    const clash = read && disagreement(entry.status, read.outcome);
+    // A pure spelling repair must remain reachable even when the old entry is
+    // internally contradictory. `lint` can make the status visible again; it
+    // cannot decide which historical outcome was intended. Requiring both to
+    // be rewritten turns the printed one-field remedy into a dead end.
+    const clash = !pureClosedStatusRepair && read && disagreement(entry.status, read.outcome);
     if (clash) {
       fail(`queue.js: ${clash}. Nothing was written.`);
     }

@@ -606,5 +606,41 @@ check('reopening a legacy applied-fix entry keeps its inferred outcome', () => {
   });
 });
 
+check('a pure repair of a closed status is not blocked by an old contradiction', () => {
+  // lint prints a one-field status repair. The old resolution may already
+  // disagree, but repairing visibility must not require inventing a replacement
+  // outcome in the same command.
+  withHome((home) => {
+    seed(home, 'c9', {
+      outcome: 'fix_applied', at: '2026-08-05T12:00:00.000Z', summary: 'old record',
+    });
+    const file = path.join(queueDir(home), 'c9.json');
+    const entry = readBack(home, 'c9');
+    entry.status = 'Wontfix';
+    fs.writeFileSync(file, JSON.stringify(entry, null, 2));
+
+    run(home, ['update', 'c9', '--status', "Won't Fix"]);
+    assert.strictEqual(readBack(home, 'c9').status, "Won't Fix");
+    assert.strictEqual(readBack(home, 'c9').resolution.outcome, 'fix_applied', 'the repair rewrote history');
+  });
+});
+
+check('the retired unresolved status is not mistaken for an earlier closure', () => {
+  withHome((home) => {
+    seed(home, 'c10');
+    const file = path.join(queueDir(home), 'c10.json');
+    const entry = readBack(home, 'c10');
+    entry.status = 'fix attempted / unresolved';
+    fs.writeFileSync(file, JSON.stringify(entry, null, 2));
+
+    assert.throws(
+      () => run(home, ['update', 'c10', '--status', 'Resolved']),
+      /needs a resolution/,
+      'closed an unresolved entry without recording what happened'
+    );
+    assert.strictEqual(readBack(home, 'c10').status, 'fix attempted / unresolved');
+  });
+});
+
 console.log(`\n${ran} checks, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);
