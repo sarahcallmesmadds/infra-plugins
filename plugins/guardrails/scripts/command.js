@@ -183,7 +183,9 @@ function isDisposable(target, safePaths) {
 // Commands that throw away committed or staged work with no straightforward undo.
 const IRREVERSIBLE_GIT = [
   { re: /(^|\s)git\s+reset\s+--hard(\s|$)/, what: 'git reset --hard discards uncommitted work' },
-  { re: /(^|\s)git\s+clean\s+-[a-zA-Z]*[dfx]/, what: 'git clean removes untracked files permanently' },
+  // `git clean` is not here. It needs the same reading as the commit rule,
+  // because its dry run is spelled with a letter bundled in among the
+  // destructive ones. See removesUntrackedFiles below.
   { re: /(^|\s)git\s+push\s[^\n]*--force(?!-with-lease)/, what: 'git push --force can overwrite a remote branch' },
   { re: /(^|\s)git\s+branch\s+-D(\s|$)/, what: 'git branch -D deletes an unmerged branch' },
 ];
@@ -212,9 +214,25 @@ function skipsCommitHooks(segment) {
   // `git commit -m $(head -n 1 msg.txt)` belongs to head and means "one line".
   // Segments split on `;`, `&` and `|` only, so a substitution stays inside
   // one and has to be removed here or it is read as part of the commit.
-  const own = segment.replace(/\$\([^)]*\)/g, ' ').replace(/`[^`]*`/g, ' ');
+  //
+  // A trailing comment is removed for the same reason: `git commit -m x # -n`
+  // is a note to a reader and git never sees it.
+  const own = segment
+    .replace(/\$\([^)]*\)/g, ' ')
+    .replace(/`[^`]*`/g, ' ')
+    .replace(/(^|\s)#.*$/, '$1');
 
-  for (const raw of own.match(/(?:^|\s)--?[A-Za-z][^\s]*/g) || []) {
+  // Only what comes after the word `commit`. Anything before it belongs to
+  // something else: `nice -n 10 git commit -m x` runs the commit at a lower
+  // priority and `sudo -n git commit` means sudo must not prompt. Both were
+  // refused, and both were told they had asked to skip the commit checks,
+  // which is a sentence about a flag that is not theirs. It is the same
+  // mistake as reading `-uno` as a bundle, one level further out.
+  const commit = GIT_COMMIT.exec(own);
+  if (!commit) return false;
+  const afterCommit = own.slice(commit.index + commit[0].length);
+
+  for (const raw of afterCommit.match(/(?:^|\s)--?[A-Za-z][^\s]*/g) || []) {
     const token = raw.trim();
     if (token === '--no-verify') return true;
     if (token.startsWith('--')) continue;
@@ -226,6 +244,37 @@ function skipsCommitHooks(segment) {
     }
   }
   return false;
+}
+
+const GIT_CLEAN = /(^|\s)git\s+(?:-[^\s]+(?:\s+[^\s-][^\s]*)?\s+)*clean(\s|$)/;
+
+// Does this segment actually delete untracked files? The old rule was
+// `git\s+clean\s+-[a-zA-Z]*[dfx]`, which asked only whether a destructive
+// letter was present. `-n` is the dry run, and nobody types it alone: the
+// useful preview is `git clean -nd` or `-ndx`, which name the very things
+// being previewed. Both contain a `d`, so both were refused.
+//
+// That refusal landed on exactly the careful person the rule exists to help,
+// the one checking what a delete would remove before running it, and a
+// `confirm` reaches them as an outright deny. So the preview was blocked and
+// the destructive form was one keystroke away.
+function removesUntrackedFiles(segment) {
+  const clean = GIT_CLEAN.exec(segment);
+  if (!clean) return false;
+  const after = segment.slice(clean.index + clean[0].length);
+
+  let destructive = false;
+  for (const raw of after.match(/(?:^|\s)--?[A-Za-z][^\s]*/g) || []) {
+    const token = raw.trim();
+    if (token === '--dry-run') return false;
+    if (token.startsWith('--')) continue;
+    const letters = token.slice(1);
+    // A dry run anywhere in the command settles it, whatever else is asked
+    // for. Nothing is deleted, so there is nothing to confirm.
+    if (letters.includes('n')) return false;
+    if (/[dfx]/.test(letters)) destructive = true;
+  }
+  return destructive;
 }
 
 // Returns { verdict: 'allow' | 'confirm', reason, target }.
@@ -266,6 +315,17 @@ function checkCommand(command, config = {}) {
             `~/.claude/guardrails.config.json rather than approving it each time.`,
         };
       }
+    }
+
+    if (stopDeletes && removesUntrackedFiles(segment)) {
+      return {
+        verdict: 'confirm',
+        target: source,
+        reason:
+          `git clean removes untracked files permanently.\n\nConfirm this is ` +
+          `intended before running it. Adding \`-n\` shows what it would remove ` +
+          `without removing anything, which is the safer way to find out.`,
+      };
     }
 
     for (const entry of stopDeletes ? IRREVERSIBLE_GIT : []) {

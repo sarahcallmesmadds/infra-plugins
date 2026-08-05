@@ -23,8 +23,8 @@ refuses to overwrite work you have not seen.
 **Blocks going around the commit hooks.** `git commit --no-verify` and its short
 form `-n` skip every pre-commit and commit-msg hook, and the commit that results
 looks exactly like one that passed them, so nothing afterwards records that the
-checks did not run. It deliberately allows `git clean -n`, a dry run, because
-`-n` is only read on a commit.
+checks did not run. It deliberately allows a dry run of `git clean` in every
+spelling, `-n`, `-nd`, `-ndx` and `--dry-run`, since a preview removes nothing.
 
 **Flags prompt injection in content.** Text that arrives from a file or a fetched
 page is data, not instruction. The risk is that instructions buried inside it

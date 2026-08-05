@@ -214,15 +214,31 @@ check('the short form -n is denied too', () => {
   fs.rmSync(repo, { recursive: true, force: true });
 });
 
-check('git clean -n, a dry run, is left alone', () => {
-  // The careful way to run the command the guard blocks the reckless form of.
-  // `-n` only means --no-verify on a commit, and reading it anywhere would
-  // flag exactly the people being careful.
+// The dry run, in the spellings people actually use. `-n` alone is not one of
+// them: a preview is only useful when it names what it would remove, and those
+// letters are the destructive ones, so every real spelling of "show me first"
+// was refused. Pinning only the bare form, which is what this test did at
+// first, left the whole gap invisible.
+for (const command of ['git clean -n', 'git clean -nd', 'git clean -ndx', 'git clean --dry-run -d']) {
+  check(`a dry run is left alone: ${command}`, () => {
+    assert.strictEqual(runHook(command), null, 'hook objected to a preview');
+  });
+}
+
+check('git clean -fd, which really does delete, is still denied', () => {
+  assertDenies(runHook('git clean -fd'), 'git clean -fd');
+});
+
+check('a commit run under another program is left alone', () => {
+  // `nice -n 10` is not the commit asking to skip anything.
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrails-repo-'));
+  initRepo(repo, 'some-feature');
   assert.strictEqual(
-    runHook('git clean -n'),
+    runHook(`nice -n 10 git -C ${repo} commit -m "wip"`),
     null,
-    'hook objected to a dry run'
+    'hook read another program\'s flag as the commit\'s'
   );
+  fs.rmSync(repo, { recursive: true, force: true });
 });
 
 // --- the repository the guard reads ---------------------------------------

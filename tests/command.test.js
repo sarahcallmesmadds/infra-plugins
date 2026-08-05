@@ -81,6 +81,31 @@ const CASES = [
   // after all of the above.
   ['git commit -sn -m x', 'confirm', 'signed off and no-verify bundled'],
   ['git commit -uno -n -m x', 'confirm', 'a real -n alongside an attached value'],
+
+  // --- must allow: flags belonging to something other than the commit -----
+  //
+  // Only what follows the word `commit` is the commit's. Everything before it
+  // belongs to whatever is running it, and reading those letters refused an
+  // ordinary commit while naming a flag the person never typed.
+  ['nice -n 10 git commit -m x', 'allow', 'the -n sets priority, and is nice\'s'],
+  ['sudo -n git commit -m y', 'allow', 'the -n tells sudo not to prompt'],
+  ['git commit -m x  # -n', 'allow', 'a trailing comment git never sees'],
+
+  // --- must allow: previewing a delete instead of doing it ----------------
+  //
+  // Nobody types the dry run on its own. The useful form names the things it
+  // is previewing, and those letters are the destructive ones, so every real
+  // spelling of "show me what this would remove" was refused. That refusal
+  // fell on the one person the rule exists to protect.
+  ['git clean -nd', 'allow', 'the dry run people actually type'],
+  ['git clean -ndx', 'allow', 'the same, including ignored files'],
+  ['git clean -n -fd', 'allow', 'a dry run asked for separately'],
+  ['git clean --dry-run -d', 'allow', 'the long form of it'],
+
+  // And the real thing, which must still be caught.
+  ['git clean -fd', 'confirm', 'no dry run, so it deletes'],
+  ['git clean -fdx', 'confirm', 'including ignored files'],
+  ['git clean -f -d', 'confirm', 'the same, spelled separately'],
 ];
 
 let failed = 0;
