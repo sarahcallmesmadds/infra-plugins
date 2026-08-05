@@ -74,6 +74,12 @@ function describeAge(minutes) {
   return ` (${hours}h)`;
 }
 
+function includeWeeklySummary(source) {
+  // These are the two known repeat sources. Missing and future source values
+  // fail toward including the orientation rather than silently disabling it.
+  return source !== 'resume' && source !== 'compact';
+}
+
 // The parallel-session sentence, or '' when there is nothing to say.
 //
 // Kept separate from the process work so the tests can drive every branch with
@@ -236,7 +242,7 @@ function main(event) {
     deadline: started + BRIEF_DEADLINE_MS,
     // The queue counts are short enough to restate. The weekly report is an
     // opening orientation, not another 2,000 characters on compact or resume.
-    includeSummary: event && event.source === 'startup',
+    includeSummary: includeWeeklySummary(event && event.source),
   });
   if (openingBrief) parts.push(openingBrief);
 
@@ -278,4 +284,4 @@ function run() {
 
 if (require.main === module) run();
 
-module.exports = { parallelLine, describeAge, gitActivityLine };
+module.exports = { parallelLine, describeAge, gitActivityLine, includeWeeklySummary };

@@ -7,6 +7,7 @@ const os = require('os');
 const path = require('path');
 
 const brief = require(path.join(__dirname, '..', 'plugins', 'session', 'scripts', 'build-loop-brief.js'));
+const sessionStart = require(path.join(__dirname, '..', 'plugins', 'session', 'hooks', 'session-start.js'));
 
 let ran = 0;
 let failed = 0;
@@ -45,7 +46,7 @@ check('the queue reports active primary work and dependency reviews separately',
   fs.writeFileSync(path.join(dir, 'broken.json'), '{');
 
   const out = brief.buildBrief({ home });
-  assert.match(out, /Bug queue: 2 active: first-hook, second-script; 1 dependency review\./);
+  assert.match(out, /Bug queue: 2 active: first-hook, second-script\. Dependency reviews: 1 active\./);
   assert.doesNotMatch(out, /finished|declined|dependent/);
 });
 
@@ -69,13 +70,15 @@ check('fix-applied watching entries do not inflate the list-bugs count', () => {
   assert.doesNotMatch(brief.buildBrief({ home }), /Bug queue/);
 });
 
-check('the retired unresolved status is still counted as open', () => {
+check('the retired unresolved status is surfaced separately from active', () => {
   const home = tempHome();
   const dir = stateDir(home, 'queue');
   writeJson(path.join(dir, 'old-status.json'), {
     status: 'fix attempted / unresolved', skill: 'old-open-bug',
   });
-  assert.match(brief.buildBrief({ home }), /Bug queue: 1 active: old-open-bug\./);
+  const out = brief.buildBrief({ home });
+  assert.match(out, /Legacy unresolved queue entries: 1: old-open-bug\./);
+  assert.doesNotMatch(out, /Bug queue:/);
 });
 
 check('dependency reviews alone do not announce zero active bugs', () => {
@@ -127,6 +130,14 @@ check('the weekly summary can be omitted on resume and compact', () => {
   const dir = stateDir(home, 'summaries');
   fs.writeFileSync(path.join(dir, '2026-31.md'), 'fresh report');
   assert.doesNotMatch(brief.buildBrief({ home, includeSummary: false }), /fresh report/);
+});
+
+check('only known repeat sources suppress the weekly summary', () => {
+  assert.strictEqual(sessionStart.includeWeeklySummary('resume'), false);
+  assert.strictEqual(sessionStart.includeWeeklySummary('compact'), false);
+  assert.strictEqual(sessionStart.includeWeeklySummary('startup'), true);
+  assert.strictEqual(sessionStart.includeWeeklySummary(undefined), true);
+  assert.strictEqual(sessionStart.includeWeeklySummary('future-source'), true);
 });
 
 check('DEPS reports missing and files changed since their record', () => {

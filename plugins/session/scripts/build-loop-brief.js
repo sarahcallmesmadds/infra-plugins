@@ -19,9 +19,7 @@ const MAX_QUEUE_TITLES = 5;
 
 const loose = (value) => String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 const isActiveBuildStatus = (status) => ['open', 'inprogress'].includes(loose(status));
-const isActiveQueueStatus = (status) => [
-  'open', 'inprogress', 'fixattemptedunresolved',
-].includes(loose(status));
+const isLegacyUnresolvedStatus = (status) => loose(status) === 'fixattemptedunresolved';
 const expired = (deadline) => Date.now() >= deadline;
 
 function jsonFiles(dir, deadline = Infinity) {
@@ -57,8 +55,10 @@ function queueLine(root, { deadline = Infinity } = {}) {
   const entries = entriesBeforeDeadline(path.join(root, 'queue'), deadline);
   if (!entries) return '';
   const active = entries
-    .filter((entry) => entry && isActiveQueueStatus(entry.status));
-  if (!active.length) return '';
+    .filter((entry) => entry && isActiveBuildStatus(entry.status));
+  const legacy = entries
+    .filter((entry) => entry && isLegacyUnresolvedStatus(entry.status));
+  if (!active.length && !legacy.length) return '';
 
   const primary = active.filter((entry) => entry.type !== 'dep-review');
   const reviews = active.length - primary.length;
@@ -66,12 +66,20 @@ function queueLine(root, { deadline = Infinity } = {}) {
     .map((entry) => String(entry.target || entry.skill || entry.id || 'untitled').trim())
     .filter(Boolean);
   const more = primary.length > names.length ? `, +${primary.length - names.length} more` : '';
-  const reviewText = reviews ? `; ${reviews} dependency review${reviews === 1 ? '' : 's'}` : '';
   const titleText = names.length ? `: ${names.join(', ')}${more}` : '';
-  if (!primary.length) {
-    return `Dependency reviews: ${reviews} active.`;
+  const legacyNames = legacy.slice(0, MAX_QUEUE_TITLES)
+    .map((entry) => String(entry.target || entry.skill || entry.id || 'untitled').trim())
+    .filter(Boolean);
+  const legacyMore = legacy.length > legacyNames.length ? `, +${legacy.length - legacyNames.length} more` : '';
+
+  const clauses = [];
+  if (primary.length) clauses.push(`Bug queue: ${primary.length} active${titleText}.`);
+  if (reviews) clauses.push(`Dependency reviews: ${reviews} active.`);
+  if (legacy.length) {
+    const legacyTitles = legacyNames.length ? `: ${legacyNames.join(', ')}${legacyMore}` : '';
+    clauses.push(`Legacy unresolved queue entries: ${legacy.length}${legacyTitles}.`);
   }
-  return `Bug queue: ${primary.length} active${titleText}${reviewText}.`;
+  return clauses.join(' ');
 }
 
 function toBuildLine(root, { deadline = Infinity } = {}) {
@@ -187,7 +195,7 @@ module.exports = {
   buildBrief,
   depsLine,
   isActiveBuildStatus,
-  isActiveQueueStatus,
+  isLegacyUnresolvedStatus,
   joinContext,
   latestSummary,
   queueLine,
