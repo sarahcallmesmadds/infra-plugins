@@ -635,8 +635,14 @@ function writeEntry(id, entry, dir = QUEUE) {
   // this gate had just allowed to be reopened.
   if (listNameFor(dir) === 'queue' && entry && isClosed(entry.status) && (statusChanged || resolutionChanged)) {
     const read = normalise(entry.resolution);
-    const wasClosed = alreadyClosed(statusOnDisk(id, dir));
-    const pureClosedStatusRepair = statusChanged && !resolutionChanged && wasClosed;
+    const priorStatus = statusOnDisk(id, dir);
+    const wasClosed = alreadyClosed(priorStatus);
+    // A repair means the same closed status after punctuation and case are
+    // removed: `Wontfix` -> `Won't Fix`. Merely starting and ending closed is
+    // not enough; `Resolved` -> `Won't Fix` is a different state and must be
+    // judged against the resolution like any other closure change.
+    const pureClosedStatusRepair = statusChanged && !resolutionChanged && wasClosed
+      && loosely(entry.status) === loosely(priorStatus);
 
     // Closing with nothing recorded. `queue.js update x --status Resolved`
     // against an entry whose resolution was null changed no resolution, so the
@@ -649,7 +655,7 @@ function writeEntry(id, entry, dir = QUEUE) {
     // misspelt status repaired, which is the same rule as everywhere else here.
     // Moving `Wontfix` to `Won't Fix` is not a closing act, and refusing it
     // would break the fix `lint` prints for the fault `lint` exists to find.
-    if (statusChanged && !wasClosed && (!read || !read.outcome)) {
+    if (statusChanged && !pureClosedStatusRepair && (!read || !read.outcome)) {
       fail(
         `queue.js: closing ${id} as ${showStatus(entry.status)} needs a resolution saying what that meant.\n`
         + `  It currently records: ${JSON.stringify(entry.resolution === undefined ? null : entry.resolution)}\n`

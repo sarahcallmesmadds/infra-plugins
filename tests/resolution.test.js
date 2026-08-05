@@ -625,6 +625,39 @@ check('a pure repair of a closed status is not blocked by an old contradiction',
   });
 });
 
+check('moving between closed states is not mistaken for a spelling repair', () => {
+  withHome((home) => {
+    seed(home, 'c11', {
+      outcome: 'fix_applied', at: '2026-08-05T12:00:00.000Z', summary: 'worked',
+    });
+    run(home, ['update', 'c11', '--status', 'Resolved']);
+
+    assert.throws(
+      () => run(home, ['update', 'c11', '--status', "Won't Fix"]),
+      /say different things/,
+      'treated Resolved -> Won\'t Fix as punctuation repair'
+    );
+    assert.strictEqual(readBack(home, 'c11').status, 'Resolved');
+  });
+});
+
+check('moving a resolution-less old closure to another closed state is refused', () => {
+  withHome((home) => {
+    seed(home, 'c12');
+    const file = path.join(queueDir(home), 'c12.json');
+    const entry = readBack(home, 'c12');
+    entry.status = 'Resolved';
+    fs.writeFileSync(file, JSON.stringify(entry, null, 2));
+
+    assert.throws(
+      () => run(home, ['update', 'c12', '--status', "Won't Fix"]),
+      /needs a resolution/,
+      'changed closed states with no closing record'
+    );
+    assert.strictEqual(readBack(home, 'c12').status, 'Resolved');
+  });
+});
+
 check('the retired unresolved status is not mistaken for an earlier closure', () => {
   withHome((home) => {
     seed(home, 'c10');
