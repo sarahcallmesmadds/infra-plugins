@@ -21,8 +21,15 @@ const errors = [];
 const dispositions = new Set([
   'fixed', 'design-intentional', 'deferred', 'positive-flag', 'out-of-scope'
 ]);
+const object = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const text = (value) => typeof value === 'string' && value.trim().length > 0;
 const list = (value) => Array.isArray(value) && value.length > 0;
+
+if (!object(round)) {
+  console.error('round is not push-ready (1 issue):');
+  console.error('- round record must be a JSON object');
+  process.exit(1);
+}
 
 for (const key of ['repository', 'branch', 'head_sha']) {
   if (!text(round[key])) errors.push(`${key} is required`);
@@ -30,10 +37,20 @@ for (const key of ['repository', 'branch', 'head_sha']) {
 if (!Number.isInteger(round.pr) || round.pr < 1) errors.push('pr must be a positive integer');
 if (!Number.isInteger(round.round) || round.round < 1) errors.push('round must be a positive integer');
 if (round.finding_set_complete !== true) errors.push('finding_set_complete must be true');
-if (!Array.isArray(round.findings)) errors.push('findings must be an array');
+if (!Array.isArray(round.findings)) {
+  errors.push('findings must be an array');
+} else if (round.findings.length === 0 && round.review_outcome !== 'clean') {
+  errors.push('an empty findings array requires review_outcome "clean"');
+} else if (round.findings.length > 0 && round.review_outcome !== 'findings') {
+  errors.push('a non-empty findings array requires review_outcome "findings"');
+}
 
 const ids = new Set();
-for (const [index, finding] of (round.findings || []).entries()) {
+for (const [index, finding] of (Array.isArray(round.findings) ? round.findings : []).entries()) {
+  if (!object(finding)) {
+    errors.push(`findings[${index}] must be a JSON object`);
+    continue;
+  }
   const label = text(finding.id) ? finding.id : `findings[${index}]`;
   if (!text(finding.id)) errors.push(`${label}: id is required`);
   else if (ids.has(finding.id)) errors.push(`${label}: duplicate id`);
@@ -60,6 +77,10 @@ if (!list(round.verification)) {
   errors.push('verification needs at least one command result');
 } else {
   for (const [index, check] of round.verification.entries()) {
+    if (!object(check)) {
+      errors.push(`verification[${index}] must be a JSON object`);
+      continue;
+    }
     if (!text(check.command)) errors.push(`verification[${index}]: command is required`);
     if (check.outcome !== 'passed') errors.push(`verification[${index}]: outcome must be passed`);
   }

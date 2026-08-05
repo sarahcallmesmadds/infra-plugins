@@ -13,7 +13,7 @@ Resolve the repository, PR, branch, head SHA, and review round. Confirm the chec
 
 Fetch every inline and top-level finding. If Devin reports additional findings behind its web interface, stop and ask the user to provide them. An incomplete finding set cannot produce a clean round.
 
-Create a JSON round record from [references/round-record.example.json](references/round-record.example.json). Keep it in a private temporary directory until the round is complete.
+Create a JSON round record from [references/round-record.example.json](references/round-record.example.json). Set `review_outcome` to `findings` when the review contains findings, or `clean` only when the authoritative review completed with none. An empty array without that explicit clean outcome must fail validation. Keep the record in a private temporary directory until the round is complete.
 
 ## 2. Classify every finding
 

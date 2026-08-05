@@ -5,6 +5,7 @@
   "branch": "feature/example",
   "head_sha": "0123456789abcdef0123456789abcdef01234567",
   "finding_set_complete": true,
+  "review_outcome": "findings",
   "findings": [
     {
       "id": "FINDING-1",

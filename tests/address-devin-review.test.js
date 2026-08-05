@@ -26,7 +26,7 @@ function run(record) {
 
 const valid = {
   repository: 'o/r', pr: 12, round: 1, branch: 'feat/x', head_sha: 'abc',
-  finding_set_complete: true,
+  finding_set_complete: true, review_outcome: 'findings',
   findings: [{ id: 'F1', location: 'x.js:1', summary: 'wrong result', disposition: 'fixed',
     evidence: 'return corrected result', dependency_audit: ['caller checked'],
     paired_file_audit: ['test changed'], changed_files: ['x.js', 'x.test.js'] }],
@@ -83,6 +83,33 @@ check('duplicate finding IDs fail', () => {
   const result = run({ ...valid, findings: [valid.findings[0], valid.findings[0]] });
   assert.strictEqual(result.status, 1);
   assert.match(result.stderr, /duplicate id/);
+});
+
+check('empty findings require an explicit clean review outcome', () => {
+  const rejected = run({ ...valid, findings: [], review_outcome: 'findings' });
+  assert.strictEqual(rejected.status, 1);
+  assert.match(rejected.stderr, /requires review_outcome "clean"/);
+
+  const clean = run({ ...valid, findings: [], review_outcome: 'clean' });
+  assert.strictEqual(clean.status, 0, clean.stderr);
+  assert.match(clean.stdout, /0 findings/);
+});
+
+check('non-object JSON returns a validation error without a stack trace', () => {
+  for (const record of [null, 3, 'round', []]) {
+    const result = run(record);
+    assert.strictEqual(result.status, 1);
+    assert.match(result.stderr, /round record must be a JSON object/);
+    assert.doesNotMatch(result.stderr, /TypeError|at Object/);
+  }
+});
+
+check('non-object findings and verification rows return validation errors', () => {
+  const result = run({ ...valid, findings: [null], verification: [null] });
+  assert.strictEqual(result.status, 1);
+  assert.match(result.stderr, /findings\[0\] must be a JSON object/);
+  assert.match(result.stderr, /verification\[0\] must be a JSON object/);
+  assert.doesNotMatch(result.stderr, /TypeError|at Object/);
 });
 
 console.log(`address-devin-review: ${passed} checks passed`);
