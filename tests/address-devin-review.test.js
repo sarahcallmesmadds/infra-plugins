@@ -9,7 +9,7 @@ const { spawnSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
 const SKILL = path.join(ROOT, 'plugins/build-loop/skills/address-devin-review');
-const VALIDATOR = path.join(SKILL, 'scripts/pre-push-check.js');
+const VALIDATOR = path.join(ROOT, 'plugins/build-loop/scripts/pre-push-check.js');
 const README = path.join(ROOT, 'plugins/build-loop/README.md');
 let passed = 0;
 
@@ -43,6 +43,14 @@ check('skill ships every linked reference', () => {
   for (const match of body.matchAll(/\]\((references\/[^)]+)\)/g)) {
     assert.ok(fs.existsSync(path.join(SKILL, match[1])), `missing ${match[1]}`);
   }
+});
+
+check('validator uses the plugin-level scripts convention', () => {
+  assert.ok(fs.existsSync(VALIDATOR), 'plugin-level pre-push validator is missing');
+  assert.ok(!fs.existsSync(path.join(SKILL, 'scripts/pre-push-check.js')),
+    'a skill-local copy would be invisible to the plugin-repo script scanner');
+  const body = fs.readFileSync(path.join(SKILL, 'SKILL.md'), 'utf8');
+  assert.match(body, /\$\{CLAUDE_PLUGIN_ROOT\}\/scripts\/pre-push-check\.js/);
 });
 
 check('Build Loop documents the same command count for Claude and Codex', () => {

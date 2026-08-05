@@ -220,7 +220,7 @@ both are correct and neither resolves, so a fix filed against one silently
 misses the other. `/audit-deps` carries a `notes` field to record this after the
 fact; the hook catches it at the moment of writing instead.
 
-`type:` is checked rather than required on purpose. Seven of the twenty skills
+`type:` is checked rather than required on purpose. 8 of the 21 skills
 here do not set it, and reporting seven files that are fine is how a check
 teaches you to ignore it.
 

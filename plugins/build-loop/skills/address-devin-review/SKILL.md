@@ -59,7 +59,7 @@ Run the repository's complete relevant test, typecheck, lint, and formatting gat
 Validate the record:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/skills/address-devin-review/scripts/pre-push-check.js" /path/to/round.json
+node "${CLAUDE_PLUGIN_ROOT}/scripts/pre-push-check.js" /path/to/round.json
 ```
 
 Do not commit if validation fails. Run the same check again after the commit and before push so the record reflects the final verification results. Show the user the complete disposition table and the files changed. Commit the whole review round once, using [references/templates.md](references/templates.md). Never bypass repository hooks.

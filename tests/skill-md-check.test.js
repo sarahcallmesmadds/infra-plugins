@@ -7,8 +7,8 @@
 // 2026-07-28. Two things changed in the port, and both are the point of this
 // file.
 //
-// 1. The original required `type: human|agent`. Seven of the twenty skills in
-//    this repository do not set it, so requiring it would report seven files
+// 1. The original required `type: human|agent`. Eight of the twenty-one skills
+//    in this repository do not set it, so requiring it would report eight files
 //    that are fine. Here it is validated when present and never required.
 //
 // 2. The original did not compare the frontmatter name against the directory.
@@ -33,7 +33,7 @@ const HOOK = path.join(__dirname, '..', 'plugins', 'build-loop', 'hooks', 'skill
 const PLUGINS = path.join(__dirname, '..', 'plugins');
 
 // See deps-keys.test.js for why this is compared rather than printed.
-const EXPECTED_CHECKS = 15;
+const EXPECTED_CHECKS = 16;
 
 let failed = 0;
 let ran = 0;
@@ -165,9 +165,27 @@ check('a folded description counts as present', () => {
 
 check('type is validated when present and not required when absent', () => {
   assert.strictEqual(run('untyped', good('untyped')), null,
-    'type is absent in 7 of 20 skills here and must not be required');
+    'type is absent in some skills here and must not be required');
   const bad = run('mistyped', `---\nname: mistyped\ndescription: x\ntype: huamn\n---\n`);
   assert.match(bad.hookSpecificOutput.additionalContext, /type: huamn/);
+});
+
+check('the documented type counts match the repository inventory', () => {
+  const files = [];
+  for (const plugin of fs.readdirSync(PLUGINS)) {
+    const skills = path.join(PLUGINS, plugin, 'skills');
+    if (!fs.existsSync(skills)) continue;
+    for (const name of fs.readdirSync(skills)) {
+      const file = path.join(skills, name, 'SKILL.md');
+      if (fs.existsSync(file)) files.push(file);
+    }
+  }
+  const withoutType = files.filter((file) => !/^type:\s*(human|agent)\s*$/m.test(fs.readFileSync(file, 'utf8')));
+  const claim = `${withoutType.length} of the ${files.length} skills`;
+  const hook = fs.readFileSync(HOOK, 'utf8');
+  const readme = fs.readFileSync(path.join(PLUGINS, 'build-loop', 'README.md'), 'utf8');
+  assert.ok(hook.includes(claim), `hook does not contain the current count: ${claim}`);
+  assert.ok(readme.includes(claim), `README does not contain the current count: ${claim}`);
 });
 
 // --- against the real repository -------------------------------------------
