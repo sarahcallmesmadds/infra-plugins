@@ -221,7 +221,7 @@ misses the other. `/audit-deps` carries a `notes` field to record this after the
 fact; the hook catches it at the moment of writing instead.
 
 `type:` is checked rather than required on purpose. 8 of the 21 skills
-here do not set it, and reporting seven files that are fine is how a check
+here do not set it, and reporting 8 files that are fine is how a check
 teaches you to ignore it.
 
 Nothing to do on upgrade. The hook registers itself and stays quiet on a

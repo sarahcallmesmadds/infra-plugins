@@ -22,7 +22,7 @@
 //                         looks exactly like never being needed.
 //   type, when present    13 of the 21 skills in this repository set it and 8
 //                         do not, so it is checked but not required. Requiring
-//                         it would flag seven files that are fine.
+//                         it would flag 8 files that are fine.
 
 'use strict';
 

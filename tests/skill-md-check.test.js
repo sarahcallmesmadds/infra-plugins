@@ -182,10 +182,13 @@ check('the documented type counts match the repository inventory', () => {
   }
   const withoutType = files.filter((file) => !/^type:\s*(human|agent)\s*$/m.test(fs.readFileSync(file, 'utf8')));
   const claim = `${withoutType.length} of the ${files.length} skills`;
+  const affectedFiles = `${withoutType.length} files that are fine`;
   const hook = fs.readFileSync(HOOK, 'utf8');
   const readme = fs.readFileSync(path.join(PLUGINS, 'build-loop', 'README.md'), 'utf8');
   assert.ok(hook.includes(claim), `hook does not contain the current count: ${claim}`);
+  assert.ok(hook.includes(affectedFiles), `hook does not contain the current unaffected-file count: ${affectedFiles}`);
   assert.ok(readme.includes(claim), `README does not contain the current count: ${claim}`);
+  assert.ok(readme.includes(affectedFiles), `README does not contain the current unaffected-file count: ${affectedFiles}`);
 });
 
 // --- against the real repository -------------------------------------------
