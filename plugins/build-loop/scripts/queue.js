@@ -29,6 +29,8 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
+const { problemsWith, outcomeList } = require('./resolution.js');
+
 const ROOT = path.join(os.homedir(), '.claude', 'build-loop');
 const QUEUE = path.join(ROOT, 'queue');
 const LOCK = path.join(ROOT, '.queue.lock');
@@ -479,6 +481,14 @@ function statusOnDisk(id, dir) {
   }
 }
 
+function resolutionOnDisk(id, dir) {
+  try {
+    return JSON.parse(fs.readFileSync(entryPath(id, dir), 'utf8')).resolution;
+  } catch {
+    return undefined;
+  }
+}
+
 function writeEntry(id, entry, dir = QUEUE) {
   // Refuse to write without the lock. The check in acquire narrows the takeover
   // race but cannot close it: there is no compare-and-swap for a rename, so two
@@ -536,6 +546,26 @@ function writeEntry(id, entry, dir = QUEUE) {
     }
   } else if (entry && entry.status !== statusOnDisk(id, dir)) {
     checkStatus(entry.status, listNameFor(dir));
+  }
+
+  // Same gate, same rule: only what this write CHANGES. Nineteen entries on
+  // disk carry a resolution written by hand in three different shapes, and
+  // every one of them predates this check. Validating unconditionally would
+  // lock all nineteen out of ever being annotated again, which is the trap the
+  // status check above already fell into once.
+  //
+  // Compared as JSON rather than by identity, because `--json resolution=FILE`
+  // parses a fresh object every time and an untouched field would otherwise
+  // read as a change on every write.
+  if (entry && JSON.stringify(entry.resolution) !== JSON.stringify(resolutionOnDisk(id, dir))) {
+    const problems = problemsWith(entry.resolution);
+    if (problems.length) {
+      fail(
+        `queue.js: this resolution cannot be read back. Nothing was written.\n`
+        + problems.map((p) => `  - ${p}`).join('\n')
+        + `\n  Outcomes: ${outcomeList()}`
+      );
+    }
   }
 
   const target = entryPath(id, dir);

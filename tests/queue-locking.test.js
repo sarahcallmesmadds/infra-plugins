@@ -193,13 +193,20 @@ check('notes already on the entry are never rebuilt away', () => {
 check('one call changing several things lands as one write', () => {
   return withHome((home) => {
     entry(home, 'e4');
-    fs.writeFileSync(path.join(home, 'res.json'), JSON.stringify({ outcome: 'fixed' }));
+    // `{outcome: 'fixed'}` here until the resolution gate landed, which is not
+    // a spelling anything accepted. It wrote fine, because nothing checked.
+    fs.writeFileSync(path.join(home, 'res.json'), JSON.stringify({
+      outcome: 'fix_applied',
+      at: '2026-08-05T12:00:00.000Z',
+      summary: 'the guard now reads the event cwd',
+      commit: 'abc1234',
+    }));
     run(home, ['update', 'e4', '--status', 'Resolved', '--note', 'a', '--note', 'b',
       '--resolution', path.join(home, 'res.json'), '--field', 'repo=other']);
     const after = read(home, 'e4');
     assert.strictEqual(after.status, 'Resolved');
     assert.strictEqual(after.notes.length, 2, 'a repeated --note was dropped');
-    assert.strictEqual(after.resolution.outcome, 'fixed');
+    assert.strictEqual(after.resolution.outcome, 'fix_applied');
     assert.strictEqual(after.repo, 'other');
   });
 });
