@@ -51,6 +51,7 @@ const REAL_SHAPES = [
       shipped_in: '0.4.1',
       summary: 'unanchored build output, dropped the substring match',
     },
+    status: 'Resolved',
     expect: { outcome: 'fix_applied', at: '2026-08-02', commit: 'a74c489d63b8c40b7284ebb7ba9da177a1f4d59d' },
     keepsExtra: ['pr', 'shipped_in'],
   },
@@ -79,7 +80,7 @@ const REAL_SHAPES = [
 
 for (const shape of REAL_SHAPES) {
   check(`reads ${shape.what}`, () => {
-    const got = normalise(shape.stored);
+    const got = normalise(shape.stored, { status: shape.status });
     for (const [key, want] of Object.entries(shape.expect)) {
       assert.strictEqual(got[key], want, `${key}: expected ${want}, got ${got[key]}`);
     }
@@ -128,8 +129,30 @@ check('the inference still fires when the field is genuinely empty', () => {
   for (const stated of [undefined, '', '   ']) {
     const r = { commit: 'abc1234', fixed_at: '2026-08-02', summary: 's' };
     if (stated !== undefined) r.outcome = stated;
-    assert.strictEqual(normalise(r).outcome, 'fix_applied', `${JSON.stringify(stated)} lost the inference`);
+    const got = normalise(r, { status: 'Resolved' }).outcome;
+    assert.strictEqual(got, 'fix_applied', `${JSON.stringify(stated)} lost the inference`);
   }
+});
+
+check('an outcome that was stated and cannot be read is kept, not dropped', () => {
+  // Returning null is the right answer to "which of the five is this". It is
+  // not an answer to "what did somebody write", and the first version lost
+  // that entirely, so a deliberate "reverted" came back indistinguishable
+  // from an entry closed with no outcome at all.
+  const got = normalise({ outcome: 'reverted', at: 'now', summary: 's', commit: 'abc1234' });
+  assert.strictEqual(got.outcome, null, 'invented an enum value');
+  assert.strictEqual(got.extra.outcome, 'reverted', 'the stated outcome vanished');
+});
+
+check('the inference needs the status, and does not guess without it', () => {
+  // Its justification has always been "those twelve are Resolved primaries
+  // carrying a commit". The function could not see a status, so what it
+  // actually did was infer from a commit alone, and a Won't Fix entry
+  // recording the commit it was rolled back by read as a fix.
+  const legacy = { commit: 'abc1234', fixed_at: '2026-08-05', summary: 'Declined after rollback' };
+  assert.strictEqual(normalise(legacy, { status: "Won't Fix" }).outcome, null, 'called a rollback a fix');
+  assert.strictEqual(normalise(legacy).outcome, null, 'guessed with no status to go on');
+  assert.strictEqual(normalise(legacy, { status: 'Resolved' }).outcome, 'fix_applied');
 });
 
 check('a closed entry with no commit and no outcome stays unknown', () => {
@@ -148,6 +171,26 @@ check('every outcome in the enum is accepted', () => {
     assert.deepStrictEqual(problemsWith(r), [], `${outcome} was refused`);
   }
 });
+
+// The two functions are separate and nothing forces them to agree. These are
+// the values that passed the gate and then read back as null, so the write was
+// accepted and the value was gone. The duplicate one is the worse: the link is
+// the entire reason that outcome exists.
+const TYPE_MISMATCHES = [
+  ['a numeric duplicate_of', { outcome: 'duplicate', at: 'now', summary: 's', duplicate_of: 42 }, 'duplicate_of'],
+  ['a boolean commit', { outcome: 'fix_applied', at: 'now', summary: 's', commit: true }, 'commit'],
+  ['an object commit', { outcome: 'fix_applied', at: 'now', summary: 's', commit: { sha: 'x' } }, 'commit'],
+  ['a numeric by', { outcome: 'obsolete', at: 'now', summary: 's', by: 7 }, 'by'],
+];
+
+for (const [what, value, field] of TYPE_MISMATCHES) {
+  check(`the writer refuses what the reader would drop: ${what}`, () => {
+    const problems = problemsWith(value);
+    assert.ok(problems.length > 0, 'accepted a value that reads back as null');
+    assert.ok(problems.some((p) => p.includes(field)), `refused, but not about ${field}: ${problems.join('; ')}`);
+    assert.strictEqual(normalise(value)[field], null, 'the reader kept it after all, so this test is stale');
+  });
+}
 
 const REFUSED = [
   ['no outcome', { at: 'now', summary: 's' }, /no outcome/],
@@ -260,6 +303,59 @@ check('a good resolution goes in', () => {
     const after = readBack(home, 'a3');
     assert.strictEqual(after.resolution.outcome, 'fix_applied');
     assert.strictEqual(after.status, 'Resolved');
+  });
+});
+
+check('the gate refuses to erase a resolution', () => {
+  // Clearing one is not an edit, it is a deletion, and it succeeded in
+  // silence: there is nothing for the shape check to object to in `null`, so a
+  // resolution file holding it replaced a complete record of outcome,
+  // timestamp, summary and commit with nothing, and left the status saying
+  // Resolved. This queue never deletes an entry, and the same reasoning
+  // applies one level down.
+  withHome((home) => {
+    const kept = {
+      outcome: 'fix_applied', at: '2026-08-05T12:00:00.000Z',
+      summary: 'the guard reads the event cwd', commit: 'abc1234',
+    };
+    seed(home, 'a5', kept);
+    fs.writeFileSync(path.join(home, 'null.json'), 'null');
+    assert.throws(
+      () => run(home, ['update', 'a5', '--resolution', path.join(home, 'null.json')]),
+      /erase the resolution/,
+      'erased a closed entry\'s record'
+    );
+    assert.deepStrictEqual(readBack(home, 'a5').resolution, kept, 'the record changed anyway');
+  });
+});
+
+check('a resolution can still be replaced by a better one', () => {
+  // The other side of the refusal above. Refusing to erase must not turn into
+  // refusing to correct.
+  withHome((home) => {
+    seed(home, 'a6', { outcome: 'obsolete', at: '2026-08-01T00:00:00.000Z', summary: 'wrong call' });
+    fs.writeFileSync(path.join(home, 'better.json'), JSON.stringify({
+      outcome: 'wont_fix', at: '2026-08-05T12:00:00.000Z', summary: 'declined on purpose',
+    }));
+    run(home, ['update', 'a6', '--resolution', path.join(home, 'better.json')]);
+    assert.strictEqual(readBack(home, 'a6').resolution.outcome, 'wont_fix');
+  });
+});
+
+check('the same legacy value in a different key order is not a change', () => {
+  // JSON.stringify is order-sensitive, so handing back an untouched legacy
+  // resolution with its keys reordered read as a change, which then validated
+  // it under the new rules and refused it. The entry had not changed and could
+  // not be written.
+  withHome((home) => {
+    seed(home, 'a7', { ts: '2026-08-01T20:30:00.000Z', outcome: 'wontfix', why: 'dead code' });
+    fs.writeFileSync(path.join(home, 'same.json'), JSON.stringify({
+      outcome: 'wontfix', why: 'dead code', ts: '2026-08-01T20:30:00.000Z',
+    }));
+    run(home, ['update', 'a7', '--note', 'checked again', '--resolution', path.join(home, 'same.json')]);
+    const after = readBack(home, 'a7');
+    assert.strictEqual(after.notes.length, 1, 'the note was refused over a reordering');
+    assert.strictEqual(after.resolution.outcome, 'wontfix');
   });
 });
 

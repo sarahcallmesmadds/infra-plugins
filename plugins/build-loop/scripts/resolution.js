@@ -70,7 +70,7 @@ function outcomeList() {
 //
 // Anything unreadable, and anything with no commit and no outcome, stays null.
 // "Closed and cannot say why" is a real answer, and inventing one hides it.
-function normalise(resolution) {
+function normalise(resolution, { status } = {}) {
   if (resolution === null || resolution === undefined) return null;
 
   // A string, which is what SCHEMA.md described until now. No entry on disk
@@ -103,18 +103,30 @@ function normalise(resolution) {
 
   const commit = typeof resolution.commit === 'string' && resolution.commit ? resolution.commit : null;
 
-  // Only when nothing was written in that field, not merely when what was
-  // written could not be read. Those are different, and conflating them made
-  // this the one place in the module that invents an answer: `{outcome:
-  // "reverted", commit: "abc1234"}` came back as `fix_applied`, which is not a
-  // lossy reading of "reverted", it is the opposite of it. A typo and a cased
-  // variant went the same way, silently, because the enum is matched exactly.
+  // An outcome that was stated and cannot be read is kept, under the same
+  // bucket as any other key this module does not understand. Returning null
+  // and dropping the word was the first attempt, and it lost the only record
+  // that anything had been said at all: `{outcome: "reverted"}` came back
+  // indistinguishable from an entry closed with no outcome. Null is the right
+  // answer to "which of the five is this", and it is not an answer to "what
+  // did somebody write".
+  if (rawOutcome && !outcome) extra.outcome = rawOutcome;
+
+  // The inference fires only when nothing was written in that field, never
+  // when what was written could not be read. Conflating those made this the
+  // one place in the module that invents an answer: `{outcome: "reverted",
+  // commit: "abc1234"}` came back as `fix_applied`, which is not a lossy
+  // reading of "reverted" but the opposite of it.
   //
-  // An outcome nobody can read stays null now, which is what the rule three
-  // paragraphs up already claimed. Null means "closed, cannot say why", which
-  // is a real answer, and it leaves the odd spelling visible instead of
-  // dressing it up as a fix.
-  if (!outcome && !rawOutcome && commit) outcome = 'fix_applied';
+  // It also needs the status, and reading it off the entry rather than
+  // assuming it is the second correction here. The justification for this
+  // inference has always been "those twelve entries are Resolved primaries
+  // carrying a commit", and the function could not see a status, so what it
+  // actually did was infer from a commit alone. A `Won't Fix` entry recording
+  // the commit it was rolled back by read as `fix_applied`. A caller that does
+  // not pass the status does not get the inference, which is the honest
+  // reading of a value it cannot check.
+  if (!outcome && !rawOutcome && commit && status === 'Resolved') outcome = 'fix_applied';
 
   const summary = [resolution.summary, resolution.why]
     .find((s) => typeof s === 'string' && s.trim());
@@ -142,6 +154,13 @@ function normalise(resolution) {
 //
 // Returns an array of problems, empty when there are none. It does not throw,
 // so the caller decides what a problem means.
+function describe(value) {
+  if (value === null) return 'null';
+  if (Array.isArray(value)) return 'an array';
+  if (typeof value === 'string') return 'an empty string';
+  return `a ${typeof value}`;
+}
+
 function problemsWith(resolution) {
   if (resolution === null || resolution === undefined) return [];
 
@@ -171,6 +190,20 @@ function problemsWith(resolution) {
   }
   if (outcome !== 'duplicate' && resolution.duplicate_of) {
     problems.push(`duplicate_of is set but the outcome is "${outcome}"`);
+  }
+
+  // The types the reader requires, checked by the writer. These two functions
+  // are separate and nothing forces them to agree, and they did not: a
+  // `duplicate_of` of 42 and a `commit` of true both passed the gate and both
+  // read back as null, so the write was accepted and the value was gone. The
+  // duplicate case is the worse one, because the link is the entire reason
+  // that outcome exists.
+  for (const key of ['commit', 'duplicate_of', 'by']) {
+    const value = resolution[key];
+    if (value === undefined || value === null) continue;
+    if (typeof value !== 'string' || !value.trim()) {
+      problems.push(`${key} has to be a non-empty string, and this is ${describe(value)}`);
+    }
   }
 
   if (typeof resolution.at !== 'string' || !resolution.at.trim()) {

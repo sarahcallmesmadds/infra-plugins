@@ -271,6 +271,15 @@ neither of them is that.
 | `commit` | no | The commit, when there was one. A fix can land without one. |
 | `duplicate_of` | only when the outcome is `duplicate` | The id of the entry holding the discussion. |
 
+`by`, `commit` and `duplicate_of` must be non-empty strings when present. The
+reader drops anything else, so a write that set `duplicate_of` to a number was
+accepted and then read back as nothing, losing the link that outcome exists for.
+
+A resolution cannot be erased once written. Clearing it is a deletion rather
+than an edit, and this queue never deletes: to reopen an entry change its
+status, and the resolution stays as the record of the earlier close. Writing a
+different valid resolution over it is allowed.
+
 ### Outcome enum
 
 | Outcome | Meaning |
@@ -297,13 +306,16 @@ Three shapes exist in the real queue and all three are still read:
 
 | Shape | Where it came from |
 |---|---|
-| `{commit, fixed_at, pr, shipped_in, summary}` | Resolved primaries. No outcome, because the vocabulary did not exist. A commit on a Resolved entry reads as `fix_applied`. |
+| `{commit, fixed_at, pr, shipped_in, summary}` | Resolved primaries. No outcome, because the vocabulary did not exist. A commit reads as `fix_applied` **only when the caller passes the entry's status and it is `Resolved`**. Without that the reader is inferring from a commit alone, and a `Won't Fix` entry recording the commit it was rolled back by would read as a fix. |
 | `{commit, outcome, ts, why}` | Resolved dep-reviews, outcome `"no change needed"`. |
 | `{outcome, ts, why}` | `Won't Fix` primaries, outcomes `"wontfix"` and `"obsolete"`. |
 
 `ts` and `fixed_at` read as `at`. `why` reads as `summary`. The old outcome
 spellings map to the enum. Anything else a reader does not know about is kept
-under `extra` rather than dropped.
+under `extra` rather than dropped, and that includes an outcome that was stated
+and is not one of the five: `outcome` comes back `null`, and the word somebody
+wrote is kept at `extra.outcome`. Null answers "which of the five is this" and
+is not an answer to "what did somebody write".
 
 Nothing rewrites these. That is the same rule the pre-v5 `skill` and
 `skill_path` fields follow: a migration that half-runs leaves a queue in two

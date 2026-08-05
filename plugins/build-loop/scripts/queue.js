@@ -481,6 +481,15 @@ function statusOnDisk(id, dir) {
   }
 }
 
+// JSON with object keys in a fixed order, so two spellings of the same value
+// compare equal. Only used to answer "did this write change anything", never
+// to produce something stored.
+function stableJSON(value) {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(stableJSON).join(',')}]`;
+  return `{${Object.keys(value).sort().map((k) => `${JSON.stringify(k)}:${stableJSON(value[k])}`).join(',')}}`;
+}
+
 function resolutionOnDisk(id, dir) {
   try {
     return JSON.parse(fs.readFileSync(entryPath(id, dir), 'utf8')).resolution;
@@ -554,10 +563,27 @@ function writeEntry(id, entry, dir = QUEUE) {
   // lock all nineteen out of ever being annotated again, which is the trap the
   // status check above already fell into once.
   //
-  // Compared as JSON rather than by identity, because `--json resolution=FILE`
-  // parses a fresh object every time and an untouched field would otherwise
-  // read as a change on every write.
-  if (entry && JSON.stringify(entry.resolution) !== JSON.stringify(resolutionOnDisk(id, dir))) {
+  // Compared with keys sorted, because `--json resolution=FILE` parses a fresh
+  // object every time and JSON.stringify is order-sensitive. Handing back the
+  // same legacy value with its keys in a different order read as a change,
+  // which then validated it under the new rules and refused it. The entry had
+  // not changed and could not be written.
+  if (entry && stableJSON(entry.resolution) !== stableJSON(resolutionOnDisk(id, dir))) {
+    const had = resolutionOnDisk(id, dir);
+    // Clearing one is not an edit, it is a deletion, and it succeeded in
+    // silence: `problemsWith(null)` has nothing to object to, so a resolution
+    // file holding `null` replaced a complete record of outcome, timestamp,
+    // summary and commit with nothing, and left the status saying Resolved.
+    // This queue never deletes an entry, it changes the status instead, and
+    // the same reasoning applies one level down.
+    if ((entry.resolution === null || entry.resolution === undefined) && had !== null && had !== undefined) {
+      fail(
+        `queue.js: that would erase the resolution on ${id} and nothing was written.\n`
+        + `  It currently records: ${JSON.stringify(had)}\n`
+        + `  To reopen the entry, change its status. The resolution stays as the record\n`
+        + `  of the earlier close. To correct it, write a new one rather than clearing it.`
+      );
+    }
     const problems = problemsWith(entry.resolution);
     if (problems.length) {
       fail(
