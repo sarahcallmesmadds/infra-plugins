@@ -56,6 +56,10 @@ const STDIN_WAIT_MS = 1000;
 // BUDGET_MS. When `liveSessions` returns early, which is the normal case at
 // around a tenth of its cap, the git scan still gets everything left over.
 const SESSIONS_BUDGET_MS = Math.round(BUDGET_MS * 0.6);
+// The local-state brief runs after the process scan, so it cannot consume the
+// session scan's share. Give it one tenth of the total before git activity gets
+// the remaining three tenths. Reads that do not finish say so and stop.
+const BRIEF_DEADLINE_MS = Math.round(BUDGET_MS * 0.7);
 
 // Naming every overlapping session gets silly past a handful, and past a
 // handful the count is the useful part anyway.
@@ -218,9 +222,6 @@ function main(event) {
 
   const parts = [todayLine(new Date())];
 
-  const openingBrief = brief.buildBrief({ deadline: started + SESSIONS_BUDGET_MS });
-  if (openingBrief) parts.push(openingBrief);
-
   const live = sessionsMod.liveSessions({
     selfSessionId: event && event.session_id,
     deadline: started + SESSIONS_BUDGET_MS,
@@ -229,6 +230,14 @@ function main(event) {
   const cwd = (event && event.cwd) || process.cwd();
   const parallel = parallelLine(cwd, live, sessionsMod);
   if (parallel) parts.push(parallel);
+
+  const openingBrief = brief.buildBrief({
+    deadline: started + BRIEF_DEADLINE_MS,
+    // The queue counts are short enough to restate. The weekly report is an
+    // opening orientation, not another 2,000 characters on compact or resume.
+    includeSummary: event && event.source === 'startup',
+  });
+  if (openingBrief) parts.push(openingBrief);
 
   const activity = gitActivityLine(cwd, started + BUDGET_MS);
   if (activity) parts.push(activity);

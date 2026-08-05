@@ -13,11 +13,11 @@ const os = require('os');
 const path = require('path');
 
 const CONTEXT_LIMIT = 10000;
-const SUMMARY_LIMIT = 5000;
+const SUMMARY_LIMIT = 2000;
+const SUMMARY_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
 const MAX_QUEUE_TITLES = 5;
 
 const loose = (value) => String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-const isClosedQueueStatus = (status) => ['resolved', 'wontfix'].includes(loose(status));
 const isActiveBuildStatus = (status) => ['open', 'inprogress'].includes(loose(status));
 
 function jsonFiles(dir) {
@@ -39,13 +39,13 @@ function readJson(file) {
 function queueLine(root) {
   const active = jsonFiles(path.join(root, 'queue'))
     .map(readJson)
-    .filter((entry) => entry && !isClosedQueueStatus(entry.status));
+    .filter((entry) => entry && isActiveBuildStatus(entry.status));
   if (!active.length) return '';
 
   const primary = active.filter((entry) => entry.type !== 'dep-review');
   const reviews = active.length - primary.length;
   const names = primary.slice(0, MAX_QUEUE_TITLES)
-    .map((entry) => String(entry.target || entry.what_happened || entry.id || 'untitled').trim())
+    .map((entry) => String(entry.target || entry.skill || entry.id || 'untitled').trim())
     .filter(Boolean);
   const more = primary.length > names.length ? `, +${primary.length - names.length} more` : '';
   const reviewText = reviews ? `; ${reviews} dependency review${reviews === 1 ? '' : 's'}` : '';
@@ -62,7 +62,7 @@ function toBuildLine(root) {
   return `To build: ${entries.length} active${inProgress ? ` (${inProgress} in progress)` : ''}.`;
 }
 
-function latestSummary(root) {
+function latestSummary(root, { now = Date.now() } = {}) {
   let files;
   try {
     files = fs.readdirSync(path.join(root, 'summaries'))
@@ -76,7 +76,9 @@ function latestSummary(root) {
 
   const name = files[0];
   try {
-    const content = fs.readFileSync(path.join(root, 'summaries', name), 'utf8').trim();
+    const file = path.join(root, 'summaries', name);
+    if (now - fs.statSync(file).mtimeMs > SUMMARY_MAX_AGE_MS) return '';
+    const content = fs.readFileSync(file, 'utf8').trim();
     if (!content) return '';
     const clipped = content.length > SUMMARY_LIMIT
       ? `${content.slice(0, SUMMARY_LIMIT - 1).trimEnd()}\u2026`
@@ -121,12 +123,17 @@ function depsLine(root, { home, deadline = Infinity } = {}) {
   if (missing) bits.push(`${missing} missing`);
   if (changed) bits.push(`${changed} changed`);
   if (incomplete) bits.push('check incomplete');
-  return `DEPS.json drift warning: ${bits.join(', ')}. Run /audit-deps before relying on it.`;
+  return `DEPS.json drift warning: ${bits.join(', ')}. Review it before relying on it.`;
 }
 
-function buildBrief({ home = os.homedir(), deadline = Infinity } = {}) {
+function buildBrief({ home = os.homedir(), deadline = Infinity, includeSummary = true, now = Date.now() } = {}) {
   const root = path.join(home, '.claude', 'build-loop');
-  const lines = [queueLine(root), toBuildLine(root), depsLine(root, { home, deadline }), latestSummary(root)]
+  const lines = [
+    queueLine(root),
+    toBuildLine(root),
+    depsLine(root, { home, deadline }),
+    includeSummary ? latestSummary(root, { now }) : '',
+  ]
     .filter(Boolean);
   return lines.length ? `Build-loop brief:\n${lines.join('\n')}` : '';
 }
@@ -140,11 +147,11 @@ function joinContext(parts, limit = CONTEXT_LIMIT) {
 
 module.exports = {
   CONTEXT_LIMIT,
+  SUMMARY_MAX_AGE_MS,
   SUMMARY_LIMIT,
   buildBrief,
   depsLine,
   isActiveBuildStatus,
-  isClosedQueueStatus,
   joinContext,
   latestSummary,
   queueLine,

@@ -38,7 +38,7 @@ check('the queue reports active primary work and dependency reviews separately',
   const home = tempHome();
   const dir = stateDir(home, 'queue');
   writeJson(path.join(dir, '1.json'), { status: 'Open', type: 'primary', target: 'first-hook' });
-  writeJson(path.join(dir, '2.json'), { status: 'fix applied, watching', type: 'primary', target: 'second-script' });
+  writeJson(path.join(dir, '2.json'), { status: 'In Progress', type: 'primary', target: 'second-script' });
   writeJson(path.join(dir, '3.json'), { status: 'Open', type: 'dep-review', target: 'dependent' });
   writeJson(path.join(dir, '4.json'), { status: 'Resolved', type: 'primary', target: 'finished' });
   writeJson(path.join(dir, '5.json'), { status: "Won't Fix", type: 'primary', target: 'declined' });
@@ -47,6 +47,26 @@ check('the queue reports active primary work and dependency reviews separately',
   const out = brief.buildBrief({ home });
   assert.match(out, /Bug queue: 2 active: first-hook, second-script; 1 dependency review\./);
   assert.doesNotMatch(out, /finished|declined|dependent/);
+});
+
+check('pre-v5 queue entries use skill as their short name', () => {
+  const home = tempHome();
+  const dir = stateDir(home, 'queue');
+  writeJson(path.join(dir, 'old.json'), {
+    status: 'Open', skill: 'daily-brief', what_happened: 'A whole paragraph that must not be listed.',
+  });
+  const out = brief.buildBrief({ home });
+  assert.match(out, /Bug queue: 1 active: daily-brief\./);
+  assert.doesNotMatch(out, /whole paragraph/);
+});
+
+check('fix-applied watching entries do not inflate the list-bugs count', () => {
+  const home = tempHome();
+  const dir = stateDir(home, 'queue');
+  writeJson(path.join(dir, 'watching.json'), {
+    status: 'fix applied, watching', type: 'primary', target: 'already-fixed',
+  });
+  assert.doesNotMatch(brief.buildBrief({ home }), /Bug queue/);
 });
 
 check('the to-build count includes open and in-progress items only', () => {
@@ -72,6 +92,23 @@ check('the lexically latest weekly summary is included and bounded', () => {
   assert.ok(out.endsWith('\u2026'));
 });
 
+check('a weekly summary older than 14 days is not injected', () => {
+  const home = tempHome();
+  const dir = stateDir(home, 'summaries');
+  const file = path.join(dir, '2026-01.md');
+  fs.writeFileSync(file, 'stale report');
+  const now = Date.now();
+  fs.utimesSync(file, new Date(now - brief.SUMMARY_MAX_AGE_MS - 1), new Date(now - brief.SUMMARY_MAX_AGE_MS - 1));
+  assert.doesNotMatch(brief.buildBrief({ home, now }), /weekly summary/i);
+});
+
+check('the weekly summary can be omitted on resume and compact', () => {
+  const home = tempHome();
+  const dir = stateDir(home, 'summaries');
+  fs.writeFileSync(path.join(dir, '2026-31.md'), 'fresh report');
+  assert.doesNotMatch(brief.buildBrief({ home, includeSummary: false }), /fresh report/);
+});
+
 check('DEPS reports missing and files changed since their record', () => {
   const home = tempHome();
   const root = path.join(home, '.claude', 'build-loop');
@@ -88,7 +125,8 @@ check('DEPS reports missing and files changed since their record', () => {
 
   const out = brief.buildBrief({ home });
   assert.match(out, /DEPS\.json drift warning: 1 missing, 1 changed\./);
-  assert.match(out, /\/audit-deps/);
+  assert.doesNotMatch(out, /\/audit-deps/);
+  assert.match(out, /Review it before relying on it/);
 });
 
 check('an exhausted deadline is described as incomplete, not clean', () => {
