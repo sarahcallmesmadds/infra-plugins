@@ -1,5 +1,4 @@
-// Blank out the quoted text and the regular expressions in a source file, so
-// what remains is the part of it that addresses a reader.
+// Blank out the regular expressions in a source file, and nothing else.
 //
 // The problem this solves is the scanner firing on security tooling, including
 // its own source. A pattern catalogue is a list of the phrases an attacker
@@ -12,20 +11,28 @@
 // be extended for every new place a catalogue turns up and is wrong the moment
 // somebody else's scanner is reviewed.
 //
-// The distinction drawn here is between text a program handles and text that
-// addresses a person. A string literal and a regular expression are data: the
-// program compares them, stores them, prints them. They are written in machine
-// syntax, and `/\b(ignore|disregard)\b/i` is not a sentence anybody could act
-// on. A comment is the opposite. It is prose, written to be read, and it is
-// exactly where an instruction aimed at a model would be put, so comments stay
-// scanned in full. That is the whole rule.
+// Only regular expressions are blanked, and the reason is that a regular
+// expression cannot be an instruction. `/\b(ignore|disregard)\b/i` is machine
+// syntax for matching text. There is no reading of it under which somebody
+// does what it says, so treating a match inside one as a declaration is not a
+// judgement call about intent.
 //
-// The cost, stated plainly rather than buried: an injection hidden inside a
-// string literal in a source file is no longer reported. That is a real gap
-// and it is the price of the rule. It is accepted because the alternative,
-// warning on every catalogue, trains the reader to skim the next warning, and
-// a warning that gets skimmed protects nothing. Comments remain the more
-// natural hiding place and remain covered.
+// A string literal is not like that, and an earlier version of this file
+// blanked those too. It was wrong. A string can hold a sentence, a prompt
+// constant, or an entire instruction written to be read later, and blanking
+// them meant an injection sitting in a quoted string in any .js file passed
+// the scan in silence, on Write and Edit as well as on Read. In a codebase
+// full of prompts held in source that is not an acceptable trade, and the
+// version that made it never said so out loud in the place it mattered. So
+// strings are scanned, comments are scanned, and everything outside a regular
+// expression is scanned exactly as it was before.
+//
+// What that costs is honest noise rather than a silent gap. A file holding
+// injection strings as test fixtures still reports, because from the outside
+// it is indistinguishable from a file holding injection strings for real.
+// injectionExcludePaths in ~/.claude/guardrails.config.json is the release
+// valve for a specific file, and it stays a decision somebody makes on
+// purpose rather than a rule that quietly stops looking.
 //
 // Only the JavaScript and TypeScript family is handled. Other languages quote
 // and comment differently, and a lexer that half understands a language would
@@ -53,10 +60,16 @@ function regexCanStartAfter(previous) {
   return previous === '' || REGEX_MAY_FOLLOW.test(previous);
 }
 
-// Returns a copy of `source` the same length, with the inside of every string,
-// template and regular expression replaced by `x`. Length is preserved so a
-// match found in the copy can be reported from the original at the same
-// offset, and newlines are kept so line numbers and excerpts still line up.
+// Returns a copy of `source` the same length, with the inside of every regular
+// expression replaced by `x`. Length is preserved so a match found in the copy
+// can be reported from the original at the same offset, and newlines are kept
+// so line numbers and excerpts still line up.
+//
+// Strings and comments are walked but left intact. Walking them is not
+// optional even though nothing is blanked: a `/` inside a string or a comment
+// would otherwise be read as opening a regular expression, and the mask would
+// run from there to the next `/` anywhere in the file, blanking real prose on
+// the way. Skipping them is what keeps the blanking confined.
 function maskCodeLiterals(source) {
   const out = source.split('');
   const n = source.length;
@@ -85,20 +98,21 @@ function maskCodeLiterals(source) {
       continue;
     }
 
+    // Walked, not blanked. The contents stay scannable; stepping over them is
+    // only so a `/` inside a string cannot be mistaken for a regular
+    // expression opening.
     if (ch === '"' || ch === "'" || ch === '`') {
       const quote = ch;
-      const start = i + 1;
       i += 1;
       while (i < n) {
         if (source[i] === '\\') { i += 2; continue; }
         if (source[i] === quote) break;
         // An unterminated quote on one line is a quote character in prose far
         // more often than it is a string running to the end of the file, and
-        // running away with it would blank everything after an apostrophe.
+        // running away with it would step over everything after an apostrophe.
         if (quote !== '`' && source[i] === '\n') break;
         i += 1;
       }
-      blank(start, i);
       i += 1;
       previous = quote;
       continue;

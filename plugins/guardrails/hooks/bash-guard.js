@@ -154,13 +154,16 @@ readEvent((event) => {
 
   const config = loadConfig();
 
-  // 1. Destructive commands.
-  if (config.blockDestructiveCommands) {
-    const verdict = checkCommand(command, config);
-    if (verdict.verdict === 'confirm') {
-      block(verdict.reason);
-      return;
-    }
+  // 1. Destructive commands, and commands that skip the commit hooks.
+  //
+  // No switch is read here. checkCommand reads its own, one per family of
+  // rule, because gating the whole call on blockDestructiveCommands meant
+  // turning off delete prompts also turned off the commit-hook rule without
+  // saying so.
+  const verdict = checkCommand(command, config);
+  if (verdict.verdict === 'confirm') {
+    block(verdict.reason);
+    return;
   }
 
   // `git commit`, but also `git -C <path> commit`, `git --no-pager commit`, and

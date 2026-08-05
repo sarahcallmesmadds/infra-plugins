@@ -71,6 +71,36 @@ for (const [command, expected, why] of CASES) {
   console.log(`${ok ? '  ok  ' : '  FAIL'} ${expected.padEnd(7)} ${why}\n         ${command}`);
 }
 
+// --- one switch per family of rule ---------------------------------------
+//
+// These two rules have nothing to do with each other. One is about not losing
+// work, the other about not walking past a check. They shipped sharing a
+// single switch, because the hook only called this function when
+// blockDestructiveCommands was on, so anybody turning off noisy delete prompts
+// lost the commit-hook rule as well and was told nothing about it.
+//
+// Each row below turns off exactly one and asserts the other still fires. An
+// absent key counts as on, which is what every case above this line relies on.
+const SWITCHES = [
+  [{ ...CONFIG, blockDestructiveCommands: false }, 'rm -rf ~/live', 'allow',
+    'deletes off: the delete is allowed'],
+  [{ ...CONFIG, blockDestructiveCommands: false }, 'git commit --no-verify -m "x"', 'confirm',
+    'deletes off: the commit-hook rule still fires'],
+  [{ ...CONFIG, blockCommitHookSkip: false }, 'git commit --no-verify -m "x"', 'allow',
+    'commit-hook rule off: the commit is allowed'],
+  [{ ...CONFIG, blockCommitHookSkip: false }, 'rm -rf ~/live', 'confirm',
+    'commit-hook rule off: the delete still fires'],
+  [{ ...CONFIG, blockDestructiveCommands: false }, 'git reset --hard', 'allow',
+    'deletes off: the git rules go with them'],
+];
+
+for (const [config, command, expected, why] of SWITCHES) {
+  const actual = checkCommand(command, config).verdict;
+  const ok = actual === expected;
+  if (!ok) failed += 1;
+  console.log(`${ok ? '  ok  ' : '  FAIL'} ${expected.padEnd(7)} ${why}\n         ${command}`);
+}
+
 // The reported target has to be the path as typed. It used to be the rest of
 // the sentence, and after masking it could have been a row of x characters.
 const quoted = checkCommand('rm -rf "my dir"', CONFIG);
@@ -151,5 +181,5 @@ for (const raw of DEFAULTS.safeDeletePaths) {
   }
 }
 
-console.log(`\n${CASES.length + 2 + walked} checks, ${failed} failed`);
+console.log(`\n${CASES.length + SWITCHES.length + 2 + walked} checks, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

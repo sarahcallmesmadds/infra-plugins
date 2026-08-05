@@ -201,14 +201,23 @@ const GIT_COMMIT = /(^|\s)git\s+(?:-[^\s]+(?:\s+[^\s-][^\s]*)?\s+)*commit(\s|$)/
 const SKIPS_COMMIT_HOOKS = /(^|\s)(--no-verify|-[a-zA-Z]*n[a-zA-Z]*)(\s|$)/;
 
 // Returns { verdict: 'allow' | 'confirm', reason, target }.
+//
+// Each family of rule reads its own switch, rather than the caller deciding
+// whether to call this at all. That was the previous arrangement and it meant
+// one setting governed two unrelated things: the hook only ran this when
+// blockDestructiveCommands was on, so switching off noisy delete prompts also
+// switched off the commit-hook rule, silently. A key that is absent counts as
+// on, so a config naming one setting keeps the rest.
 function checkCommand(command, config = {}) {
+  const stopDeletes = config.blockDestructiveCommands !== false;
+  const stopHookSkips = config.blockCommitHookSkip !== false;
   const safePaths = config.safeDeletePaths || [];
   const line = firstLineOf(command);
   // Quoted text is only inert when nothing on the line will execute it.
   const masked = SHELL_INVOKERS.test(line) ? unquote(line) : maskQuoted(line);
 
   for (const { masked: segment, source } of segments(masked, line)) {
-    if (isRecursiveForceDelete(segment)) {
+    if (stopDeletes && isRecursiveForceDelete(segment)) {
       const targets = deleteTargets(segment, source);
       // No parsable operand means we could not establish what is being deleted.
       // Ask rather than assume.
@@ -231,7 +240,7 @@ function checkCommand(command, config = {}) {
       }
     }
 
-    for (const entry of IRREVERSIBLE_GIT) {
+    for (const entry of stopDeletes ? IRREVERSIBLE_GIT : []) {
       if (entry.re.test(segment)) {
         return {
           verdict: 'confirm',
@@ -250,7 +259,7 @@ function checkCommand(command, config = {}) {
     // leaves a commit that looks exactly like one that passed them, so the
     // check is not recorded as having been waived anywhere, and a rule enforced
     // by a pre-commit hook stops being enforced by anything at all.
-    if (GIT_COMMIT.test(segment) && SKIPS_COMMIT_HOOKS.test(segment)) {
+    if (stopHookSkips && GIT_COMMIT.test(segment) && SKIPS_COMMIT_HOOKS.test(segment)) {
       return {
         verdict: 'confirm',
         target: source,

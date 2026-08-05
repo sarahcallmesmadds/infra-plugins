@@ -24,6 +24,17 @@ const DEFAULTS = {
   // Block `rm -rf` outside known-disposable paths.
   blockDestructiveCommands: true,
 
+  // Block `git commit --no-verify` and `-n`, which skip every pre-commit and
+  // commit-msg hook.
+  //
+  // Its own key, and that is the point of it. This check first shipped inside
+  // the destructive-command path, so turning off the delete prompts because
+  // they were noisy also turned this off, with nothing said about it. The two
+  // have nothing to do with each other: one is about not losing work, this one
+  // is about not walking past a check. Anybody switching off either should be
+  // switching off only the one they meant.
+  blockCommitHookSkip: true,
+
   // Paths where recursive force-delete is routine and does not need a prompt.
   //
   // `/private/tmp/` is the same directory as `/tmp/` on macOS, where `/tmp` is a

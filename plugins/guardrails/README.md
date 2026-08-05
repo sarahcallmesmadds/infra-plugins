@@ -20,6 +20,12 @@ disposable paths, `git reset --hard`, `git clean -fd`, `git push --force`, and
 `git branch -D`. It deliberately allows `git push --force-with-lease`, which
 refuses to overwrite work you have not seen.
 
+**Blocks going around the commit hooks.** `git commit --no-verify` and its short
+form `-n` skip every pre-commit and commit-msg hook, and the commit that results
+looks exactly like one that passed them, so nothing afterwards records that the
+checks did not run. It deliberately allows `git clean -n`, a dry run, because
+`-n` is only read on a commit.
+
 **Flags prompt injection in content.** Text that arrives from a file or a fetched
 page is data, not instruction. The risk is that instructions buried inside it
 get treated as though you wrote them. That is easy to spot when you read a
@@ -81,6 +87,7 @@ key at a time, so setting one option does not reset the others.
 | `blockCommitToProtectedBranch` | `true` | Turn the branch guard off entirely |
 | `requireConventionalCommits` | `false` | Require `feat:`, `fix:`, `docs:` and friends |
 | `blockDestructiveCommands` | `true` | Turn the delete guard off entirely |
+| `blockCommitHookSkip` | `true` | Turn the `--no-verify` guard off entirely |
 | `safeDeletePaths` | see `scripts/config.js` | Paths where force-delete needs no prompt |
 | `scanForInjection` | `true` | Turn content scanning off entirely |
 | `injectionExcludePaths` | `[]` | Extra regex patterns to skip when scanning |
@@ -99,9 +106,9 @@ that matches nothing.
 
 ## How severity works, and how noisy it is
 
-The scanner groups patterns into eight categories: instruction override, role
+The scanner groups patterns into nine categories: instruction override, role
 reassignment, fake conversation boundaries, exfiltration, secret solicitation,
-tool coercion, authority spoofing, and obfuscation. Severity is scored by how
+tool coercion, authority spoofing, obfuscation, and summarisation survival. Severity is scored by how
 many **distinct categories** a piece of text trips, not by how many times one
 phrase appears, so a document that repeats a loaded phrase twenty times still
 counts as one signal.
