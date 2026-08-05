@@ -221,35 +221,66 @@ check('a deadline already past skips the work that costs, and reports it', () =>
   git('merge', '-q', '--squash', 'squashed');
   git('commit', '-qm', 'squash squashed');
 
+  // Both capabilities probed for real rather than read off `git --version`,
+  // the same way the write-tree probe further down is. They change what this
+  // test is entitled to assert, not just how fast the code runs:
+  // `%(ahead-behind:)` needs git 2.41, and without it the ancestry answer costs
+  // a call per branch, which is exactly the work an expired deadline skips.
+  let listingCarriesAhead = true;
+  try {
+    execFileSync('git', ['-C', repo, 'for-each-ref', '--format=%(ahead-behind:main)',
+      'refs/heads/'], { stdio: 'pipe' });
+  } catch (_) { listingCarriesAhead = false; }
+  // Asked the way collect.js asks it, argument for argument. A probe that
+  // differs even in the flags it passes can answer yes where the real call
+  // answers no, and then this test asserts a capability the code did not have.
+  let hasWriteTree = true;
+  try {
+    execFileSync('git', ['-C', repo, 'merge-tree', '--write-tree', 'main', 'main'], { stdio: 'pipe' });
+  } catch (_) { hasWriteTree = false; }
+
   const collect = require(path.join(ROOT, 'scripts', 'collect.js'));
   const r = collect.localBranches(repo, { deadline: Date.now() - 1 });
   const by = (n) => r.branches.find((b) => b.name === n);
+  const { safe } = classify(r.branches, {}, Date.now());
 
+  // True on any git. Skipping the per-branch work is the whole point of the
+  // deadline, and a branch that only a skipped call could have cleared must
+  // come back uncleared.
   assert.strictEqual(r.truncated, true, 'an expired deadline must be reported, not hidden');
-
-  // Skipping the tree comparison is the whole point of the deadline. A branch
-  // that only a tree comparison could clear must come back uncleared.
   assert.strictEqual(by('squashed').merged, false,
     'the tree comparison ran after the deadline had passed');
 
-  // Ancestry rides along on the branch listing and costs no extra call, so
-  // withholding it buys no time. Reporting a fact that was already in hand is
-  // not the same as doing work the deadline forbade.
-  assert.strictEqual(by('pointer').aheadBy, 0, 'a free ancestry answer should still be given');
-  assert.strictEqual(by('unmerged').aheadBy, 1, 'a free ancestry answer should still be given');
+  // The safety property, and the reason any of this is acceptable: an
+  // unfinished run under-reports what is safe and never over-reports it.
+  // `squashed` really is deletable, and is deliberately not offered here.
+  assert.ok(!safe.some((b) => b.name === 'squashed' || b.name === 'unmerged'),
+    'a branch that a skipped call would have judged must not be offered as safe');
 
-  // The safety property, unchanged and the reason any of this is acceptable:
-  // an unfinished run under-reports what is safe and never over-reports it.
-  // `squashed` really is deletable and is deliberately not offered here.
-  const { safe } = classify(r.branches, {}, Date.now());
-  assert.deepStrictEqual(safe.map((b) => b.name), ['pointer'],
-    'a truncated run must offer only what it fully resolved');
+  if (listingCarriesAhead) {
+    // Ancestry rides along on the branch listing and costs no extra call, so
+    // withholding it buys no time. Reporting a fact already in hand is not the
+    // same as doing work the deadline forbade.
+    assert.strictEqual(by('pointer').aheadBy, 0, 'a free ancestry answer should still be given');
+    assert.strictEqual(by('unmerged').aheadBy, 1, 'a free ancestry answer should still be given');
+    assert.deepStrictEqual(safe.map((b) => b.name), ['pointer'],
+      'a truncated run must offer everything it fully resolved, and nothing else');
+  } else {
+    // On an older git the same answer costs a call per branch, so the deadline
+    // skips it and the run offers nothing. Slower, still never wrong.
+    assert.strictEqual(by('pointer').aheadBy, null,
+      'without the batched listing the count is per-branch work the deadline forbids');
+    assert.deepStrictEqual(safe.map((b) => b.name), [],
+      'nothing was resolved, so nothing may be offered');
+  }
 
   // And with time to work, the branch it withheld is found.
   const full = collect.localBranches(repo, {});
   assert.strictEqual(full.truncated, false, 'no pressure, no truncation');
-  assert.strictEqual(full.branches.find((b) => b.name === 'squashed').merged, true,
-    'the squash merge should be detected when there is time to look');
+  if (hasWriteTree) {
+    assert.strictEqual(full.branches.find((b) => b.name === 'squashed').merged, true,
+      'the squash merge should be detected when there is time to look');
+  }
 
   fs.rmSync(repo, { recursive: true, force: true });
 });
