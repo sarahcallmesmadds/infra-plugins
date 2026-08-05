@@ -55,6 +55,67 @@ const enableGitActivity = (home) => {
   return home;
 };
 
+const writeTodos = (home, sessionId, tasks, suffix = 'agent-main') => {
+  const dir = path.join(home, '.claude', 'todos');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, `${sessionId}-${suffix}.json`), JSON.stringify(tasks));
+};
+
+// ------------------------------------------------------ current task line ----
+
+check('the status line shows this session activeForm in the middle', () => {
+  const home = tmp();
+  writeTodos(home, 'session-a', [
+    { status: 'completed', activeForm: 'Finished work' },
+    { status: 'in_progress', activeForm: 'Building the current-task segment' },
+  ]);
+  writeTodos(home, 'session-b', [
+    { status: 'in_progress', activeForm: 'Working in another session' },
+  ]);
+  const segment = statusline.readCurrentTaskStatuslineSegment({ sessionId: 'session-a', home });
+  assert.match(segment, /Building the current-task segment/);
+  assert.doesNotMatch(segment, /another session/);
+  const line = statusline.composeStatusline({ model: 'Claude', dirname: 'plugins', currentTask: segment, cost: ' │ $1' });
+  assert.ok(line.indexOf('Building the current-task segment') < line.indexOf('$1'));
+});
+
+check('current task stays quiet without a usable task file', () => {
+  const home = tmp();
+  writeTodos(home, 'other-session', [{ status: 'in_progress', activeForm: 'Not ours' }]);
+  assert.strictEqual(statusline.readCurrentTaskStatuslineSegment({ sessionId: 'this-session', home }), '');
+  writeTodos(home, 'this-session', [{ status: 'pending', activeForm: 'Not started' }]);
+  assert.strictEqual(statusline.readCurrentTaskStatuslineSegment({ sessionId: 'this-session', home }), '');
+});
+
+check('current task accepts the wrapped todo shape and survives malformed files', () => {
+  const home = tmp();
+  writeTodos(home, 'wrapped', { tasks: [{ status: 'in_progress', activeForm: 'Wrapped task' }] }, 'agent-good');
+  const bad = path.join(home, '.claude', 'todos', 'wrapped-agent-newer.json');
+  fs.writeFileSync(bad, '{bad');
+  const future = new Date(Date.now() + 1000);
+  fs.utimesSync(bad, future, future);
+  assert.match(statusline.readCurrentTaskStatuslineSegment({ sessionId: 'wrapped', home }), /Wrapped task/);
+});
+
+check('current task can be disabled in session config', () => {
+  const home = tmp();
+  writeTodos(home, 'quiet', [{ status: 'in_progress', activeForm: 'Hidden task' }]);
+  const segment = statusline.readCurrentTaskStatuslineSegment({
+    sessionId: 'quiet', home, config: { currentTask: { enabled: false } },
+  });
+  assert.strictEqual(segment, '');
+});
+
+check('current task strips controls and bounds untrusted task text', () => {
+  const home = tmp();
+  writeTodos(home, 'safe', [{ status: 'in_progress', activeForm: `Doing\n\x1b[31m${'x'.repeat(100)}` }]);
+  const plain = statusline.readCurrentTaskStatuslineSegment({ sessionId: 'safe', home })
+    .replace(/\x1b\[[0-9;]*m/g, '');
+  assert.doesNotMatch(plain, /\n|\x1b/);
+  assert.doesNotMatch(plain, /\[31m/);
+  assert.ok(plain.replace(/^.*↳ /, '').length <= 80);
+});
+
 // ----------------------------------------------------------- the bridge ----
 
 check('the bridge carries the raw percentage, not the meter percentage', () => {
