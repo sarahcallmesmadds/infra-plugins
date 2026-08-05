@@ -6,7 +6,6 @@ const os = require('os');
 const path = require('path');
 
 const LEASE_TTL_MS = 30 * 60 * 1000;
-const LEASE_MAX_MS = 2 * 60 * 60 * 1000;
 const WRITE_TOOLS = new Set(['Write', 'Edit', 'NotebookEdit']);
 
 function expandHome(value) {
@@ -21,22 +20,70 @@ function absolutePath(value, cwd) {
   return path.resolve(cwd || process.cwd(), expanded);
 }
 
-function loadRegistry(pluginRoot) {
+function loadRegistry(pluginRoot, home = os.homedir()) {
   const shipped = path.join(pluginRoot, 'hooks', 'resource-owners.json');
-  const custom = path.join(os.homedir(), '.claude', 'guardrails.resources.json');
-  let registry = JSON.parse(fs.readFileSync(shipped, 'utf8'));
-  if (fs.existsSync(custom)) registry = JSON.parse(fs.readFileSync(custom, 'utf8'));
+  const custom = path.join(home, '.claude', 'guardrails.resources.json');
+  const fallback = JSON.parse(fs.readFileSync(shipped, 'utf8'));
+  let registry = fallback;
+  if (fs.existsSync(custom)) {
+    try {
+      const candidate = JSON.parse(fs.readFileSync(custom, 'utf8'));
+      if (candidate && Array.isArray(candidate.resources)) registry = candidate;
+    }
+    catch (_) { registry = fallback; }
+  }
   if (!registry || !Array.isArray(registry.resources)) throw new Error('resource registry has no resources array');
   return registry.resources;
 }
 
+function realPathWithMissingTail(value) {
+  let existing = value;
+  const tail = [];
+  while (!fs.existsSync(existing)) {
+    const parent = path.dirname(existing);
+    if (parent === existing) return value;
+    tail.unshift(path.basename(existing));
+    existing = parent;
+  }
+  try { return path.join(fs.realpathSync(existing), ...tail); }
+  catch (_) { return value; }
+}
+
 function contains(resource, candidate, cwd) {
-  const target = absolutePath(resource.path, cwd);
-  const actual = absolutePath(candidate, cwd);
+  const target = realPathWithMissingTail(absolutePath(resource.path, cwd));
+  const actual = realPathWithMissingTail(absolutePath(candidate, cwd));
   if (!target || !actual) return false;
   if (resource.type === 'file') return actual === target;
   const relative = path.relative(target, actual);
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
+function shellSegments(command) {
+  const segments = [];
+  let current = '';
+  let quote = null;
+  for (let i = 0; i < command.length; i += 1) {
+    const char = command[i];
+    if (char === '\\' && quote !== "'") {
+      current += char + (command[i + 1] || '');
+      i += 1;
+      continue;
+    }
+    if ((char === "'" || char === '"')) {
+      quote = quote === char ? null : (quote || char);
+      current += char;
+      continue;
+    }
+    if (!quote && (';|\n\r'.includes(char) || (char === '&' && command[i + 1] === '&'))) {
+      segments.push(current);
+      current = '';
+      if ((char === '|' && command[i + 1] === '|') || (char === '&' && command[i + 1] === '&')) i += 1;
+      continue;
+    }
+    current += char;
+  }
+  segments.push(current);
+  return segments;
 }
 
 function bashWritesPath(command, resource, cwd) {
@@ -56,11 +103,14 @@ function bashWritesPath(command, resource, cwd) {
 
   // Judge one shell segment at a time. A path mentioned after `&&`, `;` or a
   // pipe is not an argument to the write command before it.
-  for (const segment of raw.split(/&&|\|\||[;|\n\r]/)) {
+  for (const segment of shellSegments(raw)) {
     if (!normalizedSpellings.some((spelling) => segment.includes(spelling))) continue;
     if (new RegExp(`>>?\\s*["']?(?:${pathPattern})(?:[/"'\\s]|$)`).test(segment)) return true;
     if (new RegExp(`\\b(?:tee|mv|truncate|touch|mkdir|rm)\\b[^;|\\n\\r]*(?:${pathPattern})`).test(segment)) return true;
-    if (/\bsed\s+(?:-[^\s]*i[^\s]*)\b/.test(segment)) return true;
+    if (/\bsed\s+(?:-[^\s]*i[^\s]*)\b/.test(segment)) {
+      const tokens = segment.trim().match(/"[^"]*"|'[^']*'|\S+/g) || [];
+      if (tokens.some((token) => contains(resource, token.replace(/^['"]|['"]$/g, ''), cwd))) return true;
+    }
 
     // cp and install read every argument except the last one. Only the last
     // path is their destination, so copying a protected file out is allowed.
@@ -118,20 +168,10 @@ function readLease(skill, sessionId, now = Date.now(), leaseDir) {
   try {
     const lease = JSON.parse(fs.readFileSync(leasePath(skill, sessionId, leaseDir), 'utf8'));
     if (lease.sessionId !== keyPart(sessionId)) return null;
-    if (now - lease.touchedAt >= LEASE_TTL_MS || now - lease.startedAt >= LEASE_MAX_MS) return null;
+    if (now - lease.touchedAt >= LEASE_TTL_MS) return null;
     return lease;
   } catch (_) {
     return null;
-  }
-}
-
-function renewLeases(resources, sessionId, now = Date.now(), leaseDir) {
-  const skills = [...new Set(resources.flatMap((resource) => resource.owners || []))];
-  for (const skill of skills) {
-    const lease = readLease(skill, sessionId, now, leaseDir);
-    if (!lease) continue;
-    lease.touchedAt = now;
-    atomicWriteLease(leasePath(skill, sessionId, leaseDir), lease);
   }
 }
 
@@ -140,7 +180,6 @@ function activeOwner(resource, sessionId, now = Date.now(), leaseDir) {
 }
 
 module.exports = {
-  LEASE_MAX_MS,
   LEASE_TTL_MS,
   absolutePath,
   activeOwner,
@@ -151,6 +190,5 @@ module.exports = {
   loadRegistry,
   matchedResource,
   readLease,
-  renewLeases,
   writeLease,
 };

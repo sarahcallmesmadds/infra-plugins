@@ -7,8 +7,8 @@ const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
 const {
-  LEASE_MAX_MS, LEASE_TTL_MS, activeOwner, atomicWriteLease, contains, matchedResource,
-  leasePath, readLease, renewLeases, writeLease,
+  LEASE_TTL_MS, activeOwner, atomicWriteLease, contains, loadRegistry, matchedResource,
+  leasePath, readLease, writeLease,
 } = require('../plugins/guardrails/scripts/resource-ownership');
 
 const ROOT = path.join(__dirname, '..');
@@ -37,6 +37,30 @@ check('directory matching respects path boundaries', () => {
   assert.ok(!contains(handoffs, '~/.planning/handoffs-old/HANDOFF-x.md', '/tmp'));
 });
 
+check('directory matching resolves symlinked destinations', () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'owner-symlink-'));
+  try {
+    const protectedDir = path.join(temp, 'protected');
+    const alias = path.join(temp, 'alias');
+    fs.mkdirSync(protectedDir);
+    fs.symlinkSync(protectedDir, alias);
+    assert.ok(contains({ type: 'directory', path: protectedDir }, path.join(alias, 'new.md'), temp));
+  } finally { fs.rmSync(temp, { recursive: true, force: true }); }
+});
+
+check('a malformed custom registry falls back to the shipped policy', () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'owner-registry-'));
+  try {
+    const pluginRoot = path.join(temp, 'plugin');
+    const fakeHome = path.join(temp, 'home');
+    fs.mkdirSync(path.join(pluginRoot, 'hooks'), { recursive: true });
+    fs.mkdirSync(path.join(fakeHome, '.claude'), { recursive: true });
+    fs.writeFileSync(path.join(pluginRoot, 'hooks', 'resource-owners.json'), JSON.stringify({ resources: [{ id: 'default' }] }));
+    fs.writeFileSync(path.join(fakeHome, '.claude', 'guardrails.resources.json'), '{broken');
+    assert.deepStrictEqual(loadRegistry(pluginRoot, fakeHome), [{ id: 'default' }]);
+  } finally { fs.rmSync(temp, { recursive: true, force: true }); }
+});
+
 check('Write and Edit events resolve a protected destination', () => {
   for (const tool_name of ['Write', 'Edit', 'NotebookEdit']) {
     const key = tool_name === 'NotebookEdit' ? 'notebook_path' : 'file_path';
@@ -61,16 +85,19 @@ check('common Bash writes are caught but reads and stderr redirects are not', ()
   assert.strictEqual(event('cp ~/.planning/handoffs/x.md /tmp/x.md'), null);
   assert.strictEqual(event('rm /tmp/x && ls ~/.planning/handoffs/'), null);
   assert.strictEqual(event('rm /tmp/x\ncat ~/.planning/handoffs/x.md'), null);
+  assert.strictEqual(event("sed -i 's|~/.planning/handoffs|/tmp/out|' /tmp/config"), null);
+  assert.strictEqual(event("sed -i 's|old|new|' ~/.planning/handoffs/x.md").id, 'session-handoffs');
   assert.strictEqual(event('cat ~/.planning/handoffs/x.md'), null);
   assert.strictEqual(event('ls ~/.planning/handoffs/ 2>/dev/null'), null);
 });
 
 check('an owning skill opens a session-scoped lease', () => {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'owner-lease-'));
-  writeLease('session:wrap', 'session-a', 1000, temp);
-  assert.strictEqual(activeOwner(handoffs, 'session-a', 1001, temp), 'session:wrap');
-  assert.strictEqual(activeOwner(handoffs, 'session-b', 1001, temp), null);
-  fs.rmSync(temp, { recursive: true, force: true });
+  try {
+    writeLease('session:wrap', 'session-a', 1000, temp);
+    assert.strictEqual(activeOwner(handoffs, 'session-a', 1001, temp), 'session:wrap');
+    assert.strictEqual(activeOwner(handoffs, 'session-b', 1001, temp), null);
+  } finally { fs.rmSync(temp, { recursive: true, force: true }); }
 });
 
 check('default leases live under a private per-user directory', () => {
@@ -78,36 +105,33 @@ check('default leases live under a private per-user directory', () => {
   assert.strictEqual(path.dirname(file), path.join(os.homedir(), '.claude', 'guardrails-leases'));
 });
 
-check('activity renews a lease without extending its hard lifetime', () => {
-  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'owner-renew-'));
-  const resources = [{ owners: ['session:wrap'] }];
-  writeLease('session:wrap', 'session-a', 1000, temp);
-  renewLeases(resources, 'session-a', 1000 + LEASE_TTL_MS - 1, temp);
-  assert.ok(readLease('session:wrap', 'session-a', 1000 + LEASE_TTL_MS + 1, temp));
-  assert.strictEqual(readLease('session:wrap', 'session-a', 1000 + LEASE_MAX_MS, temp), null);
-  fs.rmSync(temp, { recursive: true, force: true });
+check('a lease expires after 30 minutes even when the session stays active', () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'owner-expiry-'));
+  try {
+    writeLease('session:wrap', 'session-a', 1000, temp);
+    assert.ok(readLease('session:wrap', 'session-a', 1000 + LEASE_TTL_MS - 1, temp));
+    assert.strictEqual(readLease('session:wrap', 'session-a', 1000 + LEASE_TTL_MS, temp), null);
+  } finally { fs.rmSync(temp, { recursive: true, force: true }); }
 });
 
 check('lease replacement never truncates the live record', () => {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'owner-atomic-'));
-  const live = path.join(temp, 'lease.json');
-  fs.writeFileSync(live, JSON.stringify({ touchedAt: 1 }));
-  const originalWrite = fs.writeFileSync;
-  const written = [];
-  fs.writeFileSync = (file, ...args) => {
-    written.push(file);
-    return originalWrite(file, ...args);
-  };
   try {
-    atomicWriteLease(live, { touchedAt: 2 });
-  } finally {
-    fs.writeFileSync = originalWrite;
-  }
-  assert.ok(written.length === 1 && written[0] !== live, 'the live lease was opened for writing');
-  assert.deepStrictEqual(JSON.parse(fs.readFileSync(live, 'utf8')), { touchedAt: 2 });
-  assert.deepStrictEqual(fs.readdirSync(temp), ['lease.json']);
-  assert.strictEqual(fs.statSync(temp).mode & 0o777, 0o700);
-  fs.rmSync(temp, { recursive: true, force: true });
+    const live = path.join(temp, 'lease.json');
+    fs.writeFileSync(live, JSON.stringify({ touchedAt: 1 }));
+    const originalWrite = fs.writeFileSync;
+    const written = [];
+    fs.writeFileSync = (file, ...args) => {
+      written.push(file);
+      return originalWrite(file, ...args);
+    };
+    try { atomicWriteLease(live, { touchedAt: 2 }); }
+    finally { fs.writeFileSync = originalWrite; }
+    assert.ok(written.length === 1 && written[0] !== live, 'the live lease was opened for writing');
+    assert.deepStrictEqual(JSON.parse(fs.readFileSync(live, 'utf8')), { touchedAt: 2 });
+    assert.deepStrictEqual(fs.readdirSync(temp), ['lease.json']);
+    assert.strictEqual(fs.statSync(temp).mode & 0o777, 0o700);
+  } finally { fs.rmSync(temp, { recursive: true, force: true }); }
 });
 
 check('the wired hooks deny a bypass and allow the owning skill', () => {
@@ -121,20 +145,21 @@ check('the wired hooks deny a bypass and allow the owning skill', () => {
     tool_input: { file_path: path.join(testHome, '.planning', 'handoffs', 'x.md'), content: 'x' },
   };
 
-  let run = spawnSync(guard, { env, input: JSON.stringify(writeEvent), encoding: 'utf8' });
-  assert.strictEqual(run.status, 0);
-  assert.strictEqual(JSON.parse(run.stdout).hookSpecificOutput.permissionDecision, 'deny');
+  try {
+    let run = spawnSync(guard, { env, input: JSON.stringify(writeEvent), encoding: 'utf8' });
+    assert.strictEqual(run.status, 0);
+    assert.strictEqual(JSON.parse(run.stdout).hookSpecificOutput.permissionDecision, 'deny');
 
-  run = spawnSync(lease, { input: JSON.stringify({
-    hook_event_name: 'PostToolUse', session_id, cwd: '/tmp', tool_name: 'Skill',
-    tool_input: { skill: 'session:wrap' }, tool_response: {},
-  }), env, encoding: 'utf8' });
-  assert.strictEqual(run.status, 0);
+    run = spawnSync(lease, { input: JSON.stringify({
+      hook_event_name: 'PostToolUse', session_id, cwd: '/tmp', tool_name: 'Skill',
+      tool_input: { skill: 'session:wrap' }, tool_response: {},
+    }), env, encoding: 'utf8' });
+    assert.strictEqual(run.status, 0);
 
-  run = spawnSync(guard, { env, input: JSON.stringify(writeEvent), encoding: 'utf8' });
-  assert.strictEqual(run.status, 0);
-  assert.strictEqual(run.stdout, '');
-  fs.rmSync(testHome, { recursive: true, force: true });
+    run = spawnSync(guard, { env, input: JSON.stringify(writeEvent), encoding: 'utf8' });
+    assert.strictEqual(run.status, 0);
+    assert.strictEqual(run.stdout, '');
+  } finally { fs.rmSync(testHome, { recursive: true, force: true }); }
 });
 
 console.log(`\n${ran} checks, ${failed} failed`);

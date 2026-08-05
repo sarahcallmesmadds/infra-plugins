@@ -36,9 +36,9 @@ point where the difference is still visible.
 
 **Blocks direct writes to skill-owned resources.** Session handoffs belong to
 `/session:wrap`; the build-loop bug queue belongs to the skills that create and
-resolve its entries. Invoking an owning skill opens a session-scoped lease, and
-ordinary tool activity renews that lease for up to two hours. A direct Write,
-Edit, NotebookEdit, or common shell write without that lease is denied, so the
+resolve its entries. Invoking an owning skill opens a session-scoped lease for
+30 minutes. A direct Write, Edit, NotebookEdit, or common shell write without
+that lease is denied, so the
 skill's validation and confirmation steps cannot be skipped by accident.
 Lease files live under `~/.claude/guardrails-leases/`, with the directory locked
 to the current user.
