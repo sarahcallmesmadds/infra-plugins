@@ -108,6 +108,29 @@ function pluginNames() {
     (n) => fs.existsSync(path.join(dir, n, '.claude-plugin', 'plugin.json')));
 }
 
+// The plugin manager compares by ordering, not by inequality, so "the number
+// changed" is the wrong question. 0.3.1 down to 0.2.9 is a different string and
+// still leaves every installed machine on a higher version, fetching nothing:
+// the same silent no-op release, arrived at from the other direction.
+//
+// Returns null when either side cannot be ordered, and the caller says so
+// rather than guessing. A version this cannot parse is not a version this can
+// make a claim about.
+function semver(v) {
+  const m = /^(\d+)\.(\d+)\.(\d+)/.exec(String(v == null ? '' : v));
+  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
+}
+
+function compareVersions(a, b) {
+  const A = semver(a);
+  const B = semver(b);
+  if (!A || !B) return null;
+  for (let i = 0; i < 3; i += 1) {
+    if (A[i] !== B[i]) return A[i] < B[i] ? -1 : 1;
+  }
+  return 0;
+}
+
 function versionAt(ref, name) {
   const raw = git(['show', `${ref}:plugins/${name}/.claude-plugin/plugin.json`]);
   if (raw === null) return null;
@@ -124,10 +147,13 @@ const base = baseRef();
 const plugins = pluginNames();
 
 if (!base) {
-  console.log('plugin-version-drift: NOT RUN. No base branch, so no version was checked.');
-  console.log('  Looked for origin/main, main, origin/master, master. Expected in a shallow');
-  console.log('  checkout, and not a failure, but nothing here was verified either.');
-  console.log('\n0 checks, 0 failed');
+  console.log('plugin-version-drift: no base branch. Looked for origin/main, main,');
+  console.log('  origin/master, master. Expected in a shallow checkout, and not a failure,');
+  console.log('  but nothing here was verified either.');
+  // Last line, because run-all.js shows the last line and nothing above it. An
+  // earlier NOT RUN is invisible in the one place people read all the suites at
+  // once, which turns "verified nothing" into a green row.
+  console.log('\nNOT RUN, 0 versions verified, no base branch to compare against');
   process.exit(0);
 }
 
@@ -147,10 +173,10 @@ const mergeBase = git(['merge-base', base, 'HEAD']);
 const changed = mergeBase && git(['diff', '--name-only', `${mergeBase}..HEAD`, '--', 'plugins/']);
 
 if (!mergeBase || changed === null) {
-  console.log(`plugin-version-drift: NOT RUN. No merge base with ${base}, so no version was checked.`);
+  console.log(`plugin-version-drift: no merge base with ${base}.`);
   console.log('  A shallow clone has no shared history to work from. Fetch more depth to');
   console.log('  turn this back on: git fetch --unshallow, or fetch-depth: 0 in CI.');
-  console.log('\n0 checks, 0 failed');
+  console.log(`\nNOT RUN, 0 versions verified, no merge base with ${base}`);
   process.exit(0);
 }
 
@@ -163,8 +189,14 @@ for (const file of changed.split('\n').filter(Boolean)) {
   }
 }
 
-console.log(`plugin-version-drift: against ${base}, ${touched.size} plugin(s) changed `
-  + `of ${plugins.length}\n`);
+// The base is named with its date, because this comparison is only as current
+// as the ref on the machine running it and a stale `origin/main` compares
+// against a stale number without anything looking wrong. Printing when it was
+// last updated is the cheapest way to make that visible; the alternative is
+// fetching, and a test has no business reaching the network.
+const baseWhen = git(['log', '-1', '--format=%h %ad', '--date=short', base]) || base;
+console.log(`plugin-version-drift: against ${base} (${baseWhen}), `
+  + `${touched.size} plugin(s) changed of ${plugins.length}\n`);
 
 if (!touched.size) {
   console.log('  ok    no plugin changed, so no version needs to move');
@@ -190,20 +222,34 @@ for (const [name, files] of [...touched].sort()) {
       + 'successful update and fetch nothing, and the old code keeps running on every '
       + 'installed machine.';
 
-    assert.notStrictEqual(now, atFork,
-      `${files.length} file(s) under plugins/${name}/ changed on this branch but the version `
-      + `is still ${atFork}, the same as at the fork point: ${where}. ${consequence} `
-      + 'Bump it in all three manifests.');
+    // Above both the fork point and whatever main has released since. The fork
+    // point alone is not enough once main has moved, and main's tip alone says
+    // nothing about whether this branch bumped at all. The highest of the two is
+    // the number installed machines could already hold.
+    const ceiling = (atTip !== null && compareVersions(atTip, atFork) === 1) ? atTip : atFork;
 
-    // And not onto a number main has already released. Main moving on is what
-    // makes the fork-point comparison necessary; landing on the number it moved
-    // to is the other half of the same problem, because installed machines
-    // already have that version and will not fetch this code either.
-    if (atTip !== null && atTip !== atFork) {
-      assert.notStrictEqual(now, atTip,
-        `plugins/${name}/ changed on this branch and its version is ${now}, which ${base} `
-        + `has already released: ${where}. ${consequence} Pick a number above ${atTip}.`);
+    if (now === atFork) {
+      assert.fail(`${files.length} file(s) under plugins/${name}/ changed on this branch but `
+        + `the version is still ${atFork}, the same as at the fork point: ${where}. `
+        + `${consequence} Bump it in all three manifests.`);
     }
+    if (atTip !== null && now === atTip && atTip !== atFork) {
+      assert.fail(`plugins/${name}/ changed on this branch and its version is ${now}, which `
+        + `${base} has already released: ${where}. ${consequence} Pick a number above ${atTip}.`);
+    }
+
+    const order = compareVersions(now, ceiling);
+    if (order === null) {
+      // Different, but not orderable, so the strongest true statement is that
+      // it changed. Said out loud rather than counted as a clean pass.
+      console.log(`        note: ${name} ${ceiling} -> ${now} could not be compared as `
+        + 'semver, so only the change was checked, not the direction.');
+      return;
+    }
+    assert.strictEqual(order, 1,
+      `plugins/${name}/ changed on this branch and its version went from ${ceiling} to `
+      + `${now}, which is not higher: ${where}. ${consequence} A number that moves backwards `
+      + 'fails the same way as one that does not move at all.');
   });
 }
 
