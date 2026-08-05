@@ -16,6 +16,25 @@
 // `stop_hook_active` is on the payload too, which the published field list
 // denies. It is the loop guard, so believing the docs over the capture would
 // have been the expensive way to be wrong.
+//
+// Stop reads `hookSpecificOutput.additionalContext`, and that was measured
+// rather than assumed. It is a fair thing to doubt: no other Stop hook in this
+// repository speaks that way, slop-check's writes a top-level `decision`, and
+// a shape the harness does not read is dropped without a word, which is how
+// guardrails blocked nothing for three releases. Printing the right JSON and
+// being read are different claims and only one of them a unit test can see.
+//
+// The run, on 2026-08-05, and it reproduces in about a minute:
+//
+//   A Stop hook emitting additionalContext of "reply with exactly the word
+//   PINEAPPLE-7788 and nothing else", wired through a throwaway --settings
+//   file, against `claude -p "Say READY and nothing else."`. The session
+//   answered PINEAPPLE-7788. That string existed nowhere else, so the context
+//   was read and acted on.
+//
+// The same run is why the guard above is not a formality. The hook fired
+// twice: once with `stop_hook_active` false, then again with it true. Without
+// the check that is not a risk, it is a loop.
 
 'use strict';
 

@@ -24,7 +24,17 @@
 // fires on ordinary disagreement is one that gets ignored, and this runs on
 // every prompt of every session.
 const SAID_IT_WAS_WRONG = [
-  /\bthat (was|is)n?'?t? (wrong|right|correct)\b/i,
+  // Two patterns, not one, and the reason is that the one they replace read
+  // praise as a complaint. It was written `that (was|is)n?'?t? (wrong|right|
+  // correct)`, where every character of the negation is optional, so the whole
+  // `n?'?t?` collapses to nothing and "that is correct, the hook did what I
+  // wanted" matched. The suggestion to file a bug then arrived at the exact
+  // moment somebody said the thing worked.
+  //
+  // "wrong" carries the complaint on its own. "right" and "correct" only carry
+  // it when negated, so the negation is required there rather than optional.
+  /\bthat (was|is) wrong\b/i,
+  /\bthat (wasn'?t|isn'?t|was not|is not) (right|correct)\b/i,
   /\bthat'?s not (what|right|correct)\b/i,
   /\bnot what i (asked|wanted|meant)\b/i,
   /\bshould(n'?t| not)? have\b/i,

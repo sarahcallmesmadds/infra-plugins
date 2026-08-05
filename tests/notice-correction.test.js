@@ -128,6 +128,36 @@ for (const prompt of ORDINARY) {
   });
 }
 
+// Praise, which read as a complaint until it was pointed out.
+//
+// The phrase test was one pattern with an optional negation, `that (was|is)n?
+// '?t? (wrong|right|correct)`, and every character of `n?'?t?` being optional
+// meant the negation could vanish entirely. So the suggestion to file a bug
+// arrived at the exact moment somebody said the thing worked, which is the
+// worst possible time for it and the opposite of what the hook is for.
+const PRAISE = [
+  'that is correct, the hook did what I wanted',
+  'that was right, the skill handled it',
+  'yes that is right about the plugin',
+  'the command is correct now, thanks',
+];
+
+for (const prompt of PRAISE) {
+  check(`praise is not a complaint: "${prompt.slice(0, 40)}..."`, () => {
+    assert.strictEqual(onPrompt(prompt), null, 'suggested filing a bug about something that worked');
+  });
+}
+
+// And the negated forms, which are complaints and have to survive the fix.
+for (const prompt of [
+  "that isn't right, the skill wrote to the wrong place",
+  'that is not correct, the hook fired twice',
+]) {
+  check(`negated praise is still a complaint: "${prompt.slice(0, 40)}..."`, () => {
+    assertSuggests(onPrompt(prompt), 'UserPromptSubmit', 'negated');
+  });
+}
+
 check('stays quiet when the correction is already being filed', () => {
   assert.strictEqual(
     onPrompt('/flag-issue the wrap skill should have filed centrally, that was wrong'),
