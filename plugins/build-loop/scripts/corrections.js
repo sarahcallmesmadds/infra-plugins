@@ -37,8 +37,22 @@ const SAID_IT_WAS_WRONG = [
   /\bthat (wasn'?t|isn'?t|was not|is not) (right|correct)\b/i,
   /\bthat'?s not (what|right|correct)\b/i,
   /\bnot what i (asked|wanted|meant)\b/i,
-  /\bshould(n'?t| not)? have\b/i,
-  /\bwas supposed to\b/i,
+  // The subject is required, and that is what keeps this one usable. A bare
+  // `should have` is how people talk about plans and expectations, so it fired
+  // on "I should have time tomorrow" whenever a buildable word happened to sit
+  // in another clause of the same message. Naming what should have done it
+  // separates a defect report from a diary entry.
+  //
+  // "The script should have finished by now" still matches, and that is left
+  // deliberately. It reads as a complaint about a thing she built, the reading
+  // is genuinely ambiguous, and this errs toward firing because a suggestion
+  // that is occasionally unwanted costs a line while one that never arrives
+  // costs the whole feature.
+  /\b(you|it|that|this|they|the\b[^.\n]{0,30}?) should(n'?t| not)? have\b/i,
+  // Both persons. Only the third was written, so "you were supposed to make
+  // the plugin ask first" said nothing, and that is the more direct way to
+  // phrase a correction of the two.
+  /\b(was|were) supposed to\b/i,
   /\bnext time\b/i,
   /\b(from now on|going forward|in future)\b/i,
   /\b(don'?t|do not|never) do that\b/i,
@@ -68,7 +82,14 @@ const ADMITTED_IT_WAS_WRONG = [
   // the text itself rather than leaning on the target test below to catch it.
   // Both spellings of the contraction, because writing only `you'?re` missed
   // "you are" entirely, which is how it is written more often than not.
-  /\byou('?re| are) right,\s*(the|it|that|and|i)\b/i,
+  //
+  // Any of the sentence punctuation, not only the comma. Requiring a comma
+  // meant "You're right. The hook should not have fired" and the dashed form
+  // of the same sentence both said nothing, and a full stop there is at least
+  // as common as a comma. What is still excluded is the unpunctuated "You are
+  // right that ...", which is agreement about a fact rather than a concession,
+  // and that was always the distinction being drawn.
+  /\byou('?re| are) right\s*[,.;:\u2014\u2013-]\s*(the|it|that|and|i)\b/i,
 ];
 
 // The second signal, and the one that keeps this quiet.
@@ -85,7 +106,14 @@ const ADMITTED_IT_WAS_WRONG = [
 const NAMES_SOMETHING_BUILT = /(^|\s)\/[a-z][a-z0-9-]{2,}|\b(skill|hook|command|plugin|script)s?\b/i;
 
 // Already reaching for it, so saying so is pure noise.
-const ALREADY_FLAGGING = /(^|\s)\/(flag-issue|list-bugs|apply-fix|verify-fix|to-build)\b/i;
+//
+// Anchored to the start, because matching the name anywhere suppressed the one
+// correction nobody else can file: a defect in /flag-issue itself. "The
+// /flag-issue command should have asked before writing" is exactly what this
+// hook exists to catch, and it was the one sentence guaranteed to be ignored.
+// Invoking a command and talking about one are different things, and only the
+// first is a reason to stay quiet.
+const INVOKING_A_QUEUE_COMMAND = /^\s*\/(flag-issue|list-bugs|apply-fix|verify-fix|to-build)\b/i;
 
 const SUGGESTION =
   'That reads like a correction to something in this setup. If it is, `/flag-issue` '
@@ -95,7 +123,7 @@ const SUGGESTION =
 
 function looksLikeCorrection(text, phrases) {
   if (typeof text !== 'string' || !text) return false;
-  if (ALREADY_FLAGGING.test(text)) return false;
+  if (INVOKING_A_QUEUE_COMMAND.test(text)) return false;
   if (!NAMES_SOMETHING_BUILT.test(text)) return false;
   return phrases.some((re) => re.test(text));
 }

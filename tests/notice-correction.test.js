@@ -158,6 +158,52 @@ for (const prompt of [
   });
 }
 
+// --- corrections that said nothing until review found them ----------------
+//
+// All four went the silent direction, which is the one that looks like a quiet
+// week rather than like a bug.
+
+check('a defect in /flag-issue itself is not suppressed by its own name', () => {
+  // The one correction nobody else can file. Matching the command name
+  // anywhere meant the sentence guaranteed to be about a real defect in the
+  // queue tooling was the one sentence guaranteed to be ignored.
+  assertSuggests(
+    onPrompt('The /flag-issue command should have asked before writing.'),
+    'UserPromptSubmit',
+    'defect in flag-issue'
+  );
+});
+
+check('the second person of "supposed to" is noticed', () => {
+  assertSuggests(
+    onPrompt('You were supposed to make the plugin ask first.'),
+    'UserPromptSubmit',
+    'were supposed to'
+  );
+});
+
+for (const message of [
+  "You're right, the hook should not have fired.",
+  "You're right. The hook should not have fired.",
+  "You're right — the hook should not have fired.",
+  "You're right - the hook should not have fired.",
+]) {
+  check(`a concession is noticed however it is punctuated: "${message.slice(0, 30)}..."`, () => {
+    assertSuggests(onStop(message), 'Stop', 'punctuated concession');
+  });
+}
+
+// The noisy direction, from the same round. A buildable word in one clause and
+// a plan in another is not a correction.
+for (const prompt of [
+  'Can you script that? I should have time tomorrow.',
+  'What plugin is this? I should have the budget next week.',
+]) {
+  check(`a plan is not a correction: "${prompt.slice(0, 38)}..."`, () => {
+    assert.strictEqual(onPrompt(prompt), null, 'read a plan as a defect report');
+  });
+}
+
 check('stays quiet when the correction is already being filed', () => {
   assert.strictEqual(
     onPrompt('/flag-issue the wrap skill should have filed centrally, that was wrong'),
