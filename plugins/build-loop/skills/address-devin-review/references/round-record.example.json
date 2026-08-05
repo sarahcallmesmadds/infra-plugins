@@ -1,0 +1,24 @@
+{
+  "repository": "owner/repository",
+  "pr": 123,
+  "round": 1,
+  "branch": "feature/example",
+  "head_sha": "0123456789abcdef0123456789abcdef01234567",
+  "finding_set_complete": true,
+  "findings": [
+    {
+      "id": "FINDING-1",
+      "severity": "high",
+      "location": "src/example.js:10",
+      "summary": "The failure path reports success",
+      "disposition": "fixed",
+      "evidence": "Return the error result to the caller",
+      "dependency_audit": ["src/caller.js:20 checked"],
+      "paired_file_audit": ["tests/example.test.js changed"],
+      "changed_files": ["src/example.js", "tests/example.test.js"]
+    }
+  ],
+  "verification": [
+    { "command": "node tests/run-all.js", "outcome": "passed" }
+  ]
+}

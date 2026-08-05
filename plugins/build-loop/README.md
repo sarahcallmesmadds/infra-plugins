@@ -15,7 +15,7 @@ It covers everything you build, not only skills. A hook, a slash command, a
 whole plugin, and a loose script are all things that can misbehave, and all of
 them are things you forget you meant to fix.
 
-## The ten commands
+## The eleven commands
 
 **Catch it**
 
@@ -47,6 +47,10 @@ them are things you forget you meant to fix.
 
 **Keep it honest**
 
+- `/address-devin-review` — work one complete Devin review round: classify
+  every finding, map dependencies before editing, sweep paired files, validate
+  the round record, and ship one atomic commit rather than a trail of point
+  fixes.
 - `/audit-deps` — scan every configured root and reconcile what is on disk
   against the dependency map.
 - `/whats-breaking` — a weekly view of what broke, what got fixed, and what

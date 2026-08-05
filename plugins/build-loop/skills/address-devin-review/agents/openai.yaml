@@ -1,0 +1,4 @@
+interface:
+  display_name: "Address Devin Review"
+  short_description: "Resolve a full Devin review without point fixes"
+  default_prompt: "Use $address-devin-review to classify and resolve every finding in the latest Devin review round."
