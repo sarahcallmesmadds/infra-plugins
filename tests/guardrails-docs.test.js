@@ -111,6 +111,36 @@ check('the stated category count matches how many there are', () => {
   }
 });
 
+check('the count at the top matches the things listed under it', () => {
+  // The other shape stated-counts cannot see. It compares a number to a
+  // markdown list or table immediately below it, and this number sits above
+  // four paragraphs that each open with a bold sentence, which is not a list
+  // as far as any parser is concerned. A fourth was added under a sentence
+  // saying three and nothing anywhere noticed.
+  const lines = README.split('\n');
+  const at = lines.findIndex((l) => /^(\w+) things, and it says which/.test(l));
+  if (at === -1) {
+    throw new Error(
+      'the opening sentence no longer has the expected shape, so this check is '
+        + 'watching nothing. Update the pattern here or drop the count.'
+    );
+  }
+
+  let listed = 0;
+  for (let i = at + 1; i < lines.length; i += 1) {
+    if (/^## /.test(lines[i])) break;
+    if (/^\*\*[A-Z]/.test(lines[i])) listed += 1;
+  }
+
+  const stated = lines[at].match(/^(\w+) things/)[1].toLowerCase();
+  const want = NUMBER_WORD[listed] || String(listed);
+  if (stated !== want) {
+    throw new Error(
+      `the README opens by promising ${stated} things and then lists ${listed} (${want})`
+    );
+  }
+});
+
 check('every config key is documented in the README table', () => {
   const missing = Object.keys(DEFAULTS).filter((key) => !README.includes(`\`${key}\``));
   if (missing.length) {

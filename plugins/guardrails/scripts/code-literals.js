@@ -42,7 +42,20 @@
 
 'use strict';
 
-const SOURCE_EXTENSION = /\.(?:js|mjs|cjs|jsx|ts|tsx|mts|cts)$/i;
+// No .jsx and no .tsx. Markup breaks the one heuristic this file depends on:
+// every closing tag is written `</`, so the slash reads as opening a regular
+// expression and the mask runs to the next slash on the line, which is the
+// next closing tag. Text between two tags, the words actually on the screen,
+// got blanked and stopped being scanned. That is the failure this file's
+// header warns about, arriving through the door it was watching.
+const SOURCE_EXTENSION = /\.(?:js|mjs|cjs|ts|mts|cts)$/i;
+
+// Markup living in a plain .js or .ts file, which older React code does all
+// the time. The extension cannot rule it out, so the content is checked, and
+// a file that looks like markup is not masked at all. Scanning too much is a
+// false positive somebody can see and argue with. Scanning too little is
+// silent, and between the two there is no contest.
+const LOOKS_LIKE_MARKUP = /<\/[A-Za-z]|\/>/;
 
 function isSourceFile(filePath) {
   return typeof filePath === 'string' && SOURCE_EXTENSION.test(filePath);
@@ -54,7 +67,22 @@ function isSourceFile(filePath) {
 // the list below is the set of characters after which a regular expression is
 // genuinely possible, and everything else, notably an identifier, a closing
 // bracket or a digit, means division.
-const REGEX_MAY_FOLLOW = /[(,=:[!&|?{};+\-*%~^<>]/;
+//
+// `<` is deliberately absent, and `>` deliberately present. `>` is there for
+// the arrow in `x => /abc/.test(x)`, which is everywhere. `<` would only be
+// there for `a < /re/.source.length`, which is nothing anybody writes, and
+// leaving it in made every `</` in a piece of markup open an expression.
+// Dropping it costs at worst a real regular expression going unmasked, which
+// shows up as a warning somebody reads. Keeping it cost text going unscanned,
+// which shows up as nothing at all.
+const REGEX_MAY_FOLLOW = /[(,=:[!&|?{};+\-*%~^>]/;
+
+// A regular expression longer than this is treated as a division sign after
+// all. Nothing here is a judgement about style: it is a blast radius. Every
+// expression in this plugin's own catalogue fits inside a fraction of it, and
+// the point of the cap is that a misread slash can now blank at most a few
+// lines rather than the remainder of a file.
+const LONGEST_PLAUSIBLE_REGEX = 400;
 
 function regexCanStartAfter(previous) {
   return previous === '' || REGEX_MAY_FOLLOW.test(previous);
@@ -71,6 +99,8 @@ function regexCanStartAfter(previous) {
 // run from there to the next `/` anywhere in the file, blanking real prose on
 // the way. Skipping them is what keeps the blanking confined.
 function maskCodeLiterals(source) {
+  if (LOOKS_LIKE_MARKUP.test(source)) return source;
+
   const out = source.split('');
   const n = source.length;
   let i = 0;
@@ -130,6 +160,7 @@ function maskCodeLiterals(source) {
         if (c === '[') inClass = true;
         else if (c === ']') inClass = false;
         else if (c === '/' && !inClass) { closed = true; break; }
+        if (j - start > LONGEST_PLAUSIBLE_REGEX) break;
         j += 1;
       }
       // An unclosed `/` is division after all, whatever came before it.

@@ -9,7 +9,7 @@ nobody has packaged that knowledge for you. This is an attempt at it.
 
 ## What it does
 
-Three things, and it says which are enforced and which are advice.
+Four things, and it says which are enforced and which are advice.
 
 **Blocks direct commits to a protected branch.** `main` and `master` by default,
 in every repository, not just the ones you remembered to configure. Says what to
