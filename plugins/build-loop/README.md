@@ -15,7 +15,7 @@ It covers everything you build, not only skills. A hook, a slash command, a
 whole plugin, and a loose script are all things that can misbehave, and all of
 them are things you forget you meant to fix.
 
-## The ten commands
+## The eleven commands
 
 **Catch it**
 
@@ -47,6 +47,10 @@ them are things you forget you meant to fix.
 
 **Keep it honest**
 
+- `/address-devin-review` — work one complete Devin review round: classify
+  every finding, map dependencies before editing, sweep paired files, validate
+  the round record, and ship one atomic commit rather than a trail of point
+  fixes.
 - `/audit-deps` — scan every configured root and reconcile what is on disk
   against the dependency map.
 - `/whats-breaking` — a weekly view of what broke, what got fixed, and what
@@ -216,8 +220,8 @@ both are correct and neither resolves, so a fix filed against one silently
 misses the other. `/audit-deps` carries a `notes` field to record this after the
 fact; the hook catches it at the moment of writing instead.
 
-`type:` is checked rather than required on purpose. Seven of the twenty skills
-here do not set it, and reporting seven files that are fine is how a check
+`type:` is checked rather than required on purpose. 8 of the 21 skills
+here do not set it, and reporting 8 files that are fine is how a check
 teaches you to ignore it.
 
 Nothing to do on upgrade. The hook registers itself and stays quiet on a
@@ -421,7 +425,7 @@ One line saying the log returned nothing is the only thing that separates
 ## Codex
 
 Codex plugins cannot register hooks, and this plugin does not use any, so both
-runtimes get the same thing: ten commands you invoke. Nothing is degraded here.
+runtimes get the same thing: eleven commands you invoke. Nothing is degraded here.
 
 ## Licence
 
