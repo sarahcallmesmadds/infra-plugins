@@ -198,29 +198,89 @@ check('every child process is given a timeout', () => {
   assert.ok(/maxBuffer/.test(src), 'run() should bound output size too');
 });
 
-check('a deadline already past stops the counting and reports it', () => {
+check('a deadline already past skips the work that costs, and reports it', () => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'gh-deadline-'));
-  const git = (...a) => execFileSync('git', ['-C', repo, ...a], { stdio: 'ignore' });
+  const git = (...a) => execFileSync('git', ['-C', repo, '-c', 'user.email=t@t',
+    '-c', 'user.name=t', ...a], { stdio: 'ignore' });
   execFileSync('git', ['init', '-q', '-b', 'main', repo], { stdio: 'ignore' });
-  execFileSync('git', ['-C', repo, '-c', 'user.email=t@t', '-c', 'user.name=t',
-    'commit', '-q', '--allow-empty', '-m', 'base'], { stdio: 'ignore' });
-  for (const b of ['one', 'two', 'three']) git('branch', b, 'main');
+  git('commit', '-q', '--allow-empty', '-m', 'base');
+
+  // Three shapes, because the deadline means something different to each one.
+  // `pointer` needs no per-branch call at all; `unmerged` and `squashed` both
+  // need the tree comparison, and only one of them would survive it.
+  git('branch', 'pointer', 'main');
+  git('checkout', '-qb', 'squashed', 'main');
+  fs.writeFileSync(path.join(repo, 's.txt'), 'one\n');
+  git('add', '-A'); git('commit', '-qm', 's1');
+  fs.writeFileSync(path.join(repo, 's.txt'), 'one\ntwo\n');
+  git('add', '-A'); git('commit', '-qm', 's2');
+  git('checkout', '-qb', 'unmerged', 'main');
+  fs.writeFileSync(path.join(repo, 'w.txt'), 'work\n');
+  git('add', '-A'); git('commit', '-qm', 'work');
+  git('checkout', '-q', 'main');
+  git('merge', '-q', '--squash', 'squashed');
+  git('commit', '-qm', 'squash squashed');
+
+  // Both capabilities probed for real rather than read off `git --version`,
+  // the same way the write-tree probe further down is. They change what this
+  // test is entitled to assert, not just how fast the code runs:
+  // `%(ahead-behind:)` needs git 2.41, and without it the ancestry answer costs
+  // a call per branch, which is exactly the work an expired deadline skips.
+  let listingCarriesAhead = true;
+  try {
+    execFileSync('git', ['-C', repo, 'for-each-ref', '--format=%(ahead-behind:main)',
+      'refs/heads/'], { stdio: 'pipe' });
+  } catch (_) { listingCarriesAhead = false; }
+  // Asked the way collect.js asks it, argument for argument. A probe that
+  // differs even in the flags it passes can answer yes where the real call
+  // answers no, and then this test asserts a capability the code did not have.
+  let hasWriteTree = true;
+  try {
+    execFileSync('git', ['-C', repo, 'merge-tree', '--write-tree', 'main', 'main'], { stdio: 'pipe' });
+  } catch (_) { hasWriteTree = false; }
 
   const collect = require(path.join(ROOT, 'scripts', 'collect.js'));
   const r = collect.localBranches(repo, { deadline: Date.now() - 1 });
+  const by = (n) => r.branches.find((b) => b.name === n);
+  const { safe } = classify(r.branches, {}, Date.now());
 
+  // True on any git. Skipping the per-branch work is the whole point of the
+  // deadline, and a branch that only a skipped call could have cleared must
+  // come back uncleared.
   assert.strictEqual(r.truncated, true, 'an expired deadline must be reported, not hidden');
-  const nonDefault = r.branches.filter((b) => !b.isDefault);
-  assert.ok(nonDefault.length > 0, 'branches should still be listed');
-  for (const b of nonDefault) {
-    assert.strictEqual(b.aheadBy, null,
-      `${b.name} was counted after the deadline had passed`);
+  assert.strictEqual(by('squashed').merged, false,
+    'the tree comparison ran after the deadline had passed');
+
+  // The safety property, and the reason any of this is acceptable: an
+  // unfinished run under-reports what is safe and never over-reports it.
+  // `squashed` really is deletable, and is deliberately not offered here.
+  assert.ok(!safe.some((b) => b.name === 'squashed' || b.name === 'unmerged'),
+    'a branch that a skipped call would have judged must not be offered as safe');
+
+  if (listingCarriesAhead) {
+    // Ancestry rides along on the branch listing and costs no extra call, so
+    // withholding it buys no time. Reporting a fact already in hand is not the
+    // same as doing work the deadline forbade.
+    assert.strictEqual(by('pointer').aheadBy, 0, 'a free ancestry answer should still be given');
+    assert.strictEqual(by('unmerged').aheadBy, 1, 'a free ancestry answer should still be given');
+    assert.deepStrictEqual(safe.map((b) => b.name), ['pointer'],
+      'a truncated run must offer everything it fully resolved, and nothing else');
+  } else {
+    // On an older git the same answer costs a call per branch, so the deadline
+    // skips it and the run offers nothing. Slower, still never wrong.
+    assert.strictEqual(by('pointer').aheadBy, null,
+      'without the batched listing the count is per-branch work the deadline forbids');
+    assert.deepStrictEqual(safe.map((b) => b.name), [],
+      'nothing was resolved, so nothing may be offered');
   }
 
-  // The safety property: an unfinished run under-reports what is safe, never
-  // over-reports it, because uncounted branches stay null and null is kept.
-  const { safe } = classify(r.branches, {}, Date.now());
-  assert.strictEqual(safe.length, 0, 'a truncated run must offer nothing as safe');
+  // And with time to work, the branch it withheld is found.
+  const full = collect.localBranches(repo, {});
+  assert.strictEqual(full.truncated, false, 'no pressure, no truncation');
+  if (hasWriteTree) {
+    assert.strictEqual(full.branches.find((b) => b.name === 'squashed').merged, true,
+      'the squash merge should be detected when there is time to look');
+  }
 
   fs.rmSync(repo, { recursive: true, force: true });
 });

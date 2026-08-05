@@ -73,9 +73,7 @@ function supportsWriteTree(cwd, ref) {
   return tryRun('git', ['-C', cwd, 'merge-tree', '--write-tree', ref, ref]) !== null;
 }
 
-// opts.deadline is an epoch milliseconds value. Counting commits costs one git
-// call per branch, so on a repository with hundreds of branches the total is
-// unbounded even when each individual call is fast. A caller that has to finish
+// opts.deadline is an epoch milliseconds value. A caller that has to finish
 // inside a budget, the session-start hook being the one that matters, passes a
 // deadline and gets `truncated: true` rather than a wrong answer late.
 //
@@ -83,10 +81,17 @@ function supportsWriteTree(cwd, ref) {
 // unmerged. So a truncated run under-reports what is safe and never over-
 // reports it.
 //
-// A branch that ancestry calls unmerged costs a second call, the tree
-// comparison below. The deadline is still checked once per branch and still
-// bounds the loop; the effect of the extra call is that a run under pressure
-// truncates a little earlier, which errs towards keeping.
+// What costs time here is starting git, not running it. Every child process is
+// about 9 ms of spawn on a warm machine, and the git work inside it is close to
+// free: the whole branch listing, ahead counts included, measures at 10 ms for
+// 61 branches. So the number of calls is the only thing worth optimising, and
+// the deadline exists to bound the one call that cannot be batched away.
+//
+// Ancestry for every branch now comes back with the listing, in one call. What
+// remains per-branch is the tree comparison below, asked only of branches that
+// ancestry already called unmerged. The deadline is checked immediately before
+// each of those, so the loop stays bounded and a run under pressure keeps
+// rather than offers.
 //
 // opts.only restricts the work to a single named branch, for the re-check that
 // runs immediately before a delete. Same facts, same rules, one branch: without
@@ -114,7 +119,20 @@ function localBranches(cwd, opts) {
   // look". Both mean do not delete; only one of them means the branch is gone,
   // and saying the wrong one invites someone to assume the work was already
   // tidied away.
-  const listed = tryRun('git', ['-C', cwd, 'for-each-ref', '--format=%(refname:short)%09%(committerdate:iso-strict)', 'refs/heads/']);
+  //
+  // The ahead count rides along on this listing rather than costing a
+  // `rev-list` per branch. `%(ahead-behind:)` arrived in git 2.41, and an older
+  // git rejects the whole format with "unknown field name" rather than leaving
+  // the field empty, so a null here is asked again without it and the loop pays
+  // the per-branch cost as before. Probed by asking, the same way the
+  // `merge-tree` support above is, because a version number read off `git
+  // --version` is a different question from whether this git accepts the form.
+  const FIELDS = '%(refname:short)%09%(committerdate:iso-strict)';
+  let listed = tryRun('git', ['-C', cwd, 'for-each-ref', `--format=${FIELDS}%09%(ahead-behind:${def})`, 'refs/heads/']);
+  const listedHasAhead = listed !== null;
+  if (!listedHasAhead) {
+    listed = tryRun('git', ['-C', cwd, 'for-each-ref', `--format=${FIELDS}`, 'refs/heads/']);
+  }
   if (listed === null) return { defaultBranch: def, branches: [], unreadable: true };
   if (!listed) return { defaultBranch: def, branches: [] };
 
@@ -155,20 +173,26 @@ function localBranches(cwd, opts) {
   const canCompare = !!defTree && versionOk === true;
 
   const branches = rows.map((line) => {
-    const [name, date] = line.split('\t');
+    const [name, date, aheadBehind] = line.split('\t');
     let aheadBy = null;
     let merged = false;
     let mergedVia = null;
     if (name === def) {
       aheadBy = 0;
-    } else if (deadline !== null && Date.now() >= deadline) {
-      // Out of time. Leave aheadBy null so this branch is kept, not offered.
-      truncated = true;
     } else {
-      // `rev-list --count def..name` is the number of commits on `name` that
-      // are not reachable from `def`. That is exactly the question being asked.
-      const n = tryRun('git', ['-C', cwd, 'rev-list', '--count', `${def}..${name}`]);
-      if (n !== null && /^\d+$/.test(n)) aheadBy = parseInt(n, 10);
+      // The number of commits on `name` that are not reachable from `def`.
+      // `%(ahead-behind:)` prints it as "<ahead> <behind>"; the fall back asks
+      // `rev-list` the same question one branch at a time.
+      if (listedHasAhead) {
+        const n = (aheadBehind || '').split(' ')[0];
+        if (/^\d+$/.test(n)) aheadBy = parseInt(n, 10);
+      } else if (deadline !== null && Date.now() >= deadline) {
+        // Out of time. Leave aheadBy null so this branch is kept, not offered.
+        truncated = true;
+      } else {
+        const n = tryRun('git', ['-C', cwd, 'rev-list', '--count', `${def}..${name}`]);
+        if (n !== null && /^\d+$/.test(n)) aheadBy = parseInt(n, 10);
+      }
 
       // Ancestry says nothing about a squash merge, which rewrites the branch
       // into one new commit and leaves the originals unreachable. So ask the
@@ -179,13 +203,20 @@ function localBranches(cwd, opts) {
       // merge exits non-zero, `tryRun` returns null, and the branch is kept.
       // Not knowing is never rounded up into permission to delete.
       if (aheadBy !== null && aheadBy > 0 && canCompare) {
-        for (const target of compareAgainst) {
-          if (!target.tree) continue;
-          const t = tryRun('git', ['-C', cwd, 'merge-tree', '--write-tree', target.ref, name]);
-          if (t !== null && t.split('\n')[0] === target.tree) {
-            merged = true;
-            mergedVia = target.label;
-            break;
+        if (deadline !== null && Date.now() >= deadline) {
+          // Out of time for the one call that is still per-branch. `merged`
+          // stays false, so this branch is kept rather than offered, and the
+          // run says it was cut short.
+          truncated = true;
+        } else {
+          for (const target of compareAgainst) {
+            if (!target.tree) continue;
+            const t = tryRun('git', ['-C', cwd, 'merge-tree', '--write-tree', target.ref, name]);
+            if (t !== null && t.split('\n')[0] === target.tree) {
+              merged = true;
+              mergedVia = target.label;
+              break;
+            }
           }
         }
       }
