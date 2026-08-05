@@ -86,18 +86,11 @@ function readCurrentTaskStatuslineSegment({ sessionId, home = os.homedir(), conf
     const loaded = config || require(path.join(__dirname, '..', 'scripts', 'config.js')).load(home);
     if (loaded.currentTask?.enabled === false) return '';
 
-    const todosDir = path.join(home, '.claude', 'todos');
-    const files = fs.readdirSync(todosDir)
-      .filter((name) => name.endsWith('.json'))
-      .filter((name) => name === `${sessionId}.json` || name.startsWith(`${sessionId}-`))
-      .map((name) => {
-        const file = path.join(todosDir, name);
-        return { file, mtime: fs.statSync(file).mtimeMs };
-      })
-      .sort((a, b) => b.mtime - a.mtime);
-
-    if (!files.length) return '';
-    const parsed = readJsonFile(files[0].file);
+    // Claude gives the main session the exact filename and suffixes sub-agent
+    // files with `-agent-<id>`. Modification time cannot decide authority:
+    // an agent may write last, or leave stale in-progress work behind.
+    const file = path.join(home, '.claude', 'todos', `${sessionId}.json`);
+    const parsed = readJsonFile(file);
     const tasks = Array.isArray(parsed) ? parsed : parsed?.tasks;
     if (!Array.isArray(tasks)) return '';
     const current = tasks.find((task) => task?.status === 'in_progress'

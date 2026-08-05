@@ -59,9 +59,10 @@ Claude 4.8 │ my-project ⎇ owner │ ↳ Building the current task │ $0.42 
 Every segment is optional and vanishes rather than erroring when its data is
 absent.
 
-The current-task segment reads this session's files under `~/.claude/todos/`
-and shows the `activeForm` marked `in_progress`. It never borrows a task from a
-different session. Set `{"currentTask":{"enabled":false}}` in
+The current-task segment reads this session's exact `<sessionId>.json` file
+under `~/.claude/todos/` and shows the `activeForm` marked `in_progress`. It
+never borrows a task from another session or a sub-agent. Set
+`{"currentTask":{"enabled":false}}` in
 `~/.claude/session.config.json` to hide it.
 
 **A plugin cannot switch a status line on.** Claude Code reads `statusLine` from

@@ -55,10 +55,11 @@ const enableGitActivity = (home) => {
   return home;
 };
 
-const writeTodos = (home, sessionId, tasks, suffix = 'agent-main') => {
+const writeTodos = (home, sessionId, tasks, suffix = '') => {
   const dir = path.join(home, '.claude', 'todos');
   fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(path.join(dir, `${sessionId}-${suffix}.json`), JSON.stringify(tasks));
+  const filename = suffix ? `${sessionId}-${suffix}.json` : `${sessionId}.json`;
+  fs.writeFileSync(path.join(dir, filename), JSON.stringify(tasks));
 };
 
 // ------------------------------------------------------ current task line ----
@@ -89,27 +90,31 @@ check('current task stays quiet without a usable task file', () => {
 
 check('current task accepts the wrapped todo shape', () => {
   const home = tmp();
-  writeTodos(home, 'wrapped', { tasks: [{ status: 'in_progress', activeForm: 'Wrapped task' }] }, 'agent-good');
+  writeTodos(home, 'wrapped', { tasks: [{ status: 'in_progress', activeForm: 'Wrapped task' }] });
   assert.match(statusline.readCurrentTaskStatuslineSegment({ sessionId: 'wrapped', home }), /Wrapped task/);
 });
 
-check('the newest todo file is authoritative over stale agent work', () => {
+check('the main todo file is authoritative over stale agent work', () => {
   const home = tmp();
   writeTodos(home, 'session', [{ status: 'in_progress', activeForm: 'Stale agent task' }], 'agent-old');
-  const stale = path.join(home, '.claude', 'todos', 'session-agent-old.json');
-  const past = new Date(Date.now() - 1000);
-  fs.utimesSync(stale, past, past);
-  writeTodos(home, 'session', [{ status: 'completed', activeForm: 'Main task finished' }], 'agent-new');
+  writeTodos(home, 'session', [{ status: 'completed', activeForm: 'Main task finished' }]);
   assert.strictEqual(statusline.readCurrentTaskStatuslineSegment({ sessionId: 'session', home }), '');
 });
 
-check('a malformed newest todo file does not expose an older task', () => {
+check('a newer sub-agent file cannot hide the main task', () => {
   const home = tmp();
-  writeTodos(home, 'wrapped', { tasks: [{ status: 'in_progress', activeForm: 'Older task' }] }, 'agent-old');
-  const old = path.join(home, '.claude', 'todos', 'wrapped-agent-old.json');
-  const past = new Date(Date.now() - 1000);
-  fs.utimesSync(old, past, past);
-  const bad = path.join(home, '.claude', 'todos', 'wrapped-agent-newer.json');
+  writeTodos(home, 'session', [{ status: 'in_progress', activeForm: 'Main session task' }]);
+  writeTodos(home, 'session', [{ status: 'completed', activeForm: 'Agent finished' }], 'agent-newer');
+  const future = new Date(Date.now() + 1000);
+  const agent = path.join(home, '.claude', 'todos', 'session-agent-newer.json');
+  fs.utimesSync(agent, future, future);
+  assert.match(statusline.readCurrentTaskStatuslineSegment({ sessionId: 'session', home }), /Main session task/);
+});
+
+check('a malformed main todo file does not expose an agent task', () => {
+  const home = tmp();
+  writeTodos(home, 'wrapped', { tasks: [{ status: 'in_progress', activeForm: 'Agent task' }] }, 'agent-old');
+  const bad = path.join(home, '.claude', 'todos', 'wrapped.json');
   fs.writeFileSync(bad, '{bad');
   assert.strictEqual(statusline.readCurrentTaskStatuslineSegment({ sessionId: 'wrapped', home }), '');
 });
