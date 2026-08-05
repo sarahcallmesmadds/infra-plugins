@@ -3,7 +3,7 @@ name: revert-fix
 type: human
 description: Rolls back a committed fix. Reads the queue entry to find the commit hash, runs git revert in the correct repo (creates a new undo commit — does not delete or modify the original commit), resets the queue entry status back to Open, and stores the revert commit hash in notes. Works whether the commit has been pushed or not. The user does not need to know any git commands.
 argument-hint: "[queue-entry-id or target-name]"
-allowed-tools: Read, Write, Bash(ls:*), Bash(cat:*), Bash(date:*), Bash(mv:*), Bash(node:*), Bash(git:*)
+allowed-tools: Read, Write, Bash(ls:*), Bash(cat:*), Bash(date:*), Bash(mktemp:*), Bash(mv:*), Bash(node:*), Bash(git:*)
 ---
 
 You are rolling back a committed fix. The goal: undo a bad fix commit without rewriting history, and put the queue entry back to Open so another attempt can be made.
@@ -94,8 +94,8 @@ Example: `"Committed: abc1234 to personal"` → hash is `abc1234`.
 
   `--note` rather than `--note-file` because that sentence is fixed text with nothing
   interpolated into it, which is the same reason the `Reverted:` note further down uses `--note`.
-  This skill also has no per-run scratch directory and does not grant `mktemp`, unlike
-  `/apply-fix` and `/verify-fix`, so a note here has to be fixed text rather than a file.
+  Only the closing step at the end of this skill needs the scratch directory, because a
+  resolution is an object and there is no way to pass one on the command line.
 
   If the call exits non-zero, say what it printed and that the entry is still at
   `fix applied, watching`. Then stop either way: writing the reverse change is `/apply-fix`'s
@@ -208,4 +208,47 @@ The target file is restored to its pre-fix state.
 Do you want to try a different fix, or leave this Open for later?
 ```
 
-Wait for the user's response. If they say "Won't Fix" or "mark it closed": run `node "${CLAUDE_PLUGIN_ROOT}/scripts/queue.js" update {id} --status "Won't Fix"`.
+Wait for the user's response. If they say "Won't Fix" or "mark it closed",
+closing it means saying what closing it meant, and the status on its own is
+refused. Ask which it is, in one question:
+
+> "Closing this as Won't Fix. Was the correction declined on purpose, or has it
+> stopped being relevant?"
+
+Make a private directory for it, once:
+
+```bash
+mktemp -d "${TMPDIR:-/tmp}/build-loop.XXXXXX"
+```
+
+Written out in full rather than as `mktemp -d -t build-loop`, which is BSD only:
+GNU coreutils wants six `X` characters and exits 1 on the short form, so on Linux
+the directory is never created and the hand-off below fails. Use the path it
+prints, written as `{scratch}` here, and never a fixed name under `/tmp`, which
+another session or another local user can replace between the Write and the call.
+
+Write the answer to that directory, `wont_fix` for declined and `obsolete` for
+no longer relevant, then hand both over in one call:
+
+```json
+{
+  "outcome": "wont_fix",
+  "at": "{ISO-8601 now}",
+  "by": "user",
+  "summary": "{why they closed it, in their words. The fix was reverted, so say what happened to it}"
+}
+```
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/queue.js" update {id} --list queue \
+  --status "Won't Fix" --resolution {scratch}/resolution-{id}.json
+```
+
+If it exits non-zero, nothing was written and the entry is still `Open`. Report
+what it printed, report that the entry is still open, and stop. Never report an
+entry as closed when the call that would have closed it was refused. A refusal is
+usually another session holding the lock, in which case running it again is the
+whole remedy.
+
+Both outcomes take `Won't Fix`, and `fix_applied` is refused against it: the
+change was reverted, so nothing landed. See Resolution in SCHEMA.md.

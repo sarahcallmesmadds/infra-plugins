@@ -106,6 +106,27 @@ function statusOnDisk(home, id, list = 'queue') {
   return JSON.parse(fs.readFileSync(p, 'utf8')).status;
 }
 
+// The `--resolution FILE` arguments a status needs to be written, and nothing
+// for a status that is not a closure.
+//
+// Closing an entry has to say what closing it meant, and the outcome has to be
+// one that status can carry. The cases below that walk an entry into a closed
+// status are about the status enum and not about that rule, so they satisfy it
+// rather than route around it: writing `Resolved` with no resolution is the
+// hole review found, and a test that kept doing it would be pinning the hole.
+const CLOSING = new Map([
+  ['Resolved', { outcome: 'fix_applied', at: '2026-08-05T12:00:00.000Z', summary: 'closed by a test' }],
+  ["Won't Fix", { outcome: 'wont_fix', at: '2026-08-05T12:00:00.000Z', summary: 'closed by a test' }],
+]);
+
+function closing(home, status) {
+  const shape = CLOSING.get(status);
+  if (!shape) return [];
+  const file = path.join(home, `resolution-${String(status).replace(/[^a-z0-9]/gi, '')}.json`);
+  fs.writeFileSync(file, JSON.stringify(shape));
+  return ['--resolution', file];
+}
+
 // --- the exact value that caused this -------------------------------------
 
 check('--status Wontfix is refused, and suggests the real value', () => {
@@ -220,7 +241,7 @@ check('each list still accepts its own values', () => {
   seed(home, 'g');
   seed(home, 'h', 'Open', 'to-build');
   for (const s of ['In Progress', 'Resolved', "Won't Fix", 'fix applied, watching', 'Open']) {
-    const r = run(home, ['update', 'g', '--status', s]);
+    const r = run(home, ['update', 'g', '--status', s, ...closing(home, s)]);
     assert.strictEqual(r.code, 0, `queue refused its own value ${JSON.stringify(s)}: ${r.out}`);
     assert.strictEqual(statusOnDisk(home, 'g'), s);
   }
@@ -286,6 +307,26 @@ check('the remediation path works: a bad status can be corrected', () => {
   const r = run(home, ['update', 'p4', '--status', "Won't Fix"]);
   assert.strictEqual(r.code, 0, `correcting an off-enum status was refused: ${r.out}`);
   assert.strictEqual(statusOnDisk(home, 'p4'), "Won't Fix");
+});
+
+check('repairing a closed entry needs no resolution, closing an open one does', () => {
+  // The two halves of one rule, pinned together because getting either alone
+  // is easy and wrong. Closing an entry has to say what closing it meant, and
+  // `Wontfix` to `Won't Fix` is not a closing act: the entry was already
+  // closed, badly spelled, by somebody who had no resolution field to fill in.
+  // Demanding one there would refuse the exact command `lint` prints.
+  const home = sandbox();
+
+  plant(home, 'p6', 'Wontfix');
+  const repaired = run(home, ['update', 'p6', '--status', "Won't Fix"]);
+  assert.strictEqual(repaired.code, 0, `repairing a closed entry was refused: ${repaired.out}`);
+  assert.strictEqual(statusOnDisk(home, 'p6'), "Won't Fix");
+
+  seed(home, 'p7');
+  const closed = run(home, ['update', 'p7', '--status', "Won't Fix"]);
+  assert.notStrictEqual(closed.code, 0, 'an open entry closed with nothing recorded');
+  assert.ok(/needs a resolution/.test(closed.out), `refused for the wrong reason: ${closed.out}`);
+  assert.strictEqual(statusOnDisk(home, 'p7'), 'Open', 'the entry changed anyway');
 });
 
 check('a legacy entry cannot be moved to a different bad status', () => {
@@ -590,7 +631,8 @@ check('a suggestion, when followed, is accepted', () => {
     const match = r.out.match(suggested);
     if (!match) continue;
     seen += 1;
-    const applied = run(home, ['update', 'q1', '--status', match[1].replace(/\\"/g, '"')]);
+    const suggestedValue = match[1].replace(/\\"/g, '"');
+    const applied = run(home, ['update', 'q1', '--status', suggestedValue, ...closing(home, suggestedValue)]);
     assert.strictEqual(
       applied.code, 0,
       `refusing ${JSON.stringify(value)} suggested ${JSON.stringify(match[1])}, which is itself refused: ${applied.out}`

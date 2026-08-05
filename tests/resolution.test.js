@@ -24,7 +24,11 @@ const { execFileSync } = require('child_process');
 
 const PLUGIN = path.join(__dirname, '..', 'plugins', 'build-loop');
 const QUEUE_JS = path.join(PLUGIN, 'scripts', 'queue.js');
-const { normalise, problemsWith, OUTCOMES } = require(path.join(PLUGIN, 'scripts', 'resolution.js'));
+const KILL_MS = 20000;
+const {
+  normalise, problemsWith, disagreement, OUTCOMES, STATUS_OUTCOMES,
+} = require(path.join(PLUGIN, 'scripts', 'resolution.js'));
+const { STATUSES } = require(path.join(PLUGIN, 'scripts', 'queue.js'));
 
 let failed = 0;
 let ran = 0;
@@ -80,7 +84,7 @@ const REAL_SHAPES = [
 
 for (const shape of REAL_SHAPES) {
   check(`reads ${shape.what}`, () => {
-    const got = normalise(shape.stored, { status: shape.status });
+    const got = normalise(shape.stored);
     for (const [key, want] of Object.entries(shape.expect)) {
       assert.strictEqual(got[key], want, `${key}: expected ${want}, got ${got[key]}`);
     }
@@ -123,13 +127,17 @@ check('an outcome nobody can read is not replaced by an inferred one', () => {
   }
 });
 
-check('the inference still fires when the field is genuinely empty', () => {
+check('the inference is tied to the exact legacy applied-fix shape', () => {
   // The other half. Gating it too tightly would break the twelve legacy
-  // entries this exists for, so both directions are pinned together.
+  // entries this exists for, while using a commit alone calls rollback commits
+  // fixes. The five-key fingerprint is what distinguishes the known records.
   for (const stated of [undefined, '', '   ']) {
-    const r = { commit: 'abc1234', fixed_at: '2026-08-02', summary: 's' };
+    const r = {
+      commit: 'abc1234', fixed_at: '2026-08-02', summary: 's',
+      pr: 'https://example.invalid/41', shipped_in: '0.4.1',
+    };
     if (stated !== undefined) r.outcome = stated;
-    const got = normalise(r, { status: 'Resolved' }).outcome;
+    const got = normalise(r).outcome;
     assert.strictEqual(got, 'fix_applied', `${JSON.stringify(stated)} lost the inference`);
   }
 });
@@ -144,22 +152,98 @@ check('an outcome that was stated and cannot be read is kept, not dropped', () =
   assert.strictEqual(got.extra.outcome, 'reverted', 'the stated outcome vanished');
 });
 
-check('the inference needs the status, and does not guess without it', () => {
-  // Its justification has always been "those twelve are Resolved primaries
-  // carrying a commit". The function could not see a status, so what it
-  // actually did was infer from a commit alone, and a Won't Fix entry
-  // recording the commit it was rolled back by read as a fix.
+check('a commit outside the exact legacy shape does not imply a fix', () => {
+  // A Won't Fix entry may record the commit that rolled an attempted fix back.
+  // Current status cannot be used either: reopening changes status but must not
+  // change the historical meaning of the resolution.
   const legacy = { commit: 'abc1234', fixed_at: '2026-08-05', summary: 'Declined after rollback' };
-  assert.strictEqual(normalise(legacy, { status: "Won't Fix" }).outcome, null, 'called a rollback a fix');
-  assert.strictEqual(normalise(legacy).outcome, null, 'guessed with no status to go on');
-  assert.strictEqual(normalise(legacy, { status: 'Resolved' }).outcome, 'fix_applied');
+  assert.strictEqual(normalise(legacy).outcome, null, 'called a rollback a fix');
 });
 
 check('a closed entry with no commit and no outcome stays unknown', () => {
-  // The only inference here is commit-plus-Resolved meaning fix_applied.
+  // The only inference here is the exact five-key legacy shape meaning
+  // fix_applied.
   // Without a commit there is nothing to infer from, and "closed, cannot say
   // why" is a real answer that guessing would hide.
   assert.strictEqual(normalise({ at: '2026-08-02', summary: 'closed' }).outcome, null);
+});
+
+check('when a field was written under two names, the loser is kept', () => {
+  // `at` has three spellings and `summary` has two, and the reader takes the
+  // first that holds text. The rest used to vanish, and because they are known
+  // keys they did not land in `extra` either, so `{at, ts}` came back holding
+  // one timestamp with no sign there had ever been another.
+  const got = normalise({
+    outcome: 'fix_applied',
+    at: '2026-08-05T12:00:00.000Z',
+    ts: '2026-08-04T12:00:00.000Z',
+    summary: 'Primary explanation',
+    why: 'Additional historical detail',
+  });
+  assert.strictEqual(got.at, '2026-08-05T12:00:00.000Z');
+  assert.strictEqual(got.summary, 'Primary explanation');
+  assert.strictEqual(got.extra.ts, '2026-08-04T12:00:00.000Z', 'the earlier timestamp vanished');
+  assert.strictEqual(got.extra.why, 'Additional historical detail', 'the second explanation vanished');
+});
+
+check('a known field of the wrong type is kept rather than dropped', () => {
+  // The writer refuses these shapes now, which does nothing for the ones
+  // already on disk. A hand-written `commit: true` read back as null and left
+  // no trace of having been anything.
+  const got = normalise({ outcome: 'fix_applied', at: 'now', summary: 'Fixed', commit: true });
+  assert.strictEqual(got.commit, null, 'the reader kept it after all, so this test is stale');
+  assert.strictEqual(got.extra.commit, true, 'a value on disk disappeared from the read');
+
+  const numeric = normalise({ outcome: 42, at: 'now', summary: 's' });
+  assert.strictEqual(numeric.outcome, null);
+  assert.strictEqual(numeric.extra.outcome, 42, 'a stated outcome vanished for being the wrong type');
+});
+
+check('an absent, null or empty field is nothing to keep', () => {
+  // The documented shape writes `"duplicate_of": null` on every resolution that
+  // is not a duplicate. Preserving those would fill `extra` with nulls on
+  // entries that lost nothing, which is how a record of loss stops being read.
+  const got = normalise({
+    outcome: 'fix_applied', at: 'now', summary: 's',
+    by: null, commit: null, duplicate_of: null,
+  });
+  assert.deepStrictEqual(got.extra, {}, `kept nothing-values: ${JSON.stringify(got.extra)}`);
+  assert.deepStrictEqual(normalise({ outcome: '   ', at: 'now', summary: 's' }).extra, {});
+});
+
+// --- the pair, not either field ---------------------------------------------
+
+check('the two closed statuses take the outcomes SKILL.md says they do', () => {
+  for (const [status, outcomes] of STATUS_OUTCOMES) {
+    assert.ok(
+      STATUSES.get('queue').write.includes(status),
+      `${status} is not a writable queue status, so nothing can reach this rule`
+    );
+    for (const outcome of outcomes) {
+      assert.ok(OUTCOMES.has(outcome), `${outcome} is not in the enum`);
+      assert.strictEqual(disagreement(status, outcome), null, `${status} refused ${outcome}`);
+    }
+  }
+  const covered = [...STATUS_OUTCOMES.values()].flat();
+  for (const outcome of OUTCOMES.keys()) {
+    assert.ok(covered.includes(outcome), `${outcome} belongs with no status, so it can never be written`);
+  }
+});
+
+check('a status and an outcome that say different things disagree', () => {
+  assert.match(disagreement('Resolved', 'wont_fix'), /Won't Fix/);
+  assert.match(disagreement("Won't Fix", 'fix_applied'), /Resolved/);
+  assert.match(disagreement('Resolved', 'duplicate'), /Won't Fix/);
+});
+
+check('an unclosed status has no pairing to judge', () => {
+  // Reopening an entry leaves the earlier close's resolution on it, which is
+  // the documented way to reopen one. A rule that objected to `Open` beside
+  // `fix_applied` would make the instruction impossible to follow.
+  for (const status of ['Open', 'In Progress', 'fix applied, watching', undefined]) {
+    assert.strictEqual(disagreement(status, 'fix_applied'), null, `${status} was judged`);
+  }
+  assert.strictEqual(disagreement('Resolved', null), null, 'judged an entry with no outcome');
 });
 
 // --- what the gate refuses -------------------------------------------------
@@ -194,6 +278,10 @@ for (const [what, value, field] of TYPE_MISMATCHES) {
 
 const REFUSED = [
   ['no outcome', { at: 'now', summary: 's' }, /no outcome/],
+  ['the old name for at', { outcome: 'obsolete', ts: 'now', summary: 's' }, /ts is the old name/],
+  ['the old name for at, the other one', { outcome: 'obsolete', fixed_at: 'now', summary: 's' }, /fixed_at is the old name/],
+  ['the old name for summary', { outcome: 'obsolete', at: 'now', why: 's' }, /why is the old name/],
+  ['both names for at at once', { outcome: 'obsolete', at: 'now', ts: 'earlier', summary: 's' }, /ts is the old name/],
   ['an invented outcome', { outcome: 'fixed', at: 'now', summary: 's' }, /not one of/],
   ['an old spelling', { outcome: 'wontfix', at: 'now', summary: 's' }, /old spelling/],
   ['no timestamp', { outcome: 'obsolete', summary: 's' }, /at.*timestamp/],
@@ -259,7 +347,9 @@ function seed(home, id, resolution) {
 function run(home, args) {
   return execFileSync(process.execPath, [QUEUE_JS, ...args], {
     encoding: 'utf8',
+    timeout: KILL_MS,
     env: { ...process.env, HOME: home },
+    stdio: ['ignore', 'pipe', 'pipe'],
   });
 }
 
@@ -369,6 +459,150 @@ check('an entry already carrying a legacy resolution can still be annotated', ()
     const after = readBack(home, 'a4');
     assert.strictEqual(after.notes.length, 1, 'the note was refused');
     assert.strictEqual(after.resolution.outcome, 'wontfix', 'the old resolution was rewritten');
+  });
+});
+
+check('an entry cannot be closed with nothing recorded', () => {
+  // The hole the two field checks left between them. `--status Resolved`
+  // against an entry whose resolution is null changes no resolution, so the
+  // shape gate never ran, and the entry closed saying nothing about what
+  // closing it meant while SCHEMA.md claimed the field is null only until
+  // closure.
+  withHome((home) => {
+    seed(home, 'c1');
+    assert.throws(
+      () => run(home, ['update', 'c1', '--status', 'Resolved']),
+      /needs a resolution/,
+      'closed an entry with nothing recorded'
+    );
+    assert.strictEqual(readBack(home, 'c1').status, 'Open', 'the status changed anyway');
+
+    seed(home, 'c2');
+    assert.throws(
+      () => run(home, ['update', 'c2', '--status', "Won't Fix"]),
+      /needs a resolution/,
+      "Won't Fix took the same route"
+    );
+  });
+});
+
+check('the same hole is shut on create, which composes the whole entry', () => {
+  withHome((home) => {
+    const composed = {
+      $schema_version: 5, id: 'c3', created_at: '2026-08-01T00:00:00.000Z', status: 'Resolved',
+      type: 'primary', parent_id: null, target: 't', target_kind: 'skill',
+      target_path: '/tmp/t', repo: 'r', session_id: '', session_cwd: '',
+      what_happened: 'x', what_expected: 'y', correct_example: 'z',
+      source: 'manual', urgency_hint: 'normal', dedup_key: 't::c3', notes: [],
+      resolution: null,
+    };
+    fs.writeFileSync(path.join(home, 'new.json'), JSON.stringify(composed));
+    assert.throws(
+      () => run(home, ['create', path.join(home, 'new.json')]),
+      /needs a resolution/,
+      'a composed file walked an entry straight to closed with nothing recorded'
+    );
+    assert.ok(!fs.existsSync(path.join(queueDir(home), 'c3.json')), 'it was written anyway');
+  });
+});
+
+check('a status and an outcome that contradict each other are refused', () => {
+  // Both fields were individually valid, and each check only looked at its own,
+  // so an entry could say a fix was verified and that the correction was
+  // declined at the same time. Both directions.
+  withHome((home) => {
+    seed(home, 'c4');
+    fs.writeFileSync(path.join(home, 'declined.json'), JSON.stringify({
+      outcome: 'wont_fix', at: '2026-08-05T12:00:00.000Z', summary: 'Declined',
+    }));
+    assert.throws(
+      () => run(home, ['update', 'c4', '--status', 'Resolved', '--resolution', path.join(home, 'declined.json')]),
+      /say different things/,
+      'Resolved took a declined outcome'
+    );
+    assert.strictEqual(readBack(home, 'c4').status, 'Open', 'the entry changed anyway');
+
+    fs.writeFileSync(path.join(home, 'fixed.json'), JSON.stringify({
+      outcome: 'fix_applied', at: '2026-08-05T12:00:00.000Z', summary: 'Fixed', commit: 'abc1234',
+    }));
+    assert.throws(
+      () => run(home, ['update', 'c4', '--status', "Won't Fix", '--resolution', path.join(home, 'fixed.json')]),
+      /say different things/,
+      "Won't Fix took an applied fix"
+    );
+  });
+});
+
+check('the pair is judged when only the resolution changes, too', () => {
+  // Guarding the status change alone would leave the same contradiction one
+  // write away: close it correctly, then overwrite the resolution.
+  withHome((home) => {
+    seed(home, 'c5', { outcome: 'fix_applied', at: '2026-08-05T12:00:00.000Z', summary: 'Fixed' });
+    fs.writeFileSync(path.join(home, 'now-resolved.json'), JSON.stringify({
+      outcome: 'fix_applied', at: '2026-08-05T12:00:00.000Z', summary: 'Fixed', commit: 'abc1234',
+    }));
+    run(home, ['update', 'c5', '--status', 'Resolved', '--resolution', path.join(home, 'now-resolved.json')]);
+
+    fs.writeFileSync(path.join(home, 'declined.json'), JSON.stringify({
+      outcome: 'wont_fix', at: '2026-08-06T12:00:00.000Z', summary: 'Changed my mind',
+    }));
+    assert.throws(
+      () => run(home, ['update', 'c5', '--resolution', path.join(home, 'declined.json')]),
+      /say different things/,
+      'a second write reached the state the first was refused for'
+    );
+  });
+});
+
+check('a legacy resolution still closes an entry, which is why this reads rather than validates', () => {
+  // The nineteen shapes on disk satisfy none of the writer's rules: this one
+  // has no `at` and no outcome. It reads as `fix_applied` because it has the
+  // exact five-key legacy applied-fix shape. Checking with
+  // `problemsWith` here would refuse to reclose an entry that had just been
+  // reopened, which is the trap every other gate in this file avoids.
+  withHome((home) => {
+    seed(home, 'c6', {
+      commit: 'a74c489', fixed_at: '2026-08-02', pr: 'https://example.invalid/41',
+      shipped_in: '0.4.1', summary: 'unanchored build output',
+    });
+    run(home, ['update', 'c6', '--status', 'Resolved']);
+    assert.strictEqual(readBack(home, 'c6').status, 'Resolved');
+    assert.strictEqual(readBack(home, 'c6').resolution.fixed_at, '2026-08-02', 'the legacy shape was rewritten');
+  });
+});
+
+check('reopening a closed entry keeps its resolution and is not judged as a pair', () => {
+  // The documented way to reopen: change the status, and the resolution stays
+  // as the record of the earlier close. `Open` beside `fix_applied` is that
+  // record, not a contradiction.
+  withHome((home) => {
+    seed(home, 'c7', { outcome: 'fix_applied', at: '2026-08-05T12:00:00.000Z', summary: 'Fixed' });
+    run(home, ['update', 'c7', '--status', 'Resolved']);
+    run(home, ['update', 'c7', '--status', 'Open', '--note', 'came back']);
+    const after = readBack(home, 'c7');
+    assert.strictEqual(after.status, 'Open');
+    assert.strictEqual(after.resolution.outcome, 'fix_applied', 'reopening erased the record');
+  });
+});
+
+check('reopening a legacy applied-fix entry keeps its inferred outcome', () => {
+  // Resolution is historical. Its meaning cannot depend on the entry's current
+  // workflow status, or reopening one of the twelve old Resolved entries turns
+  // its fix_applied outcome into unknown without changing the stored record.
+  withHome((home) => {
+    const legacy = {
+      commit: 'a74c489', fixed_at: '2026-08-02',
+      pr: 'https://example.invalid/41', shipped_in: '0.4.1',
+      summary: 'unanchored build output',
+    };
+    seed(home, 'c8', legacy);
+    run(home, ['update', 'c8', '--status', 'Resolved']);
+    assert.strictEqual(normalise(readBack(home, 'c8').resolution).outcome, 'fix_applied');
+
+    run(home, ['update', 'c8', '--status', 'Open', '--note', 'came back']);
+    const after = readBack(home, 'c8');
+    assert.strictEqual(after.status, 'Open');
+    assert.strictEqual(normalise(after.resolution).outcome, 'fix_applied', 'reopening changed the historical answer');
   });
 });
 

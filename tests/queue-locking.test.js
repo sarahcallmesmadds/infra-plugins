@@ -168,13 +168,17 @@ check('a concurrent status change does not lose a note', () => {
   // read the same entry. Under the old sequence whichever wrote second erased
   // the other's change, and neither reported anything.
   return withHome(async (home) => {
+    // `In Progress` rather than `Resolved`, which this used to write. Closing an
+    // entry now has to say what closing it meant, and that requirement has
+    // nothing to do with what this test is about. Any status change makes the
+    // point, so the one that drags a second rule in is the wrong one to pick.
     entry(home, 'e2');
     await Promise.all([
-      start(home, ['update', 'e2', '--status', 'Resolved']),
+      start(home, ['update', 'e2', '--status', 'In Progress']),
       start(home, ['update', 'e2', '--note', 'still here']),
     ]);
     const after = read(home, 'e2');
-    assert.strictEqual(after.status, 'Resolved', 'the status change was lost');
+    assert.strictEqual(after.status, 'In Progress', 'the status change was lost');
     assert.strictEqual(after.notes.length, 1, 'the note was lost');
     assert.strictEqual(after.notes[0].text, 'still here');
   });

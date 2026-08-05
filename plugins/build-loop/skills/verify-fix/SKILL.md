@@ -332,8 +332,11 @@ directly:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/scripts/queue.js" update {id} --list queue \
-  --status Resolved --resolution {scratch}/resolution-{id}.json
+  --status {status from the table below} --resolution {scratch}/resolution-{id}.json
 ```
+
+For the `fix_applied` object shown above, that status is `Resolved`. For any
+other outcome, take the status from the table rather than copying `Resolved`.
 
 If it exits non-zero, nothing was written and the entry still holds whatever it
 held before. Report what it printed and **stop**. Do not retry and do not go on
@@ -355,6 +358,11 @@ Which outcome, and which status goes with it:
 The last three all take `Won't Fix`, because it is the only closed status that
 does not claim a fix landed. The status is the coarse fact and the outcome is
 the true one, which is the whole reason both exist.
+
+**This table is enforced, not advice.** Pairing a status with an outcome from
+the other row is refused, in both directions, and so is closing an entry with no
+resolution at all. Send both in one call, as above. If you have the status and
+not the outcome, you do not yet know enough to close the entry: ask.
 
 **`duplicate` must name the other entry**, in `duplicate_of`. The write is
 refused without it, and that refusal is the point: a duplicate closed with no

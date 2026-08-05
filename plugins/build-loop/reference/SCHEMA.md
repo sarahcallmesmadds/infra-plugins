@@ -280,6 +280,39 @@ than an edit, and this queue never deletes: to reopen an entry change its
 status, and the resolution stays as the record of the earlier close. Writing a
 different valid resolution over it is allowed.
 
+**Closing an entry writes one.** A write that moves an entry into `Resolved` or
+`Won't Fix` is refused unless the entry ends up carrying a resolution that reads
+back with an outcome, and the two have to be written in the same call. Until
+this, `--status Resolved` on an entry whose resolution was null changed no
+resolution, so the shape check never ran and the entry closed saying nothing
+about what closing it meant.
+
+Two things this deliberately does not cover. An entry **already** closed keeps
+whatever it has: it can still be annotated, and a misspelt status on it can
+still be repaired, because `Wontfix` to `Won't Fix` is not a closing act and
+refusing it would break the fix `lint` prints. And the check reads the
+resolution rather than validating it, so the older shapes below can close an
+entry that has been reopened even though they satisfy none of the writer's
+rules.
+
+### The status and the outcome have to agree
+
+They answer different questions, which is why both exist, and that is not the
+same as being independent. An entry cannot be `Resolved`, a fix applied and
+verified, while also recording that the correction was declined. Both fields
+were individually valid, so both directions of that used to pass.
+
+| Status | Outcomes it can carry |
+|---|---|
+| `Resolved` | `fix_applied`, `no_change_needed` |
+| `Won't Fix` | `wont_fix`, `duplicate`, `obsolete` |
+
+Checked whenever a write changes either field, and only for those two statuses.
+`Open`, `In Progress` and `fix applied, watching` are not closures, so an entry
+sitting on one of them carries the resolution of an earlier close saying
+anything at all. That is what reopening leaves behind, and it is a record rather
+than a contradiction.
+
 ### Outcome enum
 
 | Outcome | Meaning |
@@ -306,16 +339,31 @@ Three shapes exist in the real queue and all three are still read:
 
 | Shape | Where it came from |
 |---|---|
-| `{commit, fixed_at, pr, shipped_in, summary}` | Resolved primaries. No outcome, because the vocabulary did not exist. A commit reads as `fix_applied` **only when the caller passes the entry's status and it is `Resolved`**. Without that the reader is inferring from a commit alone, and a `Won't Fix` entry recording the commit it was rolled back by would read as a fix. |
+| `{commit, fixed_at, pr, shipped_in, summary}` | Resolved primaries. No outcome, because the vocabulary did not exist. This exact five-key legacy shape reads as `fix_applied`; current status is deliberately irrelevant because reopening must not change the historical answer. A later object carrying only a commit does not get the inference, because a `Won't Fix` entry may record the commit that rolled a fix back. |
 | `{commit, outcome, ts, why}` | Resolved dep-reviews, outcome `"no change needed"`. |
 | `{outcome, ts, why}` | `Won't Fix` primaries, outcomes `"wontfix"` and `"obsolete"`. |
 
 `ts` and `fixed_at` read as `at`. `why` reads as `summary`. The old outcome
-spellings map to the enum. Anything else a reader does not know about is kept
-under `extra` rather than dropped, and that includes an outcome that was stated
-and is not one of the five: `outcome` comes back `null`, and the word somebody
-wrote is kept at `extra.outcome`. Null answers "which of the five is this" and
-is not an answer to "what did somebody write".
+spellings map to the enum. All of these are refused on write, the same pairing
+as the outcome words: readers keep taking what is on disk while writers are
+pushed to one vocabulary.
+
+**Anything the reader does not carry into its result is kept under `extra`,
+under its own name.** That covers three cases, and the first is the one it was
+built for:
+
+- A key nothing knows about, such as the `pr` and `shipped_in` on the twelve.
+- An outcome that was stated and is not one of the five. `outcome` comes back
+  `null` and the word somebody wrote is at `extra.outcome`. Null answers "which
+  of the five is this" and is not an answer to "what did somebody write".
+- A key written under two names, or written with the wrong type. `{at, ts}`
+  returns the `at` and keeps the `ts`, and a hand-written `commit: true` returns
+  `commit: null` and keeps the `true`. Both used to vanish, and because they are
+  known keys they did not reach `extra` either.
+
+An absent key, an explicit `null` and an empty string are all nothing to keep,
+so the `"duplicate_of": null` on every resolution that is not a duplicate does
+not fill `extra` with nulls.
 
 Nothing rewrites these. That is the same rule the pre-v5 `skill` and
 `skill_path` fields follow: a migration that half-runs leaves a queue in two
