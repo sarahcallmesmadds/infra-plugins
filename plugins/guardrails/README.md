@@ -9,7 +9,7 @@ nobody has packaged that knowledge for you. This is an attempt at it.
 
 ## What it does
 
-Four things, and it says which are enforced and which are advice.
+Five things, and it says which are enforced and which are advice.
 
 **Blocks direct commits to a protected branch.** `main` and `master` by default,
 in every repository, not just the ones you remembered to configure. Says what to
@@ -33,6 +33,13 @@ document and act on it immediately, and hard once a long session compacts:
 a summary cannot tell you whether "delete the old records" came from you or from
 a file that suggested it. Flagging at the moment content arrives is the last
 point where the difference is still visible.
+
+**Blocks direct writes to skill-owned resources.** Session handoffs belong to
+`/session:wrap`; the build-loop bug queue belongs to the skills that create and
+resolve its entries. Invoking an owning skill opens a session-scoped lease, and
+ordinary tool activity renews that lease for up to two hours. A direct Write,
+Edit, NotebookEdit, or common shell write without that lease is denied, so the
+skill's validation and confirmation steps cannot be skipped by accident.
 
 ## Claude Code gets enforcement, Codex gets advice
 
@@ -91,6 +98,26 @@ key at a time, so setting one option does not reset the others.
 | `safeDeletePaths` | see `scripts/config.js` | Paths where force-delete needs no prompt |
 | `scanForInjection` | `true` | Turn content scanning off entirely |
 | `injectionExcludePaths` | `[]` | Extra regex patterns to skip when scanning |
+
+### Skill-owned resources
+
+The default registry is `hooks/resource-owners.json`. It protects:
+
+- `~/.planning/handoffs/`, owned by `/session:wrap`
+- `~/.claude/build-loop/queue/`, owned by `/build-loop:flag-issue`,
+  `/build-loop:apply-fix`, `/build-loop:verify-fix`, and
+  `/build-loop:revert-fix`
+
+To replace that list, create `~/.claude/guardrails.resources.json` with the same
+shape. Each resource has an `id`, human-readable `label`, `type` (`file` or
+`directory`), `path`, and an `owners` array containing canonical skill names.
+The user registry replaces the shipped list rather than merging with it, so a
+local policy is visible in one place.
+
+Only resources with a real public owner are protected by default. In
+particular, the IP inventory is intentionally absent: its current automated
+writers do not invoke a public registration skill, so guarding it would stop
+legitimate work without offering a usable route through the guard.
 
 If you find yourself approving the same deletion repeatedly, add that path to
 `safeDeletePaths` rather than approving it each time. A guard you routinely
