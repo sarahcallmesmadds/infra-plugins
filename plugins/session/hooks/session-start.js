@@ -1,11 +1,11 @@
 #!/usr/bin/env node
-// SessionStart: state today's date, and say if another session is already
-// working in this directory.
+// SessionStart: state today's date, surface the build loop, and say if another
+// session is already working in this directory.
 //
-// Two jobs in one hook because they produce one injection between them. Two
-// hooks would mean two blocks of context at the top of every session to say
-// about three lines, and the whole argument for the date line is that it is
-// cheap.
+// These jobs share one hook because they produce one opening injection between
+// them. Separate hooks would mean several blocks of context at the top of every
+// session for information that is useful together, and the whole argument for
+// the date line and brief is that they are cheap.
 //
 // ---------------------------------------------------------------------------
 // Why this fires on every source, unlike the git-hygiene notice.
@@ -212,10 +212,14 @@ function gitActivityLine(cwd, deadline) {
 function main(event) {
   const { todayLine } = require(path.join(__dirname, '..', 'scripts', 'today.js'));
   const sessionsMod = require(path.join(__dirname, '..', 'scripts', 'sessions.js'));
+  const brief = require(path.join(__dirname, '..', 'scripts', 'build-loop-brief.js'));
 
   kickHealthRefresh();
 
   const parts = [todayLine(new Date())];
+
+  const openingBrief = brief.buildBrief({ deadline: started + SESSIONS_BUDGET_MS });
+  if (openingBrief) parts.push(openingBrief);
 
   const live = sessionsMod.liveSessions({
     selfSessionId: event && event.session_id,
@@ -232,7 +236,7 @@ function main(event) {
   process.stdout.write(JSON.stringify({
     hookSpecificOutput: {
       hookEventName: 'SessionStart',
-      additionalContext: parts.join('\n\n'),
+      additionalContext: brief.joinContext(parts),
     },
   }));
 }

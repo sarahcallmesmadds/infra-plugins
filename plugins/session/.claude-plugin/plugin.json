@@ -1,7 +1,7 @@
 {
   "name": "session",
-  "version": "0.4.1",
-  "description": "Make sessions continuous. Wrap one up into a handoff the next one loads, keep today's real date in front of the model, warn when another session is already working in the same directory, and put cost, context and connected tool health in the status line.",
+  "version": "0.5.0",
+  "description": "Make sessions continuous. Wrap one up into a handoff the next one loads, start with today's date and a compact build-loop brief, warn when another session is already working here, and put cost, context and connected tool health in the status line.",
   "author": {
     "name": "Sarah Madden",
     "url": "https://github.com/sarahcallmesmadds"
