@@ -67,7 +67,17 @@ function shapeOf(value, depth) {
   if (typeof value === 'object') {
     if (depth >= MAX_DEPTH) return 'object';
     const out = {};
-    for (const k of Object.keys(value).sort()) out[k] = shapeOf(value[k], depth + 1);
+    for (const k of Object.keys(value).sort()) {
+      // A key with no value is not a key. Recording it as the leaf "undefined"
+      // makes an absent field look present, and the checker treats a leaf as
+      // unknown-but-acceptable, so a hook reading under it passes. That is how
+      // `tool_response` came to exist on PreToolUse captures, where there is no
+      // response at all, and a hook reading result data on a pre-tool event was
+      // reported as correct. Omitted, the first segment is genuinely absent and
+      // gets reported as absent.
+      if (value[k] === undefined) continue;
+      out[k] = shapeOf(value[k], depth + 1);
+    }
     return out;
   }
   return typeof value;

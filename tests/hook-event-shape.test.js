@@ -315,7 +315,13 @@ function viaHelper(hookFile, src) {
 // So a descent past any leaf stops and answers unknown. The check that matters
 // is untouched, because a name the event does not carry at all, `event.toolName`
 // for `event.tool_name`, fails on its first segment and never reaches a leaf.
-const UNKNOWN_BELOW = new Set(['object', 'array', 'null', 'string', 'number', 'boolean', 'undefined', 'function']);
+// `undefined` is deliberately not in here, and its absence is load-bearing.
+// A capture that recorded a missing key as the leaf "undefined" would otherwise
+// make an absent field look present-but-unknown, and every read beneath it
+// would pass. capture-event.js now omits those keys, and treating any that
+// survive in an older fixture as absent rather than unknown closes the same
+// hole from the other end.
+const UNKNOWN_BELOW = new Set(['object', 'array', 'null', 'string', 'number', 'boolean', 'function']);
 
 function hasPath(shape, dotted) {
   let node = shape;
