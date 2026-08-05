@@ -7,6 +7,7 @@
 'use strict';
 
 const { PATTERNS, DEFAULT_EXCLUDE_PATHS } = require('./patterns');
+const { maskCodeLiterals, isSourceFile } = require('./code-literals');
 
 const MAX_SCAN_BYTES = 512 * 1024; // scan the first 512KB; enough for any prose file
 const EXCERPT_RADIUS = 60;
@@ -36,11 +37,24 @@ function scan(text, options = {}) {
   }
 
   const body = text.length > MAX_SCAN_BYTES ? text.slice(0, MAX_SCAN_BYTES) : text;
+
+  // In a source file the quoted text and the regular expressions are data the
+  // program handles, not sentences addressed to anyone, and a catalogue of
+  // injection patterns is nothing but those. Comments are left alone, because
+  // a comment is prose and is where an instruction aimed at a model would
+  // actually be written. See code-literals.js for what this costs.
+  //
+  // Matching happens on the masked copy and reporting on the original. The
+  // mask preserves length, so an offset means the same thing in both, and an
+  // excerpt taken from `body` shows what is really there rather than a row of
+  // filler characters.
+  const searchable = isSourceFile(filePath) ? maskCodeLiterals(body) : body;
+
   const hits = [];
   const categories = new Set();
 
   for (const pattern of PATTERNS) {
-    const match = pattern.re.exec(body);
+    const match = pattern.re.exec(searchable);
     if (!match) continue;
     categories.add(pattern.category);
     hits.push({
