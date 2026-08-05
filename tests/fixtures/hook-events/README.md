@@ -10,6 +10,26 @@ hand-typed shape looks exactly like a captured one once it is on disk, and the
 bug this guards against was everyone believing the same wrong thing about what
 an event looks like.
 
+Be honest about how far that stamp goes. It proves `capture-event.js` wrote the
+file. It does not prove the event on its stdin came from Claude Code, because
+anyone can pipe a made-up payload through it, and doing so is a useful way to
+exercise the test. The stamp raises the cost of faking a shape and makes faking
+it a deliberate act rather than an accident. Treat a capture you did not watch
+arrive with the same suspicion as a fixture.
+
+## Two kinds of file
+
+`<Event>.json` is the envelope: what every event of that type carries whatever
+tool triggered it.
+
+`<Event>.<Tool>.json` is the payload: `tool_input` and `tool_response` for one
+tool. These are separate because the payload is tool-specific. `command` is a
+Bash field, `file_path` is a Write field, and checking a hook that reads
+`tool_input.file_path` against a capture that happened to land on a Bash call
+is a coin toss reported as a defect. The test matches payload captures against
+the matcher each hook is wired to, and says plainly when it has no capture for
+a tool rather than passing quietly.
+
 ## Capturing
 
 Wire the hook, start one session, use it normally, then take it back out:

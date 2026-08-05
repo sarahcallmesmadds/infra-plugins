@@ -1,0 +1,32 @@
+{
+  "source": "capture-event.js",
+  "hook_event_name": "PostToolUse",
+  "captured_at": "2026-08-05T01:51:25.808Z",
+  "keys_only": true,
+  "tool_name": "Edit",
+  "shape": {
+    "tool_input": {
+      "file_path": "string",
+      "new_string": "string",
+      "old_string": "string",
+      "replace_all": "boolean"
+    },
+    "tool_response": {
+      "filePath": "string",
+      "newString": "string",
+      "oldString": "string",
+      "originalFile": "string",
+      "replaceAll": "boolean",
+      "structuredPatch": [
+        {
+          "lines": "array",
+          "newLines": "number",
+          "newStart": "number",
+          "oldLines": "number",
+          "oldStart": "number"
+        }
+      ],
+      "userModified": "boolean"
+    }
+  }
+}

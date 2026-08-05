@@ -73,6 +73,24 @@ function shapeOf(value, depth) {
   return typeof value;
 }
 
+// Written to a temporary name and renamed into place. `existsSync` then
+// `writeFileSync` is not atomic, and a session runs tool calls in parallel, so
+// two hooks can both pass the existence test and write the same file. The
+// content is derived from the shape either way so the result is not wrong, but
+// the second writer can tear the first, and a torn file is dropped as
+// unparseable and then reported as "no captured shape", which points at the
+// wrong problem entirely. Rename is atomic on the same filesystem.
+function writeOnce(target, body) {
+  if (fs.existsSync(target)) return;
+  const tmp = `${target}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, body);
+  try {
+    fs.renameSync(tmp, target);
+  } catch (_) {
+    fs.unlinkSync(tmp);
+  }
+}
+
 function main(raw) {
   const event = JSON.parse(raw);
 
@@ -83,26 +101,39 @@ function main(raw) {
   const name = event && event.hook_event_name;
   if (typeof name !== 'string' || !/^[A-Za-z]+$/.test(name)) return;
 
-  const target = path.join(OUT_DIR, `${name}.json`);
-
-  // One capture per event type. A second session should cost a stat and
-  // nothing else, and re-capturing would rewrite the file with whatever
-  // happened to be in flight rather than adding anything.
-  if (fs.existsSync(target)) return;
-
   fs.mkdirSync(OUT_DIR, { recursive: true });
 
-  // `source` is the provenance stamp, and the test refuses any file without
-  // it. That is the whole guarantee: a shape somebody typed by hand looks
-  // exactly like a captured one otherwise, and a hand-typed shape is the belief
-  // this file exists to stop being treated as evidence.
-  fs.writeFileSync(target, `${JSON.stringify({
+  const stamp = (extra) => `${JSON.stringify(Object.assign({
+    // The provenance stamp, and the whole reason a capture is worth more than a
+    // fixture somebody typed. The test refuses any file without it, because a
+    // hand-typed shape is indistinguishable from a captured one once it is on
+    // disk, and belief is the thing this file exists to stop being evidence.
     source: 'capture-event.js',
     hook_event_name: name,
     captured_at: new Date().toISOString(),
     keys_only: true,
-    shape: shapeOf(event, 0),
-  }, null, 2)}\n`);
+  }, extra), null, 2)}\n`;
+
+  // The envelope: the fields every event of this type carries whatever tool
+  // triggered it. One per event type, because a second one would say the same
+  // thing.
+  writeOnce(path.join(OUT_DIR, `${name}.json`), stamp({ shape: shapeOf(event, 0) }));
+
+  // And one per tool, because `tool_input` and `tool_response` are not part of
+  // the envelope. They hold whatever that tool carries: `command` for Bash,
+  // `file_path` for Write, `page_id` for a Notion call. A single capture per
+  // event says nothing about a hook that reads `tool_input.file_path` unless
+  // the capture happened to land on a Write, which is a coin toss, and a coin
+  // toss reported as a defect is worse than no check.
+  //
+  // So the payload is filed under the tool it came from, and the check matches
+  // it against the matcher the hook is wired to.
+  const tool = event.tool_name;
+  if (typeof tool !== 'string' || !/^[\w.-]+$/.test(tool)) return;
+  writeOnce(path.join(OUT_DIR, `${name}.${tool}.json`), stamp({
+    tool_name: tool,
+    shape: shapeOf({ tool_input: event.tool_input, tool_response: event.tool_response }, 0),
+  }));
 }
 
 let buffer = '';
