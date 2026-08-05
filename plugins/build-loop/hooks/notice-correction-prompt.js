@@ -18,10 +18,10 @@
 'use strict';
 
 const { readEvent, advise } = require('../scripts/hook-io.js');
-const { SAID_IT_WAS_WRONG, SUGGESTION, looksLikeCorrection } = require('../scripts/corrections.js');
+const { SUGGESTION, saidItWasWrong } = require('../scripts/corrections.js');
 
 readEvent((event) => {
-  if (looksLikeCorrection(event.prompt, SAID_IT_WAS_WRONG)) {
+  if (saidItWasWrong(event.prompt)) {
     advise('UserPromptSubmit', SUGGESTION);
   }
 });

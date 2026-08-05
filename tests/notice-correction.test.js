@@ -204,6 +204,64 @@ for (const prompt of [
   });
 }
 
+// --- round three, and the shape of what it found --------------------------
+//
+// Two more silent, two more noisy. The pattern across all three rounds is that
+// a rule written for one phrasing is wrong for the next one along, so these
+// are grouped by the reading that was missing rather than by the pattern.
+
+for (const prompt of ['`/pickup` gave me the wrong handoff', '(/pickup) gave me the wrong handoff']) {
+  check(`a formatted command is still a command: "${prompt.slice(0, 34)}..."`, () => {
+    // Written as `(^|\s)` this accepted the bare form and rejected both of
+    // these, so the more carefully somebody wrote it, the less likely it was
+    // to be noticed.
+    assertSuggests(onPrompt(prompt), 'UserPromptSubmit', 'formatted command');
+  });
+}
+
+for (const message of [
+  "You're right — this hook should have failed open.",
+  "You're right — we should have made the hook fail open.",
+]) {
+  check(`a concession can begin with any subject: "${message.slice(0, 34)}..."`, () => {
+    assertSuggests(onStop(message), 'Stop', 'subject after punctuation');
+  });
+}
+
+for (const message of [
+  'I should have the plugin ready by tomorrow.',
+  'I should have time to update the plugin tomorrow.',
+]) {
+  check(`a forecast is not a confession: "${message.slice(0, 34)}..."`, () => {
+    assert.strictEqual(onStop(message), null, 'read a plan as an admission of a defect');
+  });
+}
+
+check('I should have caught that in the hook, which is a confession', () => {
+  // The other side of the same rule. Requiring a participle must not silence
+  // the real thing.
+  assertSuggests(onStop('I should have caught that in the hook.'), 'Stop', 'real confession');
+});
+
+for (const prompt of [
+  'What plugin is this? The meeting should have a room.',
+  'Can you script that? The meeting should have a room.',
+]) {
+  check(`two thoughts are not one correction: "${prompt.slice(0, 34)}..."`, () => {
+    // The buildable word is in one sentence and the expectation in the next.
+    // Two unrelated thoughts in one message is the ordinary way people write,
+    // so reading them together fired often and on nothing.
+    assert.strictEqual(onPrompt(prompt), null, 'joined two unrelated sentences');
+  });
+}
+
+check('a concession may still straddle a sentence boundary', () => {
+  // The mirror of the rule above, and why the two halves differ. "You're
+  // right. The hook should not have fired." is one thought in two sentences,
+  // so the outgoing half reads the whole text at once.
+  assertSuggests(onStop("You're right. The hook should not have fired."), 'Stop', 'straddling');
+});
+
 check('stays quiet when the correction is already being filed', () => {
   assert.strictEqual(
     onPrompt('/flag-issue the wrap skill should have filed centrally, that was wrong'),

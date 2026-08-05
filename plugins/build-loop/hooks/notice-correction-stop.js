@@ -39,7 +39,7 @@
 'use strict';
 
 const { readEvent, advise } = require('../scripts/hook-io.js');
-const { ADMITTED_IT_WAS_WRONG, SUGGESTION, looksLikeCorrection } = require('../scripts/corrections.js');
+const { SUGGESTION, admittedItWasWrong } = require('../scripts/corrections.js');
 
 readEvent((event) => {
   // First, before anything else. A Stop hook that speaks into a stop it has
@@ -48,7 +48,7 @@ readEvent((event) => {
   // not a reason to leave the check out.
   if (event.stop_hook_active) return;
 
-  if (looksLikeCorrection(event.last_assistant_message, ADMITTED_IT_WAS_WRONG)) {
+  if (admittedItWasWrong(event.last_assistant_message)) {
     advise('Stop', SUGGESTION);
   }
 });
