@@ -133,6 +133,23 @@ const CASES = [
   ['git branch -d x', 'allow', 'git refuses this itself if it would lose work'],
   ['git branch -a', 'allow', 'listing branches'],
   ['git branch -m old new', 'allow', 'renaming one'],
+
+  // --- an attached value must not cancel a rule ---------------------------
+  //
+  // The mirror of the `-uno` cases above, and the dangerous direction of the
+  // same mistake. There the letters of an attached value were read as flags
+  // and refused an ordinary command, which is visible and annoying. Here they
+  // were read as the dry-run flag and cancelled the rule, so a real delete ran
+  // with no warning, which is invisible. `-e` on clean attaches an exclude
+  // pattern, and any pattern containing an n turned the guard off.
+  ['git clean -fdx -enode_modules', 'confirm', 'an exclude pattern containing an n'],
+  ['git clean -fdx -e.env', 'confirm', 'a shorter one that also contains it'],
+  ['git clean -fdx -e node_modules', 'confirm', 'the same, spelled with a space'],
+  ['git clean -fd  # -n', 'confirm', 'a comment git never sees'],
+  ['git clean -fd  # $(echo -n)', 'confirm', 'and a substitution inside one'],
+
+  // The genuine preview still has to be allowed, exclude pattern and all.
+  ['git clean -nfdx -enode_modules', 'allow', 'a real dry run beside that pattern'],
 ];
 
 let failed = 0;

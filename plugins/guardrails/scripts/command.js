@@ -190,63 +190,76 @@ const IRREVERSIBLE_GIT = [
   // clean: each has a spelling the regex missed. See below.
 ];
 
-// `git commit`, with any option allowed to sit between the two words, so
-// `git -C <path> commit` and `git --no-pager commit` both count.
-const GIT_COMMIT = /(^|\s)git\s+(?:-[^\s]+(?:\s+[^\s-][^\s]*)?\s+)*commit(\s|$)/;
-
-// Short options of `git commit` that carry their value attached to the letter.
-// Everything after one of these inside the same token is data, not more flags,
-// which is the whole difficulty: `-uno` is `--untracked-files=no` and `-mnew`
-// is the message "new". Reading either as a bundle containing `-n` refuses an
-// ordinary commit and tells the person they were skipping the commit checks,
-// which is both wrong and confusing, since nothing they typed mentions hooks.
-const ATTACHED_VALUE = new Set(['m', 'c', 'C', 'F', 't', 'u', 'S']);
-
-// Does this segment skip the commit hooks? A regex was tried and could not do
-// it. `-[a-zA-Z]*n[a-zA-Z]*` matches any single-dash token containing an `n`,
-// and after the cases above there is not much of that pattern left standing.
+// Reading a git subcommand's own options. Four rules need this now, and each
+// time one of them was written on its own it was written slightly differently
+// and the difference was a hole. So it lives here once.
 //
-// Reading the token the way git does is not much more code and it is right.
-// Walk the letters; the first one that takes an attached value ends the
-// bundle, and an `n` reached before that is `--no-verify`.
-function skipsCommitHooks(segment) {
-  // A command substitution carries somebody else's flags. The `-n` in
-  // `git commit -m $(head -n 1 msg.txt)` belongs to head and means "one line".
-  // Segments split on `;`, `&` and `|` only, so a substitution stays inside
-  // one and has to be removed here or it is read as part of the commit.
-  //
-  // A trailing comment is removed for the same reason: `git commit -m x # -n`
-  // is a note to a reader and git never sees it.
+// Short options that carry their value attached to the letter, per subcommand.
+// Everything after one of these inside the same token is data rather than more
+// flags. Getting this wrong has gone both ways in this branch: `-uno` on a
+// commit is `--untracked-files=no` and was read as a bundle containing `-n`,
+// which refused an ordinary commit; `-enode_modules` on a clean is an exclude
+// pattern and was read the same way, which cancelled the rule and let a real
+// delete through unannounced. The second direction is the dangerous one.
+const ATTACHED_VALUE = {
+  commit: new Set(['m', 'c', 'C', 'F', 't', 'u', 'S']),
+  clean: new Set(['e']),
+  push: new Set(['o']),
+  branch: new Set(['u']),
+};
+
+// The letters in a bundled short option that are actually flags. The first one
+// that takes a value is still a flag, and everything after it is its value.
+function flagLetters(token, attached) {
+  const letters = [];
+  for (const letter of token.slice(1)) {
+    if (!/[A-Za-z]/.test(letter)) break;
+    letters.push(letter);
+    if (attached.has(letter)) break;
+  }
+  return letters;
+}
+
+// Every option token belonging to one git subcommand.
+//
+// Text that git never sees is removed first. A command substitution carries
+// somebody else's flags, so the `-n` in `git commit -m $(head -n 1 msg.txt)`
+// means "one line" to head. A trailing comment is a note to a reader. Both
+// were handled on the commit rule and neither on the others, so `git clean
+// -fd  # -n` read as a preview and deleted files with no warning.
+//
+// Only what follows the subcommand counts. Anything before it belongs to
+// whatever is running it: `nice -n 10 git commit` sets a priority and
+// `sudo -n git commit` means do not prompt.
+function optionsAfter(segment, subcommand) {
   const own = segment
     .replace(/\$\([^)]*\)/g, ' ')
     .replace(/`[^`]*`/g, ' ')
     .replace(/(^|\s)#.*$/, '$1');
 
-  // Only what comes after the word `commit`. Anything before it belongs to
-  // something else: `nice -n 10 git commit -m x` runs the commit at a lower
-  // priority and `sudo -n git commit` means sudo must not prompt. Both were
-  // refused, and both were told they had asked to skip the commit checks,
-  // which is a sentence about a flag that is not theirs. It is the same
-  // mistake as reading `-uno` as a bundle, one level further out.
-  const commit = GIT_COMMIT.exec(own);
-  if (!commit) return false;
-  const afterCommit = own.slice(commit.index + commit[0].length);
+  const at = new RegExp(`(^|\\s)git\\s+(?:-[^\\s]+(?:\\s+[^\\s-][^\\s]*)?\\s+)*${subcommand}(\\s|$)`);
+  const found = at.exec(own);
+  if (!found) return null;
 
-  for (const raw of afterCommit.match(/(?:^|\s)--?[A-Za-z][^\s]*/g) || []) {
-    const token = raw.trim();
+  const after = own.slice(found.index + found[0].length);
+  return (after.match(/(?:^|\s)--?[A-Za-z][^\s]*/g) || []).map((raw) => raw.trim());
+}
+
+// Does this segment skip the commit hooks? A regex was tried and could not do
+// it: `-[a-zA-Z]*n[a-zA-Z]*` matches any single-dash token containing an `n`,
+// and once the attached values are accounted for there is not much of that
+// pattern left standing.
+function skipsCommitHooks(segment) {
+  const options = optionsAfter(segment, 'commit');
+  if (!options) return false;
+
+  for (const token of options) {
     if (token === '--no-verify') return true;
     if (token.startsWith('--')) continue;
-
-    for (const letter of token.slice(1)) {
-      if (!/[A-Za-z]/.test(letter)) break;
-      if (letter === 'n') return true;
-      if (ATTACHED_VALUE.has(letter)) break;
-    }
+    if (flagLetters(token, ATTACHED_VALUE.commit).includes('n')) return true;
   }
   return false;
 }
-
-const GIT_CLEAN = /(^|\s)git\s+(?:-[^\s]+(?:\s+[^\s-][^\s]*)?\s+)*clean(\s|$)/;
 
 // Does this segment actually delete untracked files? The old rule was
 // `git\s+clean\s+-[a-zA-Z]*[dfx]`, which asked only whether a destructive
@@ -259,13 +272,11 @@ const GIT_CLEAN = /(^|\s)git\s+(?:-[^\s]+(?:\s+[^\s-][^\s]*)?\s+)*clean(\s|$)/;
 // `confirm` reaches them as an outright deny. So the preview was blocked and
 // the destructive form was one keystroke away.
 function removesUntrackedFiles(segment) {
-  const clean = GIT_CLEAN.exec(segment);
-  if (!clean) return false;
-  const after = segment.slice(clean.index + clean[0].length);
+  const options = optionsAfter(segment, 'clean');
+  if (!options) return false;
 
   let destructive = false;
-  for (const raw of after.match(/(?:^|\s)--?[A-Za-z][^\s]*/g) || []) {
-    const token = raw.trim();
+  for (const token of options) {
     if (token === '--dry-run') return false;
     // `--force` is the long spelling of `-f` and the only long form among the
     // destructive options. Skipping every long token meant destructiveness was
@@ -274,28 +285,16 @@ function removesUntrackedFiles(segment) {
     // spelling somebody happens to use is not a rule.
     if (token === '--force') { destructive = true; continue; }
     if (token.startsWith('--')) continue;
-    const letters = token.slice(1);
+
+    const letters = flagLetters(token, ATTACHED_VALUE.clean);
     // A dry run anywhere in the command settles it, whatever else is asked
     // for. Nothing is deleted, so there is nothing to confirm.
     if (letters.includes('n')) return false;
     // `X` is uppercase and means "remove only the ignored files", which is
     // still removing files. Matching lowercase alone let it through.
-    if (/[dfxX]/.test(letters)) destructive = true;
+    if (letters.some((l) => 'dfxX'.includes(l))) destructive = true;
   }
   return destructive;
-}
-
-// Every option token belonging to a git subcommand, with the subcommand's own
-// name and anything before it left out. Three rules now need this, so it is
-// written once. The audit that produced the last two rules found the last two
-// holes as well, and they were the same hole: a rule written as a regex sees
-// the spelling its author had in mind and no other.
-function optionsAfter(segment, subcommand) {
-  const at = new RegExp(`(^|\\s)git\\s+(?:-[^\\s]+(?:\\s+[^\\s-][^\\s]*)?\\s+)*${subcommand}(\\s|$)`);
-  const found = at.exec(segment);
-  if (!found) return null;
-  const after = segment.slice(found.index + found[0].length);
-  return (after.match(/(?:^|\s)--?[A-Za-z][^\s]*/g) || []).map((raw) => raw.trim());
 }
 
 // `git push -f` is the spelling most people type and it was allowed, while
@@ -314,7 +313,7 @@ function forcePushes(segment) {
     if (token === '--dry-run') return false;
     if (token === '--force') { forced = true; continue; }
     if (token.startsWith('--')) continue; // including --force-with-lease
-    const letters = token.slice(1);
+    const letters = flagLetters(token, ATTACHED_VALUE.push);
     if (letters.includes('n')) return false; // -n is push's dry run
     if (letters.includes('f')) forced = true;
   }
@@ -334,7 +333,7 @@ function deletesUnmergedBranch(segment) {
     if (token === '--delete') { deleting = true; continue; }
     if (token === '--force') { forcing = true; continue; }
     if (token.startsWith('--')) continue;
-    const letters = token.slice(1);
+    const letters = flagLetters(token, ATTACHED_VALUE.branch);
     if (letters.includes('D')) { deleting = true; forcing = true; }
     if (letters.includes('d')) deleting = true;
     if (letters.includes('f')) forcing = true;
@@ -456,7 +455,7 @@ function checkCommand(command, config = {}, options = {}) {
     // leaves a commit that looks exactly like one that passed them, so the
     // check is not recorded as having been waived anywhere, and a rule enforced
     // by a pre-commit hook stops being enforced by anything at all.
-    if (stopHookSkips && GIT_COMMIT.test(segment) && skipsCommitHooks(segment)) {
+    if (stopHookSkips && skipsCommitHooks(segment)) {
       return {
         verdict: 'confirm',
         rule: 'commit-hook-skip',
