@@ -26,6 +26,12 @@ const CASES = [
   ['git push --force origin main', 'confirm', 'can overwrite a remote branch'],
   ['git branch -D feature', 'confirm', 'deletes an unmerged branch'],
 
+  // --- must block: going around the checks rather than destroying anything -
+  ['git commit --no-verify -m "wip"', 'confirm', 'skips every pre-commit hook'],
+  ['git commit -n -m "wip"', 'confirm', 'short form of the same flag'],
+  ['git commit -an -m "wip"', 'confirm', 'bundled with another short flag'],
+  ['git -C ~/repo commit --no-verify -m "wip"', 'confirm', 'option sitting between git and commit'],
+
   // --- must block: quoted text that really is executed -------------------
   ['bash -c "rm -rf ~/live"', 'confirm', 'shell -c executes its quoted argument'],
   ["sh -c 'rm -rf ~/live'", 'confirm', 'single-quoted form of the same'],
@@ -43,6 +49,18 @@ const CASES = [
   ['rm -rf node_modules', 'allow', 'configured disposable path'],
   ['rm file.txt', 'allow', 'not recursive, not forced'],
   ['ls -la', 'allow', 'ordinary command'],
+
+  // --- must allow: the near misses around that flag ----------------------
+  //
+  // `-n` is read only inside a segment already known to be a commit. On other
+  // subcommands the same letter means something else, and on `git clean` it
+  // means a dry run, which is the careful way to run the one command this file
+  // already blocks the reckless form of. Flagging it there would interrupt
+  // precisely the people being careful.
+  ['git commit -m "wip"', 'allow', 'an ordinary commit'],
+  ['git commit --amend --no-edit', 'allow', 'a long option that only starts like no-verify'],
+  ['git clean -n', 'allow', 'a dry run, which destroys nothing'],
+  ['git clean --dry-run', 'allow', 'the long form of the same'],
 ];
 
 let failed = 0;

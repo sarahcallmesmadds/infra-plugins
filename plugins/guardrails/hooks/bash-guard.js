@@ -93,7 +93,12 @@ function resolveAgainst(named, base) {
 //                                              repository doing normal work
 //   nothing named and nowhere is a repository  committing outside a repository
 //                                              is not a thing that happens
-function currentBranch(command, eventCwd) {
+//
+// Returns { branch, hasCommits }. Both answers come from the same resolved
+// directory, which is the only reason they can be trusted together: asking two
+// separate functions would let them land in two different repositories on a
+// command like `cd elsewhere && git commit`.
+function repoState(command, eventCwd) {
   const named = targetRepoDir(command || '');
   const base = eventCwd || process.cwd();
 
@@ -107,15 +112,31 @@ function currentBranch(command, eventCwd) {
     }
   }
 
+  const cwd = dir || base;
+  const run = (args) => execSync(args, {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'ignore'],
+    cwd,
+  });
+
+  let branch;
   try {
-    return execSync('git symbolic-ref --short HEAD', {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-      cwd: dir || base,
-    }).trim();
+    branch = run('git symbolic-ref --short HEAD').trim();
   } catch (_) {
-    return null; // not a repository, or a detached HEAD
+    return { branch: null, hasCommits: false }; // not a repository, or a detached HEAD
   }
+
+  // An unborn HEAD. `symbolic-ref` answers "main" in a repository that has
+  // never been committed to, so the branch name alone cannot tell the two
+  // apart, and this is the question the escape hatch turns on.
+  let hasCommits = true;
+  try {
+    run('git rev-parse --verify HEAD');
+  } catch (_) {
+    hasCommits = false;
+  }
+
+  return { branch, hasCommits };
 }
 
 function commitMessageFrom(command) {
@@ -149,8 +170,15 @@ readEvent((event) => {
 
   // 2. Protected branches.
   if (config.blockCommitToProtectedBranch) {
-    const branch = currentBranch(command, event.cwd);
-    if (branch && config.protectedBranches.includes(branch)) {
+    const { branch, hasCommits } = repoState(command, event.cwd);
+    // The escape hatch, and the only one. A repository with no commits yet has
+    // no other branch to move to and cannot be given one, because
+    // `git checkout -b` needs something to branch from. Its first commit is
+    // necessarily on main, so the block fired there with nothing to suggest,
+    // which is the shape of guard that gets switched off wholesale rather than
+    // worked around. It is a checkable fact rather than a flag someone has to
+    // remember, and it stops being true the moment the first commit lands.
+    if (branch && hasCommits && config.protectedBranches.includes(branch)) {
       block(
         `You are on "${branch}", which is a protected branch.\n\n` +
         `Branch first, then commit:\n` +

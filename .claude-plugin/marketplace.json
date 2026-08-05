@@ -12,7 +12,7 @@
       "name": "guardrails",
       "source": "./plugins/guardrails",
       "description": "Blocks commits to protected branches and irreversible deletes, and flags prompt injection in content the model reads or writes.",
-      "version": "0.2.6",
+      "version": "0.2.7",
       "author": {
         "name": "Sarah Madden"
       },

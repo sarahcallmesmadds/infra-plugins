@@ -85,6 +85,20 @@ function check(what, fn) {
   }
 }
 
+// Every fixture repository here gets a commit, and that is load-bearing rather
+// than tidiness. A repository straight out of `git init` has an unborn HEAD,
+// which is the one case the protected-branch guard now deliberately lets
+// through. Every deny test below used to build exactly that and pass anyway,
+// because the guard only looked at the branch name. Left alone they would all
+// have started failing on a change that is working as intended, and the reason
+// would have looked like a bug in the guard rather than a gap in the fixture.
+function initRepo(dir, branch) {
+  execFileSync('git', ['init', '-b', branch, dir], { stdio: 'ignore' });
+  execFileSync('git', ['-C', dir, 'config', 'user.email', 't@t.t'], { stdio: 'ignore' });
+  execFileSync('git', ['-C', dir, 'config', 'user.name', 't'], { stdio: 'ignore' });
+  execFileSync('git', ['-C', dir, 'commit', '--allow-empty', '-m', 'base'], { stdio: 'ignore' });
+}
+
 // --- the three things the guard exists to stop ---------------------------
 
 check('recursive force-delete is denied, in the shape PreToolUse reads', () => {
@@ -98,7 +112,7 @@ check('a delete inside a quoted bash -c is denied', () => {
 
 check('committing on a protected branch is denied', () => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrails-repo-'));
-  execFileSync('git', ['init', '-b', 'main', repo], { stdio: 'ignore' });
+  initRepo(repo, 'main');
   const reason = assertDenies(
     runHook(`git -C ${repo} commit -m "wip"`),
     'commit on main'
@@ -127,13 +141,88 @@ check('a command that only mentions a delete is left alone', () => {
 
 check('committing on a feature branch is left alone', () => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrails-repo-'));
-  execFileSync('git', ['init', '-b', 'some-feature', repo], { stdio: 'ignore' });
+  initRepo(repo, 'some-feature');
   assert.strictEqual(
     runHook(`git -C ${repo} commit -m "wip"`),
     null,
     'hook objected to a commit on a feature branch'
   );
   fs.rmSync(repo, { recursive: true, force: true });
+});
+
+// --- the one way past the protected-branch block --------------------------
+//
+// A repository with no commits yet cannot be branched: `git checkout -b` needs
+// something to branch from. So the block used to fire on the first commit of
+// every new repository, told the person to do something git will not let them
+// do, and left them with nothing but turning the guard off. The exception is a
+// fact about the repository rather than a flag to remember, and it stops
+// applying the moment the first commit lands.
+
+check('the first commit of a repository with no commits yet is allowed', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrails-repo-'));
+  execFileSync('git', ['init', '-b', 'main', repo], { stdio: 'ignore' });
+  assert.strictEqual(
+    runHook(`git -C ${repo} commit -m "first"`),
+    null,
+    'hook blocked the first commit of a repository that has no other branch'
+  );
+  fs.rmSync(repo, { recursive: true, force: true });
+});
+
+check('the block returns as soon as that repository has a commit', () => {
+  // The same repository, one commit later. This is the pair that matters: an
+  // exception that never expires is just the guard being off.
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrails-repo-'));
+  execFileSync('git', ['init', '-b', 'main', repo], { stdio: 'ignore' });
+  assert.strictEqual(runHook(`git -C ${repo} commit -m "first"`), null, 'setup');
+  initRepo(repo, 'main');
+  const reason = assertDenies(
+    runHook(`git -C ${repo} commit -m "second"`),
+    'second commit on main'
+  );
+  assert.ok(reason.includes('main'), `reason did not name the branch: ${reason}`);
+  fs.rmSync(repo, { recursive: true, force: true });
+});
+
+// --- skipping the commit hooks --------------------------------------------
+
+check('committing with --no-verify is denied', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrails-repo-'));
+  initRepo(repo, 'some-feature');
+  const reason = assertDenies(
+    runHook(`git -C ${repo} commit --no-verify -m "wip"`),
+    'commit --no-verify'
+  );
+  // On a feature branch, so the protected-branch rule is not what fired. A
+  // test that only asserted "denied" would pass on either.
+  assert.ok(
+    reason.includes('no-verify'),
+    `something else denied this, not the hook-skipping rule: ${reason}`
+  );
+  fs.rmSync(repo, { recursive: true, force: true });
+});
+
+check('the short form -n is denied too', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrails-repo-'));
+  initRepo(repo, 'some-feature');
+  const reason = assertDenies(
+    runHook(`git -C ${repo} commit -n -m "wip"`),
+    'commit -n'
+  );
+  assert.ok(reason.includes('no-verify'), `wrong rule fired: ${reason}`);
+  fs.rmSync(repo, { recursive: true, force: true });
+});
+
+check('git clean -n, a dry run, is left alone', () => {
+  // The careful way to run the command the guard blocks the reckless form of.
+  // `-n` only means --no-verify on a commit, and reading it anywhere would
+  // flag exactly the people being careful.
+  assert.strictEqual(
+    runHook('git clean -n'),
+    null,
+    'hook objected to a dry run'
+  );
 });
 
 // --- the repository the guard reads ---------------------------------------
@@ -146,7 +235,7 @@ check('committing on a feature branch is left alone', () => {
 
 check('a bare commit is judged against the event cwd, not the hook process cwd', () => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrails-repo-'));
-  execFileSync('git', ['init', '-b', 'main', repo], { stdio: 'ignore' });
+  initRepo(repo, 'main');
   const reason = assertDenies(
     // No `-C` and no `cd`, so the only clue to the repository is the event.
     // The hook process deliberately sits somewhere else entirely.
@@ -163,8 +252,8 @@ check('an explicit -C still wins over the event cwd', () => {
   // just because the session happens to be sitting on main.
   const onMain = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrails-repo-'));
   const onFeature = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrails-repo-'));
-  execFileSync('git', ['init', '-b', 'main', onMain], { stdio: 'ignore' });
-  execFileSync('git', ['init', '-b', 'some-feature', onFeature], { stdio: 'ignore' });
+  initRepo(onMain, 'main');
+  initRepo(onFeature, 'some-feature');
   assert.strictEqual(
     runHook(`git -C ${onFeature} commit -m "wip"`, { eventCwd: onMain }),
     null,
@@ -183,7 +272,7 @@ check('an explicit -C still wins over the event cwd', () => {
 // it surfaces.
 check('the guard reads the PreToolUse event exactly as documented', () => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrails-repo-'));
-  execFileSync('git', ['init', '-b', 'main', repo], { stdio: 'ignore' });
+  initRepo(repo, 'main');
   const documented = JSON.stringify({
     session_id: 'abc123',
     transcript_path: '/home/user/.claude/projects/x/transcript.jsonl',
@@ -216,7 +305,7 @@ check('the guard reads the PreToolUse event exactly as documented', () => {
 // previous shipped behaviour rather than nothing at all.
 check('a missing cwd degrades to the process directory rather than crashing', () => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrails-repo-'));
-  execFileSync('git', ['init', '-b', 'main', repo], { stdio: 'ignore' });
+  initRepo(repo, 'main');
   // No cwd in the event, hook process sitting in the repo. It should still
   // find main from where it stands, and it must not throw.
   const reason = assertDenies(
@@ -249,7 +338,7 @@ check('a missing cwd outside any repository stays silent rather than erroring', 
 function repoIn(dir, branch) {
   const repo = path.join(dir, `repo-${branch}`);
   fs.mkdirSync(repo, { recursive: true });
-  execFileSync('git', ['init', '-b', branch, repo], { stdio: 'ignore' });
+  initRepo(repo, branch);
   return repo;
 }
 
@@ -291,7 +380,7 @@ check('a tilde path on a feature branch is still left alone', () => {
 
 check('a relative path is resolved against the event directory', () => {
   const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrails-parent-'));
-  execFileSync('git', ['init', '-b', 'main', path.join(parent, 'sub')], { stdio: 'ignore' });
+  initRepo(path.join(parent, 'sub'), 'main');
   const reason = assertDenies(
     runHook('cd sub && git commit -m "wip"', { eventCwd: parent, processCwd: NOWHERE }),
     'cd sub'
@@ -305,7 +394,7 @@ check('a relative path is resolved against the event directory', () => {
 
 check('a relative path on a feature branch is left alone', () => {
   const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrails-parent-'));
-  execFileSync('git', ['init', '-b', 'some-feature', path.join(parent, 'sub')], { stdio: 'ignore' });
+  initRepo(path.join(parent, 'sub'), 'some-feature');
   assert.strictEqual(
     runHook('cd sub && git commit -m "wip"', { eventCwd: parent, processCwd: NOWHERE }),
     null,
@@ -316,7 +405,7 @@ check('a relative path on a feature branch is left alone', () => {
 
 check('a relative path with .. is resolved too', () => {
   const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrails-parent-'));
-  execFileSync('git', ['init', '-b', 'main', path.join(parent, 'sub')], { stdio: 'ignore' });
+  initRepo(path.join(parent, 'sub'), 'main');
   fs.mkdirSync(path.join(parent, 'other'));
   const reason = assertDenies(
     runHook('cd ../sub && git commit -m "wip"', {
@@ -348,7 +437,7 @@ check('a command substitution falls back to the directory the command runs in', 
   // `$(git rev-parse --show-toplevel)` IS the repository already in play, so
   // reading the event directory answers it exactly rather than approximately.
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrails-repo-'));
-  execFileSync('git', ['init', '-b', 'main', repo], { stdio: 'ignore' });
+  initRepo(repo, 'main');
   const reason = assertDenies(
     runHook('cd "$(git rev-parse --show-toplevel)" && git commit -m "wip"', {
       eventCwd: repo,
@@ -362,7 +451,7 @@ check('a command substitution falls back to the directory the command runs in', 
 
 check('a shell variable falls back the same way', () => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrails-repo-'));
-  execFileSync('git', ['init', '-b', 'main', repo], { stdio: 'ignore' });
+  initRepo(repo, 'main');
   const reason = assertDenies(
     runHook('cd $REPO && git commit -m "wip"', { eventCwd: repo, processCwd: NOWHERE }),
     'cd $REPO'
@@ -397,7 +486,7 @@ check('cloning inside a repo on main and committing into the clone is stopped', 
   // special-casing `git clone <url> <dir>` followed by `cd <dir>`, which is
   // more moving parts than the workflow is worth.
   const outer = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrails-outer-'));
-  execFileSync('git', ['init', '-b', 'main', outer], { stdio: 'ignore' });
+  initRepo(outer, 'main');
   const reason = assertDenies(
     runHook('git clone https://example.com/x r && cd r && git commit -m "wip"', {
       eventCwd: outer,
@@ -433,12 +522,7 @@ check('a detached HEAD is left alone rather than treated as unresolvable', () =>
   // symbolic-ref fails on a detached HEAD in a perfectly valid repository
   // doing perfectly normal work. That is not the guard being unable to tell.
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrails-repo-'));
-  execFileSync('git', ['init', '-b', 'main', repo], { stdio: 'ignore' });
-  execFileSync('git', ['-C', repo, 'config', 'user.email', 't@t.t'], { stdio: 'ignore' });
-  execFileSync('git', ['-C', repo, 'config', 'user.name', 't'], { stdio: 'ignore' });
-  fs.writeFileSync(path.join(repo, 'a.txt'), 'x');
-  execFileSync('git', ['-C', repo, 'add', '-A'], { stdio: 'ignore' });
-  execFileSync('git', ['-C', repo, 'commit', '-m', 'base'], { stdio: 'ignore' });
+  initRepo(repo, 'main');
   const sha = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
   execFileSync('git', ['-C', repo, 'checkout', sha], { stdio: 'ignore' });
   assert.strictEqual(

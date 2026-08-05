@@ -188,6 +188,18 @@ const IRREVERSIBLE_GIT = [
   { re: /(^|\s)git\s+branch\s+-D(\s|$)/, what: 'git branch -D deletes an unmerged branch' },
 ];
 
+// `git commit`, with any option allowed to sit between the two words, so
+// `git -C <path> commit` and `git --no-pager commit` both count.
+const GIT_COMMIT = /(^|\s)git\s+(?:-[^\s]+(?:\s+[^\s-][^\s]*)?\s+)*commit(\s|$)/;
+
+// --no-verify and its short form. `-n` is only read inside a segment already
+// known to be a commit, because the same letter means something else on other
+// subcommands: `git clean -n` is a dry run and is the safe way to run it, so a
+// rule that fired on `-n` anywhere would flag the careful version of a command
+// it flags the reckless version of. Bundled short flags count, since
+// `git commit -an` is `--all --no-verify`.
+const SKIPS_COMMIT_HOOKS = /(^|\s)(--no-verify|-[a-zA-Z]*n[a-zA-Z]*)(\s|$)/;
+
 // Returns { verdict: 'allow' | 'confirm', reason, target }.
 function checkCommand(command, config = {}) {
   const safePaths = config.safeDeletePaths || [];
@@ -230,6 +242,26 @@ function checkCommand(command, config = {}) {
             `it usually still has what you are about to discard.`,
         };
       }
+    }
+
+    // Not on the list above, and deliberately not: nothing here is
+    // irreversible, so the reflog advice attached to that list would be beside
+    // the point. The reason to stop is a different one. Skipping the hooks
+    // leaves a commit that looks exactly like one that passed them, so the
+    // check is not recorded as having been waived anywhere, and a rule enforced
+    // by a pre-commit hook stops being enforced by anything at all.
+    if (GIT_COMMIT.test(segment) && SKIPS_COMMIT_HOOKS.test(segment)) {
+      return {
+        verdict: 'confirm',
+        target: source,
+        reason:
+          `git commit --no-verify skips every pre-commit and commit-msg hook.\n\n` +
+          `The commit that results is indistinguishable from one that passed them, ` +
+          `so nothing downstream can tell the checks were not run. If a hook is ` +
+          `failing, say which one and on what, then either fix the cause or turn ` +
+          `that hook off on purpose. Going around it for one commit leaves the ` +
+          `next person to find out the hard way.`,
+      };
     }
   }
 
