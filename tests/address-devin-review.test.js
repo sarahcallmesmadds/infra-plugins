@@ -21,8 +21,12 @@ function check(name, fn) {
 function run(record) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'devin-round-'));
   const file = path.join(dir, 'round.json');
-  fs.writeFileSync(file, JSON.stringify(record));
-  return spawnSync(process.execPath, [VALIDATOR, file], { encoding: 'utf8' });
+  try {
+    fs.writeFileSync(file, JSON.stringify(record));
+    return spawnSync(process.execPath, [VALIDATOR, file], { encoding: 'utf8' });
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 const valid = {
