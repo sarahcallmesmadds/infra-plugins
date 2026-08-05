@@ -60,9 +60,16 @@ function outcomeList() {
 // one: those twelve entries carry a commit and a summary, sit on Resolved
 // primaries, and record no outcome because the vocabulary did not exist when
 // they were written. A commit against a Resolved entry is a fix that was
-// applied. Anything with no commit and no outcome stays unknown rather than
-// being guessed at, because "we closed this and cannot say why" is a real
-// answer and inventing one hides it.
+// applied.
+//
+// It fires only when the field is empty, never when it holds something this
+// module cannot read. Two cases, and they are not the same: nothing was said,
+// and something was said that is not understood. Guessing at the second
+// overwrote a stated outcome with an inferred one, so `{outcome: "reverted",
+// commit: "abc1234"}` read as `fix_applied`.
+//
+// Anything unreadable, and anything with no commit and no outcome, stays null.
+// "Closed and cannot say why" is a real answer, and inventing one hides it.
 function normalise(resolution) {
   if (resolution === null || resolution === undefined) return null;
 
@@ -95,7 +102,19 @@ function normalise(resolution) {
   }
 
   const commit = typeof resolution.commit === 'string' && resolution.commit ? resolution.commit : null;
-  if (!outcome && commit) outcome = 'fix_applied';
+
+  // Only when nothing was written in that field, not merely when what was
+  // written could not be read. Those are different, and conflating them made
+  // this the one place in the module that invents an answer: `{outcome:
+  // "reverted", commit: "abc1234"}` came back as `fix_applied`, which is not a
+  // lossy reading of "reverted", it is the opposite of it. A typo and a cased
+  // variant went the same way, silently, because the enum is matched exactly.
+  //
+  // An outcome nobody can read stays null now, which is what the rule three
+  // paragraphs up already claimed. Null means "closed, cannot say why", which
+  // is a real answer, and it leaves the odd spelling visible instead of
+  // dressing it up as a fix.
+  if (!outcome && !rawOutcome && commit) outcome = 'fix_applied';
 
   const summary = [resolution.summary, resolution.why]
     .find((s) => typeof s === 'string' && s.trim());

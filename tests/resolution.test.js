@@ -109,6 +109,29 @@ check('null and nonsense read as nothing rather than throwing', () => {
   }
 });
 
+check('an outcome nobody can read is not replaced by an inferred one', () => {
+  // The inference exists for the twelve legacy entries that carry no outcome
+  // at all. It used to fire whenever the outcome could not be *resolved*,
+  // which is a different thing, so a deliberate `"reverted"` alongside a
+  // commit came back as `fix_applied`. That is not a lossy reading of
+  // "reverted", it is the opposite of it, and a typo or a cased variant went
+  // the same way in silence.
+  for (const stated of ['reverted', 'Fix_Applied', 'fix-applied', 'partially done']) {
+    const got = normalise({ outcome: stated, commit: 'abc1234', at: 'now', summary: 's' });
+    assert.strictEqual(got.outcome, null, `"${stated}" was rewritten as ${got.outcome}`);
+  }
+});
+
+check('the inference still fires when the field is genuinely empty', () => {
+  // The other half. Gating it too tightly would break the twelve legacy
+  // entries this exists for, so both directions are pinned together.
+  for (const stated of [undefined, '', '   ']) {
+    const r = { commit: 'abc1234', fixed_at: '2026-08-02', summary: 's' };
+    if (stated !== undefined) r.outcome = stated;
+    assert.strictEqual(normalise(r).outcome, 'fix_applied', `${JSON.stringify(stated)} lost the inference`);
+  }
+});
+
 check('a closed entry with no commit and no outcome stays unknown', () => {
   // The only inference here is commit-plus-Resolved meaning fix_applied.
   // Without a commit there is nothing to infer from, and "closed, cannot say
