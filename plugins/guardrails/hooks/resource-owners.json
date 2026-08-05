@@ -1,0 +1,24 @@
+{
+  "$schema_version": 1,
+  "resources": [
+    {
+      "id": "session-handoffs",
+      "label": "session handoffs",
+      "type": "directory",
+      "path": "~/.planning/handoffs/",
+      "owners": ["session:wrap"]
+    },
+    {
+      "id": "build-loop-bug-queue",
+      "label": "the build-loop bug queue",
+      "type": "directory",
+      "path": "~/.claude/build-loop/queue/",
+      "owners": [
+        "build-loop:flag-issue",
+        "build-loop:apply-fix",
+        "build-loop:verify-fix",
+        "build-loop:revert-fix"
+      ]
+    }
+  ]
+}
