@@ -94,11 +94,18 @@ function resolveAgainst(named, base) {
 //   nothing named and nowhere is a repository  committing outside a repository
 //                                              is not a thing that happens
 //
-// Returns { branch, hasCommits }. Both answers come from the same resolved
-// directory, which is the only reason they can be trusted together: asking two
-// separate functions would let them land in two different repositories on a
-// command like `cd elsewhere && git commit`.
-function repoState(command, eventCwd) {
+// There is no exception here for a repository with no commits yet, and there
+// was one for a day. It rested on the claim that such a repository cannot be
+// put on another branch, so the first commit is necessarily on main and the
+// block had nothing to suggest. The claim is simply false. `git checkout -b
+// feature` succeeds on an unborn HEAD and repoints it, and the branch is real
+// as soon as the first commit lands. Checked by running it rather than by
+// reasoning about it, which is how the mistake got in.
+//
+// So the advice the guard prints was always actionable, including on the very
+// first commit, and the exception did nothing but wave through the one commit
+// that establishes main as the branch everybody then keeps committing to.
+function currentBranch(command, eventCwd) {
   const named = targetRepoDir(command || '');
   const base = eventCwd || process.cwd();
 
@@ -112,31 +119,15 @@ function repoState(command, eventCwd) {
     }
   }
 
-  const cwd = dir || base;
-  const run = (args) => execSync(args, {
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'ignore'],
-    cwd,
-  });
-
-  let branch;
   try {
-    branch = run('git symbolic-ref --short HEAD').trim();
+    return execSync('git symbolic-ref --short HEAD', {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      cwd: dir || base,
+    }).trim();
   } catch (_) {
-    return { branch: null, hasCommits: false }; // not a repository, or a detached HEAD
+    return null; // not a repository, or a detached HEAD
   }
-
-  // An unborn HEAD. `symbolic-ref` answers "main" in a repository that has
-  // never been committed to, so the branch name alone cannot tell the two
-  // apart, and this is the question the escape hatch turns on.
-  let hasCommits = true;
-  try {
-    run('git rev-parse --verify HEAD');
-  } catch (_) {
-    hasCommits = false;
-  }
-
-  return { branch, hasCommits };
 }
 
 function commitMessageFrom(command) {
@@ -173,15 +164,8 @@ readEvent((event) => {
 
   // 2. Protected branches.
   if (config.blockCommitToProtectedBranch) {
-    const { branch, hasCommits } = repoState(command, event.cwd);
-    // The escape hatch, and the only one. A repository with no commits yet has
-    // no other branch to move to and cannot be given one, because
-    // `git checkout -b` needs something to branch from. Its first commit is
-    // necessarily on main, so the block fired there with nothing to suggest,
-    // which is the shape of guard that gets switched off wholesale rather than
-    // worked around. It is a checkable fact rather than a flag someone has to
-    // remember, and it stops being true the moment the first commit lands.
-    if (branch && hasCommits && config.protectedBranches.includes(branch)) {
+    const branch = currentBranch(command, event.cwd);
+    if (branch && config.protectedBranches.includes(branch)) {
       block(
         `You are on "${branch}", which is a protected branch.\n\n` +
         `Branch first, then commit:\n` +

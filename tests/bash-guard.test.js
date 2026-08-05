@@ -85,13 +85,12 @@ function check(what, fn) {
   }
 }
 
-// Every fixture repository here gets a commit, and that is load-bearing rather
-// than tidiness. A repository straight out of `git init` has an unborn HEAD,
-// which is the one case the protected-branch guard now deliberately lets
-// through. Every deny test below used to build exactly that and pass anyway,
-// because the guard only looked at the branch name. Left alone they would all
-// have started failing on a change that is working as intended, and the reason
-// would have looked like a bug in the guard rather than a gap in the fixture.
+// Every fixture repository here gets a commit, so that these describe a repo
+// somebody is actually working in rather than the output of `git init`. That
+// distinction is not load-bearing for the guard, which reads the branch name
+// and nothing else, and the two tests further down cover the empty case
+// directly. It is here because a fixture that matches reality is the one that
+// keeps being right when the code around it changes.
 function initRepo(dir, branch) {
   execFileSync('git', ['init', '-b', branch, dir], { stdio: 'ignore' });
   execFileSync('git', ['-C', dir, 'config', 'user.email', 't@t.t'], { stdio: 'ignore' });
@@ -150,36 +149,37 @@ check('committing on a feature branch is left alone', () => {
   fs.rmSync(repo, { recursive: true, force: true });
 });
 
-// --- the one way past the protected-branch block --------------------------
+// --- the exception that should not exist ----------------------------------
 //
-// A repository with no commits yet cannot be branched: `git checkout -b` needs
-// something to branch from. So the block used to fire on the first commit of
-// every new repository, told the person to do something git will not let them
-// do, and left them with nothing but turning the guard off. The exception is a
-// fact about the repository rather than a flag to remember, and it stops
-// applying the moment the first commit lands.
+// For one day this guard waved through any commit in a repository with no
+// history, on the grounds that such a repository cannot be branched and its
+// first commit is therefore necessarily on main. That is false, and the pair
+// below is what proves it rather than argues it.
+//
+// The effect of the exception was the worst possible one. The first commit is
+// what establishes main as the branch everybody then keeps committing to, so
+// the guard was off for precisely the commit that matters most.
 
-check('the first commit of a repository with no commits yet is allowed', () => {
+check('git can branch a repository that has no commits, so the advice works', () => {
+  // Pins the premise the guard's message rests on. If git ever stopped
+  // allowing this, "branch first, then commit" would become advice nobody can
+  // follow, and that should surface here rather than in somebody's terminal.
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrails-repo-'));
   execFileSync('git', ['init', '-b', 'main', repo], { stdio: 'ignore' });
-  assert.strictEqual(
-    runHook(`git -C ${repo} commit -m "first"`),
-    null,
-    'hook blocked the first commit of a repository that has no other branch'
-  );
+  execFileSync('git', ['-C', repo, 'checkout', '-b', 'feature'], { stdio: 'ignore' });
+  const now = execFileSync('git', ['-C', repo, 'symbolic-ref', '--short', 'HEAD'], {
+    encoding: 'utf8',
+  }).trim();
+  assert.strictEqual(now, 'feature', 'checkout -b did not move an unborn HEAD');
   fs.rmSync(repo, { recursive: true, force: true });
 });
 
-check('the block returns as soon as that repository has a commit', () => {
-  // The same repository, one commit later. This is the pair that matters: an
-  // exception that never expires is just the guard being off.
+check('the first commit of a brand new repository is still denied', () => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrails-repo-'));
   execFileSync('git', ['init', '-b', 'main', repo], { stdio: 'ignore' });
-  assert.strictEqual(runHook(`git -C ${repo} commit -m "first"`), null, 'setup');
-  initRepo(repo, 'main');
   const reason = assertDenies(
-    runHook(`git -C ${repo} commit -m "second"`),
-    'second commit on main'
+    runHook(`git -C ${repo} commit -m "first"`),
+    'first commit on main'
   );
   assert.ok(reason.includes('main'), `reason did not name the branch: ${reason}`);
   fs.rmSync(repo, { recursive: true, force: true });
