@@ -69,6 +69,26 @@ check('fix-applied watching entries do not inflate the list-bugs count', () => {
   assert.doesNotMatch(brief.buildBrief({ home }), /Bug queue/);
 });
 
+check('the retired unresolved status is still counted as open', () => {
+  const home = tempHome();
+  const dir = stateDir(home, 'queue');
+  writeJson(path.join(dir, 'old-status.json'), {
+    status: 'fix attempted / unresolved', skill: 'old-open-bug',
+  });
+  assert.match(brief.buildBrief({ home }), /Bug queue: 1 active: old-open-bug\./);
+});
+
+check('dependency reviews alone do not announce zero active bugs', () => {
+  const home = tempHome();
+  const dir = stateDir(home, 'queue');
+  writeJson(path.join(dir, 'review.json'), {
+    status: 'Open', type: 'dep-review', target: 'dependent',
+  });
+  const out = brief.buildBrief({ home });
+  assert.match(out, /Dependency reviews: 1 active\./);
+  assert.doesNotMatch(out, /Bug queue: 0/);
+});
+
 check('the to-build count includes open and in-progress items only', () => {
   const home = tempHome();
   const dir = stateDir(home, 'to-build');
@@ -129,12 +149,33 @@ check('DEPS reports missing and files changed since their record', () => {
   assert.match(out, /Review it before relying on it/);
 });
 
-check('an exhausted deadline is described as incomplete, not clean', () => {
+check('v1 DEPS skills are read as targets', () => {
+  const home = tempHome();
+  const root = path.join(home, '.claude', 'build-loop');
+  fs.mkdirSync(root, { recursive: true });
+  writeJson(path.join(root, 'DEPS.json'), { skills: {
+    old: { path: '~/missing-old-skill', last_updated: '2000-01-01T00:00:00Z' },
+  } });
+  assert.match(brief.buildBrief({ home }), /DEPS\.json drift warning: 1 missing\./);
+});
+
+check('a deadline exhausted before any read stays silent', () => {
   const home = tempHome();
   const root = path.join(home, '.claude', 'build-loop');
   fs.mkdirSync(root, { recursive: true });
   writeJson(path.join(root, 'DEPS.json'), { targets: { one: { path: '~/one' } } });
-  assert.match(brief.buildBrief({ home, deadline: 0 }), /check incomplete/);
+  assert.strictEqual(brief.buildBrief({ home, deadline: 0 }), '');
+});
+
+check('an exhausted deadline suppresses every brief reader', () => {
+  const home = tempHome();
+  const queue = stateDir(home, 'queue');
+  const builds = stateDir(home, 'to-build');
+  const summaries = stateDir(home, 'summaries');
+  writeJson(path.join(queue, 'one.json'), { status: 'Open', target: 'bug' });
+  writeJson(path.join(builds, 'one.json'), { status: 'Open' });
+  fs.writeFileSync(path.join(summaries, '2026-31.md'), 'summary');
+  assert.strictEqual(brief.buildBrief({ home, deadline: 0 }), '');
 });
 
 check('the combined hook context never exceeds 10000 characters', () => {

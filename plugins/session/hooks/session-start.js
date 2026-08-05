@@ -58,7 +58,8 @@ const STDIN_WAIT_MS = 1000;
 const SESSIONS_BUDGET_MS = Math.round(BUDGET_MS * 0.6);
 // The local-state brief runs after the process scan, so it cannot consume the
 // session scan's share. Give it one tenth of the total before git activity gets
-// the remaining three tenths. Reads that do not finish say so and stop.
+// the remaining three tenths. A section that cannot finish is omitted rather
+// than publishing a partial count; a partial DEPS scan says it was incomplete.
 const BRIEF_DEADLINE_MS = Math.round(BUDGET_MS * 0.7);
 
 // Naming every overlapping session gets silly past a handful, and past a

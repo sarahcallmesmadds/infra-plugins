@@ -19,13 +19,19 @@ const MAX_QUEUE_TITLES = 5;
 
 const loose = (value) => String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 const isActiveBuildStatus = (status) => ['open', 'inprogress'].includes(loose(status));
+const isActiveQueueStatus = (status) => [
+  'open', 'inprogress', 'fixattemptedunresolved',
+].includes(loose(status));
+const expired = (deadline) => Date.now() >= deadline;
 
-function jsonFiles(dir) {
+function jsonFiles(dir, deadline = Infinity) {
+  if (expired(deadline)) return null;
   try {
-    return fs.readdirSync(dir)
+    const files = fs.readdirSync(dir)
       .filter((name) => name.endsWith('.json'))
       .sort()
       .map((name) => path.join(dir, name));
+    return expired(deadline) ? null : files;
   } catch (_) {
     return [];
   }
@@ -36,10 +42,22 @@ function readJson(file) {
   catch (_) { return null; }
 }
 
-function queueLine(root) {
-  const active = jsonFiles(path.join(root, 'queue'))
-    .map(readJson)
-    .filter((entry) => entry && isActiveBuildStatus(entry.status));
+function entriesBeforeDeadline(dir, deadline) {
+  const files = jsonFiles(dir, deadline);
+  if (!files) return null;
+  const entries = [];
+  for (const file of files) {
+    if (expired(deadline)) return null;
+    entries.push(readJson(file));
+  }
+  return entries;
+}
+
+function queueLine(root, { deadline = Infinity } = {}) {
+  const entries = entriesBeforeDeadline(path.join(root, 'queue'), deadline);
+  if (!entries) return '';
+  const active = entries
+    .filter((entry) => entry && isActiveQueueStatus(entry.status));
   if (!active.length) return '';
 
   const primary = active.filter((entry) => entry.type !== 'dep-review');
@@ -50,19 +68,24 @@ function queueLine(root) {
   const more = primary.length > names.length ? `, +${primary.length - names.length} more` : '';
   const reviewText = reviews ? `; ${reviews} dependency review${reviews === 1 ? '' : 's'}` : '';
   const titleText = names.length ? `: ${names.join(', ')}${more}` : '';
+  if (!primary.length) {
+    return `Dependency reviews: ${reviews} active.`;
+  }
   return `Bug queue: ${primary.length} active${titleText}${reviewText}.`;
 }
 
-function toBuildLine(root) {
-  const entries = jsonFiles(path.join(root, 'to-build'))
-    .map(readJson)
+function toBuildLine(root, { deadline = Infinity } = {}) {
+  const read = entriesBeforeDeadline(path.join(root, 'to-build'), deadline);
+  if (!read) return '';
+  const entries = read
     .filter((entry) => entry && isActiveBuildStatus(entry.status));
   if (!entries.length) return '';
   const inProgress = entries.filter((entry) => loose(entry.status) === 'inprogress').length;
   return `To build: ${entries.length} active${inProgress ? ` (${inProgress} in progress)` : ''}.`;
 }
 
-function latestSummary(root, { now = Date.now() } = {}) {
+function latestSummary(root, { now = Date.now(), deadline = Infinity } = {}) {
+  if (expired(deadline)) return '';
   let files;
   try {
     files = fs.readdirSync(path.join(root, 'summaries'))
@@ -72,13 +95,15 @@ function latestSummary(root, { now = Date.now() } = {}) {
   } catch (_) {
     return '';
   }
-  if (!files.length) return '';
+  if (!files.length || expired(deadline)) return '';
 
   const name = files[0];
   try {
     const file = path.join(root, 'summaries', name);
     if (now - fs.statSync(file).mtimeMs > SUMMARY_MAX_AGE_MS) return '';
+    if (expired(deadline)) return '';
     const content = fs.readFileSync(file, 'utf8').trim();
+    if (expired(deadline)) return '';
     if (!content) return '';
     const clipped = content.length > SUMMARY_LIMIT
       ? `${content.slice(0, SUMMARY_LIMIT - 1).trimEnd()}\u2026`
@@ -97,20 +122,25 @@ function expandHome(value, home) {
 }
 
 function depsLine(root, { home, deadline = Infinity } = {}) {
+  if (expired(deadline)) return '';
   const deps = readJson(path.join(root, 'DEPS.json'));
-  if (!deps || !deps.targets || typeof deps.targets !== 'object') return '';
+  if (!deps) return '';
+  const targets = deps.targets || deps.skills;
+  if (!targets || typeof targets !== 'object') return '';
 
   let missing = 0;
   let changed = 0;
   let incomplete = false;
-  for (const target of Object.values(deps.targets)) {
-    if (Date.now() >= deadline) {
+  let examined = 0;
+  for (const target of Object.values(targets)) {
+    if (expired(deadline)) {
       incomplete = true;
       break;
     }
     if (!target || typeof target !== 'object') continue;
     const targetPath = expandHome(target.path, home);
     if (!targetPath) continue;
+    examined += 1;
     let stat;
     try { stat = fs.statSync(targetPath); }
     catch (_) { missing += 1; continue; }
@@ -118,21 +148,26 @@ function depsLine(root, { home, deadline = Infinity } = {}) {
     if (Number.isFinite(recorded) && stat.mtimeMs > recorded) changed += 1;
   }
 
-  if (!missing && !changed && !incomplete) return '';
+  if (!missing && !changed) {
+    if (incomplete && examined) {
+      return `DEPS.json check incomplete after ${examined} target${examined === 1 ? '' : 's'}; review it before relying on it.`;
+    }
+    return '';
+  }
   const bits = [];
   if (missing) bits.push(`${missing} missing`);
   if (changed) bits.push(`${changed} changed`);
-  if (incomplete) bits.push('check incomplete');
-  return `DEPS.json drift warning: ${bits.join(', ')}. Review it before relying on it.`;
+  const caveat = incomplete ? ` Check incomplete after ${examined} target${examined === 1 ? '' : 's'}.` : '';
+  return `DEPS.json drift warning: ${bits.join(', ')}.${caveat} Review it before relying on it.`;
 }
 
 function buildBrief({ home = os.homedir(), deadline = Infinity, includeSummary = true, now = Date.now() } = {}) {
   const root = path.join(home, '.claude', 'build-loop');
   const lines = [
-    queueLine(root),
-    toBuildLine(root),
+    queueLine(root, { deadline }),
+    toBuildLine(root, { deadline }),
     depsLine(root, { home, deadline }),
-    includeSummary ? latestSummary(root, { now }) : '',
+    includeSummary ? latestSummary(root, { now, deadline }) : '',
   ]
     .filter(Boolean);
   return lines.length ? `Build-loop brief:\n${lines.join('\n')}` : '';
@@ -152,6 +187,7 @@ module.exports = {
   buildBrief,
   depsLine,
   isActiveBuildStatus,
+  isActiveQueueStatus,
   joinContext,
   latestSummary,
   queueLine,
