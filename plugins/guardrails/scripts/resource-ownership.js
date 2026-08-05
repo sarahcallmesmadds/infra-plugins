@@ -51,17 +51,26 @@ function bashWritesPath(command, resource, cwd) {
   const normalizedSpellings = [...spellings]
     .map((spelling) => spelling && spelling.replace(/\/$/, ''))
     .filter(Boolean);
-  const mentions = normalizedSpellings.some((spelling) => raw.includes(spelling));
-  if (!mentions) return false;
-
   const escape = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const redirectsToResource = normalizedSpellings.some((spelling) => (
-    new RegExp(`>>?\\s*["']?${escape(spelling)}(?:[/"'\\s]|$)`).test(raw)
-  ));
+  const pathPattern = normalizedSpellings.map(escape).join('|');
 
-  return /(?:^|\s)(?:tee|cp|mv|install|truncate|touch|mkdir|rm)\b/.test(raw)
-    || redirectsToResource
-    || /\bsed\s+(?:-[^\s]*i[^\s]*)\b/.test(raw);
+  // Judge one shell segment at a time. A path mentioned after `&&`, `;` or a
+  // pipe is not an argument to the write command before it.
+  for (const segment of raw.split(/&&|\|\||[;|]/)) {
+    if (!normalizedSpellings.some((spelling) => segment.includes(spelling))) continue;
+    if (new RegExp(`>>?\\s*["']?(?:${pathPattern})(?:[/"'\\s]|$)`).test(segment)) return true;
+    if (new RegExp(`\\b(?:tee|mv|truncate|touch|mkdir|rm)\\b[^;|]*(?:${pathPattern})`).test(segment)) return true;
+    if (/\bsed\s+(?:-[^\s]*i[^\s]*)\b/.test(segment)) return true;
+
+    // cp and install read every argument except the last one. Only the last
+    // path is their destination, so copying a protected file out is allowed.
+    if (/\b(?:cp|install)\b/.test(segment)) {
+      const tokens = segment.trim().match(/"[^"]*"|'[^']*'|\S+/g) || [];
+      const destination = (tokens.at(-1) || '').replace(/^['"]|['"]$/g, '');
+      if (contains(resource, destination, cwd)) return true;
+    }
+  }
+  return false;
 }
 
 function matchedResource(event, resources) {

@@ -58,6 +58,8 @@ check('common Bash writes are caught but reads and stderr redirects are not', ()
   const event = (command) => matchedResource({ tool_name: 'Bash', tool_input: { command }, cwd: '/tmp' }, registry);
   assert.strictEqual(event('tee ~/.planning/handoffs/x.md').id, 'session-handoffs');
   assert.strictEqual(event('cp x ~/.claude/build-loop/queue/x.json').id, 'build-loop-bug-queue');
+  assert.strictEqual(event('cp ~/.planning/handoffs/x.md /tmp/x.md'), null);
+  assert.strictEqual(event('rm /tmp/x && ls ~/.planning/handoffs/'), null);
   assert.strictEqual(event('cat ~/.planning/handoffs/x.md'), null);
   assert.strictEqual(event('ls ~/.planning/handoffs/ 2>/dev/null'), null);
 });
