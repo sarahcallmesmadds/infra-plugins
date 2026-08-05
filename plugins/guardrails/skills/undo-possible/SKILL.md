@@ -37,6 +37,7 @@ It prints either `allow` or `confirm`, with a reason.
 | `git clean -fd` | Deletes untracked files permanently |
 | `git push --force` | Can overwrite a branch other people have pulled |
 | `git branch -D` | Deletes a branch even if it was never merged |
+| `git commit --no-verify` | Skips every pre-commit hook, and the commit looks like one that passed |
 
 `git push --force-with-lease` is deliberately not flagged. It refuses to
 overwrite work you have not seen, which is the whole point of it.

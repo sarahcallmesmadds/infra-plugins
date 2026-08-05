@@ -14,7 +14,7 @@ const path = require('path');
 const ROOT = path.join(__dirname, '..');
 const { readEvent, block } = require(path.join(ROOT, 'scripts', 'hook-io'));
 const { loadConfig } = require(path.join(ROOT, 'scripts', 'config'));
-const { checkCommand } = require(path.join(ROOT, 'scripts', 'command'));
+const { checkCommand, ALL_RULES } = require(path.join(ROOT, 'scripts', 'command'));
 
 const IS_GIT_COMMIT = /\bgit\s+(?:-[^\s]+(?:\s+[^\s-][^\s]*)?\s+)*commit\b/;
 
@@ -93,6 +93,18 @@ function resolveAgainst(named, base) {
 //                                              repository doing normal work
 //   nothing named and nowhere is a repository  committing outside a repository
 //                                              is not a thing that happens
+//
+// There is no exception here for a repository with no commits yet, and there
+// was one for a day. It rested on the claim that such a repository cannot be
+// put on another branch, so the first commit is necessarily on main and the
+// block had nothing to suggest. The claim is simply false. `git checkout -b
+// feature` succeeds on an unborn HEAD and repoints it, and the branch is real
+// as soon as the first commit lands. Checked by running it rather than by
+// reasoning about it, which is how the mistake got in.
+//
+// So the advice the guard prints was always actionable, including on the very
+// first commit, and the exception did nothing but wave through the one commit
+// that establishes main as the branch everybody then keeps committing to.
 function currentBranch(command, eventCwd) {
   const named = targetRepoDir(command || '');
   const base = eventCwd || process.cwd();
@@ -133,13 +145,27 @@ readEvent((event) => {
 
   const config = loadConfig();
 
-  // 1. Destructive commands.
-  if (config.blockDestructiveCommands) {
-    const verdict = checkCommand(command, config);
-    if (verdict.verdict === 'confirm') {
-      block(verdict.reason);
-      return;
-    }
+  // 1. Destructive commands, and commands that skip the commit hooks.
+  //
+  // The switches live here and nowhere else, one per family of rule. This
+  // hook is the thing being turned off, so this is where off means something.
+  //
+  // Two arrangements were wrong before this one. Gating the whole call on
+  // blockDestructiveCommands made one setting govern both families, so
+  // quietening delete prompts silently dropped the commit-hook rule. Moving
+  // the switches into checkCommand fixed that and reached somewhere it had no
+  // business being: cli.js asks the same function the on-demand "is this safe"
+  // question, and it started answering "safe" for a delete purely because the
+  // prompts were off. checkCommand assesses; only the caller being switched
+  // off applies a switch.
+  const rules = ALL_RULES.filter((rule) => (
+    rule === 'destructive' ? config.blockDestructiveCommands !== false
+      : config.blockCommitHookSkip !== false
+  ));
+  const verdict = checkCommand(command, config, { rules });
+  if (verdict.verdict === 'confirm') {
+    block(verdict.reason);
+    return;
   }
 
   // `git commit`, but also `git -C <path> commit`, `git --no-pager commit`, and

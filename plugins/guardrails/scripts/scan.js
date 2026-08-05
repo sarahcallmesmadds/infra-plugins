@@ -7,6 +7,7 @@
 'use strict';
 
 const { PATTERNS, DEFAULT_EXCLUDE_PATHS } = require('./patterns');
+const { maskCodeLiterals, isSourceFile } = require('./code-literals');
 
 const MAX_SCAN_BYTES = 512 * 1024; // scan the first 512KB; enough for any prose file
 const EXCERPT_RADIUS = 60;
@@ -36,11 +37,31 @@ function scan(text, options = {}) {
   }
 
   const body = text.length > MAX_SCAN_BYTES ? text.slice(0, MAX_SCAN_BYTES) : text;
+
+  // In a source file the regular expressions are blanked, and nothing else is.
+  // A regular expression is machine syntax for matching text, so a phrase
+  // inside one is a pattern being declared rather than an instruction anybody
+  // could act on, which is why a scanner reporting its own catalogue is a
+  // false positive.
+  //
+  // Strings and comments are scanned in full, and that is the part to keep
+  // hold of. An earlier version blanked string literals too and it opened a
+  // silent gap: a prompt constant carrying an injected instruction passed the
+  // scan on Read, Write and Edit alike. Widening this back out would restore
+  // that gap, and it would fail towards missing real injection, which is the
+  // direction that gives no sign of being wrong. See code-literals.js.
+  //
+  // Matching happens on the masked copy and reporting on the original. The
+  // mask preserves length, so an offset means the same thing in both, and an
+  // excerpt taken from `body` shows what is really there rather than a row of
+  // filler characters.
+  const searchable = isSourceFile(filePath) ? maskCodeLiterals(body) : body;
+
   const hits = [];
   const categories = new Set();
 
   for (const pattern of PATTERNS) {
-    const match = pattern.re.exec(body);
+    const match = pattern.re.exec(searchable);
     if (!match) continue;
     categories.add(pattern.category);
     hits.push({

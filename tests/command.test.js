@@ -26,6 +26,12 @@ const CASES = [
   ['git push --force origin main', 'confirm', 'can overwrite a remote branch'],
   ['git branch -D feature', 'confirm', 'deletes an unmerged branch'],
 
+  // --- must block: going around the checks rather than destroying anything -
+  ['git commit --no-verify -m "wip"', 'confirm', 'skips every pre-commit hook'],
+  ['git commit -n -m "wip"', 'confirm', 'short form of the same flag'],
+  ['git commit -an -m "wip"', 'confirm', 'bundled with another short flag'],
+  ['git -C ~/repo commit --no-verify -m "wip"', 'confirm', 'option sitting between git and commit'],
+
   // --- must block: quoted text that really is executed -------------------
   ['bash -c "rm -rf ~/live"', 'confirm', 'shell -c executes its quoted argument'],
   ["sh -c 'rm -rf ~/live'", 'confirm', 'single-quoted form of the same'],
@@ -43,6 +49,107 @@ const CASES = [
   ['rm -rf node_modules', 'allow', 'configured disposable path'],
   ['rm file.txt', 'allow', 'not recursive, not forced'],
   ['ls -la', 'allow', 'ordinary command'],
+
+  // --- must allow: the near misses around that flag ----------------------
+  //
+  // `-n` is read only inside a segment already known to be a commit. On other
+  // subcommands the same letter means something else, and on `git clean` it
+  // means a dry run, which is the careful way to run the one command this file
+  // already blocks the reckless form of. Flagging it there would interrupt
+  // precisely the people being careful.
+  ['git commit -m "wip"', 'allow', 'an ordinary commit'],
+  ['git commit --amend --no-edit', 'allow', 'a long option that only starts like no-verify'],
+  ['git clean -n', 'allow', 'a dry run, which destroys nothing'],
+  ['git clean --dry-run', 'allow', 'the long form of the same'],
+
+  // --- must allow: short options whose value happens to contain an n -------
+  //
+  // Every one of these was refused, and refused with a reason about skipping
+  // the commit checks, which is not something any of them does. Several git
+  // commit options carry their value attached to the letter, so the letters
+  // after them are data. Reading the token as a bundle of flags turns a
+  // message and a mode into an instruction the person never gave.
+  ['git commit -uno -m x', 'allow', '-u<mode>, untracked-files=no'],
+  ['git commit -unormal -m x', 'allow', 'the longer spelling of the same mode'],
+  ['git commit -mnew feature', 'allow', 'an attached message beginning with n'],
+  ['git commit -Snobody@example.com -m x', 'allow', 'an attached signing key'],
+  ['git commit -Fnotes.txt', 'allow', 'an attached file name'],
+  ['git commit -m $(head -n 1 msg.txt)', 'allow', 'the -n belongs to head, not to commit'],
+  ['git commit -m `head -n 1 msg.txt`', 'allow', 'the older substitution spelling'],
+
+  // And the bundles that genuinely do carry it, which must still be caught
+  // after all of the above.
+  ['git commit -sn -m x', 'confirm', 'signed off and no-verify bundled'],
+  ['git commit -uno -n -m x', 'confirm', 'a real -n alongside an attached value'],
+
+  // --- must allow: flags belonging to something other than the commit -----
+  //
+  // Only what follows the word `commit` is the commit's. Everything before it
+  // belongs to whatever is running it, and reading those letters refused an
+  // ordinary commit while naming a flag the person never typed.
+  ['nice -n 10 git commit -m x', 'allow', 'the -n sets priority, and is nice\'s'],
+  ['sudo -n git commit -m y', 'allow', 'the -n tells sudo not to prompt'],
+  ['git commit -m x  # -n', 'allow', 'a trailing comment git never sees'],
+
+  // --- must allow: previewing a delete instead of doing it ----------------
+  //
+  // Nobody types the dry run on its own. The useful form names the things it
+  // is previewing, and those letters are the destructive ones, so every real
+  // spelling of "show me what this would remove" was refused. That refusal
+  // fell on the one person the rule exists to protect.
+  ['git clean -nd', 'allow', 'the dry run people actually type'],
+  ['git clean -ndx', 'allow', 'the same, including ignored files'],
+  ['git clean -n -fd', 'allow', 'a dry run asked for separately'],
+  ['git clean --dry-run -d', 'allow', 'the long form of it'],
+
+  // And the real thing, which must still be caught.
+  ['git clean -fd', 'confirm', 'no dry run, so it deletes'],
+  ['git clean -fdx', 'confirm', 'including ignored files'],
+  ['git clean -f -d', 'confirm', 'the same, spelled separately'],
+  ['git clean --force', 'confirm', 'the long spelling deletes just the same'],
+  ['git clean --force --quiet', 'confirm', 'and with another long option beside it'],
+  ['git clean -X', 'confirm', 'uppercase X removes the ignored files'],
+
+  // --- every spelling of the rules that were already here -----------------
+  //
+  // Written after the clean rule turned out to have missed its long form, on
+  // the theory that if one rule was spelling-blind the others would be too.
+  // Two of the four were. `git push -f` is how most people type a force push
+  // and it was allowed while `--force` was stopped, and the README advertised
+  // force pushes as blocked the whole time.
+  ['git push -f origin main', 'confirm', 'the short spelling of a force push'],
+  ['git push -f', 'confirm', 'the same with no remote named'],
+  ['git push --force origin main', 'confirm', 'the long spelling'],
+  ['git branch --delete --force x', 'confirm', 'the long spelling of -D'],
+  ['git branch -df x', 'confirm', 'the same bundled'],
+
+  // The safe forms of both, which must stay allowed. -d refuses to delete a
+  // branch holding unmerged work, so git is already guarding it.
+  ['git push --force-with-lease', 'allow', 'refuses to overwrite unseen work'],
+  ['git push --force-with-lease origin main', 'allow', 'the same with a remote'],
+  ['git push -n -f origin main', 'allow', 'a dry run pushes nothing'],
+  ['git push --force --dry-run', 'allow', 'the long form of the dry run'],
+  ['git push origin main', 'allow', 'an ordinary push'],
+  ['git branch -d x', 'allow', 'git refuses this itself if it would lose work'],
+  ['git branch -a', 'allow', 'listing branches'],
+  ['git branch -m old new', 'allow', 'renaming one'],
+
+  // --- an attached value must not cancel a rule ---------------------------
+  //
+  // The mirror of the `-uno` cases above, and the dangerous direction of the
+  // same mistake. There the letters of an attached value were read as flags
+  // and refused an ordinary command, which is visible and annoying. Here they
+  // were read as the dry-run flag and cancelled the rule, so a real delete ran
+  // with no warning, which is invisible. `-e` on clean attaches an exclude
+  // pattern, and any pattern containing an n turned the guard off.
+  ['git clean -fdx -enode_modules', 'confirm', 'an exclude pattern containing an n'],
+  ['git clean -fdx -e.env', 'confirm', 'a shorter one that also contains it'],
+  ['git clean -fdx -e node_modules', 'confirm', 'the same, spelled with a space'],
+  ['git clean -fd  # -n', 'confirm', 'a comment git never sees'],
+  ['git clean -fd  # $(echo -n)', 'confirm', 'and a substitution inside one'],
+
+  // The genuine preview still has to be allowed, exclude pattern and all.
+  ['git clean -nfdx -enode_modules', 'allow', 'a real dry run beside that pattern'],
 ];
 
 let failed = 0;
@@ -51,6 +158,66 @@ for (const [command, expected, why] of CASES) {
   const ok = actual === expected;
   if (!ok) failed += 1;
   console.log(`${ok ? '  ok  ' : '  FAIL'} ${expected.padEnd(7)} ${why}\n         ${command}`);
+}
+
+// --- this function assesses, it does not decide policy --------------------
+//
+// The on/off settings are not read here, and that is the point of these rows.
+// cli.js calls this for `check --command`, which is the on-demand "is this
+// safe" question behind the undo-possible skill and the whole Codex surface,
+// where no hook can run. When the switches lived in here, somebody who had
+// quietened the automatic prompts and then explicitly asked whether a delete
+// was safe got told yes. An advisory that agrees with your configuration is
+// not an advisory.
+const IGNORES_CONFIG = [
+  [{ ...CONFIG, blockDestructiveCommands: false }, 'rm -rf ~/live', 'confirm',
+    'asked plainly, a delete is still a delete'],
+  [{ ...CONFIG, blockCommitHookSkip: false }, 'git commit --no-verify -m "x"', 'confirm',
+    'and so is skipping the commit checks'],
+];
+
+for (const [config, command, expected, why] of IGNORES_CONFIG) {
+  const actual = checkCommand(command, config).verdict;
+  const ok = actual === expected;
+  if (!ok) failed += 1;
+  console.log(`${ok ? '  ok  ' : '  FAIL'} ${expected.padEnd(7)} ${why}\n         ${command}`);
+}
+
+// --- filtering, which is the caller's job ---------------------------------
+//
+// The two families have nothing to do with each other. One is about not
+// losing work, the other about not walking past a check. They shipped sharing
+// a single switch, so anybody turning off noisy delete prompts lost the
+// commit-hook rule too and was told nothing about it. Each row turns off
+// exactly one and asserts the other still fires.
+const FILTERED = [
+  [['commit-hook-skip'], 'rm -rf ~/live', 'allow', 'deletes not asked about'],
+  [['commit-hook-skip'], 'git commit --no-verify -m "x"', 'confirm', 'the other family still fires'],
+  [['destructive'], 'git commit --no-verify -m "x"', 'allow', 'commit-hook rule not asked about'],
+  [['destructive'], 'rm -rf ~/live', 'confirm', 'the delete still fires'],
+  [['commit-hook-skip'], 'git reset --hard', 'allow', 'the git delete rules go together'],
+  [['commit-hook-skip'], 'git clean -fd', 'allow', 'clean goes with them'],
+];
+
+for (const [rules, command, expected, why] of FILTERED) {
+  const actual = checkCommand(command, CONFIG, { rules }).verdict;
+  const ok = actual === expected;
+  if (!ok) failed += 1;
+  console.log(`${ok ? '  ok  ' : '  FAIL'} ${expected.padEnd(7)} ${why}\n         ${command}`);
+}
+
+// Every confirm has to say which family it came from, or the hook cannot
+// filter and the whole arrangement above collapses back into one switch.
+for (const [command, rule] of [
+  ['rm -rf ~/live', 'destructive'],
+  ['git clean -fd', 'destructive'],
+  ['git reset --hard', 'destructive'],
+  ['git commit --no-verify -m "x"', 'commit-hook-skip'],
+]) {
+  const got = checkCommand(command, CONFIG).rule;
+  const ok = got === rule;
+  if (!ok) failed += 1;
+  console.log(`${ok ? '  ok  ' : '  FAIL'} rule    ${command} is ${rule}`);
 }
 
 // The reported target has to be the path as typed. It used to be the rest of
@@ -133,5 +300,5 @@ for (const raw of DEFAULTS.safeDeletePaths) {
   }
 }
 
-console.log(`\n${CASES.length + 2 + walked} checks, ${failed} failed`);
+console.log(`\n${CASES.length + IGNORES_CONFIG.length + FILTERED.length + 4 + 2 + walked} checks, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

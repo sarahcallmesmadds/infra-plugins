@@ -183,20 +183,197 @@ function isDisposable(target, safePaths) {
 // Commands that throw away committed or staged work with no straightforward undo.
 const IRREVERSIBLE_GIT = [
   { re: /(^|\s)git\s+reset\s+--hard(\s|$)/, what: 'git reset --hard discards uncommitted work' },
-  { re: /(^|\s)git\s+clean\s+-[a-zA-Z]*[dfx]/, what: 'git clean removes untracked files permanently' },
-  { re: /(^|\s)git\s+push\s[^\n]*--force(?!-with-lease)/, what: 'git push --force can overwrite a remote branch' },
-  { re: /(^|\s)git\s+branch\s+-D(\s|$)/, what: 'git branch -D deletes an unmerged branch' },
+  // `git clean` is not here. It needs the same reading as the commit rule,
+  // because its dry run is spelled with a letter bundled in among the
+  // destructive ones. See removesUntrackedFiles below.
+  // `git push` and `git branch` are not here either, for the same reason as
+  // clean: each has a spelling the regex missed. See below.
 ];
 
-// Returns { verdict: 'allow' | 'confirm', reason, target }.
-function checkCommand(command, config = {}) {
+// Reading a git subcommand's own options. Four rules need this now, and each
+// time one of them was written on its own it was written slightly differently
+// and the difference was a hole. So it lives here once.
+//
+// Short options that carry their value attached to the letter, per subcommand.
+// Everything after one of these inside the same token is data rather than more
+// flags. Getting this wrong has gone both ways in this branch: `-uno` on a
+// commit is `--untracked-files=no` and was read as a bundle containing `-n`,
+// which refused an ordinary commit; `-enode_modules` on a clean is an exclude
+// pattern and was read the same way, which cancelled the rule and let a real
+// delete through unannounced. The second direction is the dangerous one.
+const ATTACHED_VALUE = {
+  commit: new Set(['m', 'c', 'C', 'F', 't', 'u', 'S']),
+  clean: new Set(['e']),
+  push: new Set(['o']),
+  branch: new Set(['u']),
+};
+
+// The letters in a bundled short option that are actually flags. The first one
+// that takes a value is still a flag, and everything after it is its value.
+function flagLetters(token, attached) {
+  const letters = [];
+  for (const letter of token.slice(1)) {
+    if (!/[A-Za-z]/.test(letter)) break;
+    letters.push(letter);
+    if (attached.has(letter)) break;
+  }
+  return letters;
+}
+
+// Every option token belonging to one git subcommand.
+//
+// Text that git never sees is removed first. A command substitution carries
+// somebody else's flags, so the `-n` in `git commit -m $(head -n 1 msg.txt)`
+// means "one line" to head. A trailing comment is a note to a reader. Both
+// were handled on the commit rule and neither on the others, so `git clean
+// -fd  # -n` read as a preview and deleted files with no warning.
+//
+// Only what follows the subcommand counts. Anything before it belongs to
+// whatever is running it: `nice -n 10 git commit` sets a priority and
+// `sudo -n git commit` means do not prompt.
+function optionsAfter(segment, subcommand) {
+  const own = segment
+    .replace(/\$\([^)]*\)/g, ' ')
+    .replace(/`[^`]*`/g, ' ')
+    .replace(/(^|\s)#.*$/, '$1');
+
+  const at = new RegExp(`(^|\\s)git\\s+(?:-[^\\s]+(?:\\s+[^\\s-][^\\s]*)?\\s+)*${subcommand}(\\s|$)`);
+  const found = at.exec(own);
+  if (!found) return null;
+
+  const after = own.slice(found.index + found[0].length);
+  return (after.match(/(?:^|\s)--?[A-Za-z][^\s]*/g) || []).map((raw) => raw.trim());
+}
+
+// Does this segment skip the commit hooks? A regex was tried and could not do
+// it: `-[a-zA-Z]*n[a-zA-Z]*` matches any single-dash token containing an `n`,
+// and once the attached values are accounted for there is not much of that
+// pattern left standing.
+function skipsCommitHooks(segment) {
+  const options = optionsAfter(segment, 'commit');
+  if (!options) return false;
+
+  for (const token of options) {
+    if (token === '--no-verify') return true;
+    if (token.startsWith('--')) continue;
+    if (flagLetters(token, ATTACHED_VALUE.commit).includes('n')) return true;
+  }
+  return false;
+}
+
+// Does this segment actually delete untracked files? The old rule was
+// `git\s+clean\s+-[a-zA-Z]*[dfx]`, which asked only whether a destructive
+// letter was present. `-n` is the dry run, and nobody types it alone: the
+// useful preview is `git clean -nd` or `-ndx`, which name the very things
+// being previewed. Both contain a `d`, so both were refused.
+//
+// That refusal landed on exactly the careful person the rule exists to help,
+// the one checking what a delete would remove before running it, and a
+// `confirm` reaches them as an outright deny. So the preview was blocked and
+// the destructive form was one keystroke away.
+function removesUntrackedFiles(segment) {
+  const options = optionsAfter(segment, 'clean');
+  if (!options) return false;
+
+  let destructive = false;
+  for (const token of options) {
+    if (token === '--dry-run') return false;
+    // `--force` is the long spelling of `-f` and the only long form among the
+    // destructive options. Skipping every long token meant destructiveness was
+    // decided from short letters alone, so `git clean --force` ran unannounced
+    // while the identical `-f` was stopped. A rule that depends on which
+    // spelling somebody happens to use is not a rule.
+    if (token === '--force') { destructive = true; continue; }
+    if (token.startsWith('--')) continue;
+
+    const letters = flagLetters(token, ATTACHED_VALUE.clean);
+    // A dry run anywhere in the command settles it, whatever else is asked
+    // for. Nothing is deleted, so there is nothing to confirm.
+    if (letters.includes('n')) return false;
+    // `X` is uppercase and means "remove only the ignored files", which is
+    // still removing files. Matching lowercase alone let it through.
+    if (letters.some((l) => 'dfxX'.includes(l))) destructive = true;
+  }
+  return destructive;
+}
+
+// `git push -f` is the spelling most people type and it was allowed, while
+// `--force` was stopped. The README advertised force pushes as blocked, so the
+// guard was wrong in the direction that reads as working.
+//
+// `--force-with-lease` stays allowed, which is the whole point of it: it
+// refuses to overwrite work you have not seen. A dry run is allowed for the
+// same reason it is on clean, since nothing leaves the machine.
+function forcePushes(segment) {
+  const options = optionsAfter(segment, 'push');
+  if (!options) return false;
+
+  let forced = false;
+  for (const token of options) {
+    if (token === '--dry-run') return false;
+    if (token === '--force') { forced = true; continue; }
+    if (token.startsWith('--')) continue; // including --force-with-lease
+    const letters = flagLetters(token, ATTACHED_VALUE.push);
+    if (letters.includes('n')) return false; // -n is push's dry run
+    if (letters.includes('f')) forced = true;
+  }
+  return forced;
+}
+
+// `-D` is the short way to write `--delete --force`, and only the short way
+// was caught. A plain `-d` refuses to delete a branch holding unmerged work,
+// so it is git's own guard doing its job and nothing here needs to fire.
+function deletesUnmergedBranch(segment) {
+  const options = optionsAfter(segment, 'branch');
+  if (!options) return false;
+
+  let deleting = false;
+  let forcing = false;
+  for (const token of options) {
+    if (token === '--delete') { deleting = true; continue; }
+    if (token === '--force') { forcing = true; continue; }
+    if (token.startsWith('--')) continue;
+    const letters = flagLetters(token, ATTACHED_VALUE.branch);
+    if (letters.includes('D')) { deleting = true; forcing = true; }
+    if (letters.includes('d')) deleting = true;
+    if (letters.includes('f')) forcing = true;
+  }
+  return deleting && forcing;
+}
+
+// Returns { verdict: 'allow' | 'confirm', rule, reason, target }.
+//
+// This assesses. It does not decide policy, and it reads no on/off switch from
+// the config, only safeDeletePaths. Both of those were tried and each was
+// wrong in its own direction.
+//
+// Originally the hook decided whether to call this at all, gated on
+// blockDestructiveCommands, which meant one setting silently governed two
+// unrelated rules. Moving the switches in here fixed that and broke something
+// quieter: cli.js calls this for `check --command`, which is the on-demand
+// "is this safe" question behind the undo-possible skill and the whole Codex
+// surface, where no hook can run. With the switch inside, somebody who had
+// quietened the automatic prompts and then explicitly asked whether a delete
+// was safe was told yes. An advisory that agrees with whatever you configured
+// is not an advisory.
+//
+// So: always assess, and let the caller filter. `rules` names the families a
+// caller cares about, and the default is all of them, so asking the question
+// plainly gets the honest answer. Only bash-guard passes a filter, built from
+// the config, because only bash-guard is the thing being switched off.
+const ALL_RULES = ['destructive', 'commit-hook-skip'];
+
+function checkCommand(command, config = {}, options = {}) {
+  const rules = new Set(options.rules || ALL_RULES);
+  const stopDeletes = rules.has('destructive');
+  const stopHookSkips = rules.has('commit-hook-skip');
   const safePaths = config.safeDeletePaths || [];
   const line = firstLineOf(command);
   // Quoted text is only inert when nothing on the line will execute it.
   const masked = SHELL_INVOKERS.test(line) ? unquote(line) : maskQuoted(line);
 
   for (const { masked: segment, source } of segments(masked, line)) {
-    if (isRecursiveForceDelete(segment)) {
+    if (stopDeletes && isRecursiveForceDelete(segment)) {
       const targets = deleteTargets(segment, source);
       // No parsable operand means we could not establish what is being deleted.
       // Ask rather than assume.
@@ -208,6 +385,7 @@ function checkCommand(command, config = {}) {
         const shown = unsafe.join(', ');
         return {
           verdict: 'confirm',
+          rule: 'destructive',
           target: shown,
           reason:
             `Recursive force-delete of ${shown}. This cannot be undone.\n\n` +
@@ -219,10 +397,49 @@ function checkCommand(command, config = {}) {
       }
     }
 
-    for (const entry of IRREVERSIBLE_GIT) {
+    if (stopDeletes && removesUntrackedFiles(segment)) {
+      return {
+        verdict: 'confirm',
+        rule: 'destructive',
+        target: source,
+        reason:
+          `git clean removes untracked files permanently.\n\nConfirm this is ` +
+          `intended before running it. Adding \`-n\` shows what it would remove ` +
+          `without removing anything, which is the safer way to find out.`,
+      };
+    }
+
+    if (stopDeletes && forcePushes(segment)) {
+      return {
+        verdict: 'confirm',
+        rule: 'destructive',
+        target: source,
+        reason:
+          `git push --force can overwrite a remote branch.\n\nConfirm this is ` +
+          `intended before running it. \`--force-with-lease\` does the same job ` +
+          `but refuses if somebody has pushed work you have not seen, which is ` +
+          `the case a force push destroys.`,
+      };
+    }
+
+    if (stopDeletes && deletesUnmergedBranch(segment)) {
+      return {
+        verdict: 'confirm',
+        rule: 'destructive',
+        target: source,
+        reason:
+          `This deletes a branch even if it was never merged.\n\nConfirm this ` +
+          `is intended before running it. A plain \`-d\` deletes the branch only ` +
+          `if its commits exist somewhere else, so it answers the question ` +
+          `rather than assuming it.`,
+      };
+    }
+
+    for (const entry of stopDeletes ? IRREVERSIBLE_GIT : []) {
       if (entry.re.test(segment)) {
         return {
           verdict: 'confirm',
+          rule: 'destructive',
           target: source,
           reason:
             `${entry.what}.\n\nConfirm this is intended before running it. ` +
@@ -231,6 +448,27 @@ function checkCommand(command, config = {}) {
         };
       }
     }
+
+    // Not on the list above, and deliberately not: nothing here is
+    // irreversible, so the reflog advice attached to that list would be beside
+    // the point. The reason to stop is a different one. Skipping the hooks
+    // leaves a commit that looks exactly like one that passed them, so the
+    // check is not recorded as having been waived anywhere, and a rule enforced
+    // by a pre-commit hook stops being enforced by anything at all.
+    if (stopHookSkips && skipsCommitHooks(segment)) {
+      return {
+        verdict: 'confirm',
+        rule: 'commit-hook-skip',
+        target: source,
+        reason:
+          `git commit --no-verify skips every pre-commit and commit-msg hook.\n\n` +
+          `The commit that results is indistinguishable from one that passed them, ` +
+          `so nothing downstream can tell the checks were not run. If a hook is ` +
+          `failing, say which one and on what, then either fix the cause or turn ` +
+          `that hook off on purpose. Going around it for one commit leaves the ` +
+          `next person to find out the hard way.`,
+      };
+    }
   }
 
   return { verdict: 'allow' };
@@ -238,6 +476,7 @@ function checkCommand(command, config = {}) {
 
 module.exports = {
   checkCommand,
+  ALL_RULES,
   isRecursiveForceDelete,
   deleteTargets,
   isDisposable,

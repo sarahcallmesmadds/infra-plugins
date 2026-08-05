@@ -1,6 +1,6 @@
 {
   "name": "guardrails",
-  "version": "0.2.6",
+  "version": "0.2.16",
   "description": "Safety rails for people building with AI who aren't systems engineers. Flags prompt injection in content, and assesses shell commands for irreversible damage before they run.",
   "author": {
     "name": "Sarah Madden",
