@@ -1,0 +1,23 @@
+{
+  "source": "capture-event.js",
+  "hook_event_name": "PostToolUse",
+  "captured_at": "2026-08-05T01:51:28.640Z",
+  "keys_only": true,
+  "tool_name": "Read",
+  "shape": {
+    "tool_input": {
+      "file_path": "string",
+      "limit": "number"
+    },
+    "tool_response": {
+      "file": {
+        "content": "string",
+        "filePath": "string",
+        "numLines": "number",
+        "startLine": "number",
+        "totalLines": "number"
+      },
+      "type": "string"
+    }
+  }
+}

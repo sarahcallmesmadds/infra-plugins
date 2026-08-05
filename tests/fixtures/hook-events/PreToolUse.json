@@ -1,0 +1,23 @@
+{
+  "source": "capture-event.js",
+  "hook_event_name": "PreToolUse",
+  "captured_at": "2026-08-05T01:46:44.858Z",
+  "keys_only": true,
+  "shape": {
+    "cwd": "string",
+    "effort": {
+      "level": "string"
+    },
+    "hook_event_name": "string",
+    "permission_mode": "string",
+    "prompt_id": "string",
+    "session_id": "string",
+    "tool_input": {
+      "command": "string",
+      "description": "string"
+    },
+    "tool_name": "string",
+    "tool_use_id": "string",
+    "transcript_path": "string"
+  }
+}

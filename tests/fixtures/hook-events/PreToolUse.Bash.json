@@ -1,0 +1,14 @@
+{
+  "source": "capture-event.js",
+  "hook_event_name": "PreToolUse",
+  "captured_at": "2026-08-05T01:46:44.859Z",
+  "keys_only": true,
+  "tool_name": "Bash",
+  "shape": {
+    "tool_input": {
+      "command": "string",
+      "description": "string"
+    },
+    "tool_response": "undefined"
+  }
+}
