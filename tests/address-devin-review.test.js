@@ -10,6 +10,7 @@ const { spawnSync } = require('child_process');
 const ROOT = path.resolve(__dirname, '..');
 const SKILL = path.join(ROOT, 'plugins/build-loop/skills/address-devin-review');
 const VALIDATOR = path.join(SKILL, 'scripts/pre-push-check.js');
+const README = path.join(ROOT, 'plugins/build-loop/README.md');
 let passed = 0;
 
 function check(name, fn) {
@@ -38,6 +39,15 @@ check('skill ships every linked reference', () => {
   for (const match of body.matchAll(/\]\((references\/[^)]+)\)/g)) {
     assert.ok(fs.existsSync(path.join(SKILL, match[1])), `missing ${match[1]}`);
   }
+});
+
+check('Build Loop documents the same command count for Claude and Codex', () => {
+  const readme = fs.readFileSync(README, 'utf8');
+  const heading = readme.match(/^## The (\w+) commands$/m);
+  const codex = readme.match(/runtimes get the same thing: (\w+) commands you invoke/);
+  assert.ok(heading, 'the main command-count heading is missing');
+  assert.ok(codex, 'the Codex command-count claim is missing');
+  assert.strictEqual(codex[1], heading[1], 'the Codex command count drifted from the main list');
 });
 
 check('complete fixed round passes', () => {

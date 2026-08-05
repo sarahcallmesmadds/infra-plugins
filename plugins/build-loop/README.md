@@ -425,7 +425,7 @@ One line saying the log returned nothing is the only thing that separates
 ## Codex
 
 Codex plugins cannot register hooks, and this plugin does not use any, so both
-runtimes get the same thing: ten commands you invoke. Nothing is degraded here.
+runtimes get the same thing: eleven commands you invoke. Nothing is degraded here.
 
 ## Licence
 
