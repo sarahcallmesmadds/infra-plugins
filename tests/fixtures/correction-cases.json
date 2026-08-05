@@ -1,0 +1,58 @@
+{
+  "what_this_is": "Every case found across four rounds of review on PR #64, kept as the record of what the correction policy should do. These cannot be scored by the test suite, because the thing deciding is the model rather than a function. Score them by running a session with the plugin installed and checking each one, then tune the policy text from what actually failed rather than from invented phrasing.",
+  "how_to_read_a_case": {
+    "side": "user means it arrives as a prompt. assistant means the answer concedes it, which the policy also has to catch.",
+    "expected": "suggest, quiet, or either. either means the reading is genuinely ambiguous and both answers are defensible, so it must not be counted as a failure in either direction.",
+    "found": "which review round produced it. Round 0 is the cases written when it was first built."
+  },
+  "cases": [
+    { "side": "user", "expected": "suggest", "found": 0, "input": "that was wrong, the wrap skill should file centrally" },
+    { "side": "user", "expected": "suggest", "found": 0, "input": "the stale-branches command should have asked first" },
+    { "side": "user", "expected": "suggest", "found": 0, "input": "next time do not let the hook write without confirming" },
+    { "side": "user", "expected": "suggest", "found": 0, "input": "/pickup gave me the wrong handoff" },
+    { "side": "user", "expected": "suggest", "found": 0, "input": "you keep making the same mistake in that skill" },
+    { "side": "user", "expected": "suggest", "found": 0, "input": "that is not what I asked the plugin to do" },
+
+    { "side": "user", "expected": "quiet", "found": 0, "input": "can you look at the guardrails plugin and tell me what it does" },
+    { "side": "user", "expected": "quiet", "found": 0, "input": "that was wrong, the revenue figure is 4.2 not 4.8" },
+    { "side": "user", "expected": "quiet", "found": 0, "input": "we should have hired someone for this in January" },
+    { "side": "user", "expected": "quiet", "found": 0, "input": "next time we run the offsite let us book earlier" },
+    { "side": "user", "expected": "quiet", "found": 0, "input": "write a skill that summarises my meetings" },
+    { "side": "user", "expected": "quiet", "found": 0, "input": "the deploy failed again" },
+    { "side": "user", "expected": "quiet", "found": 0, "input": "/flag-issue the wrap skill should have filed centrally, that was wrong" },
+
+    { "side": "user", "expected": "quiet", "found": 1, "input": "that is correct, the hook did what I wanted" },
+    { "side": "user", "expected": "quiet", "found": 1, "input": "that was right, the skill handled it" },
+    { "side": "user", "expected": "quiet", "found": 1, "input": "yes that is right about the plugin" },
+    { "side": "user", "expected": "quiet", "found": 1, "input": "the command is correct now, thanks" },
+    { "side": "user", "expected": "suggest", "found": 1, "input": "that isn't right, the skill wrote to the wrong place" },
+    { "side": "user", "expected": "suggest", "found": 1, "input": "that is not correct, the hook fired twice" },
+
+    { "side": "user", "expected": "suggest", "found": 2, "input": "The /flag-issue command should have asked before writing." },
+    { "side": "user", "expected": "suggest", "found": 2, "input": "You were supposed to make the plugin ask first." },
+    { "side": "user", "expected": "quiet", "found": 2, "input": "Can you script that? I should have time tomorrow." },
+    { "side": "user", "expected": "quiet", "found": 2, "input": "What plugin is this? I should have the budget next week." },
+
+    { "side": "user", "expected": "suggest", "found": 3, "input": "`/pickup` gave me the wrong handoff" },
+    { "side": "user", "expected": "suggest", "found": 3, "input": "(/pickup) gave me the wrong handoff" },
+    { "side": "user", "expected": "quiet", "found": 3, "input": "What plugin is this? The meeting should have a room." },
+    { "side": "user", "expected": "quiet", "found": 3, "input": "Can you script that? The meeting should have a room." },
+
+    { "side": "user", "expected": "suggest", "found": 4, "input": "That was wrong. The hook fired twice." },
+    { "side": "user", "expected": "suggest", "found": 4, "input": "The hook wrote twice. That was wrong." },
+    { "side": "user", "expected": "suggest", "found": 4, "input": "The hook shouldn’t have written without asking." },
+    { "side": "user", "expected": "either", "found": 4, "input": "The script should have finished by now." },
+
+    { "side": "assistant", "expected": "suggest", "found": 0, "input": "You are right, and the hook should have stripped the comment first." },
+    { "side": "assistant", "expected": "quiet", "found": 0, "input": "You are right that the second quarter was stronger." },
+    { "side": "assistant", "expected": "suggest", "found": 2, "input": "You're right. The hook should not have fired." },
+    { "side": "assistant", "expected": "suggest", "found": 3, "input": "You're right — this hook should have failed open." },
+    { "side": "assistant", "expected": "suggest", "found": 3, "input": "You're right — we should have made the hook fail open." },
+    { "side": "assistant", "expected": "quiet", "found": 3, "input": "I should have the plugin ready by tomorrow." },
+    { "side": "assistant", "expected": "quiet", "found": 3, "input": "I should have time to update the plugin tomorrow." },
+    { "side": "assistant", "expected": "suggest", "found": 4, "input": "I should have built the plugin differently." },
+    { "side": "assistant", "expected": "suggest", "found": 4, "input": "I should have put the hook after validation." },
+    { "side": "assistant", "expected": "quiet", "found": 4, "input": "I was wrong about the revenue forecast. Separately, the plugin is installed correctly." },
+    { "side": "assistant", "expected": "quiet", "found": 4, "input": "I should have red plugin badges ready tomorrow." }
+  ]
+}

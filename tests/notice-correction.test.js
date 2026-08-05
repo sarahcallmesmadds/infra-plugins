@@ -1,23 +1,34 @@
 #!/usr/bin/env node
-// The correction-noticing hook, run the way Claude Code runs it.
+// The correction hook, run the way Claude Code runs it.
 //
 // Run: node tests/notice-correction.test.js
 //
-// Spawned as a subprocess and fed real event JSON, because that is the layer
-// where this kind of hook fails. The bug it is written against is not a wrong
-// verdict, it is a hook that reads a field the event does not carry, gets
-// undefined, and stays quiet forever while looking healthy. That shipped once
-// in this repository already, in the injection scanner.
+// This file used to assert which sentences count as a correction. It does not
+// any more, and the reason is the point of the change it accompanies.
 //
-// Both field names here were nearly wrong for that exact reason. The published
-// field list calls the prompt `user_prompt` and says Stop does not receive
-// `stop_hook_active`. The captured events say `prompt`, and say Stop does. The
-// two `shape` checks at the bottom are what keep this file honest if either
-// ever changes: they read the captures rather than trusting these tests.
+// Four rounds of review found thirteen defects in the phrase lists that used
+// to live here, every one the same shape: a regular expression reading a
+// sentence the way its author imagined rather than the way somebody wrote it.
+// The tests passed throughout, because a test written alongside a pattern is
+// written from the same misunderstanding. Sentences the author did not think
+// of are exactly the ones neither the pattern nor its test contains.
 //
-// The half that matters most is the quiet half. This fires on every prompt in
-// every session, so a false positive is not one annoying line, it is a line
-// that arrives so often nobody reads the true one.
+// So the judgement moved to the model, which is the thing here that judges
+// language and has the conversation the sentence arrived in, and what is left
+// in code is a gate that answers a question about topic. That is testable, and
+// these are the parts worth pinning:
+//
+//   the field the event actually carries
+//   the gate routing, in both directions
+//   failing open on anything malformed
+//   the output shape the harness reads
+//   the boundaries the policy has to state
+//   no Stop hook, and therefore no loop
+//
+// What cannot be pinned here is whether the model gets the judgement right.
+// tests/fixtures/correction-cases.json holds every case from all four rounds
+// for that, and it needs a real session to score. A test that scored it with
+// another regex would be back where this started.
 
 'use strict';
 
@@ -26,14 +37,13 @@ const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 
-const HOOKS = path.join(__dirname, '..', 'plugins', 'build-loop', 'hooks');
-const PROMPT_HOOK = path.join(HOOKS, 'notice-correction-prompt.js');
-const STOP_HOOK = path.join(HOOKS, 'notice-correction-stop.js');
+const PLUGIN = path.join(__dirname, '..', 'plugins', 'build-loop');
+const HOOK = path.join(PLUGIN, 'hooks', 'notice-correction.js');
 const FIXTURES = path.join(__dirname, 'fixtures', 'hook-events');
 
-function runHook(hook, event) {
-  const stdout = execFileSync(process.execPath, [hook], {
-    input: JSON.stringify(event),
+function runHook(event) {
+  const stdout = execFileSync(process.execPath, [HOOK], {
+    input: typeof event === 'string' ? event : JSON.stringify(event),
     encoding: 'utf8',
     cwd: __dirname,
   }).trim();
@@ -41,30 +51,7 @@ function runHook(hook, event) {
 }
 
 function onPrompt(prompt) {
-  return runHook(PROMPT_HOOK, { hook_event_name: 'UserPromptSubmit', prompt });
-}
-
-function onStop(last_assistant_message, extra = {}) {
-  return runHook(STOP_HOOK, { hook_event_name: 'Stop', last_assistant_message, ...extra });
-}
-
-// A suggestion arrives as additionalContext under the matching event name.
-// Anything else is dropped by the harness without a word, which is the failure
-// this asserts against rather than the wording of the message.
-function assertSuggests(out, eventName, what) {
-  assert.ok(out, `${what}: hook said nothing`);
-  const specific = out.hookSpecificOutput;
-  assert.ok(specific, `${what}: no hookSpecificOutput`);
-  assert.strictEqual(specific.hookEventName, eventName, `${what}: wrong hookEventName`);
-  assert.ok(
-    typeof specific.additionalContext === 'string' && specific.additionalContext.length > 0,
-    `${what}: suggested nothing`
-  );
-  assert.ok(
-    !('decision' in out) && !('decision' in specific),
-    `${what}: this hook suggests and must never block`
-  );
-  return specific.additionalContext;
+  return runHook({ hook_event_name: 'UserPromptSubmit', prompt });
 }
 
 let failed = 0;
@@ -80,261 +67,156 @@ function check(what, fn) {
   }
 }
 
-// --- the corrections it exists to notice -----------------------------------
+// --- the output shape ------------------------------------------------------
 
-const CORRECTIONS = [
-  'that was wrong, the wrap skill should file centrally',
-  'the stale-branches command should have asked first',
-  'next time do not let the hook write without confirming',
-  '/pickup gave me the wrong handoff',
-  'you keep making the same mistake in that skill',
-  'that is not what I asked the plugin to do',
-];
-
-for (const prompt of CORRECTIONS) {
-  check(`noticed on the way in: "${prompt.slice(0, 42)}..."`, () => {
-    assertSuggests(onPrompt(prompt), 'UserPromptSubmit', 'correction');
-  });
-}
-
-check('noticed on the way out, when the model concedes it', () => {
-  // The half that catches what only becomes clear afterwards. The prompt that
-  // produced this may have been an ordinary question.
-  assertSuggests(
-    onStop('You are right, and the hook should have stripped the comment first.'),
-    'Stop',
-    'conceded correction'
+check('the policy arrives in the shape UserPromptSubmit reads', () => {
+  // An unrecognised payload is dropped without a word, so a hook can reach the
+  // right answer, print it, and change nothing. guardrails shipped that for
+  // three releases.
+  const out = onPrompt('the hook wrote to the wrong place');
+  assert.ok(out, 'hook said nothing on a turn about a hook');
+  const specific = out.hookSpecificOutput;
+  assert.ok(specific, 'no hookSpecificOutput');
+  assert.strictEqual(specific.hookEventName, 'UserPromptSubmit', 'wrong hookEventName');
+  assert.ok(
+    typeof specific.additionalContext === 'string' && specific.additionalContext.length > 0,
+    'injected nothing'
+  );
+  assert.ok(
+    !('decision' in out) && !('decision' in specific),
+    'this hook suggests and must never block'
   );
 });
 
-// --- the half that matters just as much ------------------------------------
+// --- the gate, which is routing rather than judgement ----------------------
 //
-// This runs on every prompt of every session, so each of these is a line that
-// would otherwise arrive constantly.
+// It answers "could this turn be about something built here", not "is this a
+// correction". Every case below is about topic. None is about intent, and that
+// is deliberate: intent is what the model decides now.
 
-const ORDINARY = [
-  'can you look at the guardrails plugin and tell me what it does',
-  'that was wrong, the revenue figure is 4.2 not 4.8',
-  'we should have hired someone for this in January',
-  'next time we run the offsite let us book earlier',
+for (const prompt of [
+  'the hook wrote to the wrong place',
+  'can you look at the guardrails plugin',
   'write a skill that summarises my meetings',
-  'the deploy failed again',
-  '',
-];
-
-for (const prompt of ORDINARY) {
-  check(`stayed quiet: "${(prompt || '(empty prompt)').slice(0, 42)}..."`, () => {
-    assert.strictEqual(onPrompt(prompt), null, 'hook spoke on ordinary input');
-  });
-}
-
-// Praise, which read as a complaint until it was pointed out.
-//
-// The phrase test was one pattern with an optional negation, `that (was|is)n?
-// '?t? (wrong|right|correct)`, and every character of `n?'?t?` being optional
-// meant the negation could vanish entirely. So the suggestion to file a bug
-// arrived at the exact moment somebody said the thing worked, which is the
-// worst possible time for it and the opposite of what the hook is for.
-const PRAISE = [
-  'that is correct, the hook did what I wanted',
-  'that was right, the skill handled it',
-  'yes that is right about the plugin',
-  'the command is correct now, thanks',
-];
-
-for (const prompt of PRAISE) {
-  check(`praise is not a complaint: "${prompt.slice(0, 40)}..."`, () => {
-    assert.strictEqual(onPrompt(prompt), null, 'suggested filing a bug about something that worked');
-  });
-}
-
-// And the negated forms, which are complaints and have to survive the fix.
-for (const prompt of [
-  "that isn't right, the skill wrote to the wrong place",
-  'that is not correct, the hook fired twice',
+  '/pickup gave me the wrong handoff',
+  '`/pickup` gave me the wrong handoff',
+  '(/pickup) gave me the wrong handoff',
+  'that command needs a confirm step',
+  'the script is fine now',
 ]) {
-  check(`negated praise is still a complaint: "${prompt.slice(0, 40)}..."`, () => {
-    assertSuggests(onPrompt(prompt), 'UserPromptSubmit', 'negated');
+  check(`routed, because the topic could be built here: "${prompt.slice(0, 38)}..."`, () => {
+    assert.ok(onPrompt(prompt), 'gate did not route a turn about tooling');
   });
 }
-
-// --- corrections that said nothing until review found them ----------------
-//
-// All four went the silent direction, which is the one that looks like a quiet
-// week rather than like a bug.
-
-check('a defect in /flag-issue itself is not suppressed by its own name', () => {
-  // The one correction nobody else can file. Matching the command name
-  // anywhere meant the sentence guaranteed to be about a real defect in the
-  // queue tooling was the one sentence guaranteed to be ignored.
-  assertSuggests(
-    onPrompt('The /flag-issue command should have asked before writing.'),
-    'UserPromptSubmit',
-    'defect in flag-issue'
-  );
-});
-
-check('the second person of "supposed to" is noticed', () => {
-  assertSuggests(
-    onPrompt('You were supposed to make the plugin ask first.'),
-    'UserPromptSubmit',
-    'were supposed to'
-  );
-});
-
-for (const message of [
-  "You're right, the hook should not have fired.",
-  "You're right. The hook should not have fired.",
-  "You're right — the hook should not have fired.",
-  "You're right - the hook should not have fired.",
-]) {
-  check(`a concession is noticed however it is punctuated: "${message.slice(0, 30)}..."`, () => {
-    assertSuggests(onStop(message), 'Stop', 'punctuated concession');
-  });
-}
-
-// The noisy direction, from the same round. A buildable word in one clause and
-// a plan in another is not a correction.
-for (const prompt of [
-  'Can you script that? I should have time tomorrow.',
-  'What plugin is this? I should have the budget next week.',
-]) {
-  check(`a plan is not a correction: "${prompt.slice(0, 38)}..."`, () => {
-    assert.strictEqual(onPrompt(prompt), null, 'read a plan as a defect report');
-  });
-}
-
-// --- round three, and the shape of what it found --------------------------
-//
-// Two more silent, two more noisy. The pattern across all three rounds is that
-// a rule written for one phrasing is wrong for the next one along, so these
-// are grouped by the reading that was missing rather than by the pattern.
-
-for (const prompt of ['`/pickup` gave me the wrong handoff', '(/pickup) gave me the wrong handoff']) {
-  check(`a formatted command is still a command: "${prompt.slice(0, 34)}..."`, () => {
-    // Written as `(^|\s)` this accepted the bare form and rejected both of
-    // these, so the more carefully somebody wrote it, the less likely it was
-    // to be noticed.
-    assertSuggests(onPrompt(prompt), 'UserPromptSubmit', 'formatted command');
-  });
-}
-
-for (const message of [
-  "You're right — this hook should have failed open.",
-  "You're right — we should have made the hook fail open.",
-]) {
-  check(`a concession can begin with any subject: "${message.slice(0, 34)}..."`, () => {
-    assertSuggests(onStop(message), 'Stop', 'subject after punctuation');
-  });
-}
-
-for (const message of [
-  'I should have the plugin ready by tomorrow.',
-  'I should have time to update the plugin tomorrow.',
-]) {
-  check(`a forecast is not a confession: "${message.slice(0, 34)}..."`, () => {
-    assert.strictEqual(onStop(message), null, 'read a plan as an admission of a defect');
-  });
-}
-
-check('I should have caught that in the hook, which is a confession', () => {
-  // The other side of the same rule. Requiring a participle must not silence
-  // the real thing.
-  assertSuggests(onStop('I should have caught that in the hook.'), 'Stop', 'real confession');
-});
 
 for (const prompt of [
-  'What plugin is this? The meeting should have a room.',
-  'Can you script that? The meeting should have a room.',
+  'what did we agree about the offsite',
+  'the revenue figure is 4.2 not 4.8',
+  'we should have hired someone in January',
+  'summarise this document for me',
+  'that was wrong',
 ]) {
-  check(`two thoughts are not one correction: "${prompt.slice(0, 34)}..."`, () => {
-    // The buildable word is in one sentence and the expectation in the next.
-    // Two unrelated thoughts in one message is the ordinary way people write,
-    // so reading them together fired often and on nothing.
-    assert.strictEqual(onPrompt(prompt), null, 'joined two unrelated sentences');
+  check(`not routed, nothing here is buildable: "${prompt.slice(0, 38)}..."`, () => {
+    assert.strictEqual(onPrompt(prompt), null, 'gate routed an unrelated turn');
   });
 }
 
-check('a concession may still straddle a sentence boundary', () => {
-  // The mirror of the rule above, and why the two halves differ. "You're
-  // right. The hook should not have fired." is one thought in two sentences,
-  // so the outgoing half reads the whole text at once.
-  assertSuggests(onStop("You're right. The hook should not have fired."), 'Stop', 'straddling');
-});
-
-check('stays quiet when the correction is already being filed', () => {
-  assert.strictEqual(
-    onPrompt('/flag-issue the wrap skill should have filed centrally, that was wrong'),
-    null,
-    'suggested the command that is already being run'
+check('a turn already running a queue command is still routed', () => {
+  // Deliberately not suppressed. Suppressing at the gate is what silenced "the
+  // /flag-issue command should have asked before writing" by its own name, the
+  // one correction nobody else can file. The policy carries that rule, where
+  // it can tell invoking a command from talking about one.
+  assert.ok(
+    onPrompt('/flag-issue the wrap skill filed to the wrong place'),
+    'the gate suppressed a queue command again'
   );
 });
 
-check('stays quiet when the model merely agrees about something else', () => {
-  assert.strictEqual(
-    onStop('You are right that the second quarter was stronger.'),
-    null,
-    'read plain agreement as a defect report'
-  );
-});
-
-// --- the loop guard --------------------------------------------------------
-
-check('says nothing when stop_hook_active is set', () => {
-  // A Stop hook speaking into a stop it already interrupted is the shape that
-  // runs forever. This hook never blocks, so the loop is unlikely rather than
-  // impossible, which is not a reason to leave the check out.
-  assert.strictEqual(
-    onStop('I got that wrong, the hook should not have fired.', { stop_hook_active: true }),
-    null,
-    'ignored stop_hook_active'
-  );
-});
-
-// --- the fields, read from the captures rather than from these tests -------
+// --- what the policy has to say -------------------------------------------
 //
-// Everything above would pass just as well against a hook reading a field that
-// does not exist, as long as the tests invented the same field. These two read
-// the captured events instead, so a name that drifts fails here rather than
-// going quiet in a real session.
+// Not the wording, which will be tuned from real failures. These are the
+// boundaries that stop it being a nuisance, and each one exists because
+// something went wrong without it.
 
-function shapeOf(name) {
-  const file = path.join(FIXTURES, `${name}.json`);
-  const captured = JSON.parse(fs.readFileSync(file, 'utf8'));
+check('the policy states every boundary it needs', () => {
+  const policy = onPrompt('the hook fired twice').hookSpecificOutput.additionalContext;
+  const required = [
+    [/\/flag-issue/, 'names the command to suggest'],
+    [/once/i, 'says once, or it will be repeated every turn'],
+    [/not run it/i, 'says not to run it, since this must never write'],
+    [/not block/i, 'says not to block'],
+    [/queue command is\s+already being invoked/i, 'excludes a turn already filing one'],
+    [/skill, hook, command, plugin or script/i, 'says what counts as built here'],
+    [/answer you are about to give/i, 'covers the correction the answer itself concedes'],
+  ];
+  for (const [re, why] of required) {
+    assert.ok(re.test(policy), `the policy no longer ${why}`);
+  }
+});
+
+// --- failing open ----------------------------------------------------------
+//
+// A hook that crashes a session is worse than one that misses something, and
+// every one of these used to be a way in.
+
+for (const [name, payload] of [
+  ['a malformed body', '{not json at all'],
+  ['an empty body', ''],
+  ['an event with no prompt', { hook_event_name: 'UserPromptSubmit' }],
+  ['a prompt that is not a string', { hook_event_name: 'UserPromptSubmit', prompt: 42 }],
+  ['an empty prompt', { hook_event_name: 'UserPromptSubmit', prompt: '' }],
+  ['a null prompt', { hook_event_name: 'UserPromptSubmit', prompt: null }],
+]) {
+  check(`fails open on ${name}`, () => {
+    assert.strictEqual(runHook(payload), null, 'spoke, or threw, on a payload it cannot use');
+  });
+}
+
+// --- the wiring ------------------------------------------------------------
+
+check('the field really arrives as `prompt`', () => {
+  // Read from the capture rather than from the tests above, which would pass
+  // just as well against an invented field name as long as they invented the
+  // same one. The published docs call this `user_prompt`.
+  const captured = JSON.parse(fs.readFileSync(path.join(FIXTURES, 'UserPromptSubmit.json'), 'utf8'));
   assert.strictEqual(
     captured.source,
     'capture-event.js',
-    `${name}.json was not written by the capture tool, so it is somebody's belief`
+    'the fixture was not written by the capture tool, so it is somebody\'s belief'
   );
-  return captured.shape;
-}
-
-check('the prompt really arrives as `prompt`', () => {
-  const shape = shapeOf('UserPromptSubmit');
   assert.strictEqual(
-    shape.prompt,
+    captured.shape.prompt,
     'string',
-    'the captured event has no `prompt`. The published docs call this `user_prompt`, '
-      + 'and reading that name gives undefined on every event, so the hook goes silent '
-      + 'and looks fine. Recapture before changing the hook to match.'
+    'the captured event has no `prompt`. Recapture before changing the hook to match.'
   );
 });
 
-check('Stop really carries stop_hook_active and last_assistant_message', () => {
-  const shape = shapeOf('Stop');
-  assert.strictEqual(
-    shape.stop_hook_active,
-    'boolean',
-    'the captured Stop event has no `stop_hook_active`. The published docs say it does '
-      + 'not exist; the capture says it does. If this fails, the loop guard is guarding '
-      + 'nothing.'
-  );
-  assert.strictEqual(
-    shape.last_assistant_message,
-    'string',
-    'the captured Stop event has no `last_assistant_message`, which is the only reason '
-      + 'this hook does not have to walk the transcript'
-  );
+check('no Stop hook is wired, so there is no loop to guard against', () => {
+  // The Stop half is gone. The policy is injected before the answer is
+  // written, so it is already in context when the answer concedes something,
+  // which is what the Stop hook existed to catch.
+  const manifest = JSON.parse(fs.readFileSync(path.join(PLUGIN, 'hooks', 'hooks.json'), 'utf8'));
+  assert.ok(!manifest.hooks.Stop, 'a Stop hook is wired again, which brings the loop back');
+  const wired = JSON.stringify(manifest.hooks.UserPromptSubmit);
+  assert.ok(wired.includes('notice-correction.js'), 'the hook is not wired to UserPromptSubmit');
+});
+
+// --- the corpus, which this file cannot score ------------------------------
+
+check('the case file is well formed, so it does not rot unnoticed', () => {
+  const file = path.join(__dirname, 'fixtures', 'correction-cases.json');
+  const corpus = JSON.parse(fs.readFileSync(file, 'utf8'));
+  assert.ok(Array.isArray(corpus.cases) && corpus.cases.length > 0, 'no cases');
+  for (const c of corpus.cases) {
+    assert.ok(['user', 'assistant'].includes(c.side), `bad side: ${JSON.stringify(c)}`);
+    assert.ok(['suggest', 'quiet', 'either'].includes(c.expected), `bad expected: ${JSON.stringify(c)}`);
+    assert.ok(typeof c.input === 'string' && c.input.length > 0, `empty input: ${JSON.stringify(c)}`);
+    assert.ok(Number.isInteger(c.found), `no round recorded: ${JSON.stringify(c)}`);
+  }
+  // Both answers have to be represented or the corpus only measures one
+  // direction, and the quiet direction is the one that makes this a nuisance.
+  const kinds = new Set(corpus.cases.map((c) => c.expected));
+  assert.ok(kinds.has('suggest') && kinds.has('quiet'), 'the corpus only tests one direction');
 });
 
 console.log(`\n${ran} checks, ${failed} failed`);
