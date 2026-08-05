@@ -13,7 +13,8 @@ starts with ten minutes of "where was I".
 | `/status-bar` | Sets up the status line: model, folder, cost, context used |
 | `/core-tools` | Picks which connected tools to watch for expired sign-ins |
 
-Plus a hook that runs at session start and does two things without being asked.
+Plus a hook that runs at session start and gives the model the small amount of
+current state it should not have to rediscover.
 
 ## What the hook does
 
@@ -36,6 +37,18 @@ actually running, names the directories, and never blocks anything.
 Sessions in unrelated directories are counted but not named. Nesting counts as
 overlapping, in both directions, since a session at a repository root and one
 inside it edit the same files.
+
+**It opens with the build loop.** When build-loop state exists, the hook includes
+the active bug queue, the number of open to-build items, the newest weekly
+summary when it is no more than 14 days old, and a warning when `DEPS.json`
+points at missing or newer files. Session does not depend on build-loop being
+installed: it reads the state files when they exist and stays quiet when they
+do not. The weekly summary appears only on a new startup, not again on resume or
+compact, and is clipped at 2,000 characters.
+
+The entire injected context, including the date and parallel-session notices,
+is capped at 10,000 characters. A long weekly summary is clipped before it can
+turn an opening brief into the first session's largest context expense.
 
 ## The status line
 
