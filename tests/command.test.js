@@ -109,6 +109,30 @@ const CASES = [
   ['git clean --force', 'confirm', 'the long spelling deletes just the same'],
   ['git clean --force --quiet', 'confirm', 'and with another long option beside it'],
   ['git clean -X', 'confirm', 'uppercase X removes the ignored files'],
+
+  // --- every spelling of the rules that were already here -----------------
+  //
+  // Written after the clean rule turned out to have missed its long form, on
+  // the theory that if one rule was spelling-blind the others would be too.
+  // Two of the four were. `git push -f` is how most people type a force push
+  // and it was allowed while `--force` was stopped, and the README advertised
+  // force pushes as blocked the whole time.
+  ['git push -f origin main', 'confirm', 'the short spelling of a force push'],
+  ['git push -f', 'confirm', 'the same with no remote named'],
+  ['git push --force origin main', 'confirm', 'the long spelling'],
+  ['git branch --delete --force x', 'confirm', 'the long spelling of -D'],
+  ['git branch -df x', 'confirm', 'the same bundled'],
+
+  // The safe forms of both, which must stay allowed. -d refuses to delete a
+  // branch holding unmerged work, so git is already guarding it.
+  ['git push --force-with-lease', 'allow', 'refuses to overwrite unseen work'],
+  ['git push --force-with-lease origin main', 'allow', 'the same with a remote'],
+  ['git push -n -f origin main', 'allow', 'a dry run pushes nothing'],
+  ['git push --force --dry-run', 'allow', 'the long form of the dry run'],
+  ['git push origin main', 'allow', 'an ordinary push'],
+  ['git branch -d x', 'allow', 'git refuses this itself if it would lose work'],
+  ['git branch -a', 'allow', 'listing branches'],
+  ['git branch -m old new', 'allow', 'renaming one'],
 ];
 
 let failed = 0;

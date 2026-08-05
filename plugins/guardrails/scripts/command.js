@@ -186,8 +186,8 @@ const IRREVERSIBLE_GIT = [
   // `git clean` is not here. It needs the same reading as the commit rule,
   // because its dry run is spelled with a letter bundled in among the
   // destructive ones. See removesUntrackedFiles below.
-  { re: /(^|\s)git\s+push\s[^\n]*--force(?!-with-lease)/, what: 'git push --force can overwrite a remote branch' },
-  { re: /(^|\s)git\s+branch\s+-D(\s|$)/, what: 'git branch -D deletes an unmerged branch' },
+  // `git push` and `git branch` are not here either, for the same reason as
+  // clean: each has a spelling the regex missed. See below.
 ];
 
 // `git commit`, with any option allowed to sit between the two words, so
@@ -285,6 +285,63 @@ function removesUntrackedFiles(segment) {
   return destructive;
 }
 
+// Every option token belonging to a git subcommand, with the subcommand's own
+// name and anything before it left out. Three rules now need this, so it is
+// written once. The audit that produced the last two rules found the last two
+// holes as well, and they were the same hole: a rule written as a regex sees
+// the spelling its author had in mind and no other.
+function optionsAfter(segment, subcommand) {
+  const at = new RegExp(`(^|\\s)git\\s+(?:-[^\\s]+(?:\\s+[^\\s-][^\\s]*)?\\s+)*${subcommand}(\\s|$)`);
+  const found = at.exec(segment);
+  if (!found) return null;
+  const after = segment.slice(found.index + found[0].length);
+  return (after.match(/(?:^|\s)--?[A-Za-z][^\s]*/g) || []).map((raw) => raw.trim());
+}
+
+// `git push -f` is the spelling most people type and it was allowed, while
+// `--force` was stopped. The README advertised force pushes as blocked, so the
+// guard was wrong in the direction that reads as working.
+//
+// `--force-with-lease` stays allowed, which is the whole point of it: it
+// refuses to overwrite work you have not seen. A dry run is allowed for the
+// same reason it is on clean, since nothing leaves the machine.
+function forcePushes(segment) {
+  const options = optionsAfter(segment, 'push');
+  if (!options) return false;
+
+  let forced = false;
+  for (const token of options) {
+    if (token === '--dry-run') return false;
+    if (token === '--force') { forced = true; continue; }
+    if (token.startsWith('--')) continue; // including --force-with-lease
+    const letters = token.slice(1);
+    if (letters.includes('n')) return false; // -n is push's dry run
+    if (letters.includes('f')) forced = true;
+  }
+  return forced;
+}
+
+// `-D` is the short way to write `--delete --force`, and only the short way
+// was caught. A plain `-d` refuses to delete a branch holding unmerged work,
+// so it is git's own guard doing its job and nothing here needs to fire.
+function deletesUnmergedBranch(segment) {
+  const options = optionsAfter(segment, 'branch');
+  if (!options) return false;
+
+  let deleting = false;
+  let forcing = false;
+  for (const token of options) {
+    if (token === '--delete') { deleting = true; continue; }
+    if (token === '--force') { forcing = true; continue; }
+    if (token.startsWith('--')) continue;
+    const letters = token.slice(1);
+    if (letters.includes('D')) { deleting = true; forcing = true; }
+    if (letters.includes('d')) deleting = true;
+    if (letters.includes('f')) forcing = true;
+  }
+  return deleting && forcing;
+}
+
 // Returns { verdict: 'allow' | 'confirm', rule, reason, target }.
 //
 // This assesses. It does not decide policy, and it reads no on/off switch from
@@ -350,6 +407,32 @@ function checkCommand(command, config = {}, options = {}) {
           `git clean removes untracked files permanently.\n\nConfirm this is ` +
           `intended before running it. Adding \`-n\` shows what it would remove ` +
           `without removing anything, which is the safer way to find out.`,
+      };
+    }
+
+    if (stopDeletes && forcePushes(segment)) {
+      return {
+        verdict: 'confirm',
+        rule: 'destructive',
+        target: source,
+        reason:
+          `git push --force can overwrite a remote branch.\n\nConfirm this is ` +
+          `intended before running it. \`--force-with-lease\` does the same job ` +
+          `but refuses if somebody has pushed work you have not seen, which is ` +
+          `the case a force push destroys.`,
+      };
+    }
+
+    if (stopDeletes && deletesUnmergedBranch(segment)) {
+      return {
+        verdict: 'confirm',
+        rule: 'destructive',
+        target: source,
+        reason:
+          `This deletes a branch even if it was never merged.\n\nConfirm this ` +
+          `is intended before running it. A plain \`-d\` deletes the branch only ` +
+          `if its commits exist somewhere else, so it answers the question ` +
+          `rather than assuming it.`,
       };
     }
 
