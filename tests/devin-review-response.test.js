@@ -8,7 +8,7 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
-const SKILL = path.join(ROOT, 'plugins/build-loop/skills/address-devin-review');
+const SKILL = path.join(ROOT, 'plugins/build-loop/skills/devin-review-response');
 const VALIDATOR = path.join(ROOT, 'plugins/build-loop/scripts/pre-push-check.js');
 const README = path.join(ROOT, 'plugins/build-loop/README.md');
 let passed = 0;
@@ -134,4 +134,4 @@ check('non-object findings and verification rows return validation errors', () =
   assert.doesNotMatch(result.stderr, /TypeError|at Object/);
 });
 
-console.log(`address-devin-review: ${passed} checks passed`);
+console.log(`devin-review-response: ${passed} checks passed`);

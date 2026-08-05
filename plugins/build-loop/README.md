@@ -47,7 +47,7 @@ them are things you forget you meant to fix.
 
 **Keep it honest**
 
-- `/address-devin-review` — work one complete Devin review round: classify
+- `/devin-review-response` — work one complete Devin review round: classify
   every finding, map dependencies before editing, sweep paired files, validate
   the round record, and ship one atomic commit rather than a trail of point
   fixes.
