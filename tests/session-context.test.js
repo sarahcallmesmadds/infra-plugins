@@ -87,14 +87,31 @@ check('current task stays quiet without a usable task file', () => {
   assert.strictEqual(statusline.readCurrentTaskStatuslineSegment({ sessionId: 'this-session', home }), '');
 });
 
-check('current task accepts the wrapped todo shape and survives malformed files', () => {
+check('current task accepts the wrapped todo shape', () => {
   const home = tmp();
   writeTodos(home, 'wrapped', { tasks: [{ status: 'in_progress', activeForm: 'Wrapped task' }] }, 'agent-good');
+  assert.match(statusline.readCurrentTaskStatuslineSegment({ sessionId: 'wrapped', home }), /Wrapped task/);
+});
+
+check('the newest todo file is authoritative over stale agent work', () => {
+  const home = tmp();
+  writeTodos(home, 'session', [{ status: 'in_progress', activeForm: 'Stale agent task' }], 'agent-old');
+  const stale = path.join(home, '.claude', 'todos', 'session-agent-old.json');
+  const past = new Date(Date.now() - 1000);
+  fs.utimesSync(stale, past, past);
+  writeTodos(home, 'session', [{ status: 'completed', activeForm: 'Main task finished' }], 'agent-new');
+  assert.strictEqual(statusline.readCurrentTaskStatuslineSegment({ sessionId: 'session', home }), '');
+});
+
+check('a malformed newest todo file does not expose an older task', () => {
+  const home = tmp();
+  writeTodos(home, 'wrapped', { tasks: [{ status: 'in_progress', activeForm: 'Older task' }] }, 'agent-old');
+  const old = path.join(home, '.claude', 'todos', 'wrapped-agent-old.json');
+  const past = new Date(Date.now() - 1000);
+  fs.utimesSync(old, past, past);
   const bad = path.join(home, '.claude', 'todos', 'wrapped-agent-newer.json');
   fs.writeFileSync(bad, '{bad');
-  const future = new Date(Date.now() + 1000);
-  fs.utimesSync(bad, future, future);
-  assert.match(statusline.readCurrentTaskStatuslineSegment({ sessionId: 'wrapped', home }), /Wrapped task/);
+  assert.strictEqual(statusline.readCurrentTaskStatuslineSegment({ sessionId: 'wrapped', home }), '');
 });
 
 check('current task can be disabled in session config', () => {

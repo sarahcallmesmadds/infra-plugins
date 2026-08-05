@@ -96,21 +96,20 @@ function readCurrentTaskStatuslineSegment({ sessionId, home = os.homedir(), conf
       })
       .sort((a, b) => b.mtime - a.mtime);
 
-    for (const { file } of files) {
-      const parsed = readJsonFile(file);
-      const tasks = Array.isArray(parsed) ? parsed : parsed?.tasks;
-      if (!Array.isArray(tasks)) continue;
-      const current = tasks.find((task) => task?.status === 'in_progress'
-        && typeof task.activeForm === 'string' && task.activeForm.trim());
-      if (!current) continue;
-      const label = current.activeForm
-        .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '')
-        .replace(/[\x00-\x1f\x7f]/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim()
-        .slice(0, 80);
-      return label ? ` │ \x1b[34m↳ ${label}\x1b[0m` : '';
-    }
+    if (!files.length) return '';
+    const parsed = readJsonFile(files[0].file);
+    const tasks = Array.isArray(parsed) ? parsed : parsed?.tasks;
+    if (!Array.isArray(tasks)) return '';
+    const current = tasks.find((task) => task?.status === 'in_progress'
+      && typeof task.activeForm === 'string' && task.activeForm.trim());
+    if (!current) return '';
+    const label = current.activeForm
+      .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '')
+      .replace(/[\x00-\x1f\x7f]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 80);
+    return label ? ` │ \x1b[34m↳ ${label}\x1b[0m` : '';
   } catch (e) {
     // Todo state is optional and changes while the line renders. Stay quiet.
   }
