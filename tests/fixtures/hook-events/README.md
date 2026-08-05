@@ -37,12 +37,30 @@ Wire the hook, start one session, use it normally, then take it back out:
 ```json
 // ~/.claude/settings.json
 "hooks": {
-  "PreToolUse":   [ { "hooks": [ { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/capture-event.js" } ] } ],
-  "PostToolUse":  [ { "hooks": [ { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/capture-event.js" } ] } ],
-  "SessionStart": [ { "hooks": [ { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/capture-event.js" } ] } ],
-  "Stop":         [ { "hooks": [ { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/capture-event.js" } ] } ]
+  "PreToolUse":   [ { "hooks": [ { "type": "command", "command": "node \"$HOME/.claude/hooks/capture-event.js\"" } ] } ],
+  "PostToolUse":  [ { "hooks": [ { "type": "command", "command": "node \"$HOME/.claude/hooks/capture-event.js\"" } ] } ],
+  "SessionStart": [ { "hooks": [ { "type": "command", "command": "node \"$HOME/.claude/hooks/capture-event.js\"" } ] } ],
+  "Stop":         [ { "hooks": [ { "type": "command", "command": "node \"$HOME/.claude/hooks/capture-event.js\"" } ] } ]
 }
 ```
+
+Copy the hook there first. Two paths that look like they would work do not, and
+both fail quietly:
+
+```bash
+cp plugins/build-loop/hooks/capture-event.js ~/.claude/hooks/
+chmod +x ~/.claude/hooks/capture-event.js
+```
+
+- The installed plugin sits under a version number,
+  `~/.claude/plugins/cache/smadds/build-loop/0.5.6/hooks/`, so wiring that path
+  breaks at the next release.
+- `${CLAUDE_PLUGIN_ROOT}` is a plugin-manifest variable. In `settings.json` it
+  expands to nothing, leaving a hook that runs `node /hooks/capture-event.js`
+  and fails on every event without saying so.
+
+Payload shapes are per tool, so while capturing, use whichever tools the hooks
+you care about are wired to: a `Write`, an `Edit`, a `Read`, a shell command.
 
 Shapes land in `~/.claude/build-loop/hook-events/`. Copy them here and commit,
 so the suite passes on a fresh clone and not only on the machine that captured.

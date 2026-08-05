@@ -92,7 +92,15 @@ function wiring() {
       for (const group of groups) {
         // No matcher means every tool, which is recorded as an empty set and
         // read as "cannot narrow" rather than as "matches nothing".
-        const tools = group.matcher ? group.matcher.split('|').map((t) => t.trim()) : [];
+        //
+        // Split on comma as well as bar. hook-executable.test.js sanctions
+        // `Write, Edit` as a legal matcher, and splitting on the bar alone
+        // turns that into one tool called "Write, Edit", which matches no
+        // capture and quietly drops the hook's payload reads into the unproven
+        // list instead of checking them.
+        const tools = group.matcher
+          ? group.matcher.split(/[|,]/).map((t) => t.trim()).filter(Boolean)
+          : [];
         for (const entry of group.hooks || []) {
           const m = String(entry.command || '').match(/hooks\/([\w.-]+\.js)/);
           if (!m) continue;
@@ -151,16 +159,27 @@ function loadShapes() {
   return { envelopes, payloads, misfiled };
 }
 
+// Both halves are load-bearing and the copy is not optional. The installed
+// plugin lives under a version number, so wiring that path breaks at the next
+// release, and \${CLAUDE_PLUGIN_ROOT} expands to nothing outside a plugin
+// manifest, which is a hook that silently runs \`node /hooks/capture-event.js\`.
+// Verified: the $HOME form below runs, the other two do not.
 const SETTINGS_BLOCK = `
-  Wire the capture hook, start one session, use it normally, then remove it:
+  1. Put the hook somewhere stable:
 
-    // ~/.claude/settings.json
-    "hooks": {
-      "<EventName>": [
-        { "hooks": [ { "type": "command", "command":
-            "node \\"$HOME/.claude/hooks/capture-event.js\\"" } ] }
-      ]
-    }
+       cp plugins/build-loop/hooks/capture-event.js ~/.claude/hooks/
+       chmod +x ~/.claude/hooks/capture-event.js
+
+  2. Wire it in ~/.claude/settings.json, one entry per event you need:
+
+       "hooks": {
+         "<EventName>": [
+           { "hooks": [ { "type": "command", "command":
+               "node \\"$HOME/.claude/hooks/capture-event.js\\"" } ] }
+         ]
+       }
+
+  3. Start one session, use it normally, then take the entries back out.
 
   Shapes land in ~/.claude/build-loop/hook-events/. Copy them into
   tests/fixtures/hook-events/ and commit, so this passes on a fresh clone too.`;
@@ -196,18 +215,60 @@ function eventIdent(src) {
   return null;
 }
 
-function fieldsRead(src, ident) {
-  const paths = new Set();
-  const dotted = new RegExp(`\\b${ident}\\s*\\.\\s*([A-Za-z_$][\\w$]*(?:\\s*\\.\\s*[A-Za-z_$][\\w$]*)*)`, 'g');
+// Reads rooted at one name, whether that name is the event or a local standing
+// in for part of it.
+//
+// The alias half is not a refinement, it is most of the value. write-scan does
+// `const input = event.tool_input || {}` and then reads `input.content`,
+// `input.new_string` and `input.file_path`. Rooted at `event` alone, this saw
+// the single path `tool_input` and checked nothing under it, so a live hook got
+// a clean pass on three unverified payload reads and did not even appear in the
+// unproven list. A checker that reports nothing wrong because it looked in the
+// wrong place is the exact failure this suite exists to catch, happening inside
+// the suite.
+//
+// One level deep on purpose. `const a = event.x; const b = a.y; b.z` is not
+// followed, and chasing it properly wants a parser rather than a regex. The
+// depth that exists covers every hook here and the shape the aliasing takes.
+function readsRootedAt(src, root, prefix, paths) {
+  const dotted = new RegExp(`\\b${root}\\s*\\.\\s*([A-Za-z_$][\\w$]*(?:\\s*\\.\\s*[A-Za-z_$][\\w$]*)*)`, 'g');
   let m;
-  while ((m = dotted.exec(src)) !== null) paths.add(m[1].replace(/\s+/g, ''));
-  const destructure = new RegExp(`\\{([^{}]+)\\}\\s*=\\s*${ident}\\b`, 'g');
+  while ((m = dotted.exec(src)) !== null) {
+    paths.add((prefix ? `${prefix}.` : '') + m[1].replace(/\s+/g, ''));
+  }
+  const destructure = new RegExp(`\\{([^{}]+)\\}\\s*=\\s*${root}\\b`, 'g');
   while ((m = destructure.exec(src)) !== null) {
     for (const part of m[1].split(',')) {
       const key = part.split(':')[0].trim();
-      if (/^[A-Za-z_$][\w$]*$/.test(key)) paths.add(key);
+      if (/^[A-Za-z_$][\w$]*$/.test(key)) paths.add((prefix ? `${prefix}.` : '') + key);
     }
   }
+}
+
+function fieldsRead(src, ident) {
+  const paths = new Set();
+  readsRootedAt(src, ident, '', paths);
+
+  // `const input = event.tool_input || {}` and `const { tool_input: input } =
+  // event`. Both put part of the event behind a new name, and everything read
+  // through that name is a read of the event.
+  const aliases = new Map();
+  let m;
+  const assigned = new RegExp(
+    `\\b(?:const|let|var)\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*${ident}\\s*\\.\\s*([A-Za-z_$][\\w$]*(?:\\s*\\.\\s*[A-Za-z_$][\\w$]*)*)`, 'g');
+  while ((m = assigned.exec(src)) !== null) aliases.set(m[1], m[2].replace(/\s+/g, ''));
+
+  const renamed = new RegExp(`\\{([^{}]+)\\}\\s*=\\s*${ident}\\b`, 'g');
+  while ((m = renamed.exec(src)) !== null) {
+    for (const part of m[1].split(',')) {
+      const [key, local] = part.split(':').map((s) => (s || '').trim());
+      if (local && /^[A-Za-z_$][\w$]*$/.test(local) && /^[A-Za-z_$][\w$]*$/.test(key)) {
+        aliases.set(local, key);
+      }
+    }
+  }
+
+  for (const [local, prefix] of aliases) readsRootedAt(src, local, prefix, paths);
   return [...paths];
 }
 
@@ -245,18 +306,32 @@ function viaHelper(hookFile, src) {
   return { names, topLevelDecision };
 }
 
+// A recorded leaf is a type name, not a container. Anything below one is a
+// member of that value rather than a field of the event: `command.match`,
+// `session_id.slice`, `transcript_path.trim`, `content.length`. Walking into it
+// and reporting "not present in a real event" would call ordinary JavaScript a
+// defect, and the message would look exactly like a real finding.
+//
+// So a descent past any leaf stops and answers unknown. The check that matters
+// is untouched, because a name the event does not carry at all, `event.toolName`
+// for `event.tool_name`, fails on its first segment and never reaches a leaf.
+const UNKNOWN_BELOW = new Set(['object', 'array', 'null', 'string', 'number', 'boolean', 'undefined', 'function']);
+
 function hasPath(shape, dotted) {
   let node = shape;
   for (const seg of dotted.split('.')) {
-    if (node === null || typeof node !== 'object' || Array.isArray(node)) return false;
+    // A recorded array is `[shapeOf(firstElement)]`, so a read below it is
+    // either an index or an Array member. Neither is a field of the event.
+    if (Array.isArray(node)) return true;
+    if (node === null || typeof node !== 'object') return false;
     if (!(seg in node)) return false;
     node = node[seg];
-    // A branch recorded as one of these is unknown rather than absent, and
-    // unknown is not a finding. "object" and "array" mean the capture hit its
-    // depth limit; "null" means the field was null on the one call that got
-    // recorded, which says nothing about the field in general. Reporting either
-    // would be this suite inventing a fault out of its own sampling.
-    if (node === 'object' || node === 'array' || node === 'null') return true;
+    // "object" and "array" mean the capture hit its depth limit; "null" means
+    // the field was null on the one call recorded, which says nothing about the
+    // field in general; a scalar type name means we have left the event. Every
+    // one of them is unknown rather than absent, and reporting unknown as a
+    // fault would be this suite inventing one out of its own sampling.
+    if (typeof node === 'string' && UNKNOWN_BELOW.has(node)) return true;
   }
   return true;
 }
@@ -354,21 +429,44 @@ for (const hook of hooks) {
     const gaps = tools.size
       ? [...tools].filter((t) => !payloads[`${event}.${t}`])
       : (payloadFields.length ? ['(no matcher, so no tool to check against)'] : []);
-    if (gaps.length) {
+    if (!candidates.length) {
       unproven.push(`${label}: ${payloadFields.map((f) => `${ident}.${f}`).join(', ')} `
-        + `on ${event} for ${gaps.join(', ')}`);
+        + `on ${event}, no capture for ${gaps.join('/')}`);
+      continue;
     }
-    if (!candidates.length) continue;
-    for (const tool of candidates) {
-      const pay = payloads[`${event}.${tool}`];
-      check(`${label} reads only ${event} payload fields ${tool} carries`, () => {
-        const absent = payloadFields.filter((f) => !hasPath(pay.shape, f));
-        assert.strictEqual(absent.length, 0,
-          `${absent.map((f) => `${ident}.${f}`).join(', ')} not present in a real `
-          + `${event} event on ${tool} (${pay.origin}). `
-          + 'A field that is not there reads as undefined and the hook quietly does nothing.');
-      });
+
+    // Present in at least one of the tools the hook handles, not in all of
+    // them. A hook wired to `Write|Edit` reads the union and guards with `||`:
+    // write-scan takes `input.content || input.new_string` precisely because
+    // `content` is a Write field and `new_string` is an Edit field. Demanding
+    // every field from every tool marks that correct code as broken, which is
+    // the same class of error as checking payloads against one capture.
+    //
+    // A field carried by none of them is still a real finding, and that is the
+    // case that matters: a Bash-only hook reaching for `tool_input.file_path`
+    // reads undefined on every call it will ever see.
+    const absent = payloadFields.filter(
+      (f) => !candidates.some((t) => hasPath(payloads[`${event}.${t}`].shape, f)));
+
+    // A verdict is only available when every tool the hook handles has been
+    // captured. With one of `Write|Edit` missing, a field absent from the
+    // captured half may be carried by the other half, and calling that a defect
+    // would be the suite reporting its own missing evidence as the hook's fault.
+    if (gaps.length) {
+      if (absent.length) {
+        unproven.push(`${label}: ${absent.map((f) => `${ident}.${f}`).join(', ')} `
+          + `on ${event}, not carried by ${candidates.join('/')} and no capture for ${gaps.join('/')}`);
+      }
+      continue;
     }
+
+    check(`${label} reads only ${event} payload fields ${candidates.join('/')} provide`, () => {
+      assert.strictEqual(absent.length, 0,
+        `${absent.map((f) => `${ident}.${f}`).join(', ')} not present in a real `
+        + `${event} event on any of ${candidates.join(', ')}, which is every tool this `
+        + 'hook is wired to. A field that is not there reads as undefined and the hook '
+        + 'quietly does nothing.');
+    });
   }
 
   // What the hook writes back.
