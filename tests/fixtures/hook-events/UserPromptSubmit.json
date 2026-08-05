@@ -1,0 +1,15 @@
+{
+  "source": "capture-event.js",
+  "hook_event_name": "UserPromptSubmit",
+  "captured_at": "2026-08-05T15:03:18.720Z",
+  "keys_only": true,
+  "shape": {
+    "cwd": "string",
+    "hook_event_name": "string",
+    "permission_mode": "string",
+    "prompt": "string",
+    "prompt_id": "string",
+    "session_id": "string",
+    "transcript_path": "string"
+  }
+}
