@@ -306,6 +306,77 @@ Same three response types as Step V3:
 
 ---
 
+## Closing an entry for good
+
+The steps above take an entry as far as `fix applied, watching`, which is
+deliberately not the end: it means the change reached the file and nobody has
+used it yet. Closing it is a separate act, and this is where `resolution` gets
+written.
+
+**`status` says the entry is closed. `resolution` says what closing it meant.**
+Two of the five answers cannot be said with a status at all, so an entry closed
+without one loses the part that mattered. See Resolution in SCHEMA.md.
+
+Write the object to a scratch file, then hand it over. Never edit the entry
+directly:
+
+```json
+{
+  "outcome": "fix_applied",
+  "at": "{ISO-8601 now}",
+  "by": "user",
+  "commit": "{hash, or omit when there was none}",
+  "summary": "{what actually changed, in plain language}"
+}
+```
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/queue.js" update {id} --list queue \
+  --status {status from the table below} --resolution {scratch}/resolution-{id}.json
+```
+
+For the `fix_applied` object shown above, that status is `Resolved`. For any
+other outcome, take the status from the table rather than copying `Resolved`.
+
+If it exits non-zero, nothing was written and the entry still holds whatever it
+held before. Report what it printed and **stop**. Do not retry and do not go on
+to tell the user the entry is closed. A refusal is usually another session
+holding the lock, in which case running it again is the whole remedy, and it is
+otherwise the shape check refusing a resolution that could not be read back,
+which names what is missing.
+
+Which outcome, and which status goes with it:
+
+| What happened | `outcome` | `status` |
+|---|---|---|
+| A change was made and it worked | `fix_applied` | `Resolved` |
+| Looked at, nothing needed changing. The usual dep-review answer | `no_change_needed` | `Resolved` |
+| Declined on purpose | `wont_fix` | `Won't Fix` |
+| The same thing as another entry | `duplicate` | `Won't Fix` |
+| Stopped being relevant, nobody decided against it | `obsolete` | `Won't Fix` |
+
+The last three all take `Won't Fix`, because it is the only closed status that
+does not claim a fix landed. The status is the coarse fact and the outcome is
+the true one, which is the whole reason both exist.
+
+**This table is enforced, not advice.** Pairing a status with an outcome from
+the other row is refused, in both directions, and so is closing an entry with no
+resolution at all. Send both in one call, as above. If you have the status and
+not the outcome, you do not yet know enough to close the entry: ask.
+
+**`duplicate` must name the other entry**, in `duplicate_of`. The write is
+refused without it, and that refusal is the point: a duplicate closed with no
+link is the same as a duplicate dropped, and the discussion it pointed at is
+gone. Check the id resolves to a real entry before writing it.
+
+`summary` is required too. An outcome says what happened and never why, and why
+is the part nobody can reconstruct six weeks later.
+
+Nothing here rewrites an entry closed before this existed. Nineteen carry a
+resolution in three older shapes, all still read, none touched.
+
+---
+
 ## Error handling
 
 - **Queue entry not found**: "No queue entry found at {path}. Check the ID and try again." Stop.

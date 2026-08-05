@@ -168,13 +168,17 @@ check('a concurrent status change does not lose a note', () => {
   // read the same entry. Under the old sequence whichever wrote second erased
   // the other's change, and neither reported anything.
   return withHome(async (home) => {
+    // `In Progress` rather than `Resolved`, which this used to write. Closing an
+    // entry now has to say what closing it meant, and that requirement has
+    // nothing to do with what this test is about. Any status change makes the
+    // point, so the one that drags a second rule in is the wrong one to pick.
     entry(home, 'e2');
     await Promise.all([
-      start(home, ['update', 'e2', '--status', 'Resolved']),
+      start(home, ['update', 'e2', '--status', 'In Progress']),
       start(home, ['update', 'e2', '--note', 'still here']),
     ]);
     const after = read(home, 'e2');
-    assert.strictEqual(after.status, 'Resolved', 'the status change was lost');
+    assert.strictEqual(after.status, 'In Progress', 'the status change was lost');
     assert.strictEqual(after.notes.length, 1, 'the note was lost');
     assert.strictEqual(after.notes[0].text, 'still here');
   });
@@ -193,13 +197,20 @@ check('notes already on the entry are never rebuilt away', () => {
 check('one call changing several things lands as one write', () => {
   return withHome((home) => {
     entry(home, 'e4');
-    fs.writeFileSync(path.join(home, 'res.json'), JSON.stringify({ outcome: 'fixed' }));
+    // `{outcome: 'fixed'}` here until the resolution gate landed, which is not
+    // a spelling anything accepted. It wrote fine, because nothing checked.
+    fs.writeFileSync(path.join(home, 'res.json'), JSON.stringify({
+      outcome: 'fix_applied',
+      at: '2026-08-05T12:00:00.000Z',
+      summary: 'the guard now reads the event cwd',
+      commit: 'abc1234',
+    }));
     run(home, ['update', 'e4', '--status', 'Resolved', '--note', 'a', '--note', 'b',
       '--resolution', path.join(home, 'res.json'), '--field', 'repo=other']);
     const after = read(home, 'e4');
     assert.strictEqual(after.status, 'Resolved');
     assert.strictEqual(after.notes.length, 2, 'a repeated --note was dropped');
-    assert.strictEqual(after.resolution.outcome, 'fixed');
+    assert.strictEqual(after.resolution.outcome, 'fix_applied');
     assert.strictEqual(after.repo, 'other');
   });
 });

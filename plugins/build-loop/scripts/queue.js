@@ -29,6 +29,8 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
+const { problemsWith, outcomeList, normalise, isClosed, disagreement } = require('./resolution.js');
+
 const ROOT = path.join(os.homedir(), '.claude', 'build-loop');
 const QUEUE = path.join(ROOT, 'queue');
 const LOCK = path.join(ROOT, '.queue.lock');
@@ -99,6 +101,26 @@ function statusesFor(name) {
 // deciding to put it there.
 function loosely(value) {
   return String(value).toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+// Whether the status an entry is already sitting on means it was closed. Read
+// loosely because this is asked about what is on disk rather than about what
+// somebody is trying to write, and what is on disk includes `Wontfix`.
+//
+// It exists for one question: is this write closing the entry, or repairing the
+// status of an entry that was closed already. Correcting `Wontfix` to `Won't
+// Fix` is the second, and demanding a resolution for it would break the
+// remediation path `lint` prints, which is the whole reason `lint` reports a
+// bad status at all. An entry closed before any of this existed can still be
+// spelled correctly, and gains no obligation by being repaired.
+// The retired `fix attempted / unresolved` is deliberately absent. Despite
+// being retired it describes an unresolved entry, so moving it to either
+// closed status is a real first closure and has to write a resolution.
+const CLOSED_ON_DISK = ['Resolved', "Won't Fix"];
+
+function alreadyClosed(status) {
+  if (status === undefined || status === null) return false;
+  return CLOSED_ON_DISK.some((known) => loosely(known) === loosely(status));
 }
 
 // `JSON.parse` accepts `null`, `3`, `"x"` and `[]` as valid JSON, and none of
@@ -479,6 +501,23 @@ function statusOnDisk(id, dir) {
   }
 }
 
+// JSON with object keys in a fixed order, so two spellings of the same value
+// compare equal. Only used to answer "did this write change anything", never
+// to produce something stored.
+function stableJSON(value) {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(stableJSON).join(',')}]`;
+  return `{${Object.keys(value).sort().map((k) => `${JSON.stringify(k)}:${stableJSON(value[k])}`).join(',')}}`;
+}
+
+function resolutionOnDisk(id, dir) {
+  try {
+    return JSON.parse(fs.readFileSync(entryPath(id, dir), 'utf8')).resolution;
+  } catch {
+    return undefined;
+  }
+}
+
 function writeEntry(id, entry, dir = QUEUE) {
   // Refuse to write without the lock. The check in acquire narrows the takeover
   // race but cannot close it: there is no compare-and-swap for a rename, so two
@@ -527,6 +566,7 @@ function writeEntry(id, entry, dir = QUEUE) {
   // the gate holding only for the routes that exist today is how the `--json`
   // hole was created in the first place.
   const existed = fs.existsSync(entryPath(id, dir));
+  const statusChanged = Boolean(entry) && entry.status !== undefined && entry.status !== statusOnDisk(id, dir);
   if (entry && entry.status === undefined) {
     if (!existed) {
       fail(
@@ -534,8 +574,105 @@ function writeEntry(id, entry, dir = QUEUE) {
         + `\n  Valid: ${statusList(statusesFor(listNameFor(dir)).write)}`
       );
     }
-  } else if (entry && entry.status !== statusOnDisk(id, dir)) {
+  } else if (statusChanged) {
     checkStatus(entry.status, listNameFor(dir));
+  }
+
+  // Same gate, same rule: only what this write CHANGES. Nineteen entries on
+  // disk carry a resolution written by hand in three different shapes, and
+  // every one of them predates this check. Validating unconditionally would
+  // lock all nineteen out of ever being annotated again, which is the trap the
+  // status check above already fell into once.
+  //
+  // Compared with keys sorted, because `--json resolution=FILE` parses a fresh
+  // object every time and JSON.stringify is order-sensitive. Handing back the
+  // same legacy value with its keys in a different order read as a change,
+  // which then validated it under the new rules and refused it. The entry had
+  // not changed and could not be written.
+  const resolutionChanged = Boolean(entry)
+    && stableJSON(entry.resolution) !== stableJSON(resolutionOnDisk(id, dir));
+  if (resolutionChanged) {
+    const had = resolutionOnDisk(id, dir);
+    // Clearing one is not an edit, it is a deletion, and it succeeded in
+    // silence: `problemsWith(null)` has nothing to object to, so a resolution
+    // file holding `null` replaced a complete record of outcome, timestamp,
+    // summary and commit with nothing, and left the status saying Resolved.
+    // This queue never deletes an entry, it changes the status instead, and
+    // the same reasoning applies one level down.
+    if ((entry.resolution === null || entry.resolution === undefined) && had !== null && had !== undefined) {
+      fail(
+        `queue.js: that would erase the resolution on ${id} and nothing was written.\n`
+        + `  It currently records: ${JSON.stringify(had)}\n`
+        + `  To reopen the entry, change its status. The resolution stays as the record\n`
+        + `  of the earlier close. To correct it, write a new one rather than clearing it.`
+      );
+    }
+    const problems = problemsWith(entry.resolution);
+    if (problems.length) {
+      fail(
+        `queue.js: this resolution cannot be read back. Nothing was written.\n`
+        + problems.map((p) => `  - ${p}`).join('\n')
+        + `\n  Outcomes: ${outcomeList()}`
+      );
+    }
+  }
+
+  // The two fields, judged together. Both checks above look at one field and
+  // ask whether this write changed it, which left the pair unguarded from both
+  // sides.
+  //
+  // `Resolved` and `Won't Fix` are the only statuses this applies to, and only
+  // on the queue: they do not exist in the to-build enum, and the other three
+  // are not closures. An entry sitting on `Open` after being reopened keeps the
+  // resolution of the earlier close, which is the documented way to reopen one,
+  // so nothing here may object to that pairing.
+  //
+  // Read through `normalise` rather than `problemsWith`. The question is
+  // whether the meaning can be read back, and the nineteen legacy resolutions
+  // answer it without satisfying the writer's rules: `{commit, fixed_at,
+  // summary}` on a Resolved entry reads as `fix_applied` and has no `at` at
+  // all. Validating instead of reading would refuse to reclose the very entries
+  // this gate had just allowed to be reopened.
+  if (listNameFor(dir) === 'queue' && entry && isClosed(entry.status) && (statusChanged || resolutionChanged)) {
+    const read = normalise(entry.resolution);
+    const priorStatus = statusOnDisk(id, dir);
+    const wasClosed = alreadyClosed(priorStatus);
+    // A repair means the same closed status after punctuation and case are
+    // removed: `Wontfix` -> `Won't Fix`. Merely starting and ending closed is
+    // not enough; `Resolved` -> `Won't Fix` is a different state and must be
+    // judged against the resolution like any other closure change.
+    const pureClosedStatusRepair = statusChanged && !resolutionChanged && wasClosed
+      && loosely(entry.status) === loosely(priorStatus);
+
+    // Closing with nothing recorded. `queue.js update x --status Resolved`
+    // against an entry whose resolution was null changed no resolution, so the
+    // gate above never ran and the entry closed saying nothing about what
+    // closing it meant. SCHEMA.md says the field is null only until closure,
+    // and this is the sentence that makes that true rather than aspirational.
+    //
+    // Only when this write is the closure. An entry already closed without a
+    // resolution predates the rule and can still be annotated and still have a
+    // misspelt status repaired, which is the same rule as everywhere else here.
+    // Moving `Wontfix` to `Won't Fix` is not a closing act, and refusing it
+    // would break the fix `lint` prints for the fault `lint` exists to find.
+    if (statusChanged && !pureClosedStatusRepair && (!read || !read.outcome)) {
+      fail(
+        `queue.js: closing ${id} as ${showStatus(entry.status)} needs a resolution saying what that meant.\n`
+        + `  It currently records: ${JSON.stringify(entry.resolution === undefined ? null : entry.resolution)}\n`
+        + `  Write one with --resolution FILE in the same call:\n`
+        + `    {"outcome": "...", "at": "<ISO-8601>", "summary": "<what happened, plainly>"}\n`
+        + `  Outcomes: ${outcomeList()}`
+      );
+    }
+
+    // A pure spelling repair must remain reachable even when the old entry is
+    // internally contradictory. `lint` can make the status visible again; it
+    // cannot decide which historical outcome was intended. Requiring both to
+    // be rewritten turns the printed one-field remedy into a dead end.
+    const clash = !pureClosedStatusRepair && read && disagreement(entry.status, read.outcome);
+    if (clash) {
+      fail(`queue.js: ${clash}. Nothing was written.`);
+    }
   }
 
   const target = entryPath(id, dir);

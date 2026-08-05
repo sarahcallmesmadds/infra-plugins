@@ -222,7 +222,7 @@ One JSON file per queue entry, stored at:
 | `urgency_hint` | string | yes | Urgency signal for queue sorting. | `"normal"`, `"high"`, `"low"`. Default is `"normal"`. |
 | `dedup_key` | string | yes | Deduplication key. See Dedup Key Rule below. | Format: `"{target}::{slug(what_happened[:40])}"` |
 | `notes` | array | no | Array of `{ts, text}` objects. Append-only. `/apply-fix` appends a note holding the commit hash after every successful commit. | Used for follow-up observations after capture. |
-| `resolution` | string or null | no | Null until a fix is verified. Then a plain-language description of what changed. | Owned by `/verify-fix`. Never set by hand. |
+| `resolution` | object or null | no | Null until the entry is closed. Then what closing it meant. See Resolution below. | Written by whichever skill closes the entry. Readers use `scripts/resolution.js`, never the raw field. |
 
 ---
 
@@ -241,6 +241,139 @@ The reason for read-time mapping rather than a migration script: a migration tha
 Writers always emit the v5 field names. An old entry that gets its status updated is rewritten in full by the writer that touched it, which converts it as a side effect. That is fine, and it is the only time an old entry changes shape.
 
 ---
+
+## Resolution
+
+`status` says an entry is closed. `resolution` says what closing it meant, and
+those are different questions. Two of the answers cannot be expressed as a
+status at all: an entry that duplicates another, and one that stopped being
+relevant without anybody deciding against it. Both would read as `Won't Fix`,
+which this document defines as "the user explicitly deferred or declined", and
+neither of them is that.
+
+```json
+"resolution": {
+  "outcome": "fix_applied",
+  "at": "2026-08-05T12:00:00.000Z",
+  "by": "user",
+  "commit": "abc1234",
+  "duplicate_of": null,
+  "summary": "The guard reads the event cwd, so a bare commit is judged against the right repository."
+}
+```
+
+| Field | Required | Meaning |
+|---|---|---|
+| `outcome` | yes | One of the five below. |
+| `at` | yes | ISO-8601, when it was closed. |
+| `summary` | yes | Plain language. An outcome says what happened and never why, and why is the part nobody can reconstruct six weeks later. |
+| `by` | no | Who confirmed it. `"user"`, or the skill that closed it. |
+| `commit` | no | The commit, when there was one. A fix can land without one. |
+| `duplicate_of` | only when the outcome is `duplicate` | The id of the entry holding the discussion. |
+
+`by`, `commit` and `duplicate_of` must be non-empty strings when present. The
+reader drops anything else, so a write that set `duplicate_of` to a number was
+accepted and then read back as nothing, losing the link that outcome exists for.
+
+A resolution cannot be erased once written. Clearing it is a deletion rather
+than an edit, and this queue never deletes: to reopen an entry change its
+status, and the resolution stays as the record of the earlier close. Writing a
+different valid resolution over it is allowed.
+
+**Closing an entry writes one.** A write that moves an entry into `Resolved` or
+`Won't Fix` is refused unless the entry ends up carrying a resolution that reads
+back with an outcome, and the two have to be written in the same call. Until
+this, `--status Resolved` on an entry whose resolution was null changed no
+resolution, so the shape check never ran and the entry closed saying nothing
+about what closing it meant.
+
+Two things this deliberately does not cover. An entry **already** closed keeps
+whatever it has: it can still be annotated, and a misspelt status on it can
+still be repaired, because `Wontfix` to `Won't Fix` is not a closing act and
+refusing it would break the fix `lint` prints. And the check reads the
+resolution rather than validating it, so the older shapes below can close an
+entry that has been reopened even though they satisfy none of the writer's
+rules.
+
+### The status and the outcome have to agree
+
+They answer different questions, which is why both exist, and that is not the
+same as being independent. An entry cannot be `Resolved`, a fix applied and
+verified, while also recording that the correction was declined. Both fields
+were individually valid, so both directions of that used to pass.
+
+| Status | Outcomes it can carry |
+|---|---|
+| `Resolved` | `fix_applied`, `no_change_needed` |
+| `Won't Fix` | `wont_fix`, `duplicate`, `obsolete` |
+
+Checked whenever a write changes either field, and only for those two statuses.
+`Open`, `In Progress` and `fix applied, watching` are not closures, so an entry
+sitting on one of them carries the resolution of an earlier close saying
+anything at all. That is what reopening leaves behind, and it is a record rather
+than a contradiction.
+
+### Outcome enum
+
+| Outcome | Meaning |
+|---|---|
+| `fix_applied` | A change was made and it addressed the correction. |
+| `no_change_needed` | Looked at, and nothing needed changing. The usual answer for a dep-review. |
+| `wont_fix` | Declined on purpose. |
+| `duplicate` | The same thing as another entry. `duplicate_of` names it. |
+| `obsolete` | Stopped being relevant. Nobody decided against it. |
+
+`duplicate` is the one that earns its place. Without it a duplicate can only be
+dropped, which loses the link between the two entries, so the same thing gets
+captured a third time with nothing pointing at the earlier discussion.
+
+**This is enforced, in `writeEntry`**, the same single gate as the status enum
+and for the same reason: guarding the call sites means guarding four routes and
+missing the fifth. Only a write that *changes* the field is checked, so the
+nineteen entries written before this can still be annotated.
+
+### Reading a resolution written before this
+
+The field was never a string in practice, whatever the row above used to say.
+Three shapes exist in the real queue and all three are still read:
+
+| Shape | Where it came from |
+|---|---|
+| `{commit, fixed_at, pr, shipped_in, summary}` | Resolved primaries. No outcome, because the vocabulary did not exist. This exact five-key legacy shape reads as `fix_applied`; current status is deliberately irrelevant because reopening must not change the historical answer. A later object carrying only a commit does not get the inference, because a `Won't Fix` entry may record the commit that rolled a fix back. |
+| `{commit, outcome, ts, why}` | Resolved dep-reviews, outcome `"no change needed"`. |
+| `{outcome, ts, why}` | `Won't Fix` primaries, outcomes `"wontfix"` and `"obsolete"`. |
+
+`ts` and `fixed_at` read as `at`. `why` reads as `summary`. The old outcome
+spellings map to the enum. All of these are refused on write, the same pairing
+as the outcome words: readers keep taking what is on disk while writers are
+pushed to one vocabulary.
+
+**Anything the reader does not carry into its result is kept under `extra`,
+under its own name.** That covers three cases, and the first is the one it was
+built for:
+
+- A key nothing knows about, such as the `pr` and `shipped_in` on the twelve.
+- An outcome that was stated and is not one of the five. `outcome` comes back
+  `null` and the word somebody wrote is at `extra.outcome`. Null answers "which
+  of the five is this" and is not an answer to "what did somebody write".
+- A key written under two names, or written with the wrong type. `{at, ts}`
+  returns the `at` and keeps the `ts`, and a hand-written `commit: true` returns
+  `commit: null` and keeps the `true`. Both used to vanish, and because they are
+  known keys they did not reach `extra` either.
+
+An absent key, an explicit `null` and an empty string are all nothing to keep,
+so the `"duplicate_of": null` on every resolution that is not a duplicate does
+not fill `extra` with nulls.
+
+Nothing rewrites these. That is the same rule the pre-v5 `skill` and
+`skill_path` fields follow: a migration that half-runs leaves a queue in two
+formats with no way to tell which entries were converted, while reading every
+shape forever costs one function and cannot half-run.
+
+**Read through `scripts/resolution.js`, never the raw field.** A reader that
+looks at `resolution.outcome` directly sees `null` on twelve of the nineteen
+entries that have one.
+
 
 ## Status Enum
 
