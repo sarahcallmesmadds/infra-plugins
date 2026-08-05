@@ -61,6 +61,26 @@ const CASES = [
   ['git commit --amend --no-edit', 'allow', 'a long option that only starts like no-verify'],
   ['git clean -n', 'allow', 'a dry run, which destroys nothing'],
   ['git clean --dry-run', 'allow', 'the long form of the same'],
+
+  // --- must allow: short options whose value happens to contain an n -------
+  //
+  // Every one of these was refused, and refused with a reason about skipping
+  // the commit checks, which is not something any of them does. Several git
+  // commit options carry their value attached to the letter, so the letters
+  // after them are data. Reading the token as a bundle of flags turns a
+  // message and a mode into an instruction the person never gave.
+  ['git commit -uno -m x', 'allow', '-u<mode>, untracked-files=no'],
+  ['git commit -unormal -m x', 'allow', 'the longer spelling of the same mode'],
+  ['git commit -mnew feature', 'allow', 'an attached message beginning with n'],
+  ['git commit -Snobody@example.com -m x', 'allow', 'an attached signing key'],
+  ['git commit -Fnotes.txt', 'allow', 'an attached file name'],
+  ['git commit -m $(head -n 1 msg.txt)', 'allow', 'the -n belongs to head, not to commit'],
+  ['git commit -m `head -n 1 msg.txt`', 'allow', 'the older substitution spelling'],
+
+  // And the bundles that genuinely do carry it, which must still be caught
+  // after all of the above.
+  ['git commit -sn -m x', 'confirm', 'signed off and no-verify bundled'],
+  ['git commit -uno -n -m x', 'confirm', 'a real -n alongside an attached value'],
 ];
 
 let failed = 0;

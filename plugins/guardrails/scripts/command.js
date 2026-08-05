@@ -192,13 +192,41 @@ const IRREVERSIBLE_GIT = [
 // `git -C <path> commit` and `git --no-pager commit` both count.
 const GIT_COMMIT = /(^|\s)git\s+(?:-[^\s]+(?:\s+[^\s-][^\s]*)?\s+)*commit(\s|$)/;
 
-// --no-verify and its short form. `-n` is only read inside a segment already
-// known to be a commit, because the same letter means something else on other
-// subcommands: `git clean -n` is a dry run and is the safe way to run it, so a
-// rule that fired on `-n` anywhere would flag the careful version of a command
-// it flags the reckless version of. Bundled short flags count, since
-// `git commit -an` is `--all --no-verify`.
-const SKIPS_COMMIT_HOOKS = /(^|\s)(--no-verify|-[a-zA-Z]*n[a-zA-Z]*)(\s|$)/;
+// Short options of `git commit` that carry their value attached to the letter.
+// Everything after one of these inside the same token is data, not more flags,
+// which is the whole difficulty: `-uno` is `--untracked-files=no` and `-mnew`
+// is the message "new". Reading either as a bundle containing `-n` refuses an
+// ordinary commit and tells the person they were skipping the commit checks,
+// which is both wrong and confusing, since nothing they typed mentions hooks.
+const ATTACHED_VALUE = new Set(['m', 'c', 'C', 'F', 't', 'u', 'S']);
+
+// Does this segment skip the commit hooks? A regex was tried and could not do
+// it. `-[a-zA-Z]*n[a-zA-Z]*` matches any single-dash token containing an `n`,
+// and after the cases above there is not much of that pattern left standing.
+//
+// Reading the token the way git does is not much more code and it is right.
+// Walk the letters; the first one that takes an attached value ends the
+// bundle, and an `n` reached before that is `--no-verify`.
+function skipsCommitHooks(segment) {
+  // A command substitution carries somebody else's flags. The `-n` in
+  // `git commit -m $(head -n 1 msg.txt)` belongs to head and means "one line".
+  // Segments split on `;`, `&` and `|` only, so a substitution stays inside
+  // one and has to be removed here or it is read as part of the commit.
+  const own = segment.replace(/\$\([^)]*\)/g, ' ').replace(/`[^`]*`/g, ' ');
+
+  for (const raw of own.match(/(?:^|\s)--?[A-Za-z][^\s]*/g) || []) {
+    const token = raw.trim();
+    if (token === '--no-verify') return true;
+    if (token.startsWith('--')) continue;
+
+    for (const letter of token.slice(1)) {
+      if (!/[A-Za-z]/.test(letter)) break;
+      if (letter === 'n') return true;
+      if (ATTACHED_VALUE.has(letter)) break;
+    }
+  }
+  return false;
+}
 
 // Returns { verdict: 'allow' | 'confirm', reason, target }.
 //
@@ -259,7 +287,7 @@ function checkCommand(command, config = {}) {
     // leaves a commit that looks exactly like one that passed them, so the
     // check is not recorded as having been waived anywhere, and a rule enforced
     // by a pre-commit hook stops being enforced by anything at all.
-    if (stopHookSkips && GIT_COMMIT.test(segment) && SKIPS_COMMIT_HOOKS.test(segment)) {
+    if (stopHookSkips && GIT_COMMIT.test(segment) && skipsCommitHooks(segment)) {
       return {
         verdict: 'confirm',
         target: source,
