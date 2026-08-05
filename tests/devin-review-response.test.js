@@ -8,7 +8,7 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
-const SKILL = path.join(ROOT, 'plugins/build-loop/skills/address-devin-review');
+const SKILL = path.join(ROOT, 'plugins/build-loop/skills/devin-review-response');
 const VALIDATOR = path.join(ROOT, 'plugins/build-loop/scripts/pre-push-check.js');
 const README = path.join(ROOT, 'plugins/build-loop/README.md');
 let passed = 0;
@@ -60,6 +60,15 @@ check('Build Loop documents the same command count for Claude and Codex', () => 
   assert.ok(heading, 'the main command-count heading is missing');
   assert.ok(codex, 'the Codex command-count claim is missing');
   assert.strictEqual(codex[1], heading[1], 'the Codex command count drifted from the main list');
+});
+
+check('the renamed command has an explicit upgrade note', () => {
+  const readme = fs.readFileSync(README, 'utf8');
+  const note = readme.match(/^## Upgrading to 0\.8\.1\n([\s\S]*?)(?=^## |\z)/m);
+  assert.ok(note, 'the 0.8.1 upgrade note is missing');
+  assert.match(note[1], /\/address-devin-review/);
+  assert.match(note[1], /\/devin-review-response/);
+  assert.match(note[1], /not retained as an alias/);
 });
 
 check('complete fixed round passes', () => {
@@ -134,4 +143,4 @@ check('non-object findings and verification rows return validation errors', () =
   assert.doesNotMatch(result.stderr, /TypeError|at Object/);
 });
 
-console.log(`address-devin-review: ${passed} checks passed`);
+console.log(`devin-review-response: ${passed} checks passed`);

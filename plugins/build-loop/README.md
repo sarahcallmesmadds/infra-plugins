@@ -47,7 +47,7 @@ them are things you forget you meant to fix.
 
 **Keep it honest**
 
-- `/address-devin-review` — work one complete Devin review round: classify
+- `/devin-review-response` — work one complete Devin review round: classify
   every finding, map dependencies before editing, sweep paired files, validate
   the round record, and ship one atomic commit rather than a trail of point
   fixes.
@@ -169,6 +169,12 @@ answer, not its conclusion.
 **It does not judge quality.** It records what you said was wrong. It has no
 opinion about whether something is any good, and it will not rewrite anything
 you did not complain about.
+
+## Upgrading to 0.8.1
+
+`/address-devin-review` is now `/devin-review-response`, paired by name with
+the planned `/devin-review` persona reviewer. Update saved prompts and muscle
+memory to use the new command; the old command name is not retained as an alias.
 
 ## Upgrading to 0.3.1
 

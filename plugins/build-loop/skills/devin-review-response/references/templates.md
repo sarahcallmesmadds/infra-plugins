@@ -11,7 +11,7 @@
 ## Commit
 
 ```text
-fix(scope): address Devin review round N
+fix(scope): respond to Devin review round N
 
 Devin round N for PR #123.
 
