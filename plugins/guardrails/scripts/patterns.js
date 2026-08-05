@@ -89,6 +89,27 @@ const PATTERNS = [
   { id: 'obfus-bidi', category: 'obfuscation',
     re: /[‪-‮⁦-⁩]/,
     note: 'bidirectional override characters, can reorder displayed text' },
+  // The Unicode tag block, U+E0000 to U+E007F. Every code point in it renders
+  // as nothing at all, and the block mirrors printable ASCII one for one, so a
+  // whole paragraph of instructions fits inside what looks like an empty line.
+  // Zero-width characters above are a handful of separators; this is a full
+  // alphabet, which is why it gets its own entry rather than joining that
+  // class. The `u` flag is required to write the range as code points instead
+  // of as the surrogate pair it would otherwise have to be spelled with.
+  { id: 'obfus-tagblock', category: 'obfuscation',
+    re: /[\u{E0000}-\u{E007F}]/u,
+    note: 'Unicode tag characters, which render as nothing and can carry hidden text' },
+
+  // 9. Summarisation survival, text written to outlive a compaction pass.
+  // Ordinary injection aims at the turn it arrives in. This aims further: it
+  // asks to be copied into the summary, so it is still there after the context
+  // that carried it is gone, and by then nothing records where it came from.
+  { id: 'survive-summary', category: 'summarisation-survival',
+    re: /\b(when|if|while|before|during|after)\b[^.\n]{0,25}\b(summari[sz]\w*|compact\w*|condens\w*|truncat\w*)\b[^.\n]{0,30}\b(retain|keep|preserve|include|carry|repeat|copy)\b/i,
+    note: 'instruction aimed at surviving a summarisation pass' },
+  { id: 'survive-permanent', category: 'summarisation-survival',
+    re: /\bthis (instruction|rule|directive|note|message|prompt) is (permanent|persistent|immutable|irrevocable|not to be removed|never to be removed)\b/i,
+    note: 'claim that an instruction outlives the context carrying it' },
 ];
 
 // Files and directories where these phrases are expected rather than suspicious.
