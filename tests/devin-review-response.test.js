@@ -62,6 +62,15 @@ check('Build Loop documents the same command count for Claude and Codex', () => 
   assert.strictEqual(codex[1], heading[1], 'the Codex command count drifted from the main list');
 });
 
+check('the renamed command has an explicit upgrade note', () => {
+  const readme = fs.readFileSync(README, 'utf8');
+  const note = readme.match(/^## Upgrading to 0\.8\.1\n([\s\S]*?)(?=^## |\z)/m);
+  assert.ok(note, 'the 0.8.1 upgrade note is missing');
+  assert.match(note[1], /\/address-devin-review/);
+  assert.match(note[1], /\/devin-review-response/);
+  assert.match(note[1], /not retained as an alias/);
+});
+
 check('complete fixed round passes', () => {
   const result = run(valid);
   assert.strictEqual(result.status, 0, result.stderr);
