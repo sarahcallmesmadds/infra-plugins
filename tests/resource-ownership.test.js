@@ -7,7 +7,7 @@ const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
 const {
-  LEASE_MAX_MS, LEASE_TTL_MS, activeOwner, contains, matchedResource,
+  LEASE_MAX_MS, LEASE_TTL_MS, activeOwner, atomicWriteLease, contains, matchedResource,
   leasePath, readLease, renewLeases, writeLease,
 } = require('../plugins/guardrails/scripts/resource-ownership');
 
@@ -79,6 +79,27 @@ check('activity renews a lease without extending its hard lifetime', () => {
   renewLeases(resources, 'session-a', 1000 + LEASE_TTL_MS - 1, temp);
   assert.ok(readLease('session:wrap', 'session-a', 1000 + LEASE_TTL_MS + 1, temp));
   assert.strictEqual(readLease('session:wrap', 'session-a', 1000 + LEASE_MAX_MS, temp), null);
+  fs.rmSync(temp, { recursive: true, force: true });
+});
+
+check('lease replacement never truncates the live record', () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'owner-atomic-'));
+  const live = path.join(temp, 'lease.json');
+  fs.writeFileSync(live, JSON.stringify({ touchedAt: 1 }));
+  const originalWrite = fs.writeFileSync;
+  const written = [];
+  fs.writeFileSync = (file, ...args) => {
+    written.push(file);
+    return originalWrite(file, ...args);
+  };
+  try {
+    atomicWriteLease(live, { touchedAt: 2 });
+  } finally {
+    fs.writeFileSync = originalWrite;
+  }
+  assert.ok(written.length === 1 && written[0] !== live, 'the live lease was opened for writing');
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(live, 'utf8')), { touchedAt: 2 });
+  assert.deepStrictEqual(fs.readdirSync(temp), ['lease.json']);
   fs.rmSync(temp, { recursive: true, force: true });
 });
 

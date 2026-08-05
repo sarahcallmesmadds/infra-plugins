@@ -95,9 +95,19 @@ function leasePath(skill, sessionId, tempDir = os.tmpdir()) {
   return path.join(tempDir, `.guardrails-owner-${keyPart(sessionId)}-${safeSkill}.json`);
 }
 
+function atomicWriteLease(file, lease) {
+  const temp = `${file}.${process.pid}.${crypto.randomUUID()}.tmp`;
+  try {
+    fs.writeFileSync(temp, JSON.stringify(lease), { mode: 0o600 });
+    fs.renameSync(temp, file);
+  } finally {
+    try { fs.unlinkSync(temp); } catch (_) { /* rename succeeded, or nothing was written */ }
+  }
+}
+
 function writeLease(skill, sessionId, now = Date.now(), tempDir = os.tmpdir()) {
   const file = leasePath(skill, sessionId, tempDir);
-  fs.writeFileSync(file, JSON.stringify({ skill, sessionId: keyPart(sessionId), startedAt: now, touchedAt: now }), { mode: 0o600 });
+  atomicWriteLease(file, { skill, sessionId: keyPart(sessionId), startedAt: now, touchedAt: now });
   return file;
 }
 
@@ -118,7 +128,7 @@ function renewLeases(resources, sessionId, now = Date.now(), tempDir = os.tmpdir
     const lease = readLease(skill, sessionId, now, tempDir);
     if (!lease) continue;
     lease.touchedAt = now;
-    fs.writeFileSync(leasePath(skill, sessionId, tempDir), JSON.stringify(lease), { mode: 0o600 });
+    atomicWriteLease(leasePath(skill, sessionId, tempDir), lease);
   }
 }
 
@@ -131,6 +141,7 @@ module.exports = {
   LEASE_TTL_MS,
   absolutePath,
   activeOwner,
+  atomicWriteLease,
   bashWritesPath,
   contains,
   leasePath,
