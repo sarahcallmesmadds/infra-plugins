@@ -40,6 +40,18 @@
 // Uncommitted work is deliberately not counted. The failure happens at merge,
 // so committing is the right moment to ask, and a suite that demands a version
 // bump before you have finished editing is a suite people turn off.
+//
+// ---------------------------------------------------------------------------
+// This wants a fetched `origin/main`, and says so rather than pretending.
+//
+// The comparison is only as current as the base ref on the machine running it.
+// A stale `origin/main` compares against a stale number, and a checkout with no
+// shared history at all cannot compare anything. Both of those print NOT RUN
+// rather than a pass, because a pass here is a claim about a release.
+//
+// If this repository ever gets CI, that job needs full history:
+// `fetch-depth: 0` for actions/checkout. The default of 1 is exactly the
+// shallow case below, so the check would skip in the one place merges happen.
 
 'use strict';
 
@@ -112,21 +124,32 @@ const base = baseRef();
 const plugins = pluginNames();
 
 if (!base) {
-  console.log('plugin-version-drift: no base branch to compare against, so nothing to check.');
-  console.log('  Looked for origin/main, main, origin/master, master. This is the expected');
-  console.log('  result in a shallow checkout and is not a failure.');
+  console.log('plugin-version-drift: NOT RUN. No base branch, so no version was checked.');
+  console.log('  Looked for origin/main, main, origin/master, master. Expected in a shallow');
+  console.log('  checkout, and not a failure, but nothing here was verified either.');
   console.log('\n0 checks, 0 failed');
   process.exit(0);
 }
 
-// Three dots, so this measures what the branch added rather than what main has
-// moved on to since. On main itself the merge base is HEAD and the diff is
-// empty, which is the correct answer rather than a special case.
-const changed = git(['diff', '--name-only', `${base}...HEAD`, '--', 'plugins/']);
+// The fork point, and the only defensible thing to compare a version against.
+//
+// The file list below is `merge-base..HEAD`, so it holds what this branch
+// changed. Reading the earlier version off the tip of `base` instead measures
+// something else entirely, and the two disagree the moment main moves.
+//
+// The case that got through: branch B forks at 0.3.0, edits the plugin, bumps
+// nothing. Meanwhile main releases 0.4.0. Compared against the tip, 0.3.0 and
+// 0.4.0 differ, so the check says fine. Merge B and the manifest resolves to
+// 0.4.0, because only main touched it, and B's new code ships under a number
+// installed users already have. That is #58 and #60 exactly, with the check
+// reporting a pass.
+const mergeBase = git(['merge-base', base, 'HEAD']);
+const changed = mergeBase && git(['diff', '--name-only', `${mergeBase}..HEAD`, '--', 'plugins/']);
 
-if (changed === null) {
-  console.log(`plugin-version-drift: could not diff against ${base}, so nothing to check.`);
-  console.log('  A shallow clone has no merge base to work from. Not a failure.');
+if (!mergeBase || changed === null) {
+  console.log(`plugin-version-drift: NOT RUN. No merge base with ${base}, so no version was checked.`);
+  console.log('  A shallow clone has no shared history to work from. Fetch more depth to');
+  console.log('  turn this back on: git fetch --unshallow, or fetch-depth: 0 in CI.');
   console.log('\n0 checks, 0 failed');
   process.exit(0);
 }
@@ -151,22 +174,36 @@ if (!touched.size) {
 
 for (const [name, files] of [...touched].sort()) {
   check(`${name} changed, so its version moved`, () => {
-    const before = versionAt(base, name);
+    const atFork = versionAt(mergeBase, name);
+    const atTip = versionAt(base, name);
     const now = versionAt('HEAD', name)
       || JSON.parse(fs.readFileSync(
         path.join(REPO, 'plugins', name, '.claude-plugin', 'plugin.json'), 'utf8')).version;
 
-    // A plugin that does not exist on the base branch is new, and there is no
+    // A plugin that does not exist at the fork point is new, and there is no
     // earlier number for it to differ from.
-    if (before === null) return;
+    if (atFork === null) return;
 
-    assert.notStrictEqual(now, before,
-      `${files.length} file(s) under plugins/${name}/ differ from ${base} but the version `
-      + `is still ${before}: ${files.slice(0, 4).join(', ')}`
-      + `${files.length > 4 ? `, and ${files.length - 4} more` : ''}. `
-      + 'The plugin manager compares version numbers, so it will report a successful '
-      + 'update and fetch nothing, and the old code keeps running on every installed '
-      + 'machine. Bump it in all three manifests.');
+    const where = `${files.slice(0, 4).join(', ')}`
+      + `${files.length > 4 ? `, and ${files.length - 4} more` : ''}`;
+    const consequence = 'The plugin manager compares version numbers, so it will report a '
+      + 'successful update and fetch nothing, and the old code keeps running on every '
+      + 'installed machine.';
+
+    assert.notStrictEqual(now, atFork,
+      `${files.length} file(s) under plugins/${name}/ changed on this branch but the version `
+      + `is still ${atFork}, the same as at the fork point: ${where}. ${consequence} `
+      + 'Bump it in all three manifests.');
+
+    // And not onto a number main has already released. Main moving on is what
+    // makes the fork-point comparison necessary; landing on the number it moved
+    // to is the other half of the same problem, because installed machines
+    // already have that version and will not fetch this code either.
+    if (atTip !== null && atTip !== atFork) {
+      assert.notStrictEqual(now, atTip,
+        `plugins/${name}/ changed on this branch and its version is ${now}, which ${base} `
+        + `has already released: ${where}. ${consequence} Pick a number above ${atTip}.`);
+    }
   });
 }
 
