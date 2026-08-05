@@ -1,0 +1,16 @@
+{
+  "source": "capture-event.js",
+  "hook_event_name": "PostToolUse",
+  "captured_at": "2026-08-05T21:56:52.713Z",
+  "keys_only": true,
+  "tool_name": "Skill",
+  "shape": {
+    "tool_input": {
+      "skill": "string"
+    },
+    "tool_response": {
+      "commandName": "string",
+      "success": "boolean"
+    }
+  }
+}

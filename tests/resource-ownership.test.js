@@ -60,6 +60,7 @@ check('common Bash writes are caught but reads and stderr redirects are not', ()
   assert.strictEqual(event('cp x ~/.claude/build-loop/queue/x.json').id, 'build-loop-bug-queue');
   assert.strictEqual(event('cp ~/.planning/handoffs/x.md /tmp/x.md'), null);
   assert.strictEqual(event('rm /tmp/x && ls ~/.planning/handoffs/'), null);
+  assert.strictEqual(event('rm /tmp/x\ncat ~/.planning/handoffs/x.md'), null);
   assert.strictEqual(event('cat ~/.planning/handoffs/x.md'), null);
   assert.strictEqual(event('ls ~/.planning/handoffs/ 2>/dev/null'), null);
 });
@@ -70,6 +71,11 @@ check('an owning skill opens a session-scoped lease', () => {
   assert.strictEqual(activeOwner(handoffs, 'session-a', 1001, temp), 'session:wrap');
   assert.strictEqual(activeOwner(handoffs, 'session-b', 1001, temp), null);
   fs.rmSync(temp, { recursive: true, force: true });
+});
+
+check('default leases live under a private per-user directory', () => {
+  const file = leasePath('session:wrap', 'session-a');
+  assert.strictEqual(path.dirname(file), path.join(os.homedir(), '.claude', 'guardrails-leases'));
 });
 
 check('activity renews a lease without extending its hard lifetime', () => {
@@ -100,32 +106,35 @@ check('lease replacement never truncates the live record', () => {
   assert.ok(written.length === 1 && written[0] !== live, 'the live lease was opened for writing');
   assert.deepStrictEqual(JSON.parse(fs.readFileSync(live, 'utf8')), { touchedAt: 2 });
   assert.deepStrictEqual(fs.readdirSync(temp), ['lease.json']);
+  assert.strictEqual(fs.statSync(temp).mode & 0o777, 0o700);
   fs.rmSync(temp, { recursive: true, force: true });
 });
 
 check('the wired hooks deny a bypass and allow the owning skill', () => {
   const session_id = `resource-owner-test-${process.pid}-${Date.now()}`;
+  const testHome = fs.mkdtempSync(path.join(os.tmpdir(), 'owner-hook-home-'));
+  const env = { ...process.env, HOME: testHome };
   const guard = path.join(ROOT, 'plugins', 'guardrails', 'hooks', 'resource-owner-guard.js');
   const lease = path.join(ROOT, 'plugins', 'guardrails', 'hooks', 'resource-owner-lease.js');
   const writeEvent = {
     hook_event_name: 'PreToolUse', session_id, cwd: '/tmp', tool_name: 'Write',
-    tool_input: { file_path: path.join(os.homedir(), '.planning', 'handoffs', 'x.md'), content: 'x' },
+    tool_input: { file_path: path.join(testHome, '.planning', 'handoffs', 'x.md'), content: 'x' },
   };
 
-  let run = spawnSync(guard, { input: JSON.stringify(writeEvent), encoding: 'utf8' });
+  let run = spawnSync(guard, { env, input: JSON.stringify(writeEvent), encoding: 'utf8' });
   assert.strictEqual(run.status, 0);
   assert.strictEqual(JSON.parse(run.stdout).hookSpecificOutput.permissionDecision, 'deny');
 
   run = spawnSync(lease, { input: JSON.stringify({
     hook_event_name: 'PostToolUse', session_id, cwd: '/tmp', tool_name: 'Skill',
     tool_input: { skill: 'session:wrap' }, tool_response: {},
-  }), encoding: 'utf8' });
+  }), env, encoding: 'utf8' });
   assert.strictEqual(run.status, 0);
 
-  run = spawnSync(guard, { input: JSON.stringify(writeEvent), encoding: 'utf8' });
+  run = spawnSync(guard, { env, input: JSON.stringify(writeEvent), encoding: 'utf8' });
   assert.strictEqual(run.status, 0);
   assert.strictEqual(run.stdout, '');
-  fs.rmSync(leasePath('session:wrap', session_id), { force: true });
+  fs.rmSync(testHome, { recursive: true, force: true });
 });
 
 console.log(`\n${ran} checks, ${failed} failed`);

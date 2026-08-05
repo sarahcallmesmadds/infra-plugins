@@ -40,6 +40,8 @@ resolve its entries. Invoking an owning skill opens a session-scoped lease, and
 ordinary tool activity renews that lease for up to two hours. A direct Write,
 Edit, NotebookEdit, or common shell write without that lease is denied, so the
 skill's validation and confirmation steps cannot be skipped by accident.
+Lease files live under `~/.claude/guardrails-leases/`, with the directory locked
+to the current user.
 
 ## Claude Code gets enforcement, Codex gets advice
 

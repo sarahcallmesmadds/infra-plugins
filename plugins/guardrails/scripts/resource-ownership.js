@@ -56,10 +56,10 @@ function bashWritesPath(command, resource, cwd) {
 
   // Judge one shell segment at a time. A path mentioned after `&&`, `;` or a
   // pipe is not an argument to the write command before it.
-  for (const segment of raw.split(/&&|\|\||[;|]/)) {
+  for (const segment of raw.split(/&&|\|\||[;|\n\r]/)) {
     if (!normalizedSpellings.some((spelling) => segment.includes(spelling))) continue;
     if (new RegExp(`>>?\\s*["']?(?:${pathPattern})(?:[/"'\\s]|$)`).test(segment)) return true;
-    if (new RegExp(`\\b(?:tee|mv|truncate|touch|mkdir|rm)\\b[^;|]*(?:${pathPattern})`).test(segment)) return true;
+    if (new RegExp(`\\b(?:tee|mv|truncate|touch|mkdir|rm)\\b[^;|\\n\\r]*(?:${pathPattern})`).test(segment)) return true;
     if (/\bsed\s+(?:-[^\s]*i[^\s]*)\b/.test(segment)) return true;
 
     // cp and install read every argument except the last one. Only the last
@@ -90,12 +90,15 @@ function keyPart(value) {
   return crypto.createHash('sha256').update(String(value || 'unknown')).digest('hex').slice(0, 20);
 }
 
-function leasePath(skill, sessionId, tempDir = os.tmpdir()) {
+function leasePath(skill, sessionId, leaseDir = path.join(os.homedir(), '.claude', 'guardrails-leases')) {
   const safeSkill = String(skill).replace(/[^a-zA-Z0-9_.-]+/g, '-').slice(0, 80);
-  return path.join(tempDir, `.guardrails-owner-${keyPart(sessionId)}-${safeSkill}.json`);
+  return path.join(leaseDir, `.guardrails-owner-${keyPart(sessionId)}-${safeSkill}.json`);
 }
 
 function atomicWriteLease(file, lease) {
+  const dir = path.dirname(file);
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  fs.chmodSync(dir, 0o700);
   const temp = `${file}.${process.pid}.${crypto.randomUUID()}.tmp`;
   try {
     fs.writeFileSync(temp, JSON.stringify(lease), { mode: 0o600 });
@@ -105,15 +108,15 @@ function atomicWriteLease(file, lease) {
   }
 }
 
-function writeLease(skill, sessionId, now = Date.now(), tempDir = os.tmpdir()) {
-  const file = leasePath(skill, sessionId, tempDir);
+function writeLease(skill, sessionId, now = Date.now(), leaseDir) {
+  const file = leasePath(skill, sessionId, leaseDir);
   atomicWriteLease(file, { skill, sessionId: keyPart(sessionId), startedAt: now, touchedAt: now });
   return file;
 }
 
-function readLease(skill, sessionId, now = Date.now(), tempDir = os.tmpdir()) {
+function readLease(skill, sessionId, now = Date.now(), leaseDir) {
   try {
-    const lease = JSON.parse(fs.readFileSync(leasePath(skill, sessionId, tempDir), 'utf8'));
+    const lease = JSON.parse(fs.readFileSync(leasePath(skill, sessionId, leaseDir), 'utf8'));
     if (lease.sessionId !== keyPart(sessionId)) return null;
     if (now - lease.touchedAt >= LEASE_TTL_MS || now - lease.startedAt >= LEASE_MAX_MS) return null;
     return lease;
@@ -122,18 +125,18 @@ function readLease(skill, sessionId, now = Date.now(), tempDir = os.tmpdir()) {
   }
 }
 
-function renewLeases(resources, sessionId, now = Date.now(), tempDir = os.tmpdir()) {
+function renewLeases(resources, sessionId, now = Date.now(), leaseDir) {
   const skills = [...new Set(resources.flatMap((resource) => resource.owners || []))];
   for (const skill of skills) {
-    const lease = readLease(skill, sessionId, now, tempDir);
+    const lease = readLease(skill, sessionId, now, leaseDir);
     if (!lease) continue;
     lease.touchedAt = now;
-    atomicWriteLease(leasePath(skill, sessionId, tempDir), lease);
+    atomicWriteLease(leasePath(skill, sessionId, leaseDir), lease);
   }
 }
 
-function activeOwner(resource, sessionId, now = Date.now(), tempDir = os.tmpdir()) {
-  return (resource.owners || []).find((skill) => readLease(skill, sessionId, now, tempDir)) || null;
+function activeOwner(resource, sessionId, now = Date.now(), leaseDir) {
+  return (resource.owners || []).find((skill) => readLease(skill, sessionId, now, leaseDir)) || null;
 }
 
 module.exports = {

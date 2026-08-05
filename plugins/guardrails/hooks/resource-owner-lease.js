@@ -13,7 +13,7 @@ readEvent((event) => {
 
   if (event.tool_name === 'Skill') {
     const input = event.tool_input || {};
-    const skill = input.skill || input.name;
+    const skill = input.skill;
     const owners = new Set(resources.flatMap((resource) => resource.owners || []));
     if (skill && owners.has(skill)) writeLease(skill, sessionId);
     return;

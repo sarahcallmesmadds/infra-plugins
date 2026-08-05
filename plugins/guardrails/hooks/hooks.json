@@ -31,6 +31,15 @@
     ],
     "PostToolUse": [
       {
+        "matcher": "Skill",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/hooks/resource-owner-lease.js"
+          }
+        ]
+      },
+      {
         "hooks": [
           {
             "type": "command",
