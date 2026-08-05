@@ -1,0 +1,14 @@
+{
+  "source": "capture-event.js",
+  "hook_event_name": "SessionStart",
+  "captured_at": "2026-08-05T01:57:30.435Z",
+  "keys_only": true,
+  "shape": {
+    "cwd": "string",
+    "hook_event_name": "string",
+    "model": "string",
+    "session_id": "string",
+    "source": "string",
+    "transcript_path": "string"
+  }
+}
