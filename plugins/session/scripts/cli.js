@@ -371,6 +371,9 @@ const COMMANDS = {
   'mcp-probe': function mcpProbe(opts) {
     const config = configMod.load(opts.home);
     const result = mcpHealth.scheduledProbe({ config, home: opts.home });
+    if (['unconfigured', 'lock_failed', 'write_failed', 'state_failed'].includes(result.event)) {
+      process.exitCode = 1;
+    }
     if (opts.json) return emit(opts, result, []);
     if (result.message) process.stdout.write(`${result.message}\n`);
   },

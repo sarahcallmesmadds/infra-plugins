@@ -281,15 +281,21 @@ check('an unwritable lock parent reports that monitoring cannot run', () => {
 
 check('a failure to persist a new incident is reported instead of hidden', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'session-monitor-'));
-  fs.mkdirSync(health.incidentPath(home), { recursive: true });
   const result = health.scheduledProbe({
     home,
     config: monitorConfig([{ label: 'Email', match: 'Gmail' }]),
     exec: () => MCP([needsAuth('Gmail')]),
+    writeIncidentFn: () => null,
   });
   assert.strictEqual(result.event, 'write_failed');
   assert.match(result.message, /could not be recorded/);
   assert.match(result.message, /may repeat/);
+});
+
+check('a failed incident rename removes its temporary file', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'session-monitor-'));
+  fs.mkdirSync(health.incidentPath(home), { recursive: true });
+  assert.strictEqual(health.writeIncident({ version: 1, incident: { status: 'open' } }, { home }), null);
   const leftovers = fs.readdirSync(path.dirname(health.incidentPath(home)))
     .filter((name) => name.endsWith('.tmp'));
   assert.deepStrictEqual(leftovers, []);
@@ -309,6 +315,39 @@ check('a stale lock takeover cannot be released by the previous owner', () => {
   assert.ok(fs.existsSync(second.path), 'the old owner removed its successor\'s live lock');
   health.releaseIncidentLock(second);
   assert.ok(!fs.existsSync(second.path), 'the current owner did not release its own lock');
+});
+
+check('logical incident time cannot keep a crashed monitor lock fresh forever', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'session-monitor-'));
+  const abandoned = health.acquireIncidentLock(home, Date.now());
+  assert.strictEqual(abandoned.status, 'acquired');
+  fs.utimesSync(abandoned.path, new Date(0), new Date(0));
+
+  const result = health.scheduledProbe({
+    home,
+    now: 1000,
+    wallNow: Date.now(),
+    config: monitorConfig([{ label: 'Email', match: 'Gmail' }]),
+    exec: () => MCP([connected('Gmail')]),
+  });
+  assert.strictEqual(result.event, 'unchanged');
+  assert.strictEqual(result.message, '');
+});
+
+check('a corrupt incident record is reported without opening a duplicate incident', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'session-monitor-'));
+  fs.mkdirSync(path.dirname(health.incidentPath(home)), { recursive: true });
+  fs.writeFileSync(health.incidentPath(home), '{not json');
+  let probed = false;
+  const result = health.scheduledProbe({
+    home,
+    config: monitorConfig([{ label: 'Email', match: 'Gmail' }]),
+    exec: () => { probed = true; return MCP([needsAuth('Gmail')]); },
+  });
+  assert.strictEqual(result.event, 'state_failed');
+  assert.match(result.message, /incident record is unreadable/);
+  assert.strictEqual(probed, false);
+  assert.strictEqual(fs.readFileSync(health.incidentPath(home), 'utf8'), '{not json');
 });
 
 check('an overlapping scheduled probe stays silent rather than duplicating an alert', () => {

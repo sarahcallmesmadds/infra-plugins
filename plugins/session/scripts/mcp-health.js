@@ -164,8 +164,11 @@ function readIncident(home = os.homedir()) {
     const raw = JSON.parse(fs.readFileSync(incidentPath(home), 'utf8'));
     return raw && raw.version === 1 && raw.incident && typeof raw.incident === 'object'
       ? raw
-      : { version: 1, incident: null };
-  } catch (_) {
+      : { version: 1, incident: null, error: 'unreadable' };
+  } catch (error) {
+    if (error && error.code !== 'ENOENT') {
+      return { version: 1, incident: null, error: 'unreadable' };
+    }
     return { version: 1, incident: null };
   }
 }
@@ -217,9 +220,9 @@ function createOwnedLock(lock, owner) {
   }
 }
 
-function acquireIncidentLock(home = os.homedir(), now = Date.now()) {
+function acquireIncidentLock(home = os.homedir(), wallNow = Date.now()) {
   const lock = incidentLockPath(home);
-  const owner = `${process.pid}-${now}-${Math.random().toString(36).slice(2)}`;
+  const owner = `${process.pid}-${wallNow}-${Math.random().toString(36).slice(2)}`;
   try {
     fs.mkdirSync(path.dirname(lock), { recursive: true });
   } catch (error) {
@@ -231,7 +234,7 @@ function acquireIncidentLock(home = os.homedir(), now = Date.now()) {
 
   const judged = lockIdentity(lock);
   if (!judged) return { status: 'busy', path: null, owner: null };
-  if (now - judged.mtimeMs <= INCIDENT_LOCK_STALE_MS) {
+  if (wallNow - judged.mtimeMs <= INCIDENT_LOCK_STALE_MS) {
     return { status: 'busy', path: null, owner: null };
   }
   if (!sameLock(judged, lockIdentity(lock))) {
@@ -296,10 +299,17 @@ function formatProblem(problem) {
   if (problem.status === 'needs_auth') return `${problem.label} needs sign-in`;
   if (problem.status === 'down') return `${problem.label} is unreachable`;
   if (problem.status === 'missing') return `${problem.label} is not found; check its configured name`;
-  return 'the health check could not run';
+  return 'the health check could not run; verify the Claude CLI is available to the Desktop scheduled task';
 }
 
-function scheduledProbe({ config, home = os.homedir(), now = Date.now(), exec } = {}) {
+function scheduledProbe({
+  config,
+  home = os.homedir(),
+  now = Date.now(),
+  wallNow = Date.now(),
+  exec,
+  writeIncidentFn = writeIncident,
+} = {}) {
   const tools = (config && config.coreTools) || [];
   if (!tools.length) {
     return {
@@ -309,7 +319,7 @@ function scheduledProbe({ config, home = os.homedir(), now = Date.now(), exec } 
     };
   }
 
-  const lock = acquireIncidentLock(home, now);
+  const lock = acquireIncidentLock(home, wallNow);
   if (lock.status === 'busy') {
     return { event: 'busy', message: '', incident: readIncident(home).incident };
   }
@@ -323,6 +333,13 @@ function scheduledProbe({ config, home = os.homedir(), now = Date.now(), exec } 
 
   try {
     const state = readIncident(home);
+    if (state.error) {
+      return {
+        event: 'state_failed',
+        message: 'Core tools monitor error: the incident record is unreadable; move or repair ~/.cache/session/core-tools-incident.json.',
+        incident: null,
+      };
+    }
     const previous = state.incident;
     const servers = probe({ exec });
     let problems;
@@ -349,7 +366,7 @@ function scheduledProbe({ config, home = os.homedir(), now = Date.now(), exec } 
         fingerprint: '',
         problems: [],
       };
-      if (!writeIncident({ version: 1, incident }, { home })) {
+      if (!writeIncidentFn({ version: 1, incident }, { home })) {
         return {
           event: 'write_failed',
           message: 'Core tools monitor error: recovery was detected but the incident record could not be updated.',
@@ -380,7 +397,7 @@ function scheduledProbe({ config, home = os.homedir(), now = Date.now(), exec } 
       fingerprint,
       problems,
     };
-    if (!writeIncident({ version: 1, incident }, { home })) {
+    if (!writeIncidentFn({ version: 1, incident }, { home })) {
       const detail = problems.map(formatProblem).join('; ');
       return {
         event: 'write_failed',
