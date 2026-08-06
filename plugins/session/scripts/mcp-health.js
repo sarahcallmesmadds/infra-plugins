@@ -185,8 +185,8 @@ function writeIncident(state, { home = os.homedir() } = {}) {
 
 function acquireIncidentLock(home = os.homedir(), now = Date.now()) {
   const lock = incidentLockPath(home);
-  fs.mkdirSync(path.dirname(lock), { recursive: true });
   try {
+    fs.mkdirSync(path.dirname(lock), { recursive: true });
     fs.mkdirSync(lock);
     return lock;
   } catch (error) {
@@ -247,17 +247,19 @@ function scheduledProbe({ config, home = os.homedir(), now = Date.now(), exec } 
   if (!lock) return { event: 'busy', message: '', incident: readIncident(home).incident };
 
   try {
+    const state = readIncident(home);
+    const previous = state.incident;
     const servers = probe({ exec });
     let problems;
     if (servers) {
       writeCache(servers, { home, now });
       problems = resolve(tools, servers).filter((tool) => tool.status !== 'connected');
+    } else if (previous && previous.status === 'open') {
+      return { event: 'probe_failed', message: '', incident: previous };
     } else {
       problems = [{ label: 'Core tools probe', match: '', server: null, status: 'probe_failed' }];
     }
 
-    const state = readIncident(home);
-    const previous = state.incident;
     const nowIso = new Date(now).toISOString();
 
     if (!problems.length) {
@@ -273,7 +275,11 @@ function scheduledProbe({ config, home = os.homedir(), now = Date.now(), exec } 
         problems: [],
       };
       if (!writeIncident({ version: 1, incident }, { home })) {
-        return { event: 'write_failed', message: '', incident: previous };
+        return {
+          event: 'write_failed',
+          message: 'Core tools monitor error: recovery was detected but the incident record could not be updated.',
+          incident: previous,
+        };
       }
       return {
         event: 'resolved',
@@ -300,7 +306,12 @@ function scheduledProbe({ config, home = os.homedir(), now = Date.now(), exec } 
       problems,
     };
     if (!writeIncident({ version: 1, incident }, { home })) {
-      return { event: 'write_failed', message: '', incident: previous || null };
+      const detail = problems.map(formatProblem).join('; ');
+      return {
+        event: 'write_failed',
+        message: `Core tools monitor error: ${detail}, but the incident could not be recorded; this alert may repeat.`,
+        incident: previous || null,
+      };
     }
     const detail = problems.map(formatProblem).join('; ');
     return {

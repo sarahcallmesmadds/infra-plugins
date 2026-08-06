@@ -242,6 +242,48 @@ check('a failed health command opens one monitor incident without erasing the go
   assert.strictEqual(fs.readFileSync(health.cachePath(home), 'utf8'), before);
 });
 
+check('a failed health command does not replace an existing real outage', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'session-monitor-'));
+  const cfg = monitorConfig([{ label: 'Email', match: 'Gmail' }]);
+  const opened = health.scheduledProbe({ home, config: cfg, now: 1000, exec: () => MCP([needsAuth('Gmail')]) });
+  const failed = health.scheduledProbe({
+    home, config: cfg, now: 2000, exec: () => { throw new Error('temporary failure'); },
+  });
+  assert.strictEqual(failed.event, 'probe_failed');
+  assert.strictEqual(failed.message, '');
+  assert.deepStrictEqual(health.readIncident(home).incident.problems, opened.incident.problems);
+
+  const stillDown = health.scheduledProbe({ home, config: cfg, now: 3000, exec: () => MCP([needsAuth('Gmail')]) });
+  assert.strictEqual(stillDown.event, 'unchanged');
+  assert.strictEqual(stillDown.message, '');
+});
+
+check('an unwritable lock parent makes a scheduled probe safely stay silent', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'session-monitor-'));
+  fs.mkdirSync(path.join(home, '.cache'));
+  fs.writeFileSync(path.join(home, '.cache', 'session'), 'not a directory');
+  const result = health.scheduledProbe({
+    home,
+    config: monitorConfig([{ label: 'Email', match: 'Gmail' }]),
+    exec: () => MCP([needsAuth('Gmail')]),
+  });
+  assert.strictEqual(result.event, 'busy');
+  assert.strictEqual(result.message, '');
+});
+
+check('a failure to persist a new incident is reported instead of hidden', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'session-monitor-'));
+  fs.mkdirSync(health.incidentPath(home), { recursive: true });
+  const result = health.scheduledProbe({
+    home,
+    config: monitorConfig([{ label: 'Email', match: 'Gmail' }]),
+    exec: () => MCP([needsAuth('Gmail')]),
+  });
+  assert.strictEqual(result.event, 'write_failed');
+  assert.match(result.message, /could not be recorded/);
+  assert.match(result.message, /may repeat/);
+});
+
 check('an overlapping scheduled probe stays silent rather than duplicating an alert', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'session-monitor-'));
   fs.mkdirSync(health.incidentLockPath(home), { recursive: true });
