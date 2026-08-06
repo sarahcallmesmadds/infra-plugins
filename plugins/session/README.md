@@ -62,8 +62,8 @@ absent.
 The current-task segment reads this session's main todo file under
 `~/.claude/todos/`: either `<sessionId>.json` or
 `<sessionId>-agent-<sessionId>.json`, depending on the Claude Code version. It
-shows the `activeForm` marked `in_progress` and never borrows a task from
-another session or a sub-agent. Set
+uses the newer one if both exist, shows the `activeForm` marked `in_progress`,
+and never borrows a task from another session or a sub-agent. Set
 `{"currentTask":{"enabled":false}}` in
 `~/.claude/session.config.json` to hide it.
 

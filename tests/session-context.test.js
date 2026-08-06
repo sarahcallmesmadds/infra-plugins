@@ -102,6 +102,31 @@ check('current task accepts Claude main-agent filename shape', () => {
   assert.match(statusline.readCurrentTaskStatuslineSegment({ sessionId: 'session', home }), /Main agent task/);
 });
 
+check('a newer main-agent file supersedes a stale bare file', () => {
+  const home = tmp();
+  writeTodos(home, 'session', [{ status: 'completed', activeForm: 'Stale bare task' }]);
+  writeTodos(home, 'session', [
+    { status: 'in_progress', activeForm: 'Current main-agent task' },
+  ], 'agent-session');
+  const future = new Date(Date.now() + 1000);
+  fs.utimesSync(path.join(home, '.claude', 'todos', 'session-agent-session.json'), future, future);
+  const segment = statusline.readCurrentTaskStatuslineSegment({ sessionId: 'session', home });
+  assert.match(segment, /Current main-agent task/);
+});
+
+check('a newer bare file supersedes a stale main-agent file', () => {
+  const home = tmp();
+  writeTodos(home, 'session', [
+    { status: 'in_progress', activeForm: 'Stale main-agent task' },
+  ], 'agent-session');
+  writeTodos(home, 'session', [{ status: 'in_progress', activeForm: 'Current bare task' }]);
+  const future = new Date(Date.now() + 1000);
+  fs.utimesSync(path.join(home, '.claude', 'todos', 'session.json'), future, future);
+  const segment = statusline.readCurrentTaskStatuslineSegment({ sessionId: 'session', home });
+  assert.match(segment, /Current bare task/);
+  assert.doesNotMatch(segment, /Stale main-agent task/);
+});
+
 check('the main todo file is authoritative over stale agent work', () => {
   const home = tmp();
   writeTodos(home, 'session', [{ status: 'in_progress', activeForm: 'Stale agent task' }], 'agent-old');

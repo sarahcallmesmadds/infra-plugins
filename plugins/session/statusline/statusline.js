@@ -91,9 +91,12 @@ function readCurrentTaskStatuslineSegment({ sessionId, home = os.homedir(), conf
     // Other `-agent-<id>` files belong to sub-agents and are never candidates.
     const dir = path.join(home, '.claude', 'todos');
     const file = [
-      path.join(dir, `${sessionId}.json`),
-      path.join(dir, `${sessionId}-agent-${sessionId}.json`),
-    ].find((candidate) => fs.existsSync(candidate));
+      { path: path.join(dir, `${sessionId}.json`), priority: 0 },
+      { path: path.join(dir, `${sessionId}-agent-${sessionId}.json`), priority: 1 },
+    ]
+      .filter((candidate) => fs.existsSync(candidate.path))
+      .map((candidate) => ({ ...candidate, mtimeMs: fs.statSync(candidate.path).mtimeMs }))
+      .sort((a, b) => b.mtimeMs - a.mtimeMs || b.priority - a.priority)[0]?.path;
     if (!file) return '';
     const parsed = readJsonFile(file);
     const tasks = Array.isArray(parsed) ? parsed : parsed?.tasks;
