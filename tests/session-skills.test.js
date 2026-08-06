@@ -78,6 +78,28 @@ function fences(text) {
   return out.map((f) => ({ info: f.info, body: f.lines.join('\n') }));
 }
 
+// --------------------------------------------------------- status bar ----
+
+check('status-bar routes Codex through its native pickers', () => {
+  const text = skill('status-bar');
+  const codexAt = text.indexOf('## Codex');
+  const claudeAt = text.indexOf('## Claude Code');
+  assert.ok(codexAt !== -1 && claudeAt > codexAt, 'runtime-specific status-bar routes are missing');
+  const codex = text.slice(codexAt, claudeAt);
+  assert.match(codex, /\/statusline/);
+  assert.match(codex, /tui\.status_line/);
+  assert.match(codex, /\/title/);
+  assert.match(codex, /task progress/i);
+  assert.match(codex, /cannot add arbitrary custom segments/i);
+});
+
+check('status-bar does not promise Claude-only fields in Codex', () => {
+  const text = skill('status-bar');
+  const codex = text.slice(text.indexOf('## Codex'), text.indexOf('## Claude Code'));
+  assert.doesNotMatch(codex, /session cost|30 day spend|Core tools 5\/5/);
+  assert.match(text.slice(text.indexOf('## Claude Code')), /Session cost so far/);
+});
+
 let failed = 0;
 function check(what, fn) {
   try {

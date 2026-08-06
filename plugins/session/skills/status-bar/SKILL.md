@@ -1,14 +1,74 @@
 ---
 name: status-bar
-description: Set up the Claude Code status line that shows the model, folder, GitHub owner, current task, session cost, rolling 30 day spend, context used, and connected tool health. Use when the user says "set up the status bar", "install the status line", "show me my context usage", "add the usage bar", or invokes /status-bar. Also use when the status line has stopped rendering or is showing an old version.
+description: Set up the native Codex footer and task-progress title, or the richer Claude Code status line with model, folder, current task, spend, context, and connected-tool health. Use when the user says "set up the status bar", "install the status line", "show me my context usage", "show the current Codex task", "add the usage bar", or invokes /status-bar. Also use when a status line has stopped rendering or is showing an old version.
 ---
 
 # Status bar
 
-Set up the one line at the bottom of the terminal that answers "which model,
-which folder, how much have I spent, how full is the context".
+Set up the persistent terminal UI that answers "which model, which folder, how
+full is the context, and what is this session doing". Codex and Claude Code
+expose different status surfaces, so follow only the route for the runtime in
+which this skill is running.
 
 ---
+
+## Codex
+
+Codex owns its footer natively. A plugin cannot add arbitrary custom segments,
+but Codex can persist an ordered set of supported fields without editing config
+by hand.
+
+### Step 1: Configure the footer
+
+Tell the user you are opening Codex's native picker, then ask them to type:
+
+```text
+/statusline
+```
+
+Recommend this compact order:
+
+1. Model + reasoning
+2. Context remaining
+3. Git branch
+4. Current directory or project root
+
+If they have room, suggest rate limits next. Token counters, session ID and the
+Codex version are available but usually less useful on every turn. The picker
+updates the footer immediately and saves the selection to `tui.status_line` in
+Codex's `config.toml`.
+
+Do not edit `config.toml` when the picker is available. The picker knows the
+field identifiers supported by the installed Codex version and avoids leaving
+an obsolete identifier behind after an update.
+
+### Step 2: Put task progress in the terminal title
+
+Codex does not document task progress as a footer item. It does expose task
+progress in the terminal title. Ask the user to type:
+
+```text
+/title
+```
+
+Recommend `Task progress`, with `Project` after it if they use several terminal
+tabs. Explain the boundary plainly: this is Codex's native task-progress state,
+not the text of a Claude task file, and it appears in the window or tab title
+rather than consuming footer width.
+
+### Step 3: Verify
+
+Ask the user to confirm that the footer changed immediately and that the chosen
+fields remain after starting a fresh Codex session. If the picker commands do
+not exist, report that this Codex build does not expose the documented native
+configuration yet; do not substitute the Claude installer or claim a plugin can
+render a custom Codex footer.
+
+Stop here in Codex. The remaining instructions are Claude Code only.
+
+---
+
+## Claude Code
 
 ## What it shows
 

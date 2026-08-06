@@ -10,7 +10,7 @@ starts with ten minutes of "where was I".
 |---|---|
 | `/wrap` | Writes what was decided, built and left open into a handoff document |
 | `/pickup <slug>` | Loads that handoff back and starts from it |
-| `/status-bar` | Sets up the status line: model, folder, current task, cost, context used |
+| `/status-bar` | Sets up Codex's native footer/task title or Claude Code's richer status line |
 | `/core-tools` | Picks which connected tools to watch for expired sign-ins |
 | `/core-tools-monitor` | Runs the transition-only probe used by a Desktop scheduled task |
 
@@ -51,7 +51,22 @@ The entire injected context, including the date and parallel-session notices,
 is capped at 10,000 characters. A long weekly summary is clipped before it can
 turn an opening brief into the first session's largest context expense.
 
-## The status line
+## Status surfaces
+
+### Codex
+
+Codex has a native footer picker. Run `/status-bar` and it will guide you
+through `/statusline`, recommending a compact model, context, branch and folder
+layout. The selection takes effect immediately and Codex persists it in
+`tui.status_line`.
+
+Codex does not expose task progress as a documented footer field. It does
+expose it in the terminal title, so the setup also routes you through `/title`.
+This uses Codex's native task-progress state and keeps the footer from becoming
+too wide. Plugins cannot add arbitrary custom Codex footer segments, so the
+Claude-only spend and connected-tool fields below are not promised in Codex.
+
+### Claude Code
 
 ```
 Claude 4.8 │ my-project ⎇ owner │ ↳ Building the current task │ $0.42 · 30d $81.20 est ████░░░░░░ 41% │ Core tools 5/5
