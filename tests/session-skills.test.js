@@ -54,6 +54,7 @@ const fs = require('fs');
 const path = require('path');
 
 const SKILLS = path.join(__dirname, '..', 'plugins', 'session', 'skills');
+const CODEX_SURFACES = path.join(__dirname, '..', 'plugins', 'session', 'skills', 'status-bar', 'references', 'codex-status-surfaces.md');
 
 function skill(name) {
   const file = path.join(SKILLS, name, 'SKILL.md');
@@ -79,7 +80,9 @@ function fences(text) {
 }
 
 let failed = 0;
+let ran = 0;
 function check(what, fn) {
+  ran += 1;
   try {
     fn();
     console.log(`  ok    ${what}`);
@@ -88,6 +91,38 @@ function check(what, fn) {
     console.log(`  FAIL  ${what}\n        ${error.message}`);
   }
 }
+
+// --------------------------------------------------------- status bar ----
+
+check('status-bar routes Codex through its native pickers', () => {
+  const text = skill('status-bar');
+  const codexAt = text.indexOf('## Codex');
+  const claudeAt = text.indexOf('## Claude Code');
+  assert.ok(codexAt !== -1 && claudeAt > codexAt, 'runtime-specific status-bar routes are missing');
+  const codex = text.slice(codexAt, claudeAt);
+  assert.match(codex, /\/statusline/);
+  assert.match(codex, /tui\.status_line/);
+  assert.match(codex, /\/title/);
+  assert.match(codex, /task progress/i);
+  assert.match(codex, /cannot add arbitrary custom segments/i);
+  assert.match(text, /CLAUDE_PLUGIN_ROOT/);
+  assert.match(text, /session context/);
+  assert.match(text, /CODEX_HOME.*not required/);
+  assert.match(text, /Do not use the\s+existence of `\/statusline` as detection/);
+  assert.ok(fs.existsSync(CODEX_SURFACES), 'Codex surface evidence note is missing');
+  const sources = fs.readFileSync(CODEX_SURFACES, 'utf8');
+  assert.match(sources, /developers\.openai\.com\/codex\/codex-manual\.md/);
+  assert.match(sources, /tui\.status_line/);
+  assert.match(sources, /`\/statusline`/);
+  assert.match(sources, /`\/title`/);
+});
+
+check('status-bar does not promise Claude-only fields in Codex', () => {
+  const text = skill('status-bar');
+  const codex = text.slice(text.indexOf('## Codex'), text.indexOf('## Claude Code'));
+  assert.doesNotMatch(codex, /session cost|30 day spend|Core tools 5\/5/);
+  assert.match(text.slice(text.indexOf('## Claude Code')), /Session cost so far/);
+});
 
 // ----------------------------------------------------------------- wrap ----
 
@@ -238,5 +273,5 @@ check('the position check would actually catch one', () => {
   );
 });
 
-console.log(`\n10 checks, ${failed} failed`);
+console.log(`\n${ran} checks, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);
