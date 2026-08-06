@@ -79,6 +79,26 @@ check('current task reads Claude per-session task files', () => {
   assert.match(segment, /Verifying Session status-line task label/);
 });
 
+check('per-session task files accept arrays and wrapped task lists', () => {
+  const arrayHome = tmp();
+  writeTask(arrayHome, 'array-session', [
+    { status: 'in_progress', activeForm: 'Array task' },
+  ]);
+  assert.match(statusline.readCurrentTaskStatuslineSegment({
+    sessionId: 'array-session', home: arrayHome,
+  }), /Array task/);
+
+  for (const key of ['tasks', 'todos']) {
+    const home = tmp();
+    writeTask(home, `${key}-session`, {
+      [key]: [{ status: 'in_progress', activeForm: `${key} wrapper task` }],
+    });
+    assert.match(statusline.readCurrentTaskStatuslineSegment({
+      sessionId: `${key}-session`, home,
+    }), new RegExp(`${key} wrapper task`));
+  }
+});
+
 check('current task directory is authoritative over stale legacy todos', () => {
   const home = tmp();
   writeTodos(home, 'session', [{ status: 'in_progress', activeForm: 'Stale legacy task' }]);

@@ -94,6 +94,14 @@ function renderCurrentTaskSegment(tasks) {
   return label ? ` │ \x1b[34m↳ ${label}\x1b[0m` : '';
 }
 
+function taskListFrom(parsed) {
+  if (Array.isArray(parsed)) return parsed;
+  if (!parsed || typeof parsed !== 'object') return [];
+  if (Array.isArray(parsed.tasks)) return parsed.tasks;
+  if (Array.isArray(parsed.todos)) return parsed.todos;
+  return [parsed];
+}
+
 function readCurrentTaskStatuslineSegment({ sessionId, home = os.homedir(), config } = {}) {
   try {
     if (!sessionId || !/^[A-Za-z0-9_-]+$/.test(sessionId)) return '';
@@ -107,9 +115,10 @@ function readCurrentTaskStatuslineSegment({ sessionId, home = os.homedir(), conf
     if (fs.existsSync(taskDir)) {
       const tasks = fs.readdirSync(taskDir, { withFileTypes: true })
         .filter((entry) => entry.isFile() && entry.name.endsWith('.json'))
-        .map((entry) => {
+        .flatMap((entry) => {
           const filePath = path.join(taskDir, entry.name);
-          return { task: readJsonFile(filePath), mtimeMs: fs.statSync(filePath).mtimeMs };
+          const mtimeMs = fs.statSync(filePath).mtimeMs;
+          return taskListFrom(readJsonFile(filePath)).map((task) => ({ task, mtimeMs }));
         })
         .filter(({ task }) => task && typeof task === 'object')
         .sort((a, b) => b.mtimeMs - a.mtimeMs)
@@ -130,8 +139,7 @@ function readCurrentTaskStatuslineSegment({ sessionId, home = os.homedir(), conf
       .sort((a, b) => b.mtimeMs - a.mtimeMs || b.priority - a.priority)[0]?.path;
     if (!file) return '';
     const parsed = readJsonFile(file);
-    const tasks = Array.isArray(parsed) ? parsed : parsed?.tasks;
-    return renderCurrentTaskSegment(tasks);
+    return renderCurrentTaskSegment(taskListFrom(parsed));
   } catch (e) {
     // Todo state is optional and changes while the line renders. Stay quiet.
   }
@@ -326,6 +334,7 @@ module.exports = {
   writeContextBridge,
   readGitOwner,
   readCoreToolsStatuslineSegment,
+  taskListFrom,
   renderCurrentTaskSegment,
   readCurrentTaskStatuslineSegment,
   formatUsd,
