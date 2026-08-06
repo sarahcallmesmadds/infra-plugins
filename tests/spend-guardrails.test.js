@@ -74,6 +74,10 @@ check('the README states installation, runtime, configuration, and side effects'
   assert.match(readme, /both Claude Code and Codex/);
   assert.match(readme, /No setup or configuration is required/);
   assert.match(readme, /advisory and read-only/);
+  assert.match(readme, /Which current model should this task use/);
+  assert.match(readme, /current OpenAI API model/);
+  assert.match(readme, /Without\s+live verification, it returns only the capability tier/);
+  assert.ok(!/Sonnet|Haiku|Opus|Fable/.test(readme), 'README still promises a fixed Claude ladder');
 });
 
 check('forward evaluations cover both providers and every decision path', () => {

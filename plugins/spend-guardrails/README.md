@@ -25,15 +25,19 @@ chat as soon as installation finishes.
 
 Ask:
 
-> Which Claude model should this task use?
+> Which current model should this task use, and why?
 
-The skill returns the model ID, why it fits, why a cheaper model does not, and
-the observable condition that would justify another escalation.
+Name the provider and target surface when they matter, for example “Which
+current OpenAI API model should run these workers?” The skill returns a verified
+model ID when official sources are available, why it fits, why a cheaper model
+does not, and the observable condition that would justify escalation. Without
+live verification, it returns only the capability tier and tells you to verify
+an exact ID before pinning it.
 
 It also helps design mixed-model agent workflows: a premium planning pass when
-needed, Sonnet implementation agents, and Haiku fan-out where verification is
-strong. Recurring agents should always pin their model, and Opus or Fable
-should never be inherited without a written reason.
+needed, balanced implementation agents, and economy fan-out where verification
+is strong. Recurring agents should always pin a verified model, and premium or
+maximum models should never be inherited without a written reason.
 
 ## Pricing
 
@@ -51,8 +55,8 @@ catalog.
 ## Release verification
 
 The rerunnable, provider-specific forward-evaluation cases live in
-`tests/fixtures/spend-guardrails-evals.json`. They cover bounded Haiku fan-out,
-an Opus-worthy cross-system refactor, important work that should remain on
-Sonnet, and the equivalent OpenAI tiers. These cases record human-observed
+`tests/fixtures/spend-guardrails-evals.json`. They cover bounded economy
+fan-out, a premium cross-system refactor, and important work that should remain
+on the balanced tier for both providers. These cases record human-observed
 results; they do not pretend that a string assertion can execute and grade
 model judgment.
