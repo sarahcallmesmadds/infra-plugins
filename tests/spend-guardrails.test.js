@@ -83,15 +83,21 @@ check('forward evaluations cover both providers and every decision path', () => 
   assert.strictEqual(evaluations.cases.length, 6);
   assert.ok(evaluations.cases.every((entry) =>
     entry.prompt
-      && entry.expected_model
       && entry.expected_tier
       && entry.pass_condition
       && entry.status === 'pass'
       && entry.observed_tier === entry.expected_tier));
-  assert.ok(evaluations.cases.filter((entry) => entry.provider === 'anthropic').every((entry) =>
-    entry.observed_model === entry.expected_model));
-  assert.ok(evaluations.cases.filter((entry) => entry.provider === 'openai').every((entry) =>
-    entry.observed_model === '' && /withheld an exact ID/.test(entry.verification)));
+  assert.ok(evaluations.cases.every((entry) => {
+    if (entry.verification_mode === 'live') {
+      return entry.expected_model && entry.observed_model === entry.expected_model;
+    }
+    if (entry.verification_mode === 'fallback') {
+      return entry.expected_model === ''
+        && entry.observed_model === ''
+        && /withheld an exact ID/.test(entry.verification);
+    }
+    return false;
+  }));
 });
 
 console.log(`\n${ran} checks, ${failed} failed`);
