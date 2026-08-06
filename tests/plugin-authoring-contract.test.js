@@ -10,8 +10,14 @@ const PLUGINS = path.join(REPO, 'plugins');
 const ROOT_README = fs.readFileSync(path.join(REPO, 'README.md'), 'utf8');
 const GUIDE = fs.readFileSync(path.join(REPO, 'CONTRIBUTING.md'), 'utf8');
 
-const names = fs.readdirSync(PLUGINS).sort().filter((name) =>
-  fs.existsSync(path.join(PLUGINS, name, '.claude-plugin', 'plugin.json')));
+// Discover directories, not manifests. A missing Claude manifest is one of the
+// failures this suite exists to report, so using that manifest to decide what
+// counts as a plugin would make the most important assertion impossible to
+// fail.
+const names = fs.readdirSync(PLUGINS, { withFileTypes: true })
+  .filter((entry) => entry.isDirectory())
+  .map((entry) => entry.name)
+  .sort();
 
 let failed = 0;
 let total = 0;
