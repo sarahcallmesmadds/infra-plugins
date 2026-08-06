@@ -47,7 +47,7 @@ If they have room, suggest rate limits next. Token counters, session ID and the
 Codex version are available but usually less useful on every turn. The picker
 updates the footer immediately and saves the selection to `tui.status_line` in
 Codex's `config.toml`. The exact command and persistence behavior are recorded
-in [the checked-in Codex surface note](../../references/codex-status-surfaces.md),
+in [the checked-in Codex surface note](references/codex-status-surfaces.md),
 which links to the current official manual.
 
 Do not edit `config.toml` when the picker is available. The picker knows the

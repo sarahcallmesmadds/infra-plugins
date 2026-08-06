@@ -54,7 +54,7 @@ const fs = require('fs');
 const path = require('path');
 
 const SKILLS = path.join(__dirname, '..', 'plugins', 'session', 'skills');
-const CODEX_SURFACES = path.join(__dirname, '..', 'plugins', 'session', 'references', 'codex-status-surfaces.md');
+const CODEX_SURFACES = path.join(__dirname, '..', 'plugins', 'session', 'skills', 'status-bar', 'references', 'codex-status-surfaces.md');
 
 function skill(name) {
   const file = path.join(SKILLS, name, 'SKILL.md');
