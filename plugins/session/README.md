@@ -59,11 +59,11 @@ Claude 4.8 │ my-project ⎇ owner │ ↳ Building the current task │ $0.42 
 Every segment is optional and vanishes rather than erroring when its data is
 absent.
 
-The current-task segment reads this session's main todo file under
-`~/.claude/todos/`: either `<sessionId>.json` or
-`<sessionId>-agent-<sessionId>.json`, depending on the Claude Code version. It
-uses the newer one if both exist, shows the `activeForm` marked `in_progress`,
-and never borrows a task from another session or a sub-agent. Set
+The current-task segment reads this session's task files under
+`~/.claude/tasks/<sessionId>/`. For older Claude Code versions it falls back to
+the main todo file under `~/.claude/todos/`: either `<sessionId>.json` or
+`<sessionId>-agent-<sessionId>.json`. It shows the `activeForm` marked
+`in_progress` and never borrows a task from another session or a sub-agent. Set
 `{"currentTask":{"enabled":false}}` in
 `~/.claude/session.config.json` to hide it.
 
