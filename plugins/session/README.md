@@ -12,6 +12,7 @@ starts with ten minutes of "where was I".
 | `/pickup <slug>` | Loads that handoff back and starts from it |
 | `/status-bar` | Sets up the status line: model, folder, current task, cost, context used |
 | `/core-tools` | Picks which connected tools to watch for expired sign-ins |
+| `/core-tools-monitor` | Runs the transition-only probe used by a Desktop scheduled task |
 
 Plus a hook that runs at session start and gives the model the small amount of
 current state it should not have to rediscover.
@@ -109,6 +110,12 @@ session start and the status line only ever reads the cache. That means the
 number is as fresh as the cache and no fresher, which is why it starts showing
 its age once it gets old, and why it shows nothing at all rather than `0/5`
 before the first refresh finishes.
+
+For notification without watching the status line, schedule
+`/core-tools-monitor` hourly in Claude Desktop. It speaks only when the state
+changes: once for a new failure, once when the affected set changes, and once
+when every tool recovers. Repeated runs update one local incident at
+`~/.cache/session/core-tools-incident.json` instead of stacking duplicates.
 
 ## Knowing how full the context is
 

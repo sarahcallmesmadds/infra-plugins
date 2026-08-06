@@ -36,9 +36,19 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 
 const PROBE_TIMEOUT_MS = 25000;
+const INCIDENT_SOURCE_ID = 'session:core-tools';
+const INCIDENT_LOCK_STALE_MS = 2 * 60 * 1000;
 
 function cachePath(home = os.homedir()) {
   return path.join(home, '.cache', 'session', 'mcp-health.json');
+}
+
+function incidentPath(home = os.homedir()) {
+  return path.join(home, '.cache', 'session', 'core-tools-incident.json');
+}
+
+function incidentLockPath(home = os.homedir()) {
+  return `${incidentPath(home)}.lock`;
 }
 
 // One line of `claude mcp list` output. The shape is `name: target - status`:
@@ -149,6 +159,54 @@ function writeCache(servers, { home = os.homedir(), now = Date.now() } = {}) {
   }
 }
 
+function readIncident(home = os.homedir()) {
+  try {
+    const raw = JSON.parse(fs.readFileSync(incidentPath(home), 'utf8'));
+    return raw && raw.version === 1 && raw.incident && typeof raw.incident === 'object'
+      ? raw
+      : { version: 1, incident: null };
+  } catch (_) {
+    return { version: 1, incident: null };
+  }
+}
+
+function writeIncident(state, { home = os.homedir() } = {}) {
+  const target = incidentPath(home);
+  try {
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    const tmp = `${target}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, `${JSON.stringify(state, null, 2)}\n`);
+    fs.renameSync(tmp, target);
+    return state;
+  } catch (_) {
+    return null;
+  }
+}
+
+function acquireIncidentLock(home = os.homedir(), now = Date.now()) {
+  const lock = incidentLockPath(home);
+  fs.mkdirSync(path.dirname(lock), { recursive: true });
+  try {
+    fs.mkdirSync(lock);
+    return lock;
+  } catch (error) {
+    if (!error || error.code !== 'EEXIST') return null;
+    try {
+      if (now - fs.statSync(lock).mtimeMs <= INCIDENT_LOCK_STALE_MS) return null;
+      fs.rmSync(lock, { recursive: true, force: true });
+      fs.mkdirSync(lock);
+      return lock;
+    } catch (_) {
+      return null;
+    }
+  }
+}
+
+function releaseIncidentLock(lock) {
+  if (!lock) return;
+  try { fs.rmSync(lock, { recursive: true, force: true }); } catch (_) { /* best effort */ }
+}
+
 function cacheAgeMinutes(cache, now = Date.now()) {
   if (!cache || !cache.updated_at) return null;
   const t = Date.parse(cache.updated_at);
@@ -165,6 +223,94 @@ function refresh({ home = os.homedir(), now = Date.now(), exec } = {}) {
   const servers = probe({ exec });
   if (!servers) return null;
   return writeCache(servers, { home, now });
+}
+
+function problemFingerprint(problems) {
+  return problems
+    .map((problem) => `${problem.label}:${problem.status}`)
+    .sort()
+    .join('|');
+}
+
+function formatProblem(problem) {
+  if (problem.status === 'needs_auth') return `${problem.label} needs sign-in`;
+  if (problem.status === 'down') return `${problem.label} is unreachable`;
+  if (problem.status === 'missing') return `${problem.label} is not found; check its configured name`;
+  return 'the health check could not run';
+}
+
+function scheduledProbe({ config, home = os.homedir(), now = Date.now(), exec } = {}) {
+  const tools = (config && config.coreTools) || [];
+  if (!tools.length) return { event: 'unconfigured', message: '', incident: null };
+
+  const lock = acquireIncidentLock(home, now);
+  if (!lock) return { event: 'busy', message: '', incident: readIncident(home).incident };
+
+  try {
+    const servers = probe({ exec });
+    let problems;
+    if (servers) {
+      writeCache(servers, { home, now });
+      problems = resolve(tools, servers).filter((tool) => tool.status !== 'connected');
+    } else {
+      problems = [{ label: 'Core tools probe', match: '', server: null, status: 'probe_failed' }];
+    }
+
+    const state = readIncident(home);
+    const previous = state.incident;
+    const nowIso = new Date(now).toISOString();
+
+    if (!problems.length) {
+      if (!previous || previous.status !== 'open') {
+        return { event: 'unchanged', message: '', incident: previous || null };
+      }
+      const incident = {
+        ...previous,
+        status: 'resolved',
+        updated_at: nowIso,
+        resolved_at: nowIso,
+        fingerprint: '',
+        problems: [],
+      };
+      if (!writeIncident({ version: 1, incident }, { home })) {
+        return { event: 'write_failed', message: '', incident: previous };
+      }
+      return {
+        event: 'resolved',
+        message: `Core tools recovered: all ${tools.length} connected. Closed ${INCIDENT_SOURCE_ID}.`,
+        incident,
+      };
+    }
+
+    const fingerprint = problemFingerprint(problems);
+    if (previous && previous.status === 'open' && previous.fingerprint === fingerprint) {
+      return { event: 'unchanged', message: '', incident: previous };
+    }
+
+    const reopening = previous && previous.status === 'resolved';
+    const updating = previous && previous.status === 'open';
+    const incident = {
+      source_id: INCIDENT_SOURCE_ID,
+      status: 'open',
+      opened_at: updating ? previous.opened_at : nowIso,
+      updated_at: nowIso,
+      resolved_at: null,
+      occurrence: reopening ? (previous.occurrence || 1) + 1 : (previous?.occurrence || 1),
+      fingerprint,
+      problems,
+    };
+    if (!writeIncident({ version: 1, incident }, { home })) {
+      return { event: 'write_failed', message: '', incident: previous || null };
+    }
+    const detail = problems.map(formatProblem).join('; ');
+    return {
+      event: updating ? 'updated' : 'opened',
+      message: `Core tools alert${updating ? ' updated' : ''}: ${detail}. Source ${INCIDENT_SOURCE_ID}.`,
+      incident,
+    };
+  } finally {
+    releaseIncidentLock(lock);
+  }
 }
 
 // Match the configured tools against what the cache saw.
@@ -263,17 +409,28 @@ function formatAge(minutes) {
 
 module.exports = {
   cachePath,
+  incidentPath,
+  incidentLockPath,
   parseMcpList,
   classifyStatus,
   probe,
   readCache,
   writeCache,
+  readIncident,
+  writeIncident,
+  acquireIncidentLock,
+  releaseIncidentLock,
   cacheAgeMinutes,
   isStale,
   refresh,
+  problemFingerprint,
+  formatProblem,
+  scheduledProbe,
   resolve,
   summarize,
   statuslineSegment,
   formatAge,
   LINE_RE,
+  INCIDENT_SOURCE_ID,
+  INCIDENT_LOCK_STALE_MS,
 };

@@ -160,6 +160,100 @@ check('a failed refresh leaves the existing cache untouched', () => {
   assert.strictEqual(fs.readFileSync(health.cachePath(home), 'utf8'), before);
 });
 
+// ----------------------------------------------------- scheduled monitor ----
+
+const MCP = (rows) => ['Checking MCP server health…', '', ...rows].join('\n');
+const connected = (name) => `claude.ai ${name}: https://example.com/${name} - ✔ Connected`;
+const needsAuth = (name) => `claude.ai ${name}: https://example.com/${name} - ! Needs authentication`;
+const unreachable = (name) => `claude.ai ${name}: https://example.com/${name} - ✘ Failed to connect`;
+const monitorConfig = (tools) => ({ ...config.DEFAULTS, coreTools: tools });
+
+check('a healthy scheduled probe is silent', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'session-monitor-'));
+  const result = health.scheduledProbe({
+    home,
+    config: monitorConfig([{ label: 'Email', match: 'Gmail' }]),
+    exec: () => MCP([connected('Gmail')]),
+  });
+  assert.strictEqual(result.event, 'unchanged');
+  assert.strictEqual(result.message, '');
+  assert.ok(health.readCache(home), 'the scheduled probe did not refresh the status cache');
+});
+
+check('a failure opens one incident and repeated failures stay silent', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'session-monitor-'));
+  const args = {
+    home,
+    config: monitorConfig([{ label: 'Email', match: 'Gmail' }]),
+    exec: () => MCP([needsAuth('Gmail')]),
+  };
+  const first = health.scheduledProbe({ ...args, now: 1000 });
+  assert.strictEqual(first.event, 'opened');
+  assert.match(first.message, /Email needs sign-in/);
+  assert.match(first.message, /session:core-tools/);
+
+  const second = health.scheduledProbe({ ...args, now: 2000 });
+  assert.strictEqual(second.event, 'unchanged');
+  assert.strictEqual(second.message, '');
+  assert.strictEqual(health.readIncident(home).incident.source_id, 'session:core-tools');
+});
+
+check('a changed failure updates the same incident instead of stacking another', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'session-monitor-'));
+  const cfg = monitorConfig([
+    { label: 'Email', match: 'Gmail' },
+    { label: 'Notion', match: 'Notion' },
+  ]);
+  health.scheduledProbe({ home, config: cfg, now: 1000, exec: () => MCP([needsAuth('Gmail'), connected('Notion')]) });
+  const changed = health.scheduledProbe({
+    home, config: cfg, now: 2000, exec: () => MCP([needsAuth('Gmail'), unreachable('Notion')]),
+  });
+  assert.strictEqual(changed.event, 'updated');
+  assert.match(changed.message, /Notion is unreachable/);
+  assert.strictEqual(health.readIncident(home).incident.source_id, 'session:core-tools');
+});
+
+check('recovery closes the incident once and then stays silent', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'session-monitor-'));
+  const cfg = monitorConfig([{ label: 'Email', match: 'Gmail' }]);
+  health.scheduledProbe({ home, config: cfg, now: 1000, exec: () => MCP([needsAuth('Gmail')]) });
+
+  const recovered = health.scheduledProbe({ home, config: cfg, now: 2000, exec: () => MCP([connected('Gmail')]) });
+  assert.strictEqual(recovered.event, 'resolved');
+  assert.match(recovered.message, /recovered/);
+  assert.strictEqual(health.readIncident(home).incident.status, 'resolved');
+
+  const again = health.scheduledProbe({ home, config: cfg, now: 3000, exec: () => MCP([connected('Gmail')]) });
+  assert.strictEqual(again.event, 'unchanged');
+  assert.strictEqual(again.message, '');
+});
+
+check('a failed health command opens one monitor incident without erasing the good cache', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'session-monitor-'));
+  health.writeCache(health.parseMcpList(MCP([connected('Gmail')])), { home, now: 1 });
+  const before = fs.readFileSync(health.cachePath(home), 'utf8');
+  const result = health.scheduledProbe({
+    home,
+    config: monitorConfig([{ label: 'Email', match: 'Gmail' }]),
+    exec: () => { throw new Error('cannot run'); },
+  });
+  assert.strictEqual(result.event, 'opened');
+  assert.match(result.message, /health check could not run/);
+  assert.strictEqual(fs.readFileSync(health.cachePath(home), 'utf8'), before);
+});
+
+check('an overlapping scheduled probe stays silent rather than duplicating an alert', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'session-monitor-'));
+  fs.mkdirSync(health.incidentLockPath(home), { recursive: true });
+  const result = health.scheduledProbe({
+    home,
+    config: monitorConfig([{ label: 'Email', match: 'Gmail' }]),
+    exec: () => MCP([needsAuth('Gmail')]),
+  });
+  assert.strictEqual(result.event, 'busy');
+  assert.strictEqual(result.message, '');
+});
+
 // ------------------------------------------------------------ resolution ----
 
 const SERVERS = health.parseMcpList(REAL_MCP_LIST);
