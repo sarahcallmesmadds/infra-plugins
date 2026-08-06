@@ -115,8 +115,8 @@
     {
       "name": "spend-guardrails",
       "source": "./plugins/spend-guardrails",
-      "description": "Choose the lowest-cost Claude model that can reliably do the work, and make every escalation explain itself.",
-      "version": "0.1.0",
+      "description": "Choose the lowest-cost current Claude or OpenAI model that can reliably do the work, without recommending retired models.",
+      "version": "0.1.1",
       "author": {
         "name": "Sarah Madden"
       },
@@ -126,7 +126,9 @@
         "spend",
         "cost",
         "agents",
-        "claude"
+        "claude",
+        "openai",
+        "lifecycle"
       ]
     }
   ]

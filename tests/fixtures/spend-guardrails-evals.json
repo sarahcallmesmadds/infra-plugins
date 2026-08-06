@@ -1,0 +1,82 @@
+{
+  "version": 1,
+  "last_evaluated": "2026-08-06",
+  "method": "Human-reviewed forward evaluation in fresh agent contexts. Rerun the prompts after changing the ladder or its trigger description.",
+  "cases": [
+    {
+      "id": "bounded-invoice-workers",
+      "provider": "anthropic",
+      "verification_mode": "live",
+      "prompt": "I need to process 50,000 schema-validated invoices with the same deterministic extraction steps. Which Claude model should run the workers, and why?",
+      "expected_tier": "economy",
+      "observed_tier": "economy",
+      "expected_model": "claude-haiku-4-5",
+      "observed_model": "claude-haiku-4-5",
+      "pass_condition": "Select Haiku, pin it on every worker, and escalate only after representative evaluation finds errors that validation cannot catch.",
+      "status": "pass"
+    },
+    {
+      "id": "cross-service-authorization-refactor",
+      "provider": "anthropic",
+      "verification_mode": "live",
+      "prompt": "Choose a model for redesigning authorization across four services in three languages that share a permissions model, then planning and reviewing the migration.",
+      "expected_tier": "premium",
+      "observed_tier": "premium",
+      "expected_model": "claude-opus-5",
+      "observed_model": "claude-opus-5",
+      "pass_condition": "Select Opus for the cross-system architecture and migration plan without escalating to Fable by default.",
+      "status": "pass"
+    },
+    {
+      "id": "important-board-presentation",
+      "provider": "anthropic",
+      "verification_mode": "live",
+      "prompt": "This board presentation is due tomorrow and is extremely important. Which model should I use to draft and revise it?",
+      "expected_tier": "balanced",
+      "observed_tier": "balanced",
+      "expected_model": "claude-sonnet-5",
+      "observed_model": "claude-sonnet-5",
+      "pass_condition": "Keep Sonnet as the default because visibility, urgency, and executive audience are not capability evidence for escalation.",
+      "status": "pass"
+    },
+    {
+      "id": "openai-bounded-invoice-workers",
+      "provider": "openai",
+      "verification_mode": "fallback",
+      "prompt": "Using current OpenAI API models, choose a model for 50,000 schema-validated invoices with deterministic extraction steps.",
+      "expected_tier": "economy",
+      "observed_tier": "economy",
+      "expected_model": "",
+      "observed_model": "",
+      "pass_condition": "Verify the live OpenAI catalog, select the current economy tier, and require representative evaluation before escalation.",
+      "verification": "Live sources were unavailable. The evaluator correctly withheld an exact ID and price rather than guessing.",
+      "status": "pass"
+    },
+    {
+      "id": "openai-cross-service-authorization-refactor",
+      "provider": "openai",
+      "verification_mode": "fallback",
+      "prompt": "Using current OpenAI API models, choose a model for redesigning authorization across four services in three languages and planning the migration.",
+      "expected_tier": "premium",
+      "observed_tier": "premium",
+      "expected_model": "",
+      "observed_model": "",
+      "pass_condition": "Verify the live OpenAI catalog and select the current premium tier for cross-system architecture.",
+      "verification": "Live sources were unavailable. The evaluator correctly withheld an exact ID, selected premium planning with balanced execution, and rejected maximum without evidence.",
+      "status": "pass"
+    },
+    {
+      "id": "openai-important-board-presentation",
+      "provider": "openai",
+      "verification_mode": "fallback",
+      "prompt": "Using current OpenAI API models, choose a model for an important board presentation due tomorrow.",
+      "expected_tier": "balanced",
+      "observed_tier": "balanced",
+      "expected_model": "",
+      "observed_model": "",
+      "pass_condition": "Verify the live OpenAI catalog and keep the current balanced tier because urgency and visibility do not justify escalation.",
+      "verification": "Live sources were unavailable. The evaluator correctly withheld an exact ID and kept urgency and executive visibility from causing escalation.",
+      "status": "pass"
+    }
+  ]
+}
