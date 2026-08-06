@@ -1,0 +1,19 @@
+{
+  "name": "spend-guardrails",
+  "version": "0.1.0",
+  "description": "Choose the lowest-cost Claude model that can reliably do the work, and make every escalation explain itself.",
+  "author": {
+    "name": "Sarah Madden",
+    "url": "https://github.com/sarahcallmesmadds"
+  },
+  "homepage": "https://github.com/sarahcallmesmadds/plugins/tree/main/plugins/spend-guardrails",
+  "repository": "https://github.com/sarahcallmesmadds/plugins",
+  "license": "MIT",
+  "keywords": [
+    "models",
+    "spend",
+    "cost",
+    "agents",
+    "claude"
+  ]
+}

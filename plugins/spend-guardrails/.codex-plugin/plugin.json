@@ -1,0 +1,36 @@
+{
+  "name": "spend-guardrails",
+  "version": "0.1.0",
+  "description": "Choose the lowest-cost Claude model that can reliably do the work, and make every escalation explain itself.",
+  "author": {
+    "name": "Sarah Madden",
+    "url": "https://github.com/sarahcallmesmadds"
+  },
+  "homepage": "https://github.com/sarahcallmesmadds/plugins/tree/main/plugins/spend-guardrails",
+  "repository": "https://github.com/sarahcallmesmadds/plugins",
+  "license": "MIT",
+  "keywords": [
+    "models",
+    "spend",
+    "cost",
+    "agents",
+    "claude"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Spend Guardrails",
+    "shortDescription": "Choose the lowest-cost Claude model that holds",
+    "longDescription": "Spend Guardrails gives agents a four-rung Claude model ladder, keeps Sonnet as the practical default, pins cheap models on bounded worker tasks, and requires evidence before escalating to premium models. It separates planning from execution, names observable escalation triggers, and keeps recurring agents from inheriting an expensive model without a reason.",
+    "developerName": "Sarah Madden",
+    "category": "Productivity",
+    "capabilities": [
+      "Interactive",
+      "Read"
+    ],
+    "defaultPrompt": [
+      "Which Claude model should this task use?",
+      "Design a cost-aware model mix for these agents.",
+      "Does this workflow have evidence to justify escalating models?"
+    ]
+  }
+}

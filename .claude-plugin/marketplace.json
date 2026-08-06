@@ -45,7 +45,7 @@
       "name": "build-loop",
       "source": "./plugins/build-loop",
       "description": "Keep everything you build honest. Log what a skill, hook, command, plugin or script got wrong the moment it happens, fix it from the queue with an approval gate, know what else the fix puts at risk, and keep a to-build list that closes itself when the work actually ships.",
-      "version": "0.8.2",
+      "version": "0.8.3",
       "author": {
         "name": "Sarah Madden"
       },
@@ -110,6 +110,23 @@
         "notion",
         "audit",
         "provenance"
+      ]
+    },
+    {
+      "name": "spend-guardrails",
+      "source": "./plugins/spend-guardrails",
+      "description": "Choose the lowest-cost Claude model that can reliably do the work, and make every escalation explain itself.",
+      "version": "0.1.0",
+      "author": {
+        "name": "Sarah Madden"
+      },
+      "category": "productivity",
+      "tags": [
+        "models",
+        "spend",
+        "cost",
+        "agents",
+        "claude"
       ]
     }
   ]
