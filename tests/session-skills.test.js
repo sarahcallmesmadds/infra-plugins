@@ -79,7 +79,9 @@ function fences(text) {
 }
 
 let failed = 0;
+let ran = 0;
 function check(what, fn) {
+  ran += 1;
   try {
     fn();
     console.log(`  ok    ${what}`);
@@ -102,6 +104,9 @@ check('status-bar routes Codex through its native pickers', () => {
   assert.match(codex, /\/title/);
   assert.match(codex, /task progress/i);
   assert.match(codex, /cannot add arbitrary custom segments/i);
+  assert.match(text, /CLAUDE_PLUGIN_ROOT/);
+  assert.match(codex, /developers\.openai\.com\/codex\/config-reference/);
+  assert.match(codex, /developers\.openai\.com\/codex\/cli/);
 });
 
 check('status-bar does not promise Claude-only fields in Codex', () => {
@@ -260,5 +265,5 @@ check('the position check would actually catch one', () => {
   );
 });
 
-console.log(`\n10 checks, ${failed} failed`);
+console.log(`\n${ran} checks, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);
