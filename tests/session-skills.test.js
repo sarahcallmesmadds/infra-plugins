@@ -54,6 +54,7 @@ const fs = require('fs');
 const path = require('path');
 
 const SKILLS = path.join(__dirname, '..', 'plugins', 'session', 'skills');
+const CODEX_SURFACES = path.join(__dirname, '..', 'plugins', 'session', 'references', 'codex-status-surfaces.md');
 
 function skill(name) {
   const file = path.join(SKILLS, name, 'SKILL.md');
@@ -105,8 +106,14 @@ check('status-bar routes Codex through its native pickers', () => {
   assert.match(codex, /task progress/i);
   assert.match(codex, /cannot add arbitrary custom segments/i);
   assert.match(text, /CLAUDE_PLUGIN_ROOT/);
-  assert.match(codex, /developers\.openai\.com\/codex\/config-reference/);
-  assert.match(codex, /developers\.openai\.com\/codex\/cli/);
+  assert.match(text, /CODEX_HOME/);
+  assert.match(text, /Do not use the existence of `\/statusline` as detection/);
+  assert.ok(fs.existsSync(CODEX_SURFACES), 'Codex surface evidence note is missing');
+  const sources = fs.readFileSync(CODEX_SURFACES, 'utf8');
+  assert.match(sources, /developers\.openai\.com\/codex\/codex-manual\.md/);
+  assert.match(sources, /tui\.status_line/);
+  assert.match(sources, /`\/statusline`/);
+  assert.match(sources, /`\/title`/);
 });
 
 check('status-bar does not promise Claude-only fields in Codex', () => {

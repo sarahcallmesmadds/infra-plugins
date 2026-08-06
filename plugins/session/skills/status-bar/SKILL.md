@@ -12,12 +12,13 @@ which this skill is running.
 
 ## Step 0: Identify the runtime
 
-Do not guess from the plugin name. In Claude Code, `CLAUDE_PLUGIN_ROOT` is
-available to the skill and the Claude route below uses that installed root. In
-Codex, the native `/statusline` command and its picker are the discriminator.
-If the host is ambiguous—both signals are present, or neither is—ask the user
-whether this is Claude Code or Codex before running any installer. Never run
-the Claude installer from the Codex route.
+Do not guess from the plugin name. Check the runtime signals before taking any
+action: `CLAUDE_PLUGIN_ROOT` means Claude Code; `CODEX_HOME` with no
+`CLAUDE_PLUGIN_ROOT` means Codex. If both are present, or neither is present,
+ask the user whether this is Claude Code or Codex before running any installer.
+Do not use the existence of `/statusline` as detection—the command is the
+configuration action, not an observable host signal. Never run the Claude
+installer from the Codex route.
 
 ---
 
@@ -45,8 +46,9 @@ Recommend this compact order:
 If they have room, suggest rate limits next. Token counters, session ID and the
 Codex version are available but usually less useful on every turn. The picker
 updates the footer immediately and saves the selection to `tui.status_line` in
-Codex's `config.toml`. See the documented [footer configuration](https://developers.openai.com/codex/config-reference#configtoml)
-and [CLI slash commands](https://developers.openai.com/codex/cli#slash-commands).
+Codex's `config.toml`. The exact command and persistence behavior are recorded
+in [the checked-in Codex surface note](../../references/codex-status-surfaces.md),
+which links to the current official manual.
 
 Do not edit `config.toml` when the picker is available. The picker knows the
 field identifiers supported by the installed Codex version and avoids leaving
