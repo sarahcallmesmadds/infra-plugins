@@ -150,6 +150,10 @@ check('a probe returning no parseable servers is also null', () => {
   assert.strictEqual(health.probe({ exec: () => 'Checking MCP server health…' }), null);
 });
 
+check('a successful no-servers response is an empty list rather than a failed probe', () => {
+  assert.deepStrictEqual(health.probe({ exec: () => 'No MCP servers configured' }), []);
+});
+
 check('a failed refresh leaves the existing cache untouched', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'session-health-'));
   health.writeCache([{ name: 'claude.ai Notion', url: 'u', status: 'connected' }], { home });
@@ -235,7 +239,7 @@ check('recovery closes the incident once and then stays silent', () => {
   assert.strictEqual(again.message, '');
 });
 
-check('a failed health command opens one monitor incident without erasing the good cache', () => {
+check('a failed health command reports a monitor error without erasing the good cache', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'session-monitor-'));
   health.writeCache(health.parseMcpList(MCP([connected('Gmail')])), { home, now: 1 });
   const before = fs.readFileSync(health.cachePath(home), 'utf8');
@@ -244,8 +248,9 @@ check('a failed health command opens one monitor incident without erasing the go
     config: monitorConfig([{ label: 'Email', match: 'Gmail' }]),
     exec: () => { throw new Error('cannot run'); },
   });
-  assert.strictEqual(result.event, 'opened');
-  assert.match(result.message, /health check could not run/);
+  assert.strictEqual(result.event, 'probe_failed');
+  assert.match(result.message, /Claude CLI/);
+  assert.strictEqual(health.readIncident(home).incident, null);
   assert.strictEqual(fs.readFileSync(health.cachePath(home), 'utf8'), before);
 });
 
@@ -257,7 +262,7 @@ check('a failed health command does not replace an existing real outage', () => 
     home, config: cfg, now: 2000, exec: () => { throw new Error('temporary failure'); },
   });
   assert.strictEqual(failed.event, 'probe_failed');
-  assert.strictEqual(failed.message, '');
+  assert.match(failed.message, /Claude CLI/);
   assert.deepStrictEqual(health.readIncident(home).incident.problems, opened.incident.problems);
 
   const stillDown = health.scheduledProbe({ home, config: cfg, now: 3000, exec: () => MCP([needsAuth('Gmail')]) });
@@ -317,6 +322,24 @@ check('a stale lock takeover cannot be released by the previous owner', () => {
   assert.ok(!fs.existsSync(second.path), 'the current owner did not release its own lock');
 });
 
+check('a stale-lock contender cannot move and delete a newly-created live lock', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'session-monitor-'));
+  const abandoned = health.acquireIncidentLock(home, 1000);
+  assert.strictEqual(abandoned.status, 'acquired');
+  fs.utimesSync(abandoned.path, new Date(0), new Date(0));
+  let successor;
+  const contender = health.acquireIncidentLock(home, health.INCIDENT_LOCK_STALE_MS + 2000, {
+    beforeStaleRename: (lockPath) => {
+      fs.rmSync(lockPath, { recursive: true, force: true });
+      successor = health.acquireIncidentLock(home, health.INCIDENT_LOCK_STALE_MS + 2001);
+    },
+  });
+  assert.strictEqual(successor.status, 'acquired');
+  assert.strictEqual(contender.status, 'busy');
+  assert.strictEqual(fs.readFileSync(path.join(successor.path, 'owner'), 'utf8'), successor.owner);
+  health.releaseIncidentLock(successor);
+});
+
 check('logical incident time cannot keep a crashed monitor lock fresh forever', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'session-monitor-'));
   const abandoned = health.acquireIncidentLock(home, Date.now());
@@ -334,7 +357,7 @@ check('logical incident time cannot keep a crashed monitor lock fresh forever', 
   assert.strictEqual(result.message, '');
 });
 
-check('a corrupt incident record is reported without opening a duplicate incident', () => {
+check('a corrupt incident record is quarantined once without opening a duplicate incident', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'session-monitor-'));
   fs.mkdirSync(path.dirname(health.incidentPath(home)), { recursive: true });
   fs.writeFileSync(health.incidentPath(home), '{not json');
@@ -344,10 +367,19 @@ check('a corrupt incident record is reported without opening a duplicate inciden
     config: monitorConfig([{ label: 'Email', match: 'Gmail' }]),
     exec: () => { probed = true; return MCP([needsAuth('Gmail')]); },
   });
-  assert.strictEqual(result.event, 'state_failed');
-  assert.match(result.message, /incident record is unreadable/);
+  assert.strictEqual(result.event, 'state_repaired');
+  assert.match(result.message, /repaired an unreadable incident record/);
   assert.strictEqual(probed, false);
-  assert.strictEqual(fs.readFileSync(health.incidentPath(home), 'utf8'), '{not json');
+  assert.strictEqual(health.readIncident(home).incident, null);
+  assert.ok(fs.readdirSync(path.dirname(health.incidentPath(home))).some((name) => name.includes('.corrupt.')));
+
+  const next = health.scheduledProbe({
+    home,
+    config: monitorConfig([{ label: 'Email', match: 'Gmail' }]),
+    exec: () => MCP([connected('Gmail')]),
+  });
+  assert.strictEqual(next.event, 'unchanged');
+  assert.strictEqual(next.message, '');
 });
 
 check('an overlapping scheduled probe stays silent rather than duplicating an alert', () => {

@@ -127,7 +127,8 @@ function probe({ exec = execFileSync } = {}) {
       stdio: ['ignore', 'pipe', 'ignore'],
     });
     const servers = parseMcpList(out);
-    return servers.length ? servers : null;
+    if (servers.length) return servers;
+    return /no mcp servers (?:are )?configured/i.test(String(out)) ? [] : null;
   } catch (_) {
     return null;
   }
@@ -162,7 +163,7 @@ function writeCache(servers, { home = os.homedir(), now = Date.now() } = {}) {
 function readIncident(home = os.homedir()) {
   try {
     const raw = JSON.parse(fs.readFileSync(incidentPath(home), 'utf8'));
-    return raw && raw.version === 1 && raw.incident && typeof raw.incident === 'object'
+    return raw && raw.version === 1 && (raw.incident === null || typeof raw.incident === 'object')
       ? raw
       : { version: 1, incident: null, error: 'unreadable' };
   } catch (error) {
@@ -220,7 +221,7 @@ function createOwnedLock(lock, owner) {
   }
 }
 
-function acquireIncidentLock(home = os.homedir(), wallNow = Date.now()) {
+function acquireIncidentLock(home = os.homedir(), wallNow = Date.now(), { beforeStaleRename } = {}) {
   const lock = incidentLockPath(home);
   const owner = `${process.pid}-${wallNow}-${Math.random().toString(36).slice(2)}`;
   try {
@@ -248,11 +249,19 @@ function acquireIncidentLock(home = os.homedir(), wallNow = Date.now()) {
   // section.
   const aside = `${lock}.stale.${owner}`;
   try {
+    if (beforeStaleRename) beforeStaleRename(lock);
     fs.renameSync(lock, aside);
   } catch (error) {
     return error && error.code === 'ENOENT'
       ? { status: 'busy', path: null, owner: null }
       : { status: 'error', path: null, owner: null };
+  }
+  if (!sameLock(judged, lockIdentity(aside))) {
+    // A successor replaced the stale path after our last check, so the rename
+    // moved its live lock. Restore it and stay out of the critical section.
+    // Never delete a lock whose identity we did not judge stale.
+    try { fs.renameSync(aside, lock); } catch (_) { /* preserve it aside rather than deleting it */ }
+    return { status: 'busy', path: null, owner: null };
   }
   try { fs.rmSync(aside, { recursive: true, force: true }); } catch (_) { /* already out of the way */ }
   return createOwnedLock(lock, owner);
@@ -302,6 +311,21 @@ function formatProblem(problem) {
   return 'the health check could not run; verify the Claude CLI is available to the Desktop scheduled task';
 }
 
+function repairIncidentState(home = os.homedir(), now = Date.now()) {
+  const target = incidentPath(home);
+  const aside = `${target}.corrupt.${now}`;
+  try {
+    fs.renameSync(target, aside);
+    if (!writeIncident({ version: 1, incident: null }, { home })) {
+      try { fs.renameSync(aside, target); } catch (_) { /* preserve whichever copy survived */ }
+      return false;
+    }
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
 function scheduledProbe({
   config,
   home = os.homedir(),
@@ -334,9 +358,12 @@ function scheduledProbe({
   try {
     const state = readIncident(home);
     if (state.error) {
+      const repaired = repairIncidentState(home, now);
       return {
-        event: 'state_failed',
-        message: 'Core tools monitor error: the incident record is unreadable; move or repair ~/.cache/session/core-tools-incident.json.',
+        event: repaired ? 'state_repaired' : 'state_failed',
+        message: repaired
+          ? 'Core tools monitor repaired an unreadable incident record; health checks will resume on the next run.'
+          : 'Core tools monitor error: the incident record is unreadable; move or repair ~/.cache/session/core-tools-incident.json.',
         incident: null,
       };
     }
@@ -346,10 +373,12 @@ function scheduledProbe({
     if (servers) {
       writeCache(servers, { home, now });
       problems = resolve(tools, servers).filter((tool) => tool.status !== 'connected');
-    } else if (previous && previous.status === 'open') {
-      return { event: 'probe_failed', message: '', incident: previous };
     } else {
-      problems = [{ label: 'Core tools probe', match: '', server: null, status: 'probe_failed' }];
+      return {
+        event: 'probe_failed',
+        message: 'Core tools monitor error: the health check could not run; verify the Claude CLI is available to the Desktop scheduled task.',
+        incident: previous || null,
+      };
     }
 
     const nowIso = new Date(now).toISOString();
@@ -521,6 +550,7 @@ module.exports = {
   writeCache,
   readIncident,
   writeIncident,
+  repairIncidentState,
   acquireIncidentLock,
   releaseIncidentLock,
   cacheAgeMinutes,
