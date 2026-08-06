@@ -74,6 +74,9 @@ check('the README states installation, runtime, configuration, and side effects'
   assert.match(readme, /both Claude Code and Codex/);
   assert.match(readme, /No setup or configuration is required/);
   assert.match(readme, /advisory and read-only/);
+  assert.match(readme, /read-only web lookups/);
+  assert.match(readme, /web access is\s+required for an exact recommendation/);
+  assert.ok(!/does not call tools/.test(readme), 'README must not deny required verification lookups');
   assert.match(readme, /Which current model should this task use/);
   assert.match(readme, /current OpenAI API model/);
   assert.match(readme, /Without\s+live verification, it returns only the capability tier/);

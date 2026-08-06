@@ -6,7 +6,10 @@ pricing, and lifecycle status against current official sources, and requires a
 concrete capability need or failed evaluation before escalating.
 
 It works in both Claude Code and Codex. The skill is advisory and read-only: it
-does not call tools, change files, or alter account settings.
+does not change files or account settings. It uses read-only web lookups to
+verify current model IDs, pricing, and lifecycle status, so web access is
+required for an exact recommendation. Without it, the skill returns a
+capability tier and clearly withholds unverified IDs and prices.
 
 ## Install
 
