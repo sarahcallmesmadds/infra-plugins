@@ -78,6 +78,17 @@ function fences(text) {
   return out.map((f) => ({ info: f.info, body: f.lines.join('\n') }));
 }
 
+let failed = 0;
+function check(what, fn) {
+  try {
+    fn();
+    console.log(`  ok    ${what}`);
+  } catch (error) {
+    failed += 1;
+    console.log(`  FAIL  ${what}\n        ${error.message}`);
+  }
+}
+
 // --------------------------------------------------------- status bar ----
 
 check('status-bar routes Codex through its native pickers', () => {
@@ -99,17 +110,6 @@ check('status-bar does not promise Claude-only fields in Codex', () => {
   assert.doesNotMatch(codex, /session cost|30 day spend|Core tools 5\/5/);
   assert.match(text.slice(text.indexOf('## Claude Code')), /Session cost so far/);
 });
-
-let failed = 0;
-function check(what, fn) {
-  try {
-    fn();
-    console.log(`  ok    ${what}`);
-  } catch (error) {
-    failed += 1;
-    console.log(`  FAIL  ${what}\n        ${error.message}`);
-  }
-}
 
 // ----------------------------------------------------------------- wrap ----
 
