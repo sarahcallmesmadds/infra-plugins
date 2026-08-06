@@ -15,7 +15,8 @@ If the command prints a line, return that line verbatim. It is either a new or
 changed incident, or a recovery. Do not add diagnosis from memory.
 
 If the command prints nothing, return no user-facing message. Healthy repeated
-runs and an unchanged open incident are deliberately silent.
+runs and an unchanged open incident are deliberately silent. An empty watch
+list is not healthy: the command tells the user to run `/core-tools` first.
 
 The probe owns one incident at
 `~/.cache/session/core-tools-incident.json`, with source id

@@ -168,6 +168,13 @@ const needsAuth = (name) => `claude.ai ${name}: https://example.com/${name} - ! 
 const unreachable = (name) => `claude.ai ${name}: https://example.com/${name} - ✘ Failed to connect`;
 const monitorConfig = (tools) => ({ ...config.DEFAULTS, coreTools: tools });
 
+check('an unconfigured scheduled probe says that nothing is being watched', () => {
+  const result = health.scheduledProbe({ config: monitorConfig([]) });
+  assert.strictEqual(result.event, 'unconfigured');
+  assert.match(result.message, /not watching anything/);
+  assert.match(result.message, /\/core-tools/);
+});
+
 check('a healthy scheduled probe is silent', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'session-monitor-'));
   const result = health.scheduledProbe({
@@ -283,6 +290,25 @@ check('a failure to persist a new incident is reported instead of hidden', () =>
   assert.strictEqual(result.event, 'write_failed');
   assert.match(result.message, /could not be recorded/);
   assert.match(result.message, /may repeat/);
+  const leftovers = fs.readdirSync(path.dirname(health.incidentPath(home)))
+    .filter((name) => name.endsWith('.tmp'));
+  assert.deepStrictEqual(leftovers, []);
+});
+
+check('a stale lock takeover cannot be released by the previous owner', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'session-monitor-'));
+  const first = health.acquireIncidentLock(home, 1000);
+  assert.strictEqual(first.status, 'acquired');
+  fs.utimesSync(first.path, new Date(0), new Date(0));
+
+  const second = health.acquireIncidentLock(home, health.INCIDENT_LOCK_STALE_MS + 2000);
+  assert.strictEqual(second.status, 'acquired');
+  assert.notStrictEqual(first.owner, second.owner);
+
+  health.releaseIncidentLock(first);
+  assert.ok(fs.existsSync(second.path), 'the old owner removed its successor\'s live lock');
+  health.releaseIncidentLock(second);
+  assert.ok(!fs.existsSync(second.path), 'the current owner did not release its own lock');
 });
 
 check('an overlapping scheduled probe stays silent rather than duplicating an alert', () => {

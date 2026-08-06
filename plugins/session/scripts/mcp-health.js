@@ -172,41 +172,99 @@ function readIncident(home = os.homedir()) {
 
 function writeIncident(state, { home = os.homedir() } = {}) {
   const target = incidentPath(home);
+  const tmp = `${target}.${process.pid}.tmp`;
   try {
     fs.mkdirSync(path.dirname(target), { recursive: true });
-    const tmp = `${target}.${process.pid}.tmp`;
     fs.writeFileSync(tmp, `${JSON.stringify(state, null, 2)}\n`);
     fs.renameSync(tmp, target);
     return state;
+  } catch (_) {
+    try { fs.rmSync(tmp, { force: true }); } catch (_) { /* best effort */ }
+    return null;
+  }
+}
+
+function lockIdentity(lock) {
+  try {
+    const stat = fs.statSync(lock);
+    return { dev: stat.dev, ino: stat.ino, mtimeMs: stat.mtimeMs };
   } catch (_) {
     return null;
   }
 }
 
-function acquireIncidentLock(home = os.homedir(), now = Date.now()) {
-  const lock = incidentLockPath(home);
+function sameLock(left, right) {
+  return Boolean(left && right
+    && left.dev === right.dev
+    && left.ino === right.ino
+    && left.mtimeMs === right.mtimeMs);
+}
+
+function createOwnedLock(lock, owner) {
   try {
-    fs.mkdirSync(path.dirname(lock), { recursive: true });
     fs.mkdirSync(lock);
-    return { status: 'acquired', path: lock };
-  } catch (error) {
-    if (!error || error.code !== 'EEXIST') return { status: 'error', path: null };
     try {
-      if (now - fs.statSync(lock).mtimeMs <= INCIDENT_LOCK_STALE_MS) {
-        return { status: 'busy', path: null };
-      }
-      fs.rmSync(lock, { recursive: true, force: true });
-      fs.mkdirSync(lock);
-      return { status: 'acquired', path: lock };
+      fs.writeFileSync(path.join(lock, 'owner'), owner);
     } catch (_) {
-      return { status: 'error', path: null };
+      try { fs.rmSync(lock, { recursive: true, force: true }); } catch (_) { /* best effort */ }
+      return { status: 'error', path: null, owner: null };
     }
+    return { status: 'acquired', path: lock, owner };
+  } catch (error) {
+    return error && error.code === 'EEXIST'
+      ? { status: 'busy', path: null, owner: null }
+      : { status: 'error', path: null, owner: null };
   }
 }
 
+function acquireIncidentLock(home = os.homedir(), now = Date.now()) {
+  const lock = incidentLockPath(home);
+  const owner = `${process.pid}-${now}-${Math.random().toString(36).slice(2)}`;
+  try {
+    fs.mkdirSync(path.dirname(lock), { recursive: true });
+  } catch (error) {
+    return { status: 'error', path: null, owner: null };
+  }
+
+  const created = createOwnedLock(lock, owner);
+  if (created.status !== 'busy') return created;
+
+  const judged = lockIdentity(lock);
+  if (!judged) return { status: 'busy', path: null, owner: null };
+  if (now - judged.mtimeMs <= INCIDENT_LOCK_STALE_MS) {
+    return { status: 'busy', path: null, owner: null };
+  }
+  if (!sameLock(judged, lockIdentity(lock))) {
+    return { status: 'busy', path: null, owner: null };
+  }
+
+  // Move a stale lock aside atomically. Deleting it in place lets two
+  // contenders both judge the same lock stale, then lets the slower one delete
+  // the faster one's newly-created lock. renameSync has one winner; every
+  // loser sees a collision or disappearance and stays out of the critical
+  // section.
+  const aside = `${lock}.stale.${owner}`;
+  try {
+    fs.renameSync(lock, aside);
+  } catch (error) {
+    return error && error.code === 'ENOENT'
+      ? { status: 'busy', path: null, owner: null }
+      : { status: 'error', path: null, owner: null };
+  }
+  try { fs.rmSync(aside, { recursive: true, force: true }); } catch (_) { /* already out of the way */ }
+  return createOwnedLock(lock, owner);
+}
+
 function releaseIncidentLock(lock) {
-  if (!lock) return;
-  try { fs.rmSync(lock, { recursive: true, force: true }); } catch (_) { /* best effort */ }
+  if (!lock || !lock.path || !lock.owner) return;
+  // A probe can outlive the stale threshold. Only its owner marker proves this
+  // path is still the lock it acquired rather than a successor's live lock.
+  try {
+    if (fs.readFileSync(path.join(lock.path, 'owner'), 'utf8') !== lock.owner) return;
+  } catch (_) {
+    return;
+  }
+  try { fs.rmSync(lock.path, { recursive: true, force: true }); } catch (_) { /* best effort */ }
 }
 
 function cacheAgeMinutes(cache, now = Date.now()) {
@@ -243,7 +301,13 @@ function formatProblem(problem) {
 
 function scheduledProbe({ config, home = os.homedir(), now = Date.now(), exec } = {}) {
   const tools = (config && config.coreTools) || [];
-  if (!tools.length) return { event: 'unconfigured', message: '', incident: null };
+  if (!tools.length) {
+    return {
+      event: 'unconfigured',
+      message: 'Core tools monitor is not watching anything. Run /core-tools to choose what to monitor.',
+      incident: null,
+    };
+  }
 
   const lock = acquireIncidentLock(home, now);
   if (lock.status === 'busy') {
@@ -331,7 +395,7 @@ function scheduledProbe({ config, home = os.homedir(), now = Date.now(), exec } 
       incident,
     };
   } finally {
-    releaseIncidentLock(lock.path);
+    releaseIncidentLock(lock);
   }
 }
 
