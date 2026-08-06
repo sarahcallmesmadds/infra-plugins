@@ -62,7 +62,29 @@ const writeTodos = (home, sessionId, tasks, suffix = '') => {
   fs.writeFileSync(path.join(dir, filename), JSON.stringify(tasks));
 };
 
+const writeTask = (home, sessionId, task, id = '1') => {
+  const dir = path.join(home, '.claude', 'tasks', sessionId);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, `${id}.json`), JSON.stringify(task));
+};
+
 // ------------------------------------------------------ current task line ----
+
+check('current task reads Claude per-session task files', () => {
+  const home = tmp();
+  writeTask(home, 'session', {
+    id: '1', status: 'in_progress', activeForm: 'Verifying Session status-line task label',
+  });
+  const segment = statusline.readCurrentTaskStatuslineSegment({ sessionId: 'session', home });
+  assert.match(segment, /Verifying Session status-line task label/);
+});
+
+check('current task directory is authoritative over stale legacy todos', () => {
+  const home = tmp();
+  writeTodos(home, 'session', [{ status: 'in_progress', activeForm: 'Stale legacy task' }]);
+  writeTask(home, 'session', { id: '1', status: 'completed', activeForm: 'Finished current task' });
+  assert.strictEqual(statusline.readCurrentTaskStatuslineSegment({ sessionId: 'session', home }), '');
+});
 
 check('the status line shows this session activeForm in the middle', () => {
   const home = tmp();

@@ -80,13 +80,44 @@ function readCoreToolsStatuslineSegment() {
 
 // --- Current task ----------------------------------------------------------
 
+function renderCurrentTaskSegment(tasks) {
+  if (!Array.isArray(tasks)) return '';
+  const current = tasks.find((task) => task?.status === 'in_progress'
+    && typeof task.activeForm === 'string' && task.activeForm.trim());
+  if (!current) return '';
+  const label = current.activeForm
+    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '')
+    .replace(/[\x00-\x1f\x7f]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 80);
+  return label ? ` │ \x1b[34m↳ ${label}\x1b[0m` : '';
+}
+
 function readCurrentTaskStatuslineSegment({ sessionId, home = os.homedir(), config } = {}) {
   try {
     if (!sessionId || !/^[A-Za-z0-9_-]+$/.test(sessionId)) return '';
     const loaded = config || require(path.join(__dirname, '..', 'scripts', 'config.js')).load(home);
     if (loaded.currentTask?.enabled === false) return '';
 
-    // Claude has used two names for the main session's todo file: the bare
+    // Current Claude Code stores one JSON file per task under a directory named
+    // for the session. When that directory exists it is authoritative, including
+    // when every task is complete, so stale legacy state cannot reappear.
+    const taskDir = path.join(home, '.claude', 'tasks', sessionId);
+    if (fs.existsSync(taskDir)) {
+      const tasks = fs.readdirSync(taskDir, { withFileTypes: true })
+        .filter((entry) => entry.isFile() && entry.name.endsWith('.json'))
+        .map((entry) => {
+          const filePath = path.join(taskDir, entry.name);
+          return { task: readJsonFile(filePath), mtimeMs: fs.statSync(filePath).mtimeMs };
+        })
+        .filter(({ task }) => task && typeof task === 'object')
+        .sort((a, b) => b.mtimeMs - a.mtimeMs)
+        .map(({ task }) => task);
+      return renderCurrentTaskSegment(tasks);
+    }
+
+    // Older Claude versions used two names for the main session's todo file: the bare
     // session id, and an agent-qualified name whose agent id is the session id.
     // Other `-agent-<id>` files belong to sub-agents and are never candidates.
     const dir = path.join(home, '.claude', 'todos');
@@ -100,17 +131,7 @@ function readCurrentTaskStatuslineSegment({ sessionId, home = os.homedir(), conf
     if (!file) return '';
     const parsed = readJsonFile(file);
     const tasks = Array.isArray(parsed) ? parsed : parsed?.tasks;
-    if (!Array.isArray(tasks)) return '';
-    const current = tasks.find((task) => task?.status === 'in_progress'
-      && typeof task.activeForm === 'string' && task.activeForm.trim());
-    if (!current) return '';
-    const label = current.activeForm
-      .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '')
-      .replace(/[\x00-\x1f\x7f]/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim()
-      .slice(0, 80);
-    return label ? ` │ \x1b[34m↳ ${label}\x1b[0m` : '';
+    return renderCurrentTaskSegment(tasks);
   } catch (e) {
     // Todo state is optional and changes while the line renders. Stay quiet.
   }
@@ -305,6 +326,7 @@ module.exports = {
   writeContextBridge,
   readGitOwner,
   readCoreToolsStatuslineSegment,
+  renderCurrentTaskSegment,
   readCurrentTaskStatuslineSegment,
   formatUsd,
   updateRollingSpend,
