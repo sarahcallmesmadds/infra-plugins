@@ -34,7 +34,7 @@ never arrive and installs fail.
 | [`slop-check`](plugins/slop-check) | Catches the habits that mean nobody edited it. Checks any draft, document, pull request, chart or spec for the signs it shipped unreviewed, and blocks em dashes and choppy sentence runs in the assistant's own writing. |
 | [`session`](plugins/session) | Carries work between sessions, warns about concurrent work, monitors connected tools, and shows cost and context in the Claude Code status line. |
 | [`ip-inventory`](plugins/ip-inventory) | Checks the record of what you built against GitHub and disk, then turns it into a schedule of prior intellectual property. |
-| [`spend-guardrails`](plugins/spend-guardrails) | Chooses the lowest-cost Claude model that can reliably do the work and makes every escalation explain itself. |
+| [`spend-guardrails`](plugins/spend-guardrails) | Chooses the lowest-cost current Claude or OpenAI model that can reliably do the work and avoids retired models. |
 
 More on the way. Each one ships when it is genuinely useful rather than when it
 is merely finished.

@@ -1,7 +1,7 @@
 {
   "name": "spend-guardrails",
-  "version": "0.1.0",
-  "description": "Choose the lowest-cost Claude model that can reliably do the work, and make every escalation explain itself.",
+  "version": "0.1.1",
+  "description": "Choose the lowest-cost current Claude or OpenAI model that can reliably do the work, without recommending retired models.",
   "author": {
     "name": "Sarah Madden",
     "url": "https://github.com/sarahcallmesmadds"
@@ -14,13 +14,15 @@
     "spend",
     "cost",
     "agents",
-    "claude"
+    "claude",
+    "openai",
+    "lifecycle"
   ],
   "skills": "./skills/",
   "interface": {
     "displayName": "Spend Guardrails",
-    "shortDescription": "Choose the lowest-cost Claude model that holds",
-    "longDescription": "Spend Guardrails gives agents a four-rung Claude model ladder, keeps Sonnet as the practical default, pins cheap models on bounded worker tasks, and requires evidence before escalating to premium models. It separates planning from execution, names observable escalation triggers, and keeps recurring agents from inheriting an expensive model without a reason.",
+    "shortDescription": "Choose the cheapest current model that holds",
+    "longDescription": "Spend Guardrails selects across current Anthropic Claude and OpenAI models, verifies exact IDs, prices, and lifecycle status against official sources, and withholds unverified IDs when those sources are unavailable. It pins economical models on bounded workers, requires evidence before escalation, and avoids deprecated or retired models.",
     "developerName": "Sarah Madden",
     "category": "Productivity",
     "capabilities": [
@@ -28,9 +30,9 @@
       "Read"
     ],
     "defaultPrompt": [
-      "Which Claude model should this task use?",
+      "Which current AI model should this task use?",
       "Design a cost-aware model mix for these agents.",
-      "Does this workflow have evidence to justify escalating models?"
+      "Is this workflow pinned to a deprecated or retired model?"
     ]
   }
 }

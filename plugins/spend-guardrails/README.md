@@ -1,9 +1,25 @@
 # Spend Guardrails
 
-Spend Guardrails chooses the lowest-cost Claude model that can reliably do the
-work. It keeps Sonnet as the default, moves bounded mechanical work to Haiku,
-and requires a concrete capability need or failed evaluation before escalating
-to Opus or Fable.
+Spend Guardrails chooses the lowest-cost available AI model that can reliably
+do the work. It supports Anthropic Claude and OpenAI, verifies exact model IDs,
+pricing, and lifecycle status against current official sources, and requires a
+concrete capability need or failed evaluation before escalating.
+
+It works in both Claude Code and Codex. The skill is advisory and read-only: it
+does not call tools, change files, or alter account settings.
+
+## Install
+
+Add the `smadds` marketplace, then install `spend-guardrails` from it. In Claude
+Code:
+
+```text
+/plugin marketplace add sarahcallmesmadds/plugins
+/plugin install spend-guardrails@smadds
+```
+
+No setup or configuration is required. Ask a model-selection question in a new
+chat as soon as installation finishes.
 
 ## Use it
 
@@ -21,6 +37,22 @@ should never be inherited without a written reason.
 
 ## Pricing
 
-The ladder includes dated Claude API base prices and links to Anthropic's
-official model and pricing documentation. Recheck those sources before using
-the table for a budget or forecast; model availability and prices change.
+The selection framework uses stable economy, balanced, premium, and maximum
+capability tiers. Before it names an exact model or price, it checks the target
+provider's current official catalog, pricing, and deprecation notices. It never
+recommends a retired model or starts new work on a deprecated model.
+
+If current sources cannot be reached, the skill returns a capability tier and
+plainly withholds an unverified model ID or price. New releases and retirements
+therefore do not require a manual plugin edit before the next recommendation;
+the dated release evaluations are evidence and fallback context, not the live
+catalog.
+
+## Release verification
+
+The rerunnable, provider-specific forward-evaluation cases live in
+`tests/fixtures/spend-guardrails-evals.json`. They cover bounded Haiku fan-out,
+an Opus-worthy cross-system refactor, important work that should remain on
+Sonnet, and the equivalent OpenAI tiers. These cases record human-observed
+results; they do not pretend that a string assertion can execute and grade
+model judgment.
