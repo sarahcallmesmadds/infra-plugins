@@ -86,10 +86,15 @@ function readCurrentTaskStatuslineSegment({ sessionId, home = os.homedir(), conf
     const loaded = config || require(path.join(__dirname, '..', 'scripts', 'config.js')).load(home);
     if (loaded.currentTask?.enabled === false) return '';
 
-    // Claude gives the main session the exact filename and suffixes sub-agent
-    // files with `-agent-<id>`. Modification time cannot decide authority:
-    // an agent may write last, or leave stale in-progress work behind.
-    const file = path.join(home, '.claude', 'todos', `${sessionId}.json`);
+    // Claude has used two names for the main session's todo file: the bare
+    // session id, and an agent-qualified name whose agent id is the session id.
+    // Other `-agent-<id>` files belong to sub-agents and are never candidates.
+    const dir = path.join(home, '.claude', 'todos');
+    const file = [
+      path.join(dir, `${sessionId}.json`),
+      path.join(dir, `${sessionId}-agent-${sessionId}.json`),
+    ].find((candidate) => fs.existsSync(candidate));
+    if (!file) return '';
     const parsed = readJsonFile(file);
     const tasks = Array.isArray(parsed) ? parsed : parsed?.tasks;
     if (!Array.isArray(tasks)) return '';

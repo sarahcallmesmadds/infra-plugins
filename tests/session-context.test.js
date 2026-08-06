@@ -94,6 +94,14 @@ check('current task accepts the wrapped todo shape', () => {
   assert.match(statusline.readCurrentTaskStatuslineSegment({ sessionId: 'wrapped', home }), /Wrapped task/);
 });
 
+check('current task accepts Claude main-agent filename shape', () => {
+  const home = tmp();
+  writeTodos(home, 'session', [
+    { status: 'in_progress', activeForm: 'Main agent task' },
+  ], 'agent-session');
+  assert.match(statusline.readCurrentTaskStatuslineSegment({ sessionId: 'session', home }), /Main agent task/);
+});
+
 check('the main todo file is authoritative over stale agent work', () => {
   const home = tmp();
   writeTodos(home, 'session', [{ status: 'in_progress', activeForm: 'Stale agent task' }], 'agent-old');
@@ -109,6 +117,19 @@ check('a newer sub-agent file cannot hide the main task', () => {
   const agent = path.join(home, '.claude', 'todos', 'session-agent-newer.json');
   fs.utimesSync(agent, future, future);
   assert.match(statusline.readCurrentTaskStatuslineSegment({ sessionId: 'session', home }), /Main session task/);
+});
+
+check('a sub-agent cannot override the main-agent filename shape', () => {
+  const home = tmp();
+  writeTodos(home, 'session', [
+    { status: 'in_progress', activeForm: 'Main agent task' },
+  ], 'agent-session');
+  writeTodos(home, 'session', [
+    { status: 'in_progress', activeForm: 'Sub-agent task' },
+  ], 'agent-worker');
+  const segment = statusline.readCurrentTaskStatuslineSegment({ sessionId: 'session', home });
+  assert.match(segment, /Main agent task/);
+  assert.doesNotMatch(segment, /Sub-agent task/);
 });
 
 check('a malformed main todo file does not expose an agent task', () => {
