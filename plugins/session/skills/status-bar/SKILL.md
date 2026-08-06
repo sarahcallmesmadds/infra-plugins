@@ -12,13 +12,14 @@ which this skill is running.
 
 ## Step 0: Identify the runtime
 
-Do not guess from the plugin name. Check the runtime signals before taking any
-action: `CLAUDE_PLUGIN_ROOT` means Claude Code; `CODEX_HOME` with no
-`CLAUDE_PLUGIN_ROOT` means Codex. If both are present, or neither is present,
-ask the user whether this is Claude Code or Codex before running any installer.
-Do not use the existence of `/statusline` as detection—the command is the
-configuration action, not an observable host signal. Never run the Claude
-installer from the Codex route.
+Do not guess from the plugin name. `CLAUDE_PLUGIN_ROOT` positively identifies
+Claude Code. Otherwise use the host explicitly identified by the current
+session context: a Codex skill invocation follows the Codex route, and a
+Claude Code invocation follows the Claude route. If the host context is
+genuinely ambiguous, ask the user before running any installer. Do not use the
+existence of `/statusline` as detection—the command is the configuration action,
+not an observable host signal. Never run the Claude installer from the Codex
+route. `CODEX_HOME` may corroborate Codex when present, but is not required.
 
 ---
 

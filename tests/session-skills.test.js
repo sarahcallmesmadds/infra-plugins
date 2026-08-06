@@ -106,8 +106,9 @@ check('status-bar routes Codex through its native pickers', () => {
   assert.match(codex, /task progress/i);
   assert.match(codex, /cannot add arbitrary custom segments/i);
   assert.match(text, /CLAUDE_PLUGIN_ROOT/);
-  assert.match(text, /CODEX_HOME/);
-  assert.match(text, /Do not use the existence of `\/statusline` as detection/);
+  assert.match(text, /session context/);
+  assert.match(text, /CODEX_HOME.*not required/);
+  assert.match(text, /Do not use the\s+existence of `\/statusline` as detection/);
   assert.ok(fs.existsSync(CODEX_SURFACES), 'Codex surface evidence note is missing');
   const sources = fs.readFileSync(CODEX_SURFACES, 'utf8');
   assert.match(sources, /developers\.openai\.com\/codex\/codex-manual\.md/);
