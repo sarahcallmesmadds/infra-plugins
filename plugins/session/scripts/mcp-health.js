@@ -36,9 +36,19 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 
 const PROBE_TIMEOUT_MS = 25000;
+const INCIDENT_SOURCE_ID = 'session:core-tools';
+const INCIDENT_LOCK_STALE_MS = 2 * 60 * 1000;
 
 function cachePath(home = os.homedir()) {
   return path.join(home, '.cache', 'session', 'mcp-health.json');
+}
+
+function incidentPath(home = os.homedir()) {
+  return path.join(home, '.cache', 'session', 'core-tools-incident.json');
+}
+
+function incidentLockPath(home = os.homedir()) {
+  return `${incidentPath(home)}.lock`;
 }
 
 // One line of `claude mcp list` output. The shape is `name: target - status`:
@@ -117,7 +127,8 @@ function probe({ exec = execFileSync } = {}) {
       stdio: ['ignore', 'pipe', 'ignore'],
     });
     const servers = parseMcpList(out);
-    return servers.length ? servers : null;
+    if (servers.length) return servers;
+    return /no mcp servers (?:are )?configured/i.test(String(out)) ? [] : null;
   } catch (_) {
     return null;
   }
@@ -149,6 +160,125 @@ function writeCache(servers, { home = os.homedir(), now = Date.now() } = {}) {
   }
 }
 
+function readIncident(home = os.homedir()) {
+  try {
+    const raw = JSON.parse(fs.readFileSync(incidentPath(home), 'utf8'));
+    return raw && raw.version === 1 && (raw.incident === null || typeof raw.incident === 'object')
+      ? raw
+      : { version: 1, incident: null, error: 'unreadable' };
+  } catch (error) {
+    if (error && error.code !== 'ENOENT') {
+      return { version: 1, incident: null, error: 'unreadable' };
+    }
+    return { version: 1, incident: null };
+  }
+}
+
+function writeIncident(state, { home = os.homedir() } = {}) {
+  const target = incidentPath(home);
+  const tmp = `${target}.${process.pid}.tmp`;
+  try {
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(tmp, `${JSON.stringify(state, null, 2)}\n`);
+    fs.renameSync(tmp, target);
+    return state;
+  } catch (_) {
+    try { fs.rmSync(tmp, { force: true }); } catch (_) { /* best effort */ }
+    return null;
+  }
+}
+
+function lockIdentity(lock) {
+  try {
+    const stat = fs.statSync(lock);
+    return { dev: stat.dev, ino: stat.ino, mtimeMs: stat.mtimeMs };
+  } catch (_) {
+    return null;
+  }
+}
+
+function sameLock(left, right) {
+  return Boolean(left && right
+    && left.dev === right.dev
+    && left.ino === right.ino
+    && left.mtimeMs === right.mtimeMs);
+}
+
+function createOwnedLock(lock, owner) {
+  try {
+    fs.mkdirSync(lock);
+    try {
+      fs.writeFileSync(path.join(lock, 'owner'), owner);
+    } catch (_) {
+      try { fs.rmSync(lock, { recursive: true, force: true }); } catch (_) { /* best effort */ }
+      return { status: 'error', path: null, owner: null };
+    }
+    return { status: 'acquired', path: lock, owner };
+  } catch (error) {
+    return error && error.code === 'EEXIST'
+      ? { status: 'busy', path: null, owner: null }
+      : { status: 'error', path: null, owner: null };
+  }
+}
+
+function acquireIncidentLock(home = os.homedir(), wallNow = Date.now(), { beforeStaleRename } = {}) {
+  const lock = incidentLockPath(home);
+  const owner = `${process.pid}-${wallNow}-${Math.random().toString(36).slice(2)}`;
+  try {
+    fs.mkdirSync(path.dirname(lock), { recursive: true });
+  } catch (error) {
+    return { status: 'error', path: null, owner: null };
+  }
+
+  const created = createOwnedLock(lock, owner);
+  if (created.status !== 'busy') return created;
+
+  const judged = lockIdentity(lock);
+  if (!judged) return { status: 'busy', path: null, owner: null };
+  if (wallNow - judged.mtimeMs <= INCIDENT_LOCK_STALE_MS) {
+    return { status: 'busy', path: null, owner: null };
+  }
+  if (!sameLock(judged, lockIdentity(lock))) {
+    return { status: 'busy', path: null, owner: null };
+  }
+
+  // Move a stale lock aside atomically. Deleting it in place lets two
+  // contenders both judge the same lock stale, then lets the slower one delete
+  // the faster one's newly-created lock. renameSync has one winner; every
+  // loser sees a collision or disappearance and stays out of the critical
+  // section.
+  const aside = `${lock}.stale.${owner}`;
+  try {
+    if (beforeStaleRename) beforeStaleRename(lock);
+    fs.renameSync(lock, aside);
+  } catch (error) {
+    return error && error.code === 'ENOENT'
+      ? { status: 'busy', path: null, owner: null }
+      : { status: 'error', path: null, owner: null };
+  }
+  if (!sameLock(judged, lockIdentity(aside))) {
+    // A successor replaced the stale path after our last check, so the rename
+    // moved its live lock. Restore it and stay out of the critical section.
+    // Never delete a lock whose identity we did not judge stale.
+    try { fs.renameSync(aside, lock); } catch (_) { /* preserve it aside rather than deleting it */ }
+    return { status: 'busy', path: null, owner: null };
+  }
+  try { fs.rmSync(aside, { recursive: true, force: true }); } catch (_) { /* already out of the way */ }
+  return createOwnedLock(lock, owner);
+}
+
+function releaseIncidentLock(lock) {
+  if (!lock || !lock.path || !lock.owner) return;
+  // A probe can outlive the stale threshold. Only its owner marker proves this
+  // path is still the lock it acquired rather than a successor's live lock.
+  try {
+    if (fs.readFileSync(path.join(lock.path, 'owner'), 'utf8') !== lock.owner) return;
+  } catch (_) {
+    return;
+  }
+  try { fs.rmSync(lock.path, { recursive: true, force: true }); } catch (_) { /* best effort */ }
+}
+
 function cacheAgeMinutes(cache, now = Date.now()) {
   if (!cache || !cache.updated_at) return null;
   const t = Date.parse(cache.updated_at);
@@ -165,6 +295,177 @@ function refresh({ home = os.homedir(), now = Date.now(), exec } = {}) {
   const servers = probe({ exec });
   if (!servers) return null;
   return writeCache(servers, { home, now });
+}
+
+function problemFingerprint(problems) {
+  return problems
+    .map((problem) => `${problem.label}:${problem.status}`)
+    .sort()
+    .join('|');
+}
+
+function formatProblem(problem) {
+  if (problem.status === 'needs_auth') return `${problem.label} needs sign-in`;
+  if (problem.status === 'down') return `${problem.label} is unreachable`;
+  if (problem.status === 'missing') return `${problem.label} is not found; check its configured name`;
+  return 'the health check could not run; verify the Claude CLI is available to the Desktop scheduled task';
+}
+
+function repairIncidentState(home = os.homedir(), now = Date.now()) {
+  const target = incidentPath(home);
+  const aside = `${target}.corrupt.${now}`;
+  try {
+    fs.renameSync(target, aside);
+    if (!writeIncident({ version: 1, incident: null }, { home })) {
+      try { fs.renameSync(aside, target); } catch (_) { /* preserve whichever copy survived */ }
+      return false;
+    }
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+function scheduledProbe({
+  config,
+  home = os.homedir(),
+  now = Date.now(),
+  wallNow = Date.now(),
+  exec,
+  writeIncidentFn = writeIncident,
+} = {}) {
+  const tools = (config && config.coreTools) || [];
+  if (!tools.length) {
+    return {
+      event: 'unconfigured',
+      message: 'Core tools monitor is not watching anything. Run /core-tools to choose what to monitor.',
+      incident: null,
+    };
+  }
+
+  const lock = acquireIncidentLock(home, wallNow);
+  if (lock.status === 'busy') {
+    return { event: 'busy', message: '', incident: readIncident(home).incident };
+  }
+  if (lock.status === 'error') {
+    return {
+      event: 'lock_failed',
+      message: 'Core tools monitor error: the coordination lock could not be created; check ~/.cache/session permissions.',
+      incident: readIncident(home).incident,
+    };
+  }
+
+  try {
+    const state = readIncident(home);
+    if (state.error) {
+      const repaired = repairIncidentState(home, now);
+      return {
+        event: repaired ? 'state_repaired' : 'state_failed',
+        message: repaired
+          ? 'Core tools monitor repaired an unreadable incident record; health checks will resume on the next run.'
+          : 'Core tools monitor error: the incident record is unreadable; move or repair ~/.cache/session/core-tools-incident.json.',
+        incident: null,
+      };
+    }
+    const previous = state.incident;
+    const servers = probe({ exec });
+    const nowIso = new Date(now).toISOString();
+    let problems;
+    if (servers) {
+      writeCache(servers, { home, now });
+      problems = resolve(tools, servers).filter((tool) => tool.status !== 'connected');
+    } else {
+      if (previous && previous.status === 'open') {
+        return { event: 'unchanged', message: '', incident: previous };
+      }
+      const incident = {
+        source_id: INCIDENT_SOURCE_ID,
+        kind: 'probe_error',
+        status: 'open',
+        opened_at: nowIso,
+        updated_at: nowIso,
+        resolved_at: null,
+        occurrence: (previous?.occurrence || 0) + 1,
+        fingerprint: 'monitor:probe_failed',
+        problems: [{ label: 'Core tools probe', match: '', server: null, status: 'probe_failed' }],
+      };
+      if (!writeIncidentFn({ version: 1, incident }, { home })) {
+        return {
+          event: 'write_failed',
+          message: 'Core tools monitor error: the health check could not run and that degraded state could not be recorded; this alert may repeat.',
+          incident: previous || null,
+        };
+      }
+      return {
+        event: 'probe_failed',
+        message: 'Core tools monitor error: the health check could not run; verify the Claude CLI is available to the Desktop scheduled task.',
+        incident,
+      };
+    }
+
+    if (!problems.length) {
+      if (!previous || previous.status !== 'open') {
+        return { event: 'unchanged', message: '', incident: previous || null };
+      }
+      const incident = {
+        ...previous,
+        status: 'resolved',
+        updated_at: nowIso,
+        resolved_at: nowIso,
+        fingerprint: '',
+        problems: [],
+      };
+      if (!writeIncidentFn({ version: 1, incident }, { home })) {
+        return {
+          event: 'write_failed',
+          message: 'Core tools monitor error: recovery was detected but the incident record could not be updated.',
+          incident: previous,
+        };
+      }
+      return {
+        event: 'resolved',
+        message: previous.kind === 'probe_error'
+          ? 'Core tools monitor recovered: the health check is running again.'
+          : `Core tools recovered: all ${tools.length} connected. Closed ${INCIDENT_SOURCE_ID}.`,
+        incident,
+      };
+    }
+
+    const fingerprint = problemFingerprint(problems);
+    if (previous && previous.status === 'open' && previous.fingerprint === fingerprint) {
+      return { event: 'unchanged', message: '', incident: previous };
+    }
+
+    const reopening = previous && previous.status === 'resolved';
+    const updating = previous && previous.status === 'open';
+    const incident = {
+      source_id: INCIDENT_SOURCE_ID,
+      kind: 'tool_outage',
+      status: 'open',
+      opened_at: updating ? previous.opened_at : nowIso,
+      updated_at: nowIso,
+      resolved_at: null,
+      occurrence: reopening ? (previous.occurrence || 1) + 1 : (previous?.occurrence || 1),
+      fingerprint,
+      problems,
+    };
+    if (!writeIncidentFn({ version: 1, incident }, { home })) {
+      const detail = problems.map(formatProblem).join('; ');
+      return {
+        event: 'write_failed',
+        message: `Core tools monitor error: ${detail}, but the incident could not be recorded; this alert may repeat.`,
+        incident: previous || null,
+      };
+    }
+    const detail = problems.map(formatProblem).join('; ');
+    return {
+      event: updating ? 'updated' : 'opened',
+      message: `Core tools alert${updating ? ' updated' : ''}: ${detail}. Source ${INCIDENT_SOURCE_ID}.`,
+      incident,
+    };
+  } finally {
+    releaseIncidentLock(lock);
+  }
 }
 
 // Match the configured tools against what the cache saw.
@@ -263,17 +564,29 @@ function formatAge(minutes) {
 
 module.exports = {
   cachePath,
+  incidentPath,
+  incidentLockPath,
   parseMcpList,
   classifyStatus,
   probe,
   readCache,
   writeCache,
+  readIncident,
+  writeIncident,
+  repairIncidentState,
+  acquireIncidentLock,
+  releaseIncidentLock,
   cacheAgeMinutes,
   isStale,
   refresh,
+  problemFingerprint,
+  formatProblem,
+  scheduledProbe,
   resolve,
   summarize,
   statuslineSegment,
   formatAge,
   LINE_RE,
+  INCIDENT_SOURCE_ID,
+  INCIDENT_LOCK_STALE_MS,
 };

@@ -20,9 +20,9 @@
 //   description           This is the discovery surface. A skill with no
 //                         description never triggers, and never triggering
 //                         looks exactly like never being needed.
-//   type, when present    13 of the 21 skills in this repository set it and 8
+//   type, when present    13 of the 22 skills in this repository set it and 9
 //                         do not, so it is checked but not required. Requiring
-//                         it would flag 8 files that are fine.
+//                         it would flag 9 files that are fine.
 
 'use strict';
 
@@ -105,7 +105,7 @@ function inspect(filePath) {
   if (fields.type !== undefined && fields.type !== 'human' && fields.type !== 'agent') {
     issues.push(`\`type: ${fields.type}\` is not a value this repository uses. `
       + 'Use `human` when you invoke it or `agent` when it runs on its own, or drop '
-      + 'the field, which 8 of the 21 skills here do.');
+      + 'the field, which 9 of the 22 skills here do.');
   }
 
   return issues;

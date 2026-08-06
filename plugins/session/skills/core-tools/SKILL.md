@@ -81,6 +81,17 @@ After this the refresh runs by itself in the background at session start, and
 the status line reads the cache. It never probes while rendering, because
 checking every server takes seconds and a status line has to be free.
 
+## Step 5: Offer persistent monitoring
+
+If they want to be notified without watching the status line, offer a Claude
+Desktop scheduled task that runs `/core-tools-monitor` hourly. Desktop tasks
+run locally without an open Claude session, so the probe can reach the same MCP
+configuration and local incident state.
+
+The monitor alerts once when a tool drops, stays silent while the same failure
+continues, updates the same incident if the affected set changes, and alerts
+once when everything recovers. Its source id is `session:core-tools`.
+
 ---
 
 ## Reading the segment
@@ -108,5 +119,5 @@ once it gets old. A count with no age is a claim about a moment you cannot see.
 **No cache shows nothing rather than zero.** Before the first refresh completes,
 `0/5` would read as five broken tools, which would be alarming and invented.
 
-**This is a status line, not a monitor.** It tells you when you look. If you
-want to be told without looking, that is a scheduled job, and this is not it.
+**The status line tells you when you look.** `/core-tools-monitor` is the
+transition-only probe for a persistent Claude Desktop scheduled task.

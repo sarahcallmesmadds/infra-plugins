@@ -12,6 +12,7 @@
 //   cli.js target [topic]        where wrap should write from here
 //   cli.js memory                the memory directory for this project, if any
 //   cli.js memory-check          is that directory still worth loading
+//   cli.js mcp-probe             transition-only core-tools monitor
 //
 // Common flags:
 //   --json                       machine-readable output
@@ -365,6 +366,16 @@ const COMMANDS = {
       + (t.server ? `  (${t.server})` : '  (no server matches "' + t.match + '")'));
     lines.push('', `${summary.connected}/${summary.total} connected, checked ${mcpHealth.formatAge(summary.ageMinutes)} ago`);
     emit(opts, {}, lines);
+  },
+
+  'mcp-probe': function mcpProbe(opts) {
+    const config = configMod.load(opts.home);
+    const result = mcpHealth.scheduledProbe({ config, home: opts.home });
+    if (['unconfigured', 'lock_failed', 'write_failed', 'state_failed', 'probe_failed'].includes(result.event)) {
+      process.exitCode = 1;
+    }
+    if (opts.json) return emit(opts, result, []);
+    if (result.message) process.stdout.write(`${result.message}\n`);
   },
 };
 
