@@ -52,6 +52,12 @@ const DEFAULTS = {
   // not used, so they count down.
   contextWarnings: {},
 
+  // Show the active Claude task in the status line when this session has one.
+  // The reader accepts both known main-session todo filenames, stays scoped to
+  // this session, and is silent when ~/.claude/todos is absent. Set
+  // `currentTask.enabled` to false to hide the segment.
+  currentTask: { enabled: true },
+
   // Report uncommitted work and recent commits at session start.
   //
   // Complements the live session check rather than duplicating it. That one

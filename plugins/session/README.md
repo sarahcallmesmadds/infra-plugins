@@ -10,7 +10,7 @@ starts with ten minutes of "where was I".
 |---|---|
 | `/wrap` | Writes what was decided, built and left open into a handoff document |
 | `/pickup <slug>` | Loads that handoff back and starts from it |
-| `/status-bar` | Sets up the status line: model, folder, cost, context used |
+| `/status-bar` | Sets up the status line: model, folder, current task, cost, context used |
 | `/core-tools` | Picks which connected tools to watch for expired sign-ins |
 
 Plus a hook that runs at session start and gives the model the small amount of
@@ -53,11 +53,19 @@ turn an opening brief into the first session's largest context expense.
 ## The status line
 
 ```
-Claude 4.8 │ my-project ⎇ owner │ $0.42 · 30d $81.20 est ████░░░░░░ 41% │ Core tools 5/5
+Claude 4.8 │ my-project ⎇ owner │ ↳ Building the current task │ $0.42 · 30d $81.20 est ████░░░░░░ 41% │ Core tools 5/5
 ```
 
 Every segment is optional and vanishes rather than erroring when its data is
 absent.
+
+The current-task segment reads this session's main todo file under
+`~/.claude/todos/`: either `<sessionId>.json` or
+`<sessionId>-agent-<sessionId>.json`, depending on the Claude Code version. It
+uses the newer one if both exist, shows the `activeForm` marked `in_progress`,
+and never borrows a task from another session or a sub-agent. Set
+`{"currentTask":{"enabled":false}}` in
+`~/.claude/session.config.json` to hide it.
 
 **A plugin cannot switch a status line on.** Claude Code reads `statusLine` from
 `settings.json` and from nowhere else, so one line has to go there. `/status-bar`

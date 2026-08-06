@@ -1,6 +1,6 @@
 ---
 name: status-bar
-description: Set up the Claude Code status line that shows the model, folder, GitHub owner, session cost, rolling 30 day spend, context used, and connected tool health. Use when the user says "set up the status bar", "install the status line", "show me my context usage", "add the usage bar", or invokes /status-bar. Also use when the status line has stopped rendering or is showing an old version.
+description: Set up the Claude Code status line that shows the model, folder, GitHub owner, current task, session cost, rolling 30 day spend, context used, and connected tool health. Use when the user says "set up the status bar", "install the status line", "show me my context usage", "add the usage bar", or invokes /status-bar. Also use when the status line has stopped rendering or is showing an old version.
 ---
 
 # Status bar
@@ -13,7 +13,7 @@ which folder, how much have I spent, how full is the context".
 ## What it shows
 
 ```
-Claude 4.8 │ my-project ⎇ owner │ $0.42 · 30d $81.20 est ████░░░░░░ 41% │ Core tools 5/5
+Claude 4.8 │ my-project ⎇ owner │ ↳ Building the current task │ $0.42 · 30d $81.20 est ████░░░░░░ 41% │ Core tools 5/5
 ```
 
 Every segment is optional and disappears rather than erroring when its data is
@@ -24,6 +24,7 @@ missing.
 | `Claude 4.8` | Model in use this session |
 | `my-project` | Current folder, so you can see where a change will land |
 | `⎇ owner` | GitHub owner from the git remote. Useful when pushing under more than one account |
+| `↳ Building the current task` | The `activeForm` of this session's in-progress Claude task |
 | `$0.42` | Session cost so far |
 | `30d $81.20 est` | Local rolling 30 day estimate, summed from sessions that rendered this line |
 | `████░░ 41%` | Context used, green through red as it fills |
@@ -92,6 +93,10 @@ export CLAUDE_30D_SPEND_LIMIT_USD=200
 ```
 
 **Connected tool health.** Off until tools are chosen. Run `/core-tools`.
+
+**Current task.** On by default and shown only while this session has a task
+marked `in_progress`. Set `{"currentTask":{"enabled":false}}` in
+`~/.claude/session.config.json` to hide it.
 
 ---
 

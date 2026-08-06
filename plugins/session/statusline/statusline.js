@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Claude Code statusline
-// Renders: model | folder/account | session cost + rolling spend | context used | optional core-tool count
+// Renders: model | folder/account | current task | session cost + rolling spend | context used | optional core-tool count
 //
 // Drop this file anywhere and point Claude Code at it in settings.json:
 //   "statusLine": { "type": "command", "command": "node \"/absolute/path/to/statusline.js\"" }
@@ -76,6 +76,45 @@ function readCoreToolsStatuslineSegment() {
     // Keep prompt rendering reliable even if the health helper is absent or broken.
     return '';
   }
+}
+
+// --- Current task ----------------------------------------------------------
+
+function readCurrentTaskStatuslineSegment({ sessionId, home = os.homedir(), config } = {}) {
+  try {
+    if (!sessionId || !/^[A-Za-z0-9_-]+$/.test(sessionId)) return '';
+    const loaded = config || require(path.join(__dirname, '..', 'scripts', 'config.js')).load(home);
+    if (loaded.currentTask?.enabled === false) return '';
+
+    // Claude has used two names for the main session's todo file: the bare
+    // session id, and an agent-qualified name whose agent id is the session id.
+    // Other `-agent-<id>` files belong to sub-agents and are never candidates.
+    const dir = path.join(home, '.claude', 'todos');
+    const file = [
+      { path: path.join(dir, `${sessionId}.json`), priority: 0 },
+      { path: path.join(dir, `${sessionId}-agent-${sessionId}.json`), priority: 1 },
+    ]
+      .filter((candidate) => fs.existsSync(candidate.path))
+      .map((candidate) => ({ ...candidate, mtimeMs: fs.statSync(candidate.path).mtimeMs }))
+      .sort((a, b) => b.mtimeMs - a.mtimeMs || b.priority - a.priority)[0]?.path;
+    if (!file) return '';
+    const parsed = readJsonFile(file);
+    const tasks = Array.isArray(parsed) ? parsed : parsed?.tasks;
+    if (!Array.isArray(tasks)) return '';
+    const current = tasks.find((task) => task?.status === 'in_progress'
+      && typeof task.activeForm === 'string' && task.activeForm.trim());
+    if (!current) return '';
+    const label = current.activeForm
+      .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '')
+      .replace(/[\x00-\x1f\x7f]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 80);
+    return label ? ` │ \x1b[34m↳ ${label}\x1b[0m` : '';
+  } catch (e) {
+    // Todo state is optional and changes while the line renders. Stay quiet.
+  }
+  return '';
 }
 
 // --- Display helpers --------------------------------------------------------
@@ -216,6 +255,7 @@ function composeStatusline({
   model,
   dirname,
   owner = '',
+  currentTask = '',
   cost = '',
   context = '',
   coreTools = '',
@@ -223,7 +263,7 @@ function composeStatusline({
   const modelSeg = `\x1b[2m${model || 'Claude'}\x1b[0m`;
   const ownerSeg = owner ? ` \x1b[2m⎇ ${owner}\x1b[0m` : '';
   const dirSeg = `\x1b[2m${dirname || ''}\x1b[0m${ownerSeg}`;
-  return `${modelSeg} │ ${dirSeg}${cost}${context}${coreTools}`;
+  return `${modelSeg} │ ${dirSeg}${currentTask}${cost}${context}${coreTools}`;
 }
 
 // --- main ------------------------------------------------------------------
@@ -235,6 +275,7 @@ function renderStatusline(data) {
     model: data.model?.display_name || 'Claude',
     dirname: path.basename(dir),
     owner: readGitOwner(dir),
+    currentTask: readCurrentTaskStatuslineSegment({ sessionId: data.session_id }),
     cost: renderCost(data),
     context: renderContextMeter(data.context_window),
     coreTools: readCoreToolsStatuslineSegment(),
@@ -264,6 +305,7 @@ module.exports = {
   writeContextBridge,
   readGitOwner,
   readCoreToolsStatuslineSegment,
+  readCurrentTaskStatuslineSegment,
   formatUsd,
   updateRollingSpend,
   renderRollingSpend,
