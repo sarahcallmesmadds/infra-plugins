@@ -239,7 +239,7 @@ check('recovery closes the incident once and then stays silent', () => {
   assert.strictEqual(again.message, '');
 });
 
-check('a failed health command reports a monitor error without erasing the good cache', () => {
+check('a failed health command alerts once, stays silent, and recovers once', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'session-monitor-'));
   health.writeCache(health.parseMcpList(MCP([connected('Gmail')])), { home, now: 1 });
   const before = fs.readFileSync(health.cachePath(home), 'utf8');
@@ -250,8 +250,24 @@ check('a failed health command reports a monitor error without erasing the good 
   });
   assert.strictEqual(result.event, 'probe_failed');
   assert.match(result.message, /Claude CLI/);
-  assert.strictEqual(health.readIncident(home).incident, null);
+  assert.strictEqual(health.readIncident(home).incident.kind, 'probe_error');
   assert.strictEqual(fs.readFileSync(health.cachePath(home), 'utf8'), before);
+
+  const repeated = health.scheduledProbe({
+    home,
+    config: monitorConfig([{ label: 'Email', match: 'Gmail' }]),
+    exec: () => { throw new Error('still cannot run'); },
+  });
+  assert.strictEqual(repeated.event, 'unchanged');
+  assert.strictEqual(repeated.message, '');
+
+  const recovered = health.scheduledProbe({
+    home,
+    config: monitorConfig([{ label: 'Email', match: 'Gmail' }]),
+    exec: () => MCP([connected('Gmail')]),
+  });
+  assert.strictEqual(recovered.event, 'resolved');
+  assert.match(recovered.message, /health check is running again/);
 });
 
 check('a failed health command does not replace an existing real outage', () => {
@@ -261,8 +277,8 @@ check('a failed health command does not replace an existing real outage', () => 
   const failed = health.scheduledProbe({
     home, config: cfg, now: 2000, exec: () => { throw new Error('temporary failure'); },
   });
-  assert.strictEqual(failed.event, 'probe_failed');
-  assert.match(failed.message, /Claude CLI/);
+  assert.strictEqual(failed.event, 'unchanged');
+  assert.strictEqual(failed.message, '');
   assert.deepStrictEqual(health.readIncident(home).incident.problems, opened.incident.problems);
 
   const stillDown = health.scheduledProbe({ home, config: cfg, now: 3000, exec: () => MCP([needsAuth('Gmail')]) });

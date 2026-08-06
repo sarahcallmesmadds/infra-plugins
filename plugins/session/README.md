@@ -116,6 +116,8 @@ For notification without watching the status line, schedule
 changes: once for a new failure, once when the affected set changes, and once
 when every tool recovers. Repeated runs update one local incident at
 `~/.cache/session/core-tools-incident.json` instead of stacking duplicates.
+If the health command itself cannot run, that degraded monitor state follows
+the same rule: one alert, silence while unchanged, and one recovery.
 
 ## Knowing how full the context is
 

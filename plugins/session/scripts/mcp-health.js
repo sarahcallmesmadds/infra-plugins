@@ -369,19 +369,39 @@ function scheduledProbe({
     }
     const previous = state.incident;
     const servers = probe({ exec });
+    const nowIso = new Date(now).toISOString();
     let problems;
     if (servers) {
       writeCache(servers, { home, now });
       problems = resolve(tools, servers).filter((tool) => tool.status !== 'connected');
     } else {
+      if (previous && previous.status === 'open') {
+        return { event: 'unchanged', message: '', incident: previous };
+      }
+      const incident = {
+        source_id: INCIDENT_SOURCE_ID,
+        kind: 'probe_error',
+        status: 'open',
+        opened_at: nowIso,
+        updated_at: nowIso,
+        resolved_at: null,
+        occurrence: (previous?.occurrence || 0) + 1,
+        fingerprint: 'monitor:probe_failed',
+        problems: [{ label: 'Core tools probe', match: '', server: null, status: 'probe_failed' }],
+      };
+      if (!writeIncidentFn({ version: 1, incident }, { home })) {
+        return {
+          event: 'write_failed',
+          message: 'Core tools monitor error: the health check could not run and that degraded state could not be recorded; this alert may repeat.',
+          incident: previous || null,
+        };
+      }
       return {
         event: 'probe_failed',
         message: 'Core tools monitor error: the health check could not run; verify the Claude CLI is available to the Desktop scheduled task.',
-        incident: previous || null,
+        incident,
       };
     }
-
-    const nowIso = new Date(now).toISOString();
 
     if (!problems.length) {
       if (!previous || previous.status !== 'open') {
@@ -404,7 +424,9 @@ function scheduledProbe({
       }
       return {
         event: 'resolved',
-        message: `Core tools recovered: all ${tools.length} connected. Closed ${INCIDENT_SOURCE_ID}.`,
+        message: previous.kind === 'probe_error'
+          ? 'Core tools monitor recovered: the health check is running again.'
+          : `Core tools recovered: all ${tools.length} connected. Closed ${INCIDENT_SOURCE_ID}.`,
         incident,
       };
     }
@@ -418,6 +440,7 @@ function scheduledProbe({
     const updating = previous && previous.status === 'open';
     const incident = {
       source_id: INCIDENT_SOURCE_ID,
+      kind: 'tool_outage',
       status: 'open',
       opened_at: updating ? previous.opened_at : nowIso,
       updated_at: nowIso,
