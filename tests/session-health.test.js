@@ -258,7 +258,7 @@ check('a failed health command does not replace an existing real outage', () => 
   assert.strictEqual(stillDown.message, '');
 });
 
-check('an unwritable lock parent makes a scheduled probe safely stay silent', () => {
+check('an unwritable lock parent reports that monitoring cannot run', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'session-monitor-'));
   fs.mkdirSync(path.join(home, '.cache'));
   fs.writeFileSync(path.join(home, '.cache', 'session'), 'not a directory');
@@ -267,8 +267,9 @@ check('an unwritable lock parent makes a scheduled probe safely stay silent', ()
     config: monitorConfig([{ label: 'Email', match: 'Gmail' }]),
     exec: () => MCP([needsAuth('Gmail')]),
   });
-  assert.strictEqual(result.event, 'busy');
-  assert.strictEqual(result.message, '');
+  assert.strictEqual(result.event, 'lock_failed');
+  assert.match(result.message, /coordination lock could not be created/);
+  assert.match(result.message, /permissions/);
 });
 
 check('a failure to persist a new incident is reported instead of hidden', () => {

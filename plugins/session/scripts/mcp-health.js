@@ -188,16 +188,18 @@ function acquireIncidentLock(home = os.homedir(), now = Date.now()) {
   try {
     fs.mkdirSync(path.dirname(lock), { recursive: true });
     fs.mkdirSync(lock);
-    return lock;
+    return { status: 'acquired', path: lock };
   } catch (error) {
-    if (!error || error.code !== 'EEXIST') return null;
+    if (!error || error.code !== 'EEXIST') return { status: 'error', path: null };
     try {
-      if (now - fs.statSync(lock).mtimeMs <= INCIDENT_LOCK_STALE_MS) return null;
+      if (now - fs.statSync(lock).mtimeMs <= INCIDENT_LOCK_STALE_MS) {
+        return { status: 'busy', path: null };
+      }
       fs.rmSync(lock, { recursive: true, force: true });
       fs.mkdirSync(lock);
-      return lock;
+      return { status: 'acquired', path: lock };
     } catch (_) {
-      return null;
+      return { status: 'error', path: null };
     }
   }
 }
@@ -244,7 +246,16 @@ function scheduledProbe({ config, home = os.homedir(), now = Date.now(), exec } 
   if (!tools.length) return { event: 'unconfigured', message: '', incident: null };
 
   const lock = acquireIncidentLock(home, now);
-  if (!lock) return { event: 'busy', message: '', incident: readIncident(home).incident };
+  if (lock.status === 'busy') {
+    return { event: 'busy', message: '', incident: readIncident(home).incident };
+  }
+  if (lock.status === 'error') {
+    return {
+      event: 'lock_failed',
+      message: 'Core tools monitor error: the coordination lock could not be created; check ~/.cache/session permissions.',
+      incident: readIncident(home).incident,
+    };
+  }
 
   try {
     const state = readIncident(home);
@@ -320,7 +331,7 @@ function scheduledProbe({ config, home = os.homedir(), now = Date.now(), exec } 
       incident,
     };
   } finally {
-    releaseIncidentLock(lock);
+    releaseIncidentLock(lock.path);
   }
 }
 
