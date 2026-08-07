@@ -969,10 +969,19 @@ advance while their subjects do not exist.
 
 1. Scaffold `plugins/review` with Claude and Codex manifests.
 2. Add version `0.1.0` to both manifests and the marketplace.
-3. Add the plugin to the root README.
+3. Author the complete `skills/setup/SKILL.md` instructional contract specified
+   above, including invocation, reconfiguration, failure behavior, and write
+   boundaries. This is the real skill contract, not a placeholder; its script
+   mechanics are implemented in Phase 4 and integrated in Phase 7.
 4. Add the plugin README covering every item in the Plugin README contract,
    including plain-language first-use instructions that direct the user to
    `/review:setup`.
+5. Add the plugin to the root README.
+6. In the same red-green slice, add the Phase 3 assertions to
+   `tests/review-plugin.test.js`: the setup skill exists, passes the repository
+   skill checker, is the sole first-run flow, and is the README's first-use
+   destination; the root README also links to the plugin. Make the focused suite
+   and `tests/run-all.js` green before the phase boundary.
 
 ### Phase 4: Storage and privacy mechanics
 
@@ -1003,13 +1012,17 @@ advance while their subjects do not exist.
 
 ### Phase 7: Lens management and private Git
 
-1. Implement `/review:setup` for first-run, reconfiguration, and new-runner
-   setup using `~/.claude/review.config.json`.
+1. Integrate the Phase 3 `/review:setup` skill with the completed configuration,
+   store, and private-Git mechanics for first-run, reconfiguration, and
+   new-runner setup using `~/.claude/review.config.json`; do not replace or
+   duplicate its instructional contract.
 2. Implement lens and context drafts with approval gates in `review-lenses`.
 3. Make `review-lenses` direct missing configuration to `/review:setup`.
 4. Implement backup and sharing after live repository privacy verification.
 5. Verify exact staging, unrelated-change blocking, commit evidence, and push
    evidence with isolated test repositories.
+6. Run the setup skill end to end in its focused suite and require
+   `tests/run-all.js` to remain green before the phase boundary.
 
 ### Phase 8: Release verification
 
