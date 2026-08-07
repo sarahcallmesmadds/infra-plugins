@@ -196,7 +196,13 @@ check('no skill names a shell command its allowed-tools does not grant', () => {
     if (!line) continue;
     // A bare `Bash` grant, with no parenthesised command, permits everything.
     if (/\bBash\b(?!\s*\()/.test(line)) continue;
-    const granted = new Set([...line.matchAll(/Bash\(([a-zA-Z0-9_.-]+):/g)].map((m) => m[1]));
+    // Grants may restrict a binary to a subcommand, e.g. Bash(git status:*).
+    // Compare the executable name with the shell commands used in code blocks.
+    const granted = new Set(
+      [...line.matchAll(/Bash\(([^:]+):/g)]
+        .map((m) => m[1].trim().split(/\s+/)[0])
+        .filter(Boolean)
+    );
 
     const used = new Set();
     for (const block of text.matchAll(/```bash\n([\s\S]*?)```/g)) {
