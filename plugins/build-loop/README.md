@@ -226,7 +226,7 @@ both are correct and neither resolves, so a fix filed against one silently
 misses the other. `/audit-deps` carries a `notes` field to record this after the
 fact; the hook catches it at the moment of writing instead.
 
-`type:` is checked rather than required on purpose. 10 of the 23 skills
+`type:` is checked rather than required on purpose. 10 of the 24 skills
 here do not set it, and reporting 10 files that are fine is how a check
 teaches you to ignore it.
 
