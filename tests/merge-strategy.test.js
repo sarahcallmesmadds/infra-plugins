@@ -18,6 +18,10 @@ function check(name, fn) {
 check('the skill is read-only and does not perform merges', () => {
   assert.match(text, /never merges, rebases, pushes, or deletes/i);
   assert.match(text, /Read-only/);
+  assert.doesNotMatch(text, /Bash\(git:\*\)|Bash\(gh:\*\)/);
+  for (const command of ['git branch', 'git rev-parse', 'git symbolic-ref', 'git rev-list', 'git log', 'git status', 'gh pr view']) {
+    assert.match(text, new RegExp(`Bash\\(${command.replace(' ', ' ')}:`));
+  }
 });
 check('the skill gathers actual branch and pull-request evidence', () => {
   assert.match(text, /git rev-list --count/);

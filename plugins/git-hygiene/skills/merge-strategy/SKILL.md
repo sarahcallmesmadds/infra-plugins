@@ -3,7 +3,7 @@ name: merge-strategy
 type: human
 description: Recommends squash-and-merge, rebase-and-merge, or a merge commit for the branch in front of you, based on its actual commits, whether the branch is shared, and whether its history is already public. Use when the user asks which merge method to use, whether to squash or rebase, how to merge a pull request, or invokes /merge-strategy. Read-only: it recommends and explains; it never merges, rebases, pushes, or deletes.
 argument-hint: "[optional repository or pull request]"
-allowed-tools: Read, Bash(git:*), Bash(gh:*)
+allowed-tools: Read, Bash(git branch:*), Bash(git rev-parse:*), Bash(git symbolic-ref:*), Bash(git rev-list:*), Bash(git log:*), Bash(git status:*), Bash(gh pr view:*)
 ---
 
 You are choosing a merge strategy for one branch or pull request. Inspect the
