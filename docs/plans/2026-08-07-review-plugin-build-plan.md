@@ -692,6 +692,11 @@ and writes this same user-owned file; it must not create or consult a second
 `~/.codex` configuration copy. A machine with both runtimes therefore has one
 set of connected stores and one default-store decision.
 
+This path choice is not accepted on assertion alone. Before setup ships,
+`config.js` must pass the cross-runtime probe below in clean Claude and Codex
+sessions. A failure in either runtime stops the build and returns the path
+decision to plan approval; the builder must not silently add a fallback path.
+
 All writes are atomic and locked. The script refuses duplicate store
 identifiers, missing directories, repositories whose actual remote disagrees
 with the configured repository, and paths that resolve through symlinks outside
@@ -707,6 +712,9 @@ configuration.
 - Read and validate local configuration
 - Add or remove store connections with approval supplied by the calling skill
 - Resolve `~/.claude/review.config.json` identically in Claude and Codex
+- Provide a probe that resolves the absolute configuration path, then—after
+  explicit approval—atomically writes, reads, and removes a uniquely named
+  synthetic sibling file without touching the real configuration
 - Write atomically under a lock
 - Print structured results for the skills
 
@@ -811,6 +819,19 @@ Proves:
 - Path traversal and symlink escapes fail.
 - Inactive lenses and panels are not selected by default.
 
+### `tests/review-runtime-config.test.js`
+
+Proves:
+
+- Claude and Codex resolve the identical absolute
+  `~/.claude/review.config.json` path for the same home directory.
+- No code path resolves a `~/.codex` configuration copy.
+- The synthetic probe never reads, replaces, or deletes the real configuration.
+- The probe fails visibly when its directory cannot be resolved, read, written,
+  or cleaned up.
+- A live clean-session run in each runtime atomically writes, reads, and removes
+  its unique synthetic probe file after approval.
+
 ### `tests/review-privacy.test.js`
 
 Proves:
@@ -901,7 +922,7 @@ The builder follows this order. Do not skip ahead.
 
 ### Phase 2: Contracts and failing tests
 
-1. Add the four test files named above.
+1. Add the five test files named above.
 2. Add synthetic private-store fixtures containing no real people, companies,
    or confidential material.
 3. Mutation-test the privacy and isolation assertions so each one demonstrably
@@ -919,10 +940,13 @@ The builder follows this order. Do not skip ahead.
 ### Phase 4: Storage and privacy mechanics
 
 1. Implement `config.js`.
-2. Implement `stores.js`.
-3. Implement `validate.js`.
-4. Implement `private-git.js` through the pre-approval boundary.
-5. Make store, freshness, path, and public-destination tests pass.
+2. Run the approved synthetic configuration probe in clean Claude and Codex
+   sessions. Record the resolved absolute path and successful cleanup from each;
+   stop the build if they differ or either probe fails.
+3. Implement `stores.js`.
+4. Implement `validate.js`.
+5. Implement `private-git.js` through the pre-approval boundary.
+6. Make store, freshness, path, and public-destination tests pass.
 
 ### Phase 5: Review behavior
 
@@ -955,10 +979,12 @@ The builder follows this order. Do not skip ahead.
 2. Sweep the public diff for private names, emails, local source paths,
    credentials, company material, stale counts, and duplicated rules.
 3. Install the plugin from the branch.
-4. Run all acceptance scenarios in a clean session.
-5. Submit one independent code-review round and resolve it as one atomic change
+4. Repeat the synthetic configuration probe in installed clean Claude and Codex
+   sessions and retain evidence that both resolved the same path and cleaned up.
+5. Run all acceptance scenarios in a clean session.
+6. Submit one independent code-review round and resolve it as one atomic change
    set.
-6. Show Sarah the complete diff, test results, and representative outputs.
+7. Show Sarah the complete diff, test results, and representative outputs.
 
 ### Phase 9: Publish the public plugin
 
