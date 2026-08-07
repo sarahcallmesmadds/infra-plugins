@@ -698,6 +698,14 @@ This path choice is not accepted on assertion alone. Before setup ships,
 sessions. A failure in either runtime stops the build and returns the path
 decision to plan approval; the builder must not silently add a fallback path.
 
+Pre-implementation evidence recorded on 2026-08-07: the active Codex runtime
+resolved the user-owned `~/.claude` directory, wrote and read an exact synthetic
+payload in a uniquely named probe file, removed that file, and verified cleanup.
+Claude's side uses the repository-standard `~/.claude/<plugin>.config.json`
+location documented in `CONTRIBUTING.md`. The Phase 4 and Phase 8 probes remain
+mandatory because the implemented script and installed plugin must reproduce
+this result in clean sessions; this planning probe does not replace them.
+
 All writes are atomic and locked. The script refuses duplicate store
 identifiers, missing directories, repositories whose actual remote disagrees
 with the configured repository, and paths that resolve through symlinks outside
