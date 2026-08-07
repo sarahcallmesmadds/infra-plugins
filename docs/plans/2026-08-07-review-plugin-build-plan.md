@@ -227,8 +227,12 @@ The user never needs to provide command flags.
 1. Load the permanent review rules.
 2. Resolve the requested lens.
 3. If no lens is requested, continue with permanent rules only.
-4. If more than one connected store has the same lens name, stop and ask the
-   user which store they mean.
+4. Compare display-name matches across all public built-in lenses and every
+   connected private store. If more than one candidate has the requested name,
+   stop and show source-qualified choices, including **built-in** for a public
+   lens and the store name for each private lens. Never give either source
+   precedence. After the user chooses, resolve that candidate by its stable
+   identifier for the request.
 5. Resolve company context only when the user requests it or the selected lens
    explicitly names it as its default.
 6. Validate the context expiration before reading its substantive content.
@@ -252,7 +256,8 @@ real person performed, approved, or agreed with the review.
 
 - Missing artifact: ask for the artifact.
 - Unknown lens: list the available matching lenses and ask for a choice.
-- Ambiguous lens: list the stores holding that name and ask for a choice.
+- Ambiguous lens: list every source-qualified candidate, including built-in and
+  private-store matches, and ask for a choice. Never select by precedence.
 - Invalid lens: name the invalid file and validation failure; do not partially
   apply it.
 - Expired context: proceed without it and say so.
@@ -817,6 +822,9 @@ Proves:
 - Unknown schema versions fail.
 - Duplicate identifiers fail.
 - Ambiguous lens names return every matching store and never pick one.
+- A private lens named Review quality colliding with the built-in Review quality
+  lens returns every source-qualified candidate, including matches from any
+  additional private stores, and never picks one.
 - A missing panel member fails.
 - An empty panel and a panel with a repeated store-qualified lens identifier
   fail.
@@ -904,23 +912,25 @@ all of these in ordinary language:
 
 1. Review an artifact with permanent rules only.
 2. Rewrite an artifact using Review quality.
-3. Explain which lens and current context were used.
-4. Refuse to use expired company context and continue safely without it.
-5. Create a private role-based lens from notes after showing a complete draft.
-6. Create a private named-person lens without impersonation or identity claims.
-7. Create a saved panel from two private lenses.
-8. Run the saved panel with real reviewer isolation.
-9. Preserve material disagreements between panel members.
-10. Set up an existing private lens repository on a new runner without manual
+3. Resolve a built-in/private Review quality name collision only after the user
+   chooses a source-qualified candidate; never apply silent precedence.
+4. Explain which lens and current context were used.
+5. Refuse to use expired company context and continue safely without it.
+6. Create a private role-based lens from notes after showing a complete draft.
+7. Create a private named-person lens without impersonation or identity claims.
+8. Create a saved panel from two private lenses.
+9. Run the saved panel with real reviewer isolation.
+10. Preserve material disagreements between panel members.
+11. Set up an existing private lens repository on a new runner without manual
     configuration or pasted credentials through `/review:setup`.
-11. Back up a personal lens to a verified private personal repository after
+12. Back up a personal lens to a verified private personal repository after
     confirmation.
-12. Share a company lens through a verified private organization repository
+13. Share a company lens through a verified private organization repository
     after confirmation.
-13. Refuse every attempt to send a lens to a public repository.
-14. Report an inaccessible private repository without creating an empty
+14. Refuse every attempt to send a lens to a public repository.
+15. Report an inaccessible private repository without creating an empty
     replacement.
-15. Leave all repositories unchanged after an ordinary review.
+16. Leave all repositories unchanged after an ordinary review.
 
 ## Implementation sequence
 
@@ -1029,18 +1039,24 @@ and independent analysis are clean; it does not create another approval event.
 
 ### Phase 10: Private lens store
 
-This phase is separate from the public plugin and requires a second explicit
-approval because it creates or changes private external state.
+This phase is separate from the public plugin and uses two already-declared
+gates at different boundaries. Gate 3 authorizes repository creation or
+connection. Gate 4 separately authorizes saving and backing up each initial
+private lens or panel after its complete content and destination are shown.
+The builder must not collapse gates 3 and 4 into one confirmation.
 
 1. Show the proposed private repository owner and name.
-2. Create it as private only after approval, or connect an existing private
-   repository.
+2. Obtain gate 3, then create it as private or connect the approved existing
+   private repository.
 3. Draft the first private named-person lens from the approved source material.
 4. Show the entire private lens to Sarah.
-5. Save locally only after content approval.
-6. Back it up only after repository and push approval.
-7. Create the first private saved panel only after its member lenses exist and
-   Sarah approves its membership and purpose.
+5. Obtain gate 4 for the complete lens content and displayed backup destination,
+   then save it locally.
+6. Back it up only within that lens's gate 4 authorization, after showing the
+   exact files and destination again at the write boundary.
+7. Obtain a separate gate 4 authorization for the first private saved panel
+   after its member lenses exist and its membership, purpose, exact files, and
+   backup destination are shown.
 
 ## Approval gates
 
