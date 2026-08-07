@@ -59,15 +59,17 @@ These are requirements, not implementation questions.
 1. `review`
 2. `review-panel`
 3. `review-lenses`
+4. `setup`, invoked as `/review:setup`
 
 ### Internal skill
 
-4. `review-one`
+5. `review-one`
 
 ### Supporting behavior
 
 - Permanent review rules
 - Built-in Review quality lens
+- Repository-standard `/review:setup` flow for private lens stores
 - Local connection to one or more private lens repositories
 - Creation and editing of private lenses and panels through plain-language
   approval flows
@@ -171,7 +173,8 @@ plugins/review/
     ├── review/SKILL.md
     ├── review-lenses/SKILL.md
     ├── review-one/SKILL.md
-    └── review-panel/SKILL.md
+    ├── review-panel/SKILL.md
+    └── setup/SKILL.md
 
 tests/
 ├── review-plugin.test.js
@@ -380,24 +383,22 @@ sequential reviews, but it must not call them independent or a panel result.
 Running a panel is read-only. Creating or editing a saved panel requires the
 approval flow above. Backup and sharing use the separate private Git flow.
 
-## Skill specification: `review-lenses`
+## Skill specification: `setup`
+
+### Invocation
+
+The skill lives inside the plugin at `skills/setup/SKILL.md` and is invoked as
+`/review:setup`, matching the repository setup convention.
+
+The plugin README's first-use instructions tell the user to run
+`/review:setup`. Natural-language requests such as “set up my review lenses”
+must route to the same skill.
 
 ### User purpose
 
-Set up private lens stores; create, inspect, update, remove from active use,
-back up, and share lenses; manage company context; and report what is connected.
-
-### Natural-language triggers
-
-The description must route requests such as:
-
-- Set up my review lenses from my private repository.
-- Create a private CTO lens from these notes.
-- Update my product lens with this new decision.
-- Back up my personal lenses.
-- Share this lens through the company repository.
-- Which lenses and panels can I use here?
-- This company context is current through the end of September.
+Connect this installation of the public review plugin to local-only or private
+Git lens stores without requiring manual configuration, file editing, or pasted
+credentials.
 
 ### First-run setup
 
@@ -411,23 +412,72 @@ The description must route requests such as:
    visibility and wait for explicit approval before creation.
 6. Clone or create the store in the standard local location.
 7. Validate the store.
-8. Show the proposed local connection and wait for approval before writing the
-   local configuration.
+8. Show the proposed local connection and wait for approval before writing
+   `~/.claude/review.config.json`.
 9. Report the available lenses, panels, and contexts.
 
-The setup flow asks for decisions in plain language and performs Git operations
-for the user. It never asks the user to edit configuration files or paste an
-access token.
+The flow asks for decisions in plain language and performs Git operations for
+the user. It never asks the user to edit configuration files or paste an access
+token.
 
-### Skill-runner setup
+### Setup on another skill runner
 
 On a new machine or skill runner, the user identifies the private repository in
-plain language. The flow checks access, verifies privacy, clones the store,
-validates it, and connects it locally. Existing GitHub authentication supplies
-access. Plugin-specific credentials are never created or stored.
+plain language or runs `/review:setup`. The flow checks access, verifies
+privacy, clones the store, validates it, and connects it locally. Existing
+GitHub authentication supplies access. Plugin-specific credentials are never
+created or stored.
 
 If the runner cannot access the repository, setup stops with the repository and
 account it checked. It does not silently create an empty replacement store.
+
+### Re-running setup
+
+Re-running `/review:setup` reads the existing configuration, reports the
+connected stores, and offers to add, reconnect, or remove a connection. It
+never overwrites a healthy configuration or changes a default store without
+showing the exact change and receiving approval.
+
+### Failure behavior
+
+- Missing Git or GitHub CLI: explain which capability is unavailable and offer
+  local-only setup when GitHub is the only missing capability.
+- Missing GitHub authentication: identify the account check that failed and
+  stop before cloning or creating anything.
+- Public repository: refuse the connection.
+- Unverifiable visibility: refuse the connection.
+- Invalid store: report validation failures and do not add it to configuration.
+- Existing configuration with unrelated or unknown fields: preserve it and
+  stop rather than replacing it.
+
+### Write boundary
+
+The setup skill writes only the approved local store and
+`~/.claude/review.config.json`. Creating a GitHub repository, cloning, and
+writing configuration each have an explicit preview and approval boundary.
+
+## Skill specification: `review-lenses`
+
+### User purpose
+
+Create, inspect, update, remove from active use, back up, and share lenses;
+manage company context; and report what is connected. First-run and new-runner
+configuration belongs to `/review:setup`, not this skill.
+
+### Natural-language triggers
+
+The description must route requests such as:
+
+- Create a private CTO lens from these notes.
+- Update my product lens with this new decision.
+- Back up my personal lenses.
+- Share this lens through the company repository.
+- Which lenses and panels can I use here?
+- This company context is current through the end of September.
+
+When no private store is connected, this skill directs the user to
+`/review:setup`. It does not create configuration through a second competing
+flow.
 
 ### Lens creation
 
@@ -596,7 +646,7 @@ The configuration records:
 The configuration location is:
 
 ```text
-~/.config/smadds/review/config.json
+~/.claude/review.config.json
 ```
 
 All writes are atomic and locked. The script refuses duplicate store
@@ -676,7 +726,12 @@ Proves:
 - Both manifests exist and name `review`.
 - The marketplace and both manifests agree on version `0.1.0`.
 - The root README links to the plugin.
-- All four skills exist and pass the repository skill checker.
+- All five skills exist and pass the repository skill checker.
+- `skills/setup/SKILL.md` exists and is the only first-run configuration flow.
+- The plugin README's first-use instructions direct the user to
+  `/review:setup`.
+- The setup and configuration contracts use
+  `~/.claude/review.config.json` consistently.
 - `review-one` is internal and not advertised as a general user action.
 - `review` has no write, Git, or GitHub permission.
 - The public Review quality lens contains all required judgment dimensions.
@@ -764,7 +819,7 @@ all of these in ordinary language:
 8. Run the saved panel with real reviewer isolation.
 9. Preserve material disagreements between panel members.
 10. Set up an existing private lens repository on a new runner without manual
-    configuration or pasted credentials.
+    configuration or pasted credentials through `/review:setup`.
 11. Back up a personal lens to a verified private personal repository after
     confirmation.
 12. Share a company lens through a verified private organization repository
@@ -798,7 +853,8 @@ The builder follows this order. Do not skip ahead.
 1. Scaffold `plugins/review` with Claude and Codex manifests.
 2. Add version `0.1.0` to both manifests and the marketplace.
 3. Add the plugin to the root README.
-4. Add the plugin README with plain-language first-use instructions.
+4. Add the plugin README with plain-language first-use instructions that direct
+   the user to `/review:setup`.
 
 ### Phase 4: Storage and privacy mechanics
 
@@ -825,10 +881,12 @@ The builder follows this order. Do not skip ahead.
 
 ### Phase 7: Lens management and private Git
 
-1. Implement first-run and new-runner setup.
-2. Implement lens and context drafts with approval gates.
-3. Implement backup and sharing after live repository privacy verification.
-4. Verify exact staging, unrelated-change blocking, commit evidence, and push
+1. Implement `/review:setup` for first-run, reconfiguration, and new-runner
+   setup using `~/.claude/review.config.json`.
+2. Implement lens and context drafts with approval gates in `review-lenses`.
+3. Make `review-lenses` direct missing configuration to `/review:setup`.
+4. Implement backup and sharing after live repository privacy verification.
+5. Verify exact staging, unrelated-change blocking, commit evidence, and push
    evidence with isolated test repositories.
 
 ### Phase 8: Release verification
@@ -913,6 +971,7 @@ The public build is done when:
 - Saved panels run truly independent reviews where the runtime supports it.
 - Private destinations are checked live and public destinations are refused.
 - Setup on a new runner requires no manual file editing or pasted credentials.
+- The README and missing-configuration paths both route to `/review:setup`.
 - Every automated gate passes.
 - A clean installed session routes natural-language requests correctly.
 - Sarah approves the complete diff and representative behavior.
