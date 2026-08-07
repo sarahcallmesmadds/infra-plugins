@@ -179,6 +179,7 @@ plugins/review/
 tests/
 ├── review-plugin.test.js
 ├── review-stores.test.js
+├── review-runtime-config.test.js
 ├── review-privacy.test.js
 └── review-panel.test.js
 ```
