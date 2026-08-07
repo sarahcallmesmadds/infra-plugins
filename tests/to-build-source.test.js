@@ -29,6 +29,16 @@ const toBuild = fs.readFileSync(path.join(ROOT, 'skills', 'to-build', 'SKILL.md'
 const builtCheck = fs.readFileSync(path.join(ROOT, 'skills', 'built-check', 'SKILL.md'), 'utf8');
 const schema = fs.readFileSync(path.join(ROOT, 'reference', 'SCHEMA-BUILD.md'), 'utf8');
 
+function bashGrantPrefixes(line) {
+  return [...line.matchAll(/Bash\(([^):]+):\*\)/g)]
+    .map((match) => match[1].trim())
+    .filter(Boolean);
+}
+
+function commandIsGranted(command, grants) {
+  return grants.some((grant) => command === grant || command.startsWith(`${grant} `));
+}
+
 let failed = 0;
 function check(what, fn) {
   try {
@@ -196,7 +206,9 @@ check('no skill names a shell command its allowed-tools does not grant', () => {
     if (!line) continue;
     // A bare `Bash` grant, with no parenthesised command, permits everything.
     if (/\bBash\b(?!\s*\()/.test(line)) continue;
-    const granted = new Set([...line.matchAll(/Bash\(([a-zA-Z0-9_.-]+):/g)].map((m) => m[1]));
+    // Grants may restrict a binary to a subcommand or exact argument prefix.
+    // Keep that complete prefix so `git log` cannot authorize `git push`.
+    const granted = bashGrantPrefixes(line);
 
     const used = new Set();
     for (const block of text.matchAll(/```bash\n([\s\S]*?)```/g)) {
@@ -207,17 +219,27 @@ check('no skill names a shell command its allowed-tools does not grant', () => {
         const stripped = raw.trim();
         if (!stripped || stripped.startsWith('#')) continue;
         for (const seg of stripped.split(/\|\||&&|\||;/)) {
-          const word = seg.trim().split(/\s/)[0];
+          const command = seg.trim();
+          const word = command.split(/\s/)[0];
           if (!word || BUILTIN.has(word)) continue;
           if (!/^[a-zA-Z][a-zA-Z0-9_.-]*$/.test(word)) continue;
-          used.add(word);
+          used.add(command);
         }
       }
     }
-    const missing = [...used].filter((c) => !granted.has(c)).sort();
-    if (missing.length) offenders.push(`${name}: runs ${missing.join(', ')} but grants ${[...granted].sort().join(', ') || '(nothing)'}`);
+    const missing = [...used].filter((command) => !commandIsGranted(command, granted)).sort();
+    if (missing.length) offenders.push(`${name}: runs ${missing.join(', ')} but grants ${granted.sort().join(', ') || '(nothing)'}`);
   }
   assert.deepStrictEqual(offenders, [], `\n  ${offenders.join('\n  ')}`);
+});
+
+check('restricted Bash grants retain their full prefix and stop at delimiters', () => {
+  const grants = bashGrantPrefixes('Read, Bash(ls), Bash(git log:*), Bash(gh pr view:*)');
+  assert.deepStrictEqual(grants, ['git log', 'gh pr view']);
+  assert.ok(commandIsGranted('git log --oneline main..topic', grants));
+  assert.ok(commandIsGranted('gh pr view 77 --json url', grants));
+  assert.ok(!commandIsGranted('git push --force', grants));
+  assert.ok(!commandIsGranted('gh pr merge 77', grants));
 });
 
 // --- the printed text obeys the house style --------------------------------

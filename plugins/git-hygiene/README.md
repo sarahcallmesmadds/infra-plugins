@@ -30,6 +30,7 @@ anything from the second list to the first.
 /stale-branches                     this repository
 /stale-branches owner/name          a repository on GitHub
 /stale-branches all                 every repository you own
+/merge-strategy                     recommend how to merge the current change
 ```
 
 You get something like this:
@@ -48,6 +49,17 @@ Delete the 1 safe one? (all / a list of names / none)
 ```
 
 Every kept branch says why it was kept. There is no unexplained row.
+
+`/merge-strategy` is the read-only companion for a branch or pull request. It
+reads the commit count and shape, review/draft state, and whether the history is
+public. It asks whether anyone else has based work on the branch instead of
+pretending a pushed branch is private.
+
+It recommends squash-and-merge for private fixup-heavy work, rebase-and-merge
+for private branches with a small number of meaningful commits, and a merge
+commit for shared/public history or meaningful merge topology. It says “not
+ready” when the change is a draft, uncommitted, or cannot be compared safely.
+It never merges, rebases, pushes, or deletes.
 
 ## What it will not do
 
