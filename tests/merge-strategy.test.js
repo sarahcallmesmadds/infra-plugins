@@ -19,7 +19,9 @@ check('the skill is read-only and does not perform merges', () => {
   assert.match(text, /never merges, rebases, pushes, or deletes/i);
   assert.match(text, /Read-only/);
   assert.doesNotMatch(text, /Bash\(git:\*\)|Bash\(gh:\*\)/);
-  for (const command of ['git branch', 'git rev-parse', 'git symbolic-ref', 'git rev-list', 'git log', 'git status', 'gh pr view']) {
+  assert.match(text, /Bash\(git branch --show-current:\*\)/);
+  assert.doesNotMatch(text, /Bash\(git branch:\*\)/);
+  for (const command of ['git rev-parse', 'git symbolic-ref', 'git rev-list', 'git log', 'git status', 'gh pr view']) {
     assert.match(text, new RegExp(`Bash\\(${command.replace(' ', ' ')}:`));
   }
 });
