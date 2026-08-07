@@ -21,11 +21,18 @@ For a local branch, gather:
 ```bash
 git branch --show-current
 git rev-parse --abbrev-ref --symbolic-full-name @{upstream}
+git symbolic-ref --short refs/remotes/origin/HEAD
 git rev-list --count <default>..<branch>
 git log --oneline --decorate <default>..<branch>
 git log --merges --oneline <default>..<branch>
 git status --short
 ```
+
+Resolve `<default>` before running the comparison: for a pull request, use its
+`baseRefName` (and the matching remote ref); for a local branch, use
+`origin/HEAD` from the command above, falling back to the repository's local
+default branch only when that symbolic ref is unavailable. If the target cannot
+be resolved, stop without a commit count or merge recommendation.
 
 For a GitHub pull request, gather the repository, base and head branch, draft
 state, review state, commit count, and whether the head branch is already on

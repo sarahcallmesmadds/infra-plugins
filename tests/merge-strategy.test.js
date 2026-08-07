@@ -22,6 +22,8 @@ check('the skill is read-only and does not perform merges', () => {
 check('the skill gathers actual branch and pull-request evidence', () => {
   assert.match(text, /git rev-list --count/);
   assert.match(text, /git log --oneline/);
+  assert.match(text, /symbolic-ref --short refs\/remotes\/origin\/HEAD/);
+  assert.match(text, /Resolve[\s\S]*default[\s\S]*baseRefName/);
   assert.match(text, /gh pr view/);
   assert.match(text, /reviewDecision/);
 });
