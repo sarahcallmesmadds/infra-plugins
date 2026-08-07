@@ -13,8 +13,9 @@ does not perform the merge.
 ## Step 1: Identify the change
 
 If the user named a pull request, use it. Otherwise use the current branch and
-its upstream. If there is no current branch, no upstream, or no pull request,
-say what is missing and stop. Do not infer a strategy from the branch name.
+its upstream when one exists. If there is no current branch, or neither an
+upstream nor a resolvable local default exists, say what is missing and stop.
+Do not infer a strategy from the branch name.
 
 For a local branch, gather:
 

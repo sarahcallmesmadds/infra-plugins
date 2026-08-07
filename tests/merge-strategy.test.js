@@ -28,6 +28,7 @@ check('the skill gathers actual branch and pull-request evidence', () => {
   assert.match(text, /git log --oneline/);
   assert.match(text, /symbolic-ref --short refs\/remotes\/origin\/HEAD/);
   assert.match(text, /Resolve[\s\S]*default[\s\S]*baseRefName/);
+  assert.match(text, /neither an[\s\S]*upstream nor a resolvable local default/);
   assert.match(text, /gh pr view/);
   assert.match(text, /reviewDecision/);
 });
