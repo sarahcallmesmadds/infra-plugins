@@ -20,7 +20,7 @@
 //   description           This is the discovery surface. A skill with no
 //                         description never triggers, and never triggering
 //                         looks exactly like never being needed.
-//   type, when present    13 of the 24 skills in this repository set it and 10
+//   type, when present    14 of the 24 skills in this repository set it and 10
 //                         do not, so it is checked but not required. Requiring
 //                         it would flag 10 files that are fine.
 
