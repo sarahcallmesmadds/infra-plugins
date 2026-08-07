@@ -670,6 +670,11 @@ The configuration location is:
 ~/.claude/review.config.json
 ```
 
+This is the single configuration path for both Claude and Codex. Codex reads
+and writes this same user-owned file; it must not create or consult a second
+`~/.codex` configuration copy. A machine with both runtimes therefore has one
+set of connected stores and one default-store decision.
+
 All writes are atomic and locked. The script refuses duplicate store
 identifiers, missing directories, repositories whose actual remote disagrees
 with the configured repository, and paths that resolve through symlinks outside
@@ -684,7 +689,7 @@ configuration.
 
 - Read and validate local configuration
 - Add or remove store connections with approval supplied by the calling skill
-- Resolve the standard configuration path
+- Resolve `~/.claude/review.config.json` identically in Claude and Codex
 - Write atomically under a lock
 - Print structured results for the skills
 
@@ -755,6 +760,8 @@ Proves:
 - The README's first-use instructions direct the user to `/review:setup`.
 - The setup and configuration contracts use
   `~/.claude/review.config.json` consistently.
+- Claude and Codex both resolve that same file, and the implementation contains
+  no second runtime-specific configuration path.
 - `review-one` is internal and not advertised as a general user action.
 - `review` has no write, Git, or GitHub permission.
 - The public Review quality lens contains all required judgment dimensions.
