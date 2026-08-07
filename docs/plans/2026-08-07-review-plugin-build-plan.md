@@ -929,13 +929,27 @@ The builder follows this order. Do not skip ahead.
 3. Confirm the main checkout's unrelated changes remain untouched.
 4. Run the full baseline test suite and record any pre-existing failures.
 
-### Phase 2: Contracts and failing tests
+### Phase 2: Contracts, fixtures, and test discipline
 
-1. Add the five test files named above.
-2. Add synthetic private-store fixtures containing no real people, companies,
-   or confidential material.
-3. Mutation-test the privacy and isolation assertions so each one demonstrably
-   fails when its protected behavior is removed.
+1. Add shared test helpers and synthetic private-store fixtures containing no
+   real people, companies, or confidential material. Helpers and fixtures do
+   not use the root `*.test.js` suffix and therefore are not auto-discovered.
+2. Build each Phase 3 through Phase 7 behavior as one red-green slice: add the
+   relevant assertion to its final `tests/review-*.test.js` suite, run that
+   focused suite directly and record the expected failure, implement the same
+   behavior immediately, then run the focused suite and `node tests/run-all.js`
+   to green before starting another slice.
+3. A transient red working tree is allowed only between the recorded focused
+   failure and its immediately paired implementation. No failing suite may be
+   committed, pushed, or carried across a phase boundary, and the five suites
+   must never be added as a bulk red commit.
+4. Mutation-test privacy and isolation assertions within their paired slice so
+   each demonstrably fails when its protected behavior is removed and passes
+   again before commit.
+
+The final repository still contains all five auto-discovered test files listed
+above. They are created incrementally with their implementation, not staged in
+advance while their subjects do not exist.
 
 ### Phase 3: Plugin scaffold
 
