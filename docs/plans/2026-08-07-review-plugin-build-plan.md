@@ -475,7 +475,9 @@ flow.
 
 ### Lens creation
 
-1. Gather the lens purpose, owner, intended users, and source material.
+1. Collect every field required by the **Lens contract** below and the source
+   material needed to draft its judgment content. Source material is input to
+   the contract's source or provenance note, not a separate stored field list.
 2. Separate durable judgment behavior from temporary company facts.
 3. Remove biography, contact information, voice imitation, invented authority,
    and unsupported claims.
@@ -584,6 +586,10 @@ A valid lens contains:
 - Created and last-reviewed dates
 - Optional default company-context identifier
 - Active or inactive state
+
+This list is the sole field definition. Every skill, script, fixture, and test
+that creates, updates, reads, or validates a lens uses it as its single source
+of truth; no creation flow keeps a second, partial field list.
 
 ### Panel contract
 
