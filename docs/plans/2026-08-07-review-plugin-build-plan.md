@@ -721,9 +721,12 @@ configuration.
 - Read and validate local configuration
 - Add or remove store connections with approval supplied by the calling skill
 - Resolve `~/.claude/review.config.json` identically in Claude and Codex
-- Provide a probe that resolves the absolute configuration path, then—after
-  explicit approval—atomically writes, reads, and removes a uniquely named
-  synthetic sibling file without touching the real configuration
+- Provide a probe that resolves the absolute configuration path, then
+  atomically writes, reads, and removes a uniquely named synthetic sibling file
+  without touching the real configuration. Plan approval authorizes this
+  synthetic Phase 4 and Phase 8 probe, so it requires no additional approval
+  interaction. Setup still requires its documented user approval before writing
+  the real configuration.
 - Write atomically under a lock
 - Print structured results for the skills
 
@@ -838,8 +841,9 @@ Proves:
 - The synthetic probe never reads, replaces, or deletes the real configuration.
 - The probe fails visibly when its directory cannot be resolved, read, written,
   or cleaned up.
-- A live clean-session run in each runtime atomically writes, reads, and removes
-  its unique synthetic probe file after approval.
+- A live clean-session run in each runtime, authorized by Plan approval,
+  atomically writes, reads, and removes its unique synthetic probe file without
+  another approval interaction.
 
 ### `tests/review-privacy.test.js`
 
@@ -963,9 +967,10 @@ advance while their subjects do not exist.
 ### Phase 4: Storage and privacy mechanics
 
 1. Implement `config.js`.
-2. Run the approved synthetic configuration probe in clean Claude and Codex
-   sessions. Record the resolved absolute path and successful cleanup from each;
-   stop the build if they differ or either probe fails.
+2. Under Plan approval, run the synthetic configuration probe in clean Claude
+   and Codex sessions without another approval interaction. Record the resolved
+   absolute path and successful cleanup from each; stop the build if they differ
+   or either probe fails.
 3. Implement `stores.js`.
 4. Implement `validate.js`.
 5. Implement `private-git.js` through the pre-approval boundary.
@@ -1042,6 +1047,8 @@ approval because it creates or changes private external state.
 There are four, and no hidden fifth gate is left for the builder to invent.
 
 1. **Plan approval:** authorizes Phases 1 through 8 in an isolated worktree.
+   This includes synthetic probe-file writes and cleanup in Phases 4 and 8; they
+   do not create another approval gate or prompt.
 2. **Public release approval:** given once after Phase 8, authorizes the complete
    Phase 9 commit, push, pull request, clean-check, and merge flow without a
    separate merge approval.
