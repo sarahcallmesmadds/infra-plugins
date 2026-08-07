@@ -326,15 +326,9 @@ The description must route requests such as:
 
 ### Saved panel contents
 
-Each panel records:
-
-- Name
-- Owner store
-- Purpose
-- Exact lens identifiers and owning stores
-- Optional company-context identifier
-- Reconciliation focus
-- Created and last-reviewed dates
+The **Panel contract** below is the sole field definition. This skill collects
+and persists every field required by that contract; it does not keep a second,
+partial field list.
 
 A panel stores references to lenses. It never copies or merges their content.
 
@@ -544,8 +538,11 @@ remain explicit GitHub administration actions outside the plugin.
 
 ### Retirement instead of deletion
 
-Removing a lens or panel from active use marks it inactive. It remains in Git
-history and can be restored. Permanent deletion is outside version 0.1.0.
+Removing a lens or panel from active use marks it inactive without deleting or
+blanking its stored content. The plugin can restore it by marking that same
+record active again, including in a local-only store with no commits. Git-history
+recovery is an additional safeguard only when the store changes have actually
+been committed. Permanent deletion is outside version 0.1.0.
 
 ## Private store contract
 
@@ -605,6 +602,9 @@ A valid panel contains:
 
 The order is for display only. It does not determine which reviewer runs first
 or whose judgment dominates.
+
+Every skill, script, fixture, and test that creates, updates, reads, or validates
+a panel uses this list as its single source of truth.
 
 ### Company-context contract
 
@@ -920,13 +920,15 @@ The builder follows this order. Do not skip ahead.
 
 ### Phase 9: Publish the public plugin
 
-This phase requires Sarah's explicit approval after Phase 8.
+This phase requires Sarah's single public release approval after Phase 8. That
+approval authorizes every step in this phase, including merge after the checks
+and independent analysis are clean; it does not create another approval event.
 
 1. Commit the complete plugin intentionally.
 2. Push the feature branch.
 3. Open a ready-for-review pull request.
 4. Run repository checks and independent analysis until clean.
-5. Merge only after Sarah says to merge.
+5. Merge after repository checks and independent analysis are clean.
 6. Install the merged `review` plugin.
 
 ### Phase 10: Private lens store
@@ -949,8 +951,9 @@ approval because it creates or changes private external state.
 There are four, and no hidden fifth gate is left for the builder to invent.
 
 1. **Plan approval:** authorizes Phases 1 through 8 in an isolated worktree.
-2. **Public release approval:** authorizes Phase 9 commit, push, pull request,
-   and merge flow.
+2. **Public release approval:** given once after Phase 8, authorizes the complete
+   Phase 9 commit, push, pull request, clean-check, and merge flow without a
+   separate merge approval.
 3. **Private repository approval:** authorizes creation or connection of the
    personal private lens repository.
 4. **Private content approval:** authorizes saving and backing up each initial
