@@ -504,16 +504,9 @@ flow.
 
 ### Company-context management
 
-Company context records:
-
-- Organization
-- Owner
-- Current priorities
-- Important audiences
-- Approved terminology
-- Known constraints
-- Confirmation date
-- Expiration date
+The **Company-context contract** below is the sole field definition. This skill
+collects and persists every field required by that contract; it does not keep a
+second, partial field list.
 
 Context creation and updates require approval. The expiration date is required
 and cannot be silently extended. The plugin never substitutes remembered
@@ -629,6 +622,28 @@ A valid context contains:
 - Boundaries
 - Active or inactive state
 
+Every skill, script, fixture, and test that creates, updates, reads, or validates
+company context uses this list as its single source of truth.
+
+## Plugin README contract
+
+The plugin README must explain all repository-required user-facing information:
+
+- The plugin's purpose and the boundary between review, lens management, and
+  panel management.
+- Installation and first use, including an explicit direction to run
+  `/review:setup` before using private stores.
+- How to invoke each public skill in plain language.
+- Configuration, including `~/.claude/review.config.json`, what it stores, and
+  which built-in review behavior works before setup.
+- Runtime limits, including that a panel runs only when independent reviewer
+  contexts are available and must never be presented as independent otherwise.
+- Important side effects and their approval gates: setup may create or clone a
+  private store and write local configuration; lens management may write that
+  store; and back up or share may commit and push to an approved private remote.
+- The privacy boundary: ordinary review is read-only, private material never
+  enters the public plugin, and version 0.1.0 refuses pushes to public remotes.
+
 ## Local configuration
 
 The plugin stores only connection information locally. It does not store lens
@@ -728,8 +743,10 @@ Proves:
 - The root README links to the plugin.
 - All five skills exist and pass the repository skill checker.
 - `skills/setup/SKILL.md` exists and is the only first-run configuration flow.
-- The plugin README's first-use instructions direct the user to
-  `/review:setup`.
+- The plugin README covers every item in the Plugin README contract: purpose,
+  installation and first use, invocation, configuration, runtime limits,
+  important side effects and approval gates, and the privacy boundary.
+- The README's first-use instructions direct the user to `/review:setup`.
 - The setup and configuration contracts use
   `~/.claude/review.config.json` consistently.
 - `review-one` is internal and not advertised as a general user action.
@@ -853,8 +870,9 @@ The builder follows this order. Do not skip ahead.
 1. Scaffold `plugins/review` with Claude and Codex manifests.
 2. Add version `0.1.0` to both manifests and the marketplace.
 3. Add the plugin to the root README.
-4. Add the plugin README with plain-language first-use instructions that direct
-   the user to `/review:setup`.
+4. Add the plugin README covering every item in the Plugin README contract,
+   including plain-language first-use instructions that direct the user to
+   `/review:setup`.
 
 ### Phase 4: Storage and privacy mechanics
 
