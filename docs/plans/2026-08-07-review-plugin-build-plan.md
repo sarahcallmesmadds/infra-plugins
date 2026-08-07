@@ -337,7 +337,9 @@ A panel stores references to lenses. It never copies or merges their content.
 1. Resolve every requested lens.
 2. Show the panel name, purpose, lens membership, and company context in plain
    language.
-3. Refuse missing, invalid, or ambiguous lenses.
+3. Refuse an empty membership list, repeated store-qualified lens identifiers,
+   and missing, invalid, ambiguous, or inactive lenses. Repeated lenses are
+   rejected rather than silently de-duplicated.
 4. Wait for explicit approval.
 5. Write through the deterministic store script using an atomic, locked write.
 6. Validate the saved panel by reading it back.
@@ -347,12 +349,15 @@ A panel stores references to lenses. It never copies or merges their content.
 
 1. Read the original artifact once.
 2. Resolve and validate every lens and the optional current context.
-3. Create one isolated `review-one` task per lens.
-4. Give every reviewer the same artifact, audience, outcome, and constraints.
-5. Give each reviewer only its own lens and allowed context.
-6. Start reviewers without exposing any reviewer's output to another reviewer.
-7. Wait until all reviewers finish or fail.
-8. Reconcile only after the independent phase ends.
+3. If any member lens is inactive, report each inactive member and refuse to run
+   the panel until the user restores the lens or updates the panel. Never omit
+   the member or run a smaller panel silently.
+4. Create one isolated `review-one` task per lens.
+5. Give every reviewer the same artifact, audience, outcome, and constraints.
+6. Give each reviewer only its own lens and allowed context.
+7. Start reviewers without exposing any reviewer's output to another reviewer.
+8. Wait until all reviewers finish or fail.
+9. Reconcile only after the independent phase ends.
 
 ### Reconciliation output
 
@@ -546,6 +551,11 @@ record active again, including in a local-only store with no commits. Git-histor
 recovery is an additional safeguard only when the store changes have actually
 been committed. Permanent deletion is outside version 0.1.0.
 
+Retiring a lens does not rewrite any saved panel that references it. Those
+panels remain stored but are unavailable to run until the lens is restored or
+the panel is explicitly updated. Listing a panel reports the inactive member;
+the plugin never treats retirement as permission to alter panel membership.
+
 ## Private store contract
 
 Private stores are ordinary Git repositories that are readable by humans and
@@ -598,6 +608,7 @@ A valid panel contains:
 - Stable identifier
 - Display name
 - Owner
+- Personal or organization scope
 - Purpose
 - Private visibility
 - Ordered membership list using store-qualified lens identifiers
@@ -608,6 +619,12 @@ A valid panel contains:
 
 The order is for display only. It does not determine which reviewer runs first
 or whose judgment dominates.
+
+The scope must match the panel's containing store. Membership must contain at
+least one lens and must not repeat a store-qualified lens identifier. Creation
+and update accept only active lenses. If a member is retired later, the stored
+panel remains structurally intact but its runnable status becomes unavailable;
+this is not store corruption and does not remove the member.
 
 Every skill, script, fixture, and test that creates, updates, reads, or validates
 a panel uses this list as its single source of truth.
@@ -700,6 +717,8 @@ configuration.
 - Resolve names and detect ambiguity
 - Create and update lenses, panels, and contexts atomically
 - Enforce active/inactive state
+- Reject empty or repeated panel membership, require panel scope to match its
+  containing store, and report panels with retired members as unavailable
 - Enforce path containment and reject symlink escapes
 
 ### `validate.js`
@@ -707,6 +726,8 @@ configuration.
 - Validate public built-in lenses
 - Validate private store registries and Markdown contracts
 - Validate panel membership
+- Distinguish a structurally intact panel with a retired member from a runnable
+  panel, and refuse runnable validation until every member is active
 - Validate context dates and expiration
 - Reject missing required sections and unknown schema versions
 - Scan public plugin files for forbidden private or identity-bearing material
@@ -777,6 +798,11 @@ Proves:
 - Duplicate identifiers fail.
 - Ambiguous lens names return every matching store and never pick one.
 - A missing panel member fails.
+- An empty panel and a panel with a repeated store-qualified lens identifier
+  fail.
+- A panel whose scope differs from its containing store fails.
+- Retiring a member preserves the saved panel and marks it unavailable rather
+  than deleting the member or treating the panel as corrupt.
 - Panel order does not become reviewer priority.
 - Expired context is classified as expired and its substantive content is not
   returned to the review caller.
@@ -807,6 +833,9 @@ Proves:
 Proves:
 
 - One isolated reviewer starts per panel lens.
+- Empty and repeated membership are refused before any reviewer starts.
+- A panel with an inactive member reports that member and starts no reviewers;
+  it never runs with fewer reviewers.
 - Every reviewer receives the same original artifact and user constraints.
 - Each reviewer receives only its own lens.
 - No reviewer receives another reviewer's output.
