@@ -473,6 +473,45 @@ check('two same-named targets in different roots are not confused', () => {
     'an edge to work:capture suppressed a genuinely new call to demo:demo/capture');
 });
 
+check('a qualified edge pointing at a pre-v3 entry still counts as recorded', () => {
+  // The mirror of the case below, and it was not handled. Tolerating a bare
+  // edge but not a bare entry compared 'demo' against '' and called a recorded
+  // dependency missing, which is the false alarm this release exists to remove.
+  //
+  // Mixed maps are reachable in ordinary use: /audit-deps takes an argument and
+  // filters its buckets, so a partial run can rewrite one entry with qualified
+  // edges while leaving the entry it points at in the older form.
+  const deps = depsFor();
+  delete deps.targets['demo:demo/roots'].plugin;          // the target is pre-v3
+  deps.targets['demo:demo/demo-hook'].depends_on = [      // the edge is current
+    { target: 'roots', plugin: 'demo', kind: 'script', repo: 'demo', reason: 'rewritten by a partial audit' },
+  ];
+  assert.deepStrictEqual(unrecorded(deps, deps.targets['demo:demo/demo-hook'], [rootsJs]), [],
+    'a qualified edge was reported missing because the entry it points at is unqualified');
+});
+
+check('a plugin mismatch between two qualified sides is still a real miss', () => {
+  // The guard must not become "any missing plugin matches anything". Where both
+  // sides are qualified and disagree, they are different targets.
+  const other = path.join(tmp, 'plugins', 'neighbour2');
+  fs.mkdirSync(path.join(other, '.claude-plugin'), { recursive: true });
+  fs.mkdirSync(path.join(other, 'scripts'), { recursive: true });
+  const theirRoots = path.join(other, 'scripts', 'roots.js');
+  fs.writeFileSync(theirRoots, '\n');
+  const deps = depsFor({
+    'demo:neighbour2/roots': {
+      target: 'roots', plugin: 'neighbour2', kind: 'script', repo: 'demo',
+      path: theirRoots, depends_on: [], dependents: [],
+      confidence: 'high', last_updated: '2026-08-01T00:00:00.000Z',
+    },
+  });
+  deps.targets['demo:demo/demo-hook'].depends_on = [
+    { target: 'roots', plugin: 'demo', kind: 'script', repo: 'demo', reason: 'a different plugin entirely' },
+  ];
+  const missing = unrecorded(deps, deps.targets['demo:demo/demo-hook'], [theirRoots]);
+  assert.strictEqual(missing.length, 1, 'two qualified sides naming different plugins were treated as one');
+});
+
 check('a pre-v3 edge with no plugin still counts as recorded', () => {
   // Maps written before v3 store edges bare. The schema requires readers to
   // resolve those, and treating one as unrecorded reports an edge that is

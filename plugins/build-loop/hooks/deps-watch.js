@@ -31,6 +31,19 @@ const path = require('path');
 const { readEvent, advise } = require('../scripts/hook-io.js');
 const { DEPS_PATH, bump, entryByPath, extractRefs, unrecorded } = require('../scripts/deps-refs.js');
 
+// The manifest matcher is `Write|Edit`, and that is an exact-string list, not a
+// regex. A matcher built only from letters, digits, `_`, `-`, spaces, `,` and
+// `|` is read as a list of exact names; anything carrying another character
+// becomes an unanchored regex. So this hook is never handed a MultiEdit or a
+// NotebookEdit, and the check below is agreement with the manifest rather than
+// a second filter narrowing it.
+//
+// Worth writing down because the repository has been wrong about it before, in
+// the other direction: a matcher here was once anchored to `^(Write|Edit)$` to
+// close a gap the exact-string path had already closed, which made one manifest
+// differ from every other for no gain. tests/hook-executable.test.js pins the
+// form. If a MultiEdit ever needs stamping, the manifest is what has to change,
+// and adding a tool name here alone would do nothing.
 readEvent((event) => {
   if (event.tool_name !== 'Write' && event.tool_name !== 'Edit') return;
 

@@ -256,6 +256,12 @@ After applying the approved additions/removals/changes:
 
 This is the critical discipline — if Claude is killed during a Write, DEPS.json must NOT be left half-written.
 
+0. Set `$schema_version` to the version SCHEMA-DEPS.md declares as current, and set the top-level `last_updated` to now.
+
+   This skill is the only thing that rewrites the whole map, so it is the only place the version can be stamped. Without this step the field was documentation-only: the schema said 4 while every map on disk said 3, and the schema's own rule to bump it in `DEPS.json` in the same commit could not be satisfied by any shipped code path. Readers here are version-agnostic, so this is not urgent, but a version field nothing maintains is worse than none: it looks like a migration signal and never moves.
+
+   Never write `last_auto_checked` here. That one belongs to the hook.
+
 1. Build the final JSON string (2-space indent).
 2. Write to `~/.claude/build-loop/DEPS.json.tmp` using the Write tool.
 3. Parse-check the tempfile:

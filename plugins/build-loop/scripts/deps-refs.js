@@ -240,8 +240,17 @@ function edgeMatches(edge, entry, entryRepo) {
   const repo = edge.repo || entryRepo || '';
   if (repo !== (entry.repo || '')) return false;
   if (bareName(edge) !== bareName(entry)) return false;
-  if (!edge.plugin) return true;                    // pre-v3 or unqualified: name and repo agree, so it points here
-  return edge.plugin === (entry.plugin || '');
+  // Unqualified on EITHER side means name and repo agreement is all there is to
+  // compare, which is the ordered lookup the schema documents. Tolerating a
+  // bare edge but not a bare entry compared 'guardrails' against '' and called
+  // a recorded dependency missing. Mixed maps are reachable in ordinary use,
+  // because /audit-deps takes an argument and filters its buckets, so a partial
+  // run rewrites one entry while leaving the entry it points at in the old form.
+  //
+  // Where both sides are qualified they must agree, which is what stops this
+  // collapsing into "any missing plugin matches anything".
+  if (!edge.plugin || !entry.plugin) return true;
+  return edge.plugin === entry.plugin;
 }
 
 // References the file makes that the entry does not record. See the header for
