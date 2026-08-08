@@ -235,7 +235,13 @@ The user never needs to provide command flags.
    precedence. After the user chooses, resolve that candidate by its stable
    identifier for the request.
 5. Resolve company context only when the user requests it or the selected lens
-   explicitly names it as its default.
+   explicitly names it as its default. A lens default is already a stable
+   identifier and resolves directly. A user request is a spoken name: compare
+   display-name matches across every connected private store. If more than one
+   candidate has the requested name, stop and show store-qualified choices,
+   never giving any store precedence, and resolve the chosen candidate by its
+   stable identifier. Company contexts are private-store content only, so no
+   built-in candidate exists.
 6. Validate the context expiration before reading its substantive content.
 7. Exclude expired context and tell the user it was excluded.
 8. Review the artifact.
@@ -261,6 +267,12 @@ real person performed, approved, or agreed with the review.
   private-store matches, and ask for a choice. Never select by precedence.
 - Invalid lens: name the invalid file and validation failure; do not partially
   apply it.
+- Unknown context: list the available company contexts and ask for a choice.
+  Do not fall back to any other context and do not proceed silently.
+- Ambiguous context: list every store-qualified candidate and ask for a choice.
+  Never select by precedence.
+- Invalid context: name the invalid file and validation failure; do not
+  partially apply it.
 - Expired context: proceed without it and say so.
 - Unreadable context: proceed without it and say so.
 - Missing setup: explain that no private lens store is connected and offer to
@@ -662,6 +674,7 @@ a panel uses this list as its single source of truth.
 A valid context contains:
 
 - Stable identifier
+- Display name
 - Organization
 - Owner
 - Confirmed date
@@ -838,9 +851,13 @@ Proves:
   `~/.claude/review.config.json` consistently.
 - Claude and Codex both resolve that same file, and the implementation contains
   no second runtime-specific configuration path.
-- `references/review-one.md` exists without skill frontmatter, no
-  `skills/review-one/SKILL.md` exists, and neither runtime discovers
-  `review-one` as a user action.
+- `references/review-one.md` exists, contains no YAML frontmatter block, and is
+  not stored below `skills/`; no path matching `skills/review-one/**` exists;
+  and no manifest, command, or skill frontmatter in the plugin names
+  `review-one`. These are the conditions under which neither runtime can
+  discover it, because both build their skill list from `skills/*/SKILL.md`
+  frontmatter alone. Phase 8 confirms the resulting behavior in clean installed
+  sessions.
 - `review` has no write, Git, or GitHub permission.
 - The public Review quality lens contains all required judgment dimensions.
 - Public plugin files contain none of the forbidden identity or private-source
@@ -1073,9 +1090,16 @@ advance while their subjects do not exist.
 4. Repeat the synthetic configuration probe in installed clean Claude and Codex
    sessions and retain evidence that both resolved the same path and cleaned up.
 5. Run all acceptance scenarios in a clean session.
-6. Submit one independent code-review round and resolve it as one atomic change
+6. Confirm in installed clean Claude and Codex sessions that `review-one` is not
+   offered as a user action. It passes when the session's own list of available
+   skills and commands contains no `review-one` entry and no entry whose
+   description names it, and when asking each runtime to run `review-one`
+   directly produces no such action. Retain the listing from each runtime as
+   evidence. It fails if either runtime names it, in which case the internal
+   reviewer contract is wrong and Phase 8 does not close.
+7. Submit one independent code-review round and resolve it as one atomic change
    set.
-7. Show Sarah the complete diff, test results, and representative outputs.
+8. Show Sarah the complete diff, test results, and representative outputs.
 
 ### Phase 9: Publish the public plugin
 
