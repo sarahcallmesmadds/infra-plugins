@@ -167,6 +167,8 @@ Classify everything into one of three buckets:
 **ORPHANED** — in `existing` but not on disk. These may have been renamed or deleted.
 **EXISTING** — in both. Check whether the file mtime from Step 1 is newer than the entry's `last_updated` field. Parse both as timestamps and compare. If newer, the entry is STALE and may need `depends_on` re-inferred.
 
+**Compare against `last_updated`, never `last_auto_checked`.** The second is written by the `deps-watch` hook after an ordinary edit, and it means only that every reference the file mechanically makes was already recorded. It cannot see a semantic edge, one thing reading a file another writes, which is the kind this map exists to catch. Treating it as a review date would empty this bucket of exactly the entries that most need looking at. Carry the field through unchanged on write; it is not yours to set.
+
 If `$ARGUMENTS` is non-empty, filter all three buckets to entries whose name or composite key matches, so `/audit-deps daily-brief` reviews one thing without scanning every change.
 
 ## Step 4 — For each MISSING entry, infer its depends_on

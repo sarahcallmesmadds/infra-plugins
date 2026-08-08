@@ -160,6 +160,34 @@ check('DEPS reports missing and files changed since their record', () => {
   assert.match(out, /Review it before relying on it/);
 });
 
+check('an automatic check quiets the drift line without hiding a real change', () => {
+  // deps-watch writes last_auto_checked after an edit that added no new
+  // dependency. It is a separate field from last_updated on purpose: that one
+  // is the human and audit review date, and /audit-deps needs it left alone to
+  // decide an entry's edges want re-inferring. So this line has to read both
+  // and take the later, or every ordinary edit keeps producing the warning
+  // that made it noise in the first place.
+  const home = tempHome();
+  const root = path.join(home, '.claude', 'build-loop');
+  fs.mkdirSync(root, { recursive: true });
+  const checked = path.join(home, 'checked.js');
+  const stale = path.join(home, 'stale.js');
+  fs.writeFileSync(checked, 'checked');
+  fs.writeFileSync(stale, 'stale');
+  writeJson(path.join(root, 'DEPS.json'), { targets: {
+    checked: {
+      path: '~/checked.js',
+      last_updated: '2000-01-01T00:00:00Z',        // never reviewed since
+      last_auto_checked: '2999-01-01T00:00:00Z',   // but confirmed by the hook
+    },
+    stale: { path: '~/stale.js', last_updated: '2000-01-01T00:00:00Z' },
+  } });
+
+  const out = brief.buildBrief({ home });
+  assert.match(out, /DEPS\.json drift warning: 1 changed\./,
+    'the auto-checked entry should be quiet and the unchecked one should not');
+});
+
 check('v1 DEPS skills are read as targets', () => {
   const home = tempHome();
   const root = path.join(home, '.claude', 'build-loop');

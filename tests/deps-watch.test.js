@@ -130,6 +130,56 @@ check('a hooks.json names the scripts it runs', () => {
   assert.deepStrictEqual(extractRefs(f, fs.readFileSync(f, 'utf8')), [path.resolve(hookJs)]);
 });
 
+// Only a file actually called hooks.json is read as one, so each of these
+// needs its own plugin rather than a differently-named file in a shared one.
+// Naming them loosely made an earlier test pass for the wrong reason: it
+// returned nothing because of the filename, not because of what it contained.
+function pluginWithHooksJson(name, command, files) {
+  const root = path.join(tmp, 'plugins', name);
+  fs.mkdirSync(path.join(root, '.claude-plugin'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'scripts'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'hooks'), { recursive: true });
+  for (const rel of files) fs.writeFileSync(path.join(root, rel), '\n');
+  const f = path.join(root, 'hooks', 'hooks.json');
+  fs.writeFileSync(f, JSON.stringify({
+    hooks: { PostToolUse: [{ hooks: [{ type: 'command', command }] }] },
+  }, null, 2));
+  return { root, f };
+}
+
+check('one command naming both folders resolves each to its own', () => {
+  // The folder was chosen by searching everything before the end of the match,
+  // so a command that ran a scripts/ file first classified every later
+  // hooks/ file as a script. It then either resolved nothing, dropping a real
+  // edge, or hit a same-named file in scripts/ and credited the wrong target.
+  const { root, f } = pluginWithHooksJson(
+    'bothfolders',
+    'node "$ROOT"/scripts/setup.js && "$ROOT"/hooks/guard.js',
+    ['scripts/setup.js', 'hooks/guard.js'],
+  );
+  const refs = extractRefs(f, fs.readFileSync(f, 'utf8')).sort();
+  assert.deepStrictEqual(
+    refs,
+    [path.resolve(root, 'hooks', 'guard.js'), path.resolve(root, 'scripts', 'setup.js')].sort(),
+    'a hooks/ reference after a scripts/ one was looked up in the wrong folder',
+  );
+});
+
+check('a same-named file in the other folder is not credited', () => {
+  // The wrong-attribution half: guard.js exists in BOTH folders, so a
+  // misclassified hooks/guard.js silently resolves to scripts/guard.js and the
+  // edge is recorded against a file that was never named.
+  const { root, f } = pluginWithHooksJson(
+    'decoy',
+    '"$R"/scripts/setup.js; "$R"/hooks/guard.js',
+    ['scripts/setup.js', 'hooks/guard.js', 'scripts/guard.js'],
+  );
+  const refs = extractRefs(f, fs.readFileSync(f, 'utf8'));
+  assert.ok(refs.includes(path.resolve(root, 'hooks', 'guard.js')), 'the hook was not found');
+  assert.ok(!refs.includes(path.resolve(root, 'scripts', 'guard.js')),
+    'the reference was credited to the same-named script instead of the hook');
+});
+
 check('a plugin.json names no scripts and yields nothing', () => {
   const f = path.join(plugin, '.claude-plugin', 'plugin.json');
   fs.writeFileSync(f, JSON.stringify({ name: 'demo', version: '1.0.0' }, null, 2));
@@ -137,8 +187,17 @@ check('a plugin.json names no scripts and yields nothing', () => {
 });
 
 check('a malformed hooks.json is survived rather than thrown on', () => {
-  const f = path.join(plugin, 'hooks', 'broken.json');
+  const root = path.join(tmp, 'plugins', 'malformed');
+  fs.mkdirSync(path.join(root, '.claude-plugin'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'hooks'), { recursive: true });
+  const f = path.join(root, 'hooks', 'hooks.json');   // the real name, so the parse is what is tested
   fs.writeFileSync(f, '{ not json');
+  assert.deepStrictEqual(extractRefs(f, fs.readFileSync(f, 'utf8')), []);
+});
+
+check('a json file that is not a hooks.json yields nothing', () => {
+  const f = path.join(plugin, 'hooks', 'settings.json');
+  fs.writeFileSync(f, JSON.stringify({ command: 'hooks/demo-hook.js' }));
   assert.deepStrictEqual(extractRefs(f, fs.readFileSync(f, 'utf8')), []);
 });
 
@@ -220,17 +279,58 @@ check('expandHome leaves an absolute path alone', () => {
 
 // --- writing -------------------------------------------------------------
 
-check('bump stamps one entry and the file, and nothing else', () => {
+check('bump records a machine check without touching the review date', () => {
+  // last_updated is the human/audit review date. /audit-deps compares it
+  // against the file mtime to decide an entry is STALE and may need its edges
+  // re-inferred, and its own failure handling says never to rewrite it unless
+  // content actually changed. Stamping it here silently emptied that bucket:
+  // the extraction cannot see semantic edges, so an edit that added one left
+  // the entry looking freshly reviewed and it never came up again.
   const p = path.join(tmp, 'DEPS.json');
-  const before = depsFor();
-  fs.writeFileSync(p, JSON.stringify(before, null, 2));
+  fs.writeFileSync(p, JSON.stringify(depsFor(), null, 2));
   const now = '2026-08-07T12:00:00.000Z';
   assert.strictEqual(bump('demo:demo/roots', now, p), 'bumped');
   const after = JSON.parse(fs.readFileSync(p, 'utf8'));
-  assert.strictEqual(after.targets['demo:demo/roots'].last_updated, now);
-  assert.strictEqual(after.last_updated, now);
-  assert.strictEqual(after.targets['demo:demo/demo-hook'].last_updated, '2026-08-01T00:00:00.000Z');
-  assert.deepStrictEqual(after.targets['demo:demo/roots'].depends_on, [], 'edges must never be rewritten here');
+  const entry = after.targets['demo:demo/roots'];
+  assert.strictEqual(entry.last_auto_checked, now, 'the machine check was not recorded');
+  assert.strictEqual(entry.last_updated, '2026-08-01T00:00:00.000Z',
+    'the review date was overwritten, which is what blinds the audit');
+  assert.strictEqual(after.last_updated, '2026-08-01T00:00:00.000Z',
+    'the map-level review date was overwritten by an unattended write');
+  assert.deepStrictEqual(entry.depends_on, [], 'edges must never be rewritten here');
+  assert.strictEqual(after.targets['demo:demo/demo-hook'].last_auto_checked, undefined,
+    'a bump touched an entry it was not given');
+});
+
+check('an entry stays STALE to the audit after a bump', () => {
+  // The end the previous test is protecting, stated as the audit sees it.
+  const p = path.join(tmp, 'DEPS-stale.json');
+  fs.writeFileSync(p, JSON.stringify(depsFor(), null, 2));
+  bump('demo:demo/roots', '2026-08-07T12:00:00.000Z', p);
+  const entry = JSON.parse(fs.readFileSync(p, 'utf8')).targets['demo:demo/roots'];
+  const mtime = fs.statSync(rootsJs).mtimeMs;
+  assert.ok(mtime > Date.parse(entry.last_updated),
+    'the file is newer than its review date, so /audit-deps must still see it as STALE');
+});
+
+check('bump refuses to overwrite a write that landed after its read', () => {
+  // /audit-deps rewrites the whole map with the Write tool and takes no lock,
+  // so the hook cannot rely on the lock alone. If an approved edge change
+  // lands between this read and its rename, the stamp is the expendable one.
+  const p = path.join(tmp, 'DEPS-race.json');
+  fs.writeFileSync(p, JSON.stringify(depsFor(), null, 2));
+  const approved = depsFor();
+  approved.targets['demo:demo/roots'].depends_on = [
+    { target: 'demo-hook', plugin: 'demo', kind: 'hook', repo: 'demo', reason: 'approved by the user mid-bump' },
+  ];
+  const result = bump('demo:demo/roots', '2026-08-07T12:00:00.000Z', p, {
+    // Fires after bump has read the file and before it renames its replacement.
+    onBeforeWrite: () => fs.writeFileSync(p, JSON.stringify(approved, null, 2)),
+  });
+  assert.strictEqual(result, 'superseded', 'a concurrent write was clobbered instead of yielding to it');
+  const after = JSON.parse(fs.readFileSync(p, 'utf8'));
+  assert.strictEqual(after.targets['demo:demo/roots'].depends_on.length, 1,
+    'the approved edge was destroyed by the hook');
 });
 
 check('bump on an unknown key changes nothing', () => {

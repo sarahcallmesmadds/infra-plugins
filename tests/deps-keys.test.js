@@ -136,7 +136,12 @@ check('the schema defines the key under a plugin-repo root', () => {
     /\{plugin\}\/\{name\}/.test(SCHEMA),
     'SCHEMA-DEPS.md does not say what the key is when one root holds many plugins'
   );
-  assert.ok(/\$schema_version` \| int \| Currently 3/.test(SCHEMA), 'schema version was not bumped');
+  // The key rule arrived in v3, so anything from 3 up carries it. Pinning the
+  // exact number made this fail on the next unrelated bump, which says nothing
+  // about whether the rule is still documented.
+  const declared = SCHEMA.match(/\$schema_version` \| int \| Currently (\d+)/);
+  assert.ok(declared, 'the schema does not declare a version at all');
+  assert.ok(Number(declared[1]) >= 3, `schema version is ${declared[1]}, so the plugin-qualified key predates it`);
 });
 
 check('both key readers know about the plugin-qualified form', () => {

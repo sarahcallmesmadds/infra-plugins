@@ -158,11 +158,12 @@ a list of skill roots. You do not need to change it.
 
 **It never writes without asking, with one named exception.** Every command that
 changes a file shows you a draft or a diff first and stops. The exception is
-`deps-watch`, which stamps a confirmation date onto a `DEPS.json` entry after an
-edit that added no new dependency. It writes one timestamp field and nothing
-else: it never adds, removes, or edits an edge, because writing an edge means
-writing the sentence explaining why two things are connected, and that is a
-judgment `/audit-deps` still takes to you for approval.
+`deps-watch`, which stamps `last_auto_checked` onto a `DEPS.json` entry after an
+edit that added no new dependency. It writes that one field and nothing else: it
+never adds, removes, or edits an edge, never touches the `last_updated` review
+date, and abandons its own write rather than overwrite a change you approved.
+Writing an edge means writing the sentence explaining why two things are
+connected, and that is a judgment `/audit-deps` still takes to you for approval.
 
 **It never pushes.** Fixes are committed locally. Pushing stays a deliberate
 thing you do.
@@ -194,8 +195,23 @@ the recorded edges.
 
 | Outcome | What happens |
 |---|---|
-| Nothing new appeared | The entry is stamped as confirmed, silently. No warning accumulates. |
+| Nothing new appeared | `last_auto_checked` is stamped, silently. No warning accumulates. |
 | The file calls a mapped target with no recorded edge | It says so in the conversation and does **not** stamp, so the drift stays visible until `/audit-deps` records the edge. |
+
+**Two dates, kept apart.** The hook writes `last_auto_checked` and never
+`last_updated`. `last_updated` is the review date, and `/audit-deps` compares it
+against the file's modification time to decide an entry is stale and may need
+its dependencies worked out again. Writing a machine check into that field
+would have emptied that bucket: the hook cannot see a dependency that no call
+expresses, one thing reading a file another writes, so an edit adding one would
+have left the entry looking freshly reviewed and it would never have come up
+again. The map's own top-level `last_updated` is left alone for the same reason.
+
+**It yields rather than overwrites.** The lock only stops another hook.
+`/audit-deps` rewrites the whole map through the Write tool and takes no lock at
+all, so if edges you just approved land while the hook is mid-write, the hook
+checks and abandons its stamp instead of renaming over them. Losing a stamp
+costs one stale line until the next edit. Losing approved edges costs the map.
 
 **It reports one direction only, on purpose.** A call with no recorded edge is
 dangerous, because `/flag-issue` reads the map to decide what a fix puts at
@@ -228,7 +244,13 @@ shell `sed`, a `git checkout`, or an external editor. Both are narrow, and
 neither is fixed here. Retiring the brief's mtime comparison outright belongs
 with the session plugin, not this one.
 
-Nothing to do on upgrade. The hook registers itself and stays quiet.
+**`DEPS.json` moves to schema v4.** The only change is the new
+`last_auto_checked` field, which is simply absent on an older map, so nothing
+needs migrating and older readers are unaffected. This release also needs
+Session 0.8.1, which is what teaches the brief to read the new field. Installing
+build-loop 0.9.0 without it leaves the drift line firing exactly as before.
+
+Nothing else to do on upgrade. The hook registers itself and stays quiet.
 
 ## Upgrading to 0.8.1
 

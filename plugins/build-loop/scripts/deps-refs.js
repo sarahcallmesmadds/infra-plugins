@@ -87,12 +87,17 @@ function jsRequires(filePath, content) {
   return found;
 }
 
-// scripts/<name>.js inside a fenced block. The prefix is whatever the skill
-// wrote in front of it, an absolute path or ${CLAUDE_PLUGIN_ROOT}, and either
-// way the plugin that owns the script is the one being resolved against:
-// a skill invoking scripts/queue.js means its own plugin's copy, since a
-// plugin reaching into a sibling's scripts/ is the thing hook-io.js exists to
-// avoid.
+// scripts/<name>.js inside a fenced block, resolved against whichever plugin
+// the text actually names. A `plugins/<name>/` written in front of it, which is
+// what an absolute path to another plugin contains, resolves there. Anything
+// else resolves to the file's own plugin, which is the common case: a skill
+// invoking scripts/queue.js means its own copy, since a plugin reaching into a
+// sibling's scripts/ is the thing hook-io.js exists to avoid.
+//
+// The distinction is load-bearing here rather than theoretical. hook-io.js,
+// cli.js, config.js and patterns.js each exist in more than one plugin by
+// design, so resolving every match locally sent a reference to the wrong file
+// and reported a missing edge that was not one.
 function markdownScriptRefs(filePath, content) {
   const found = [];
   const pluginRoot = pluginRootFor(filePath);
@@ -152,7 +157,12 @@ function hooksJsonRefs(filePath, content) {
       if (typeof value === 'string') {
         let m;
         while ((m = re.exec(value)) !== null) {
-          const dir = value.slice(0, m.index + m[0].length).includes('scripts/') ? 'scripts' : 'hooks';
+          // Read the folder off the match itself. Searching the text before it
+          // meant one command running a scripts/ file and then a hooks/ one
+          // classified the second as a script, so it either resolved to
+          // nothing and dropped a real edge, or hit a same-named file in
+          // scripts/ and credited the wrong target.
+          const dir = m[0].startsWith('scripts/') ? 'scripts' : 'hooks';
           const candidate = path.join(pluginRoot, dir, `${m[1]}.js`);
           try {
             if (fs.statSync(candidate).isFile()) found.push(candidate);
@@ -292,18 +302,43 @@ function acquire(lockPath) {
 }
 
 // Records that this entry was confirmed against the file as it now stands.
-// Returns 'bumped', 'unchanged', or 'locked'.
-function bump(key, nowIso, depsPath = DEPS_PATH) {
+// Returns 'bumped', 'unchanged', 'locked', or 'superseded'.
+//
+// IT WRITES `last_auto_checked`, NEVER `last_updated`. Those are two different
+// dates and conflating them broke a second reader. `last_updated` is the human
+// and audit review date: /audit-deps compares it against the file's mtime to
+// decide an entry is STALE and may need its edges re-inferred, and that skill's
+// own failure handling says never to rewrite it unless content actually
+// changed. Stamping it here emptied that bucket silently. Extraction cannot see
+// a semantic edge, one thing reading a file another writes, so an edit that
+// added one left the entry looking freshly reviewed and it never came up again.
+// The map-level `last_updated` is left alone for the same reason: an unattended
+// machine check is not a revision of the map.
+//
+// `onBeforeWrite` exists for the race test below and is not used in production.
+function bump(key, nowIso, depsPath = DEPS_PATH, { onBeforeWrite } = {}) {
   const lockPath = path.join(path.dirname(depsPath), '.deps.lock');
   if (!acquire(lockPath)) return 'locked';
   try {
-    const deps = JSON.parse(fs.readFileSync(depsPath, 'utf8'));
+    // The lock only stops another hook. /audit-deps rewrites the whole map
+    // through the Write tool and takes no lock at all, so if an approved edge
+    // change lands between this read and the rename below, renaming would
+    // destroy it. Between a machine stamp and the edges a user just approved,
+    // the stamp is the expendable one, so compare and yield rather than write.
+    const before = fs.statSync(depsPath);
+    const raw = fs.readFileSync(depsPath, 'utf8');
+    const deps = JSON.parse(raw);
     const targets = deps.targets || deps.skills;
     const entry = targets && targets[key];
     if (!entry) return 'unchanged';
-    if (entry.last_updated === nowIso) return 'unchanged';
-    entry.last_updated = nowIso;
-    deps.last_updated = nowIso;
+    if (entry.last_auto_checked === nowIso) return 'unchanged';
+    entry.last_auto_checked = nowIso;
+
+    if (onBeforeWrite) onBeforeWrite();
+
+    const after = fs.statSync(depsPath);
+    if (after.mtimeMs !== before.mtimeMs || after.size !== before.size) return 'superseded';
+
     const tmp = `${depsPath}.${process.pid}.tmp`;
     fs.writeFileSync(tmp, `${JSON.stringify(deps, null, 2)}\n`);
     fs.renameSync(tmp, depsPath);       // atomic replace, never a partial file
