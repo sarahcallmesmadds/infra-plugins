@@ -61,9 +61,10 @@ These are requirements, not implementation questions.
 3. `review-lenses`
 4. `setup`, invoked as `/review:setup`
 
-### Internal skill
+### Internal reviewer contract
 
-5. `review-one`
+`references/review-one.md` supplies the instructions for one isolated panel
+reviewer. It is not a skill, command, or user-discoverable action.
 
 ### Supporting behavior
 
@@ -159,6 +160,7 @@ plugins/review/
 ├── README.md
 ├── references/
 │   ├── permanent-review-rules.md
+│   ├── review-one.md
 │   ├── lens-contract.md
 │   ├── panel-contract.md
 │   ├── company-context-contract.md
@@ -172,7 +174,6 @@ plugins/review/
 └── skills/
     ├── review/SKILL.md
     ├── review-lenses/SKILL.md
-    ├── review-one/SKILL.md
     ├── review-panel/SKILL.md
     └── setup/SKILL.md
 
@@ -270,11 +271,13 @@ real person performed, approved, or agreed with the review.
 `review` is strictly read-only. It cannot create, edit, commit, push, send, or
 save an artifact, lens, panel, or context.
 
-## Skill specification: `review-one`
+## Internal reviewer contract: `references/review-one.md`
 
 ### Type
 
-Internal agent skill. It is not advertised as a general user command.
+Internal instruction file loaded only by `review-panel` when it creates an
+isolated reviewer. It has no skill frontmatter, is not stored below `skills/`,
+and cannot be invoked or discovered as a user action in Claude or Codex.
 
 ### Purpose
 
@@ -358,7 +361,8 @@ A panel stores references to lenses. It never copies or merges their content.
 3. If any member lens is inactive, report each inactive member and refuse to run
    the panel until the user restores the lens or updates the panel. Never omit
    the member or run a smaller panel silently.
-4. Create one isolated `review-one` task per lens.
+4. Create one isolated reviewer task per lens using
+   `references/review-one.md`.
 5. Give every reviewer the same artifact, audience, outcome, and constraints.
 6. Give each reviewer only its own lens and allowed context.
 7. Start reviewers without exposing any reviewer's output to another reviewer.
@@ -405,21 +409,39 @@ Connect this installation of the public review plugin to local-only or private
 Git lens stores without requiring manual configuration, file editing, or pasted
 credentials.
 
+Setup also teaches what affects a review before asking the user to connect
+anything. It explains in plain language that:
+
+1. Permanent review rules apply automatically to every review.
+2. A lens adds a chosen judgment perspective. The built-in Review quality lens
+   works without private setup.
+3. Company context adds current organization-specific facts, priorities,
+   terminology, and constraints. It is separate from a lens and expires.
+
+Setup explains that a panel is a saved group of lenses run independently, not
+a fourth judgment layer. The user is not required to remember these terms or
+choose all three layers before continuing.
+
 ### First-run setup
 
-1. Detect whether GitHub CLI and Git are available.
-2. Detect the active GitHub account without exposing its token.
-3. Ask whether the user is connecting an existing private repository, creating
+1. Give the plain-language explanation of what affects a review above.
+2. Report what works immediately: permanent review rules, ordinary review with
+   no lens or company context, and the built-in Review quality lens.
+3. Detect whether GitHub CLI and Git are available.
+4. Detect the active GitHub account without exposing its token.
+5. Ask whether the user is connecting an existing private repository, creating
    a new private personal repository, or using a local-only folder.
-4. For an existing repository, check its actual GitHub visibility before
+6. For an existing repository, check its actual GitHub visibility before
    cloning.
-5. For a new repository, show the owner, repository name, and `private`
+7. For a new repository, show the owner, repository name, and `private`
    visibility and wait for explicit approval before creation.
-6. Clone or create the store in the standard local location.
-7. Validate the store.
-8. Show the proposed local connection and wait for approval before writing
+8. Clone or create the store in the standard local location.
+9. Validate the store.
+10. Show the proposed local connection and wait for approval before writing
    `~/.claude/review.config.json`.
-9. Report the available lenses, panels, and contexts.
+11. Report the available lenses, panels, and company contexts, distinguish the
+    built-in lens from private-store content, and say that future review
+    requests can name any of them in ordinary language.
 
 The flow asks for decisions in plain language and performs Git operations for
 the user. It never asks the user to edit configuration files or paste an access
@@ -660,6 +682,9 @@ The plugin README must explain all repository-required user-facing information:
 
 - The plugin's purpose and the boundary between review, lens management, and
   panel management.
+- The three things that can affect a review, using the same plain-language
+  explanation as setup: permanent rules, an optional lens, and optional current
+  company context. Explain that panels group lenses and are not a fourth layer.
 - Installation and first use, including an explicit direction to run
   `/review:setup` before using private stores.
 - How to invoke each public skill in plain language.
@@ -798,8 +823,13 @@ Proves:
 - Both manifests exist and name `review`.
 - The marketplace and both manifests agree on version `0.1.0`.
 - The root README links to the plugin.
-- All five skills exist and pass the repository skill checker.
+- All four user-facing skills exist and pass the repository skill checker.
 - `skills/setup/SKILL.md` exists and is the only first-run configuration flow.
+- Setup and the README give the same plain-language explanation of permanent
+  rules, an optional lens, and optional company context; both state that a panel
+  groups lenses rather than adding another judgment layer.
+- Setup reports what works before private configuration and finishes by naming
+  the available built-in and private lenses, panels, and company contexts.
 - The plugin README covers every item in the Plugin README contract: purpose,
   installation and first use, invocation, configuration, runtime limits,
   important side effects and approval gates, and the privacy boundary.
@@ -808,7 +838,9 @@ Proves:
   `~/.claude/review.config.json` consistently.
 - Claude and Codex both resolve that same file, and the implementation contains
   no second runtime-specific configuration path.
-- `review-one` is internal and not advertised as a general user action.
+- `references/review-one.md` exists without skill frontmatter, no
+  `skills/review-one/SKILL.md` exists, and neither runtime discovers
+  `review-one` as a user action.
 - `review` has no write, Git, or GitHub permission.
 - The public Review quality lens contains all required judgment dimensions.
 - Public plugin files contain none of the forbidden identity or private-source
@@ -912,25 +944,29 @@ all of these in ordinary language:
 
 1. Review an artifact with permanent rules only.
 2. Rewrite an artifact using Review quality.
-3. Resolve a built-in/private Review quality name collision only after the user
+3. Run setup and confirm that it explains permanent rules, an optional lens,
+   and optional company context in plain language; identifies panels as saved
+   groups of lenses; reports what works before private setup; and finishes with
+   the available review choices.
+4. Resolve a built-in/private Review quality name collision only after the user
    chooses a source-qualified candidate; never apply silent precedence.
-4. Explain which lens and current context were used.
-5. Refuse to use expired company context and continue safely without it.
-6. Create a private role-based lens from notes after showing a complete draft.
-7. Create a private named-person lens without impersonation or identity claims.
-8. Create a saved panel from two private lenses.
-9. Run the saved panel with real reviewer isolation.
-10. Preserve material disagreements between panel members.
-11. Set up an existing private lens repository on a new runner without manual
+5. Explain which lens and current context were used.
+6. Refuse to use expired company context and continue safely without it.
+7. Create a private role-based lens from notes after showing a complete draft.
+8. Create a private named-person lens without impersonation or identity claims.
+9. Create a saved panel from two private lenses.
+10. Run the saved panel with real reviewer isolation.
+11. Preserve material disagreements between panel members.
+12. Set up an existing private lens repository on a new runner without manual
     configuration or pasted credentials through `/review:setup`.
-12. Back up a personal lens to a verified private personal repository after
+13. Back up a personal lens to a verified private personal repository after
     confirmation.
-13. Share a company lens through a verified private organization repository
+14. Share a company lens through a verified private organization repository
     after confirmation.
-14. Refuse every attempt to send a lens to a public repository.
-15. Report an inaccessible private repository without creating an empty
+15. Refuse every attempt to send a lens to a public repository.
+16. Report an inaccessible private repository without creating an empty
     replacement.
-16. Leave all repositories unchanged after an ordinary review.
+17. Leave all repositories unchanged after an ordinary review.
 
 ## Implementation sequence
 
@@ -970,7 +1006,8 @@ advance while their subjects do not exist.
 1. Scaffold `plugins/review` with Claude and Codex manifests.
 2. Add version `0.1.0` to both manifests and the marketplace.
 3. Author the complete `skills/setup/SKILL.md` instructional contract specified
-   above, including invocation, reconfiguration, failure behavior, and write
+   above, including the three-layer explanation, pre-setup availability report,
+   invocation, reconfiguration, completion report, failure behavior, and write
    boundaries. This is the real skill contract, not a placeholder; its script
    mechanics are implemented in Phase 4 and integrated in Phase 7.
 4. Add the plugin README covering every item in the Plugin README contract,
@@ -999,7 +1036,8 @@ advance while their subjects do not exist.
 
 1. Add permanent review rules.
 2. Add the Review quality lens.
-3. Implement `review-one`.
+3. Implement the internal `references/review-one.md` reviewer contract and
+   load it only while `review-panel` creates isolated reviewer tasks.
 4. Implement the user-facing `review` skill.
 5. Verify review remains read-only and works without private setup.
 
@@ -1022,7 +1060,9 @@ advance while their subjects do not exist.
 5. Verify exact staging, unrelated-change blocking, commit evidence, and push
    evidence with isolated test repositories.
 6. Run the setup skill end to end in its focused suite and require
-   `tests/run-all.js` to remain green before the phase boundary.
+   `tests/run-all.js` to remain green before the phase boundary. The focused
+   suite must prove the setup explanation, pre-setup availability report, and
+   final list of available review choices as well as the storage flow.
 
 ### Phase 8: Release verification
 
