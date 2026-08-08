@@ -94,6 +94,54 @@ check('a script named only in prose is NOT a reference', () => {
   assert.deepStrictEqual(extractRefs(f, fs.readFileSync(f, 'utf8')), []);
 });
 
+check('a doc naming another plugin resolves to that plugin, not its own', () => {
+  // hook-io.js, cli.js, config.js and patterns.js each live in more than one
+  // plugin here, so resolving every match against the file's own plugin sends
+  // the reference to the wrong target and reports a missing edge that is not.
+  const other = path.join(tmp, 'plugins', 'neighbour');
+  fs.mkdirSync(path.join(other, '.claude-plugin'), { recursive: true });
+  fs.mkdirSync(path.join(other, 'scripts'), { recursive: true });
+  const theirs = path.join(other, 'scripts', 'shared.js');
+  const mine = path.join(plugin, 'scripts', 'shared.js');
+  fs.writeFileSync(theirs, '\n');
+  fs.writeFileSync(mine, '\n');
+  const f = path.join(plugin, 'skills', 'thing', 'CITES.md');
+  fs.writeFileSync(f, ['```bash', 'node plugins/neighbour/scripts/shared.js', '```'].join('\n'));
+  assert.deepStrictEqual(extractRefs(f, fs.readFileSync(f, 'utf8')), [path.resolve(theirs)],
+    'resolved to its own plugin instead of the one it named');
+});
+
+check('an unqualified script name still resolves to the file own plugin', () => {
+  const f = path.join(plugin, 'skills', 'thing', 'OWN.md');
+  fs.writeFileSync(f, ['```bash', 'node "${CLAUDE_PLUGIN_ROOT}"/scripts/roots.js', '```'].join('\n'));
+  assert.deepStrictEqual(extractRefs(f, fs.readFileSync(f, 'utf8')), [path.resolve(rootsJs)]);
+});
+
+check('a hooks.json names the scripts it runs', () => {
+  const f = path.join(plugin, 'hooks', 'hooks.json');
+  fs.writeFileSync(f, JSON.stringify({
+    hooks: {
+      PostToolUse: [{
+        matcher: 'Write|Edit',
+        hooks: [{ type: 'command', command: '"${CLAUDE_PLUGIN_ROOT}"/hooks/demo-hook.js' }],
+      }],
+    },
+  }, null, 2));
+  assert.deepStrictEqual(extractRefs(f, fs.readFileSync(f, 'utf8')), [path.resolve(hookJs)]);
+});
+
+check('a plugin.json names no scripts and yields nothing', () => {
+  const f = path.join(plugin, '.claude-plugin', 'plugin.json');
+  fs.writeFileSync(f, JSON.stringify({ name: 'demo', version: '1.0.0' }, null, 2));
+  assert.deepStrictEqual(extractRefs(f, fs.readFileSync(f, 'utf8')), []);
+});
+
+check('a malformed hooks.json is survived rather than thrown on', () => {
+  const f = path.join(plugin, 'hooks', 'broken.json');
+  fs.writeFileSync(f, '{ not json');
+  assert.deepStrictEqual(extractRefs(f, fs.readFileSync(f, 'utf8')), []);
+});
+
 check('codeBlocks reads fenced content and drops the fences', () => {
   const blocks = codeBlocks('before\n```\ninside\n```\nafter\n');
   assert.deepStrictEqual(blocks, ['inside']);
@@ -128,7 +176,9 @@ check('a call with no recorded edge is reported', () => {
   const deps = depsFor();
   const missing = unrecorded(deps, deps.targets['demo:demo/demo-hook'], [rootsJs]);
   assert.strictEqual(missing.length, 1);
-  assert.strictEqual(missing[0].id, 'demo/roots');
+  // Repo-qualified, matching the composite key. A bare `demo/roots` cannot say
+  // which root it means, which is the collision the key format exists to stop.
+  assert.strictEqual(missing[0].id, 'demo:demo/roots');
 });
 
 check('a call that IS recorded is not reported', () => {
@@ -214,6 +264,90 @@ check('a corrupt map is survived rather than thrown on', () => {
   const p = path.join(tmp, 'DEPS-5.json');
   fs.writeFileSync(p, '{ not json');
   assert.strictEqual(bump('demo:demo/roots', '2026-08-07T12:00:00.000Z', p), 'unchanged');
+});
+
+// --- lock retries always terminate ---------------------------------------
+//
+// queue.js already carries this exact bug and its fix, documented at length:
+// a retry path that skipped both the deadline check and the sleep spun at full
+// CPU with no exit. This file reintroduced it on two branches. The symptom is
+// worse here than in queue.js, because readEvent clears its stdin timeout
+// before calling the handler, so nothing else stops the process either.
+
+check('bump gives up when the lock cannot be removed, rather than spinning', () => {
+  const dir = fs.mkdtempSync(path.join(tmp, 'unremovable-'));
+  const p = path.join(dir, 'DEPS.json');
+  fs.writeFileSync(p, JSON.stringify(depsFor(), null, 2));
+  const lock = path.join(dir, '.deps.lock');
+  fs.mkdirSync(lock);
+  // Backdate the lock past LOCK_STALE_MS so takeover is attempted, then make
+  // the parent read-only so the rmSync that takeover needs always fails.
+  const old = new Date(Date.now() - 120_000);
+  fs.utimesSync(lock, old, old);
+  fs.chmodSync(dir, 0o555);
+  try {
+    const started = Date.now();
+    const result = bump('demo:demo/roots', '2026-08-07T12:00:00.000Z', p);
+    const elapsed = Date.now() - started;
+    assert.strictEqual(result, 'locked', 'a lock it cannot clear must be reported, not retried forever');
+    assert.ok(elapsed < 10_000, `acquire ran for ${elapsed}ms, which means it is spinning`);
+  } finally {
+    fs.chmodSync(dir, 0o755);
+    fs.rmSync(lock, { recursive: true, force: true });
+  }
+});
+
+check('every retry path in acquire checks the deadline', () => {
+  const src = fs.readFileSync(REFS, 'utf8');
+  const body = src.slice(src.indexOf('function acquire'), src.indexOf('function bump'));
+  const bare = body.match(/continue;/g) || [];
+  assert.strictEqual(bare.length, 0,
+    'a bare `continue` in the retry loop skips the deadline check; route every retry through one helper');
+});
+
+// --- identity uses the whole key -----------------------------------------
+//
+// SCHEMA-DEPS.md is explicit that a bare name cannot tell two targets apart,
+// which is why keys are {repo}:{name}. Comparing on plugin and target alone
+// reintroduces the collision the composite key exists to remove.
+
+check('two same-named targets in different roots are not confused', () => {
+  const other = path.join(tmp, 'other-capture.js');
+  fs.writeFileSync(other, '\n');
+  const deps = depsFor({
+    'work:capture': {
+      target: 'capture', kind: 'skill', repo: 'work',
+      path: other, depends_on: [], dependents: [],
+      confidence: 'high', last_updated: '2026-08-01T00:00:00.000Z',
+    },
+  });
+  // The entry records an edge to work's capture. A new call to a DIFFERENT
+  // target that happens to share the name must still be reported.
+  deps.targets['demo:demo/demo-hook'].depends_on = [
+    { target: 'capture', kind: 'skill', repo: 'work', reason: 'unrelated' },
+  ];
+  const personal = path.join(plugin, 'scripts', 'capture.js');
+  fs.writeFileSync(personal, '\n');
+  deps.targets['demo:demo/capture'] = {
+    target: 'capture', plugin: 'demo', kind: 'script', repo: 'demo',
+    path: personal, depends_on: [], dependents: [],
+    confidence: 'high', last_updated: '2026-08-01T00:00:00.000Z',
+  };
+  const missing = unrecorded(deps, deps.targets['demo:demo/demo-hook'], [personal]);
+  assert.strictEqual(missing.length, 1,
+    'an edge to work:capture suppressed a genuinely new call to demo:demo/capture');
+});
+
+check('a pre-v3 edge with no plugin still counts as recorded', () => {
+  // Maps written before v3 store edges bare. The schema requires readers to
+  // resolve those, and treating one as unrecorded reports an edge that is
+  // already there, which is the false-alarm class this release removes.
+  const deps = depsFor();
+  deps.targets['demo:demo/demo-hook'].depends_on = [
+    { target: 'roots', kind: 'script', repo: 'demo', reason: 'written before v3, so no plugin field' },
+  ];
+  assert.deepStrictEqual(unrecorded(deps, deps.targets['demo:demo/demo-hook'], [rootsJs]), [],
+    'a bare pre-v3 edge was reported as missing');
 });
 
 // --- the regression this was built for -----------------------------------

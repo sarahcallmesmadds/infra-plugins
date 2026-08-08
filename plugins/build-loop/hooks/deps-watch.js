@@ -37,7 +37,7 @@ readEvent((event) => {
   const filePath = event.tool_input && event.tool_input.file_path;
   if (!filePath) return;
   const ext = path.extname(filePath).toLowerCase();
-  if (ext !== '.js' && ext !== '.md') return;   // nothing else carries a reference this can read
+  if (ext !== '.js' && ext !== '.md' && ext !== '.json') return;   // nothing else carries a reference this can read
 
   let content;
   try { content = fs.readFileSync(filePath, 'utf8'); }

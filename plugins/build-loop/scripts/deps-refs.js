@@ -97,11 +97,21 @@ function markdownScriptRefs(filePath, content) {
   const found = [];
   const pluginRoot = pluginRootFor(filePath);
   if (!pluginRoot) return found;
-  const re = /scripts\/([\w.-]+)\.js/g;
+  const siblings = path.dirname(pluginRoot);
+  // Captures any `plugins/<name>/` written immediately before the script path,
+  // which is how a doc names a script belonging to somebody else. Without it
+  // every match resolved to the file's own plugin, and hook-io.js, cli.js,
+  // config.js and patterns.js each exist in more than one plugin here by
+  // design, so a doc citing guardrails/scripts/hook-io.js from inside
+  // build-loop resolved to build-loop's copy and reported a missing edge to
+  // the wrong target.
+  const re = /(?:plugins\/([\w.-]+)\/)?scripts\/([\w.-]+)\.js/g;
   for (const block of codeBlocks(content)) {
     let m;
     while ((m = re.exec(block)) !== null) {
-      const candidate = path.join(pluginRoot, 'scripts', `${m[1]}.js`);
+      const [, namedPlugin, script] = m;
+      const owner = namedPlugin ? path.join(siblings, namedPlugin) : pluginRoot;
+      const candidate = path.join(owner, 'scripts', `${script}.js`);
       try {
         if (fs.statSync(candidate).isFile()) found.push(candidate);
       } catch (_) { /* names a script that is not here; not this map's business */ }
@@ -124,11 +134,44 @@ function pluginRootFor(filePath) {
   return null;
 }
 
+// A hooks.json names the scripts it runs, in a `command` string built around
+// ${CLAUDE_PLUGIN_ROOT}. That is as literal a reference as a require(), and
+// the file is itself a mapped target, so leaving it out meant every hook
+// registration edit kept producing the drift line this replaces.
+function hooksJsonRefs(filePath, content) {
+  if (path.basename(filePath) !== 'hooks.json') return [];
+  const pluginRoot = pluginRootFor(filePath);
+  if (!pluginRoot) return [];
+  let parsed;
+  try { parsed = JSON.parse(content); } catch (_) { return []; }
+  const found = [];
+  const re = /(?:hooks|scripts)\/([\w.-]+)\.js/g;
+  const walk = (node) => {
+    if (!node || typeof node !== 'object') return;
+    for (const value of Object.values(node)) {
+      if (typeof value === 'string') {
+        let m;
+        while ((m = re.exec(value)) !== null) {
+          const dir = value.slice(0, m.index + m[0].length).includes('scripts/') ? 'scripts' : 'hooks';
+          const candidate = path.join(pluginRoot, dir, `${m[1]}.js`);
+          try {
+            if (fs.statSync(candidate).isFile()) found.push(candidate);
+          } catch (_) { /* names something that is not here */ }
+        }
+        re.lastIndex = 0;
+      } else walk(value);
+    }
+  };
+  walk(parsed);
+  return found;
+}
+
 function extractRefs(filePath, content) {
   const ext = path.extname(filePath).toLowerCase();
   let refs = [];
   if (ext === '.js') refs = jsRequires(filePath, content);
   else if (ext === '.md') refs = markdownScriptRefs(filePath, content);
+  else if (ext === '.json') refs = hooksJsonRefs(filePath, content);
   // A file never depends on itself. require('./x') from x.js is not a thing,
   // but a markdown file naming its own plugin's script it happens to live
   // beside is, and self-edges are not what the map records.
@@ -151,18 +194,45 @@ function entryByPath(deps, filePath, home = os.homedir()) {
   return null;
 }
 
-const edgeId = (e) => `${e.plugin ? `${e.plugin}/` : ''}${e.target || e.skill || ''}`;
+// Identity carries the repo, because the name does not carry it and two roots
+// routinely hold the same name. SCHEMA-DEPS.md introduced the {repo}:{name} key
+// for exactly this: comparing on plugin and target alone lets an edge recorded
+// against work's `capture` silently absorb a brand-new call to personal's
+// `capture`, which is the missed dependent this hook exists to catch.
+const bareName = (e) => e.target || e.skill || '';
+const edgeId = (e, fallbackRepo) => {
+  const repo = e.repo || fallbackRepo || '';
+  const name = bareName(e);
+  if (!name) return '';
+  return `${repo}:${e.plugin ? `${e.plugin}/` : ''}${name}`;
+};
+
+// Does a recorded edge point at this entry?
+//
+// Two forms have to match, per the ordered lookup in SCHEMA-DEPS.md. The exact
+// key is the normal case. The bare form, repo and name with no plugin, is what
+// a map written before v3 stores, and treating one as unrecorded reports an
+// edge that is already there, reintroducing the false alarms this release
+// removes. Both forms still require the repo to agree.
+function edgeMatches(edge, entry, entryRepo) {
+  const repo = edge.repo || entryRepo || '';
+  if (repo !== (entry.repo || '')) return false;
+  if (bareName(edge) !== bareName(entry)) return false;
+  if (!edge.plugin) return true;                    // pre-v3 or unqualified: name and repo agree, so it points here
+  return edge.plugin === (entry.plugin || '');
+}
 
 // References the file makes that the entry does not record. See the header for
 // why the opposite direction is deliberately not computed.
 function unrecorded(deps, entry, refPaths, home = os.homedir()) {
-  const recorded = new Set((entry.depends_on || []).map(edgeId));
+  const edges = entry.depends_on || [];
   const out = [];
   for (const refPath of refPaths) {
     const hit = entryByPath(deps, refPath, home);
     if (!hit) continue;            // not a mapped target, so not a missing edge
-    const id = edgeId(hit.entry);
-    if (!id || recorded.has(id)) continue;
+    if (edges.some((e) => edgeMatches(e, hit.entry, entry.repo))) continue;
+    const id = edgeId(hit.entry, entry.repo);
+    if (!id) continue;
     if (out.some((o) => o.id === id)) continue;
     out.push({ id, key: hit.key, path: refPath });
   }
@@ -182,23 +252,41 @@ const LOCK_WAIT_MS = 2_000;
 
 function acquire(lockPath) {
   const deadline = Date.now() + LOCK_WAIT_MS;
+
+  // Every path that goes round again comes through here, so there is no way to
+  // retry without both checking the deadline and pausing first.
+  //
+  // queue.js carries this same helper and the same comment, because it hit this
+  // exact fault first: a retry that jumped back to the top skipped both checks
+  // and the loop spun at full CPU with no exit. This file reproduced it on two
+  // branches, and a lock directory that cannot be removed, one owned by another
+  // user or sitting under a read-only parent, is enough to trigger it.
+  //
+  // It is worse here than in queue.js. hook-io.js clears its stdin timeout
+  // before calling the handler, so a spinning hook has nothing else to stop it:
+  // every file edit would leave a runaway process behind.
+  const waitOrGiveUp = () => {
+    if (Date.now() > deadline) return false;
+    // Busy-wait rather than async: a hook is a short-lived process and the
+    // window being covered is one small write.
+    const until = Date.now() + 25;
+    while (Date.now() < until) { /* pause */ }
+    return true;
+  };
+
   for (;;) {
     try {
       fs.mkdirSync(lockPath);
       return true;
     } catch (err) {
       if (err.code !== 'EEXIST') return false;
-      let age = 0;
-      try { age = Date.now() - fs.statSync(lockPath).mtimeMs; } catch (_) { continue; }
-      if (age > LOCK_STALE_MS) {
-        try { fs.rmSync(lockPath, { recursive: true, force: true }); } catch (_) { /* someone beat us to it */ }
-        continue;
+      let age = null;
+      try { age = Date.now() - fs.statSync(lockPath).mtimeMs; } catch (_) { /* unreadable; treat as fresh */ }
+      if (age !== null && age > LOCK_STALE_MS) {
+        try { fs.rmSync(lockPath, { recursive: true, force: true }); }
+        catch (_) { /* cannot clear it, so fall through and let the deadline end this */ }
       }
-      if (Date.now() > deadline) return false;
-      // Busy-wait rather than async: a hook is a short-lived process and the
-      // window being covered is one small write.
-      const until = Date.now() + 25;
-      while (Date.now() < until) { /* spin */ }
+      if (!waitOrGiveUp()) return false;
     }
   }
 }

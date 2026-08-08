@@ -206,13 +206,27 @@ neither file names the other. Extraction cannot see those, and reporting them as
 gone would rebuild the false alarms this removes. A clean result means "nothing
 new appeared", never "the map is complete". `/audit-deps` still judges that.
 
-**What counts as a call** is only what is mechanically certain. In a `.js` file,
-a `require()` of a relative path that resolves on disk. In a `.md` file, a
-`scripts/<name>.js` inside a fenced code block, which is how a skill invokes
-one. Prose is excluded deliberately: `queue.js` names `roots.js` in a line
-comment and never calls it, and a text search would have called that a
-dependency, reproducing the exact problem being fixed. That case is pinned in
+**What counts as a call** is only what is mechanically certain:
+
+| File | What is read |
+|---|---|
+| `.js` | A `require()` of a relative path that resolves on disk. |
+| `.md` | A `scripts/<name>.js` inside a fenced code block, which is how a skill invokes one. A `plugins/<other>/` written in front of it resolves to that plugin, since `hook-io.js`, `cli.js`, `config.js` and `patterns.js` each exist in more than one plugin here. |
+| `hooks.json` | The `hooks/` and `scripts/` paths named in each `command`. |
+
+Prose is excluded deliberately. `queue.js` names `roots.js` in a line comment
+and never calls it, and a text search would have called that a dependency,
+reproducing the exact problem being fixed. That case is pinned in
 `tests/deps-watch.test.js`.
+
+**Where the old warning can still appear.** The session brief computes drift
+from modification time, and this release quiets it by stamping entries rather
+than by replacing that comparison. So the unactionable line survives in two
+cases: a mapped target with no readable references, which today means the six
+`plugin.json` manifests, and any edit made outside Write and Edit, such as a
+shell `sed`, a `git checkout`, or an external editor. Both are narrow, and
+neither is fixed here. Retiring the brief's mtime comparison outright belongs
+with the session plugin, not this one.
 
 Nothing to do on upgrade. The hook registers itself and stays quiet.
 
