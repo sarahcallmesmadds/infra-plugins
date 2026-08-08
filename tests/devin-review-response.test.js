@@ -56,7 +56,10 @@ check('validator uses the plugin-level scripts convention', () => {
 check('Build Loop documents the same command count for Claude and Codex', () => {
   const readme = fs.readFileSync(README, 'utf8');
   const heading = readme.match(/^## The (\w+) commands$/m);
-  const codex = readme.match(/runtimes get the same thing: (\w+) commands you invoke/);
+  // The sentence carrying this claim was rewritten when the Codex section
+  // stopped saying the plugin ships no hooks. What the test is for is
+  // unchanged: the count quoted to a Codex user must match the real list.
+  const codex = readme.match(/The (\w+) commands are identical on both runtimes/);
   assert.ok(heading, 'the main command-count heading is missing');
   assert.ok(codex, 'the Codex command-count claim is missing');
   assert.strictEqual(codex[1], heading[1], 'the Codex command count drifted from the main list');

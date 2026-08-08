@@ -235,14 +235,25 @@ and never calls it, and a text search would have called that a dependency,
 reproducing the exact problem being fixed. That case is pinned in
 `tests/deps-watch.test.js`.
 
-**Where the old warning can still appear.** The session brief computes drift
-from modification time, and this release quiets it by stamping entries rather
-than by replacing that comparison. So the unactionable line survives in two
-cases: a mapped target with no readable references, which today means the six
-`plugin.json` manifests, and any edit made outside Write and Edit, such as a
-shell `sed`, a `git checkout`, or an external editor. Both are narrow, and
-neither is fixed here. Retiring the brief's mtime comparison outright belongs
-with the session plugin, not this one.
+**Where the old warning can still appear, deliberately.** The hook stamps only
+a file it could actually read. Three cases stay drifted on purpose, because in
+each of them nothing was checked and saying otherwise would be a lie the map
+cannot recover from:
+
+- A mapped target nothing can be read from, which today means the six
+  `plugin.json` manifests, and any `SKILL.md` living outside a plugin, which is
+  where the default roots put every one of them.
+- A `hooks.json` that will not parse. Unreadable is not clean.
+- Any edit made outside Write and Edit: a shell `sed`, a `git checkout`, an
+  external editor.
+
+The first two are the difference between "checked, nothing new" and "could not
+check". Collapsing them is what made an early version of this hook mark files as
+verified that it had never opened. The third is a real gap, and retiring the
+brief's mtime comparison outright belongs with the Session plugin.
+
+**This release is Claude Code only.** See the Codex section below, which
+explains why that costs a Codex user nothing rather than leaving them worse off.
 
 **`DEPS.json` moves to schema v4.** The only change is the new
 `last_auto_checked` field, which is simply absent on an older map, so nothing
@@ -512,8 +523,28 @@ One line saying the log returned nothing is the only thing that separates
 
 ## Codex
 
-Codex plugins cannot register hooks, and this plugin does not use any, so both
-runtimes get the same thing: eleven commands you invoke. Nothing is degraded here.
+**The eleven commands are identical on both runtimes.** Everything you invoke by
+name behaves the same way, reads the same queue, and writes the same files.
+
+**The four hooks are Claude Code only**, because Codex plugins cannot register
+hooks. This section previously said the plugin used none, which stopped being
+true at 0.3.0 and is worth stating plainly rather than leaving as a claim that
+quietly aged.
+
+| Hook | What a Codex user does instead |
+|---|---|
+| `skill-md-check` | Run `/find-skill`, or rely on the repository's `skill-md-check` test suite, which checks the same frontmatter rules. |
+| `notice-correction` | Invoke `/flag-issue` directly when something misbehaves. It is the same skill; the hook only suggests it. |
+| `capture-event` | Nothing is lost. It records hook payload shapes, which only exist where hooks run. |
+| `deps-watch` | Run `/audit-deps`. See below, because the trade is smaller than it looks. |
+
+**`deps-watch` costs a Codex user nothing, and here is why.** The drift warning
+it exists to quiet is printed by the session brief, which is itself a
+`SessionStart` hook in the Session plugin. Under Codex that brief never runs, so
+the noisy warning never appears in the first place. Both halves are absent
+together rather than one half leaving the other broken. `/audit-deps` remains
+the way to check the map on either runtime, and it is the only way to record a
+new dependency on both, since the hook never writes an edge.
 
 ## Licence
 

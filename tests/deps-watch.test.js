@@ -180,25 +180,12 @@ check('a same-named file in the other folder is not credited', () => {
     'the reference was credited to the same-named script instead of the hook');
 });
 
-check('a plugin.json names no scripts and yields nothing', () => {
-  const f = path.join(plugin, '.claude-plugin', 'plugin.json');
-  fs.writeFileSync(f, JSON.stringify({ name: 'demo', version: '1.0.0' }, null, 2));
-  assert.deepStrictEqual(extractRefs(f, fs.readFileSync(f, 'utf8')), []);
-});
-
-check('a malformed hooks.json is survived rather than thrown on', () => {
-  const root = path.join(tmp, 'plugins', 'malformed');
-  fs.mkdirSync(path.join(root, '.claude-plugin'), { recursive: true });
-  fs.mkdirSync(path.join(root, 'hooks'), { recursive: true });
-  const f = path.join(root, 'hooks', 'hooks.json');   // the real name, so the parse is what is tested
-  fs.writeFileSync(f, '{ not json');
-  assert.deepStrictEqual(extractRefs(f, fs.readFileSync(f, 'utf8')), []);
-});
-
-check('a json file that is not a hooks.json yields nothing', () => {
+check('a json file that is not a hooks.json is not read for references', () => {
+  // Named like one and shaped like one, but the wrong file. Reported as
+  // unreadable rather than clean, so it is never stamped on that basis.
   const f = path.join(plugin, 'hooks', 'settings.json');
   fs.writeFileSync(f, JSON.stringify({ command: 'hooks/demo-hook.js' }));
-  assert.deepStrictEqual(extractRefs(f, fs.readFileSync(f, 'utf8')), []);
+  assert.strictEqual(extractRefs(f, fs.readFileSync(f, 'utf8')), null);
 });
 
 check('codeBlocks reads fenced content and drops the fences', () => {
@@ -209,6 +196,54 @@ check('codeBlocks reads fenced content and drops the fences', () => {
 check('pluginRootFor walks up to the .claude-plugin directory', () => {
   assert.strictEqual(pluginRootFor(skillMd), path.resolve(plugin));
   assert.strictEqual(pluginRootFor(path.join(tmp, 'nowhere.js')), null);
+});
+
+// --- "nothing readable" is not "nothing new" -----------------------------
+//
+// The two look identical downstream: both were an empty array, and an empty
+// array made the hook stamp the entry as confirmed. So editing a file nothing
+// can be read from, a plugin.json or a SKILL.md outside any plugin, marked it
+// current without a single reference having been checked, and each later edit
+// re-stamped it. The entry never reported drift again.
+
+check('a file nothing can be read from reports that, not an empty result', () => {
+  const f = path.join(plugin, '.claude-plugin', 'plugin.json');
+  fs.writeFileSync(f, JSON.stringify({ name: 'demo', version: '1.0.0' }));
+  assert.strictEqual(extractRefs(f, fs.readFileSync(f, 'utf8')), null,
+    'a plugin.json read as "checked, nothing found" would be stamped as confirmed');
+});
+
+check('a markdown file outside any plugin reports that it cannot be read', () => {
+  // The documented default roots are ~/.claude/skills, ~/.claude/hooks and
+  // ~/.claude/commands, so in the default configuration every loose SKILL.md
+  // lands here.
+  const loose = path.join(tmp, 'loose', 'SKILL.md');
+  fs.mkdirSync(path.dirname(loose), { recursive: true });
+  fs.writeFileSync(loose, '---\nname: loose\n---\n\n```bash\nnode scripts/roots.js\n```\n');
+  assert.strictEqual(extractRefs(loose, fs.readFileSync(loose, 'utf8')), null);
+});
+
+check('a malformed hooks.json reports that it could not be read', () => {
+  const root = path.join(tmp, 'plugins', 'malformed2');
+  fs.mkdirSync(path.join(root, '.claude-plugin'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'hooks'), { recursive: true });
+  const f = path.join(root, 'hooks', 'hooks.json');
+  fs.writeFileSync(f, '{ not json');
+  assert.strictEqual(extractRefs(f, fs.readFileSync(f, 'utf8')), null,
+    'an unparseable file was reported as checked and clean');
+});
+
+check('a readable file with no references returns an empty list, not null', () => {
+  // The other side of the same distinction: this one genuinely was checked.
+  const f = path.join(plugin, 'scripts', 'standalone.js');
+  fs.writeFileSync(f, "'use strict';\nmodule.exports = {};\n");
+  assert.deepStrictEqual(extractRefs(f, fs.readFileSync(f, 'utf8')), []);
+});
+
+check('the hook only stamps a file it could actually read', () => {
+  const src = fs.readFileSync(HOOK, 'utf8');
+  assert.ok(/=== null|refs === null|!refs/.test(src),
+    'deps-watch does not distinguish an unreadable file from a clean one before stamping');
 });
 
 // --- comparison against the map ------------------------------------------
@@ -479,6 +514,31 @@ check('the hook is registered on Write and Edit', () => {
 
 check('the hook is executable', () => {
   fs.accessSync(HOOK, fs.constants.X_OK);
+});
+
+check('the README does not claim build-loop ships no hooks', () => {
+  // It said exactly that from 0.3.0, while shipping four. CONTRIBUTING requires
+  // a documented fallback whenever only one runtime can automate something, and
+  // a claim that there is nothing to fall back from satisfies it on paper only.
+  const readme = fs.readFileSync(
+    path.join(__dirname, '..', 'plugins', 'build-loop', 'README.md'), 'utf8');
+  assert.ok(!/this plugin does not use any/.test(readme),
+    'the Codex section still claims the plugin registers no hooks');
+  const shipped = fs.readdirSync(path.join(__dirname, '..', 'plugins', 'build-loop', 'hooks'))
+    .filter((f) => f.endsWith('.js'));
+  for (const hook of shipped) {
+    const name = hook.replace(/\.js$/, '');
+    assert.ok(readme.includes(name), `the Codex section does not say what a Codex user does instead of ${name}`);
+  }
+});
+
+check('the Codex manifest does not advertise the hook-only write', () => {
+  // The stamp cannot happen under Codex at all, so describing it as an
+  // exception to the approval gate promised behaviour that never runs there.
+  const codex = fs.readFileSync(
+    path.join(__dirname, '..', 'plugins', 'build-loop', '.codex-plugin', 'plugin.json'), 'utf8');
+  assert.ok(!/confirmation date stamped/.test(codex),
+    'the Codex description advertises a write that only happens under Claude Code');
 });
 
 check('the hook never writes edges', () => {

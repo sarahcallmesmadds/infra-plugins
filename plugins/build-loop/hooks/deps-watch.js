@@ -50,7 +50,14 @@ readEvent((event) => {
   const hit = entryByPath(deps, filePath);
   if (!hit) return;                              // not something the map covers
 
-  const missing = unrecorded(deps, hit.entry, extractRefs(filePath, content));
+  const refs = extractRefs(filePath, content);
+  // null means nothing could be read from this file, which is not the same as
+  // reading it and finding nothing new. Stamping here would mark the entry
+  // confirmed without a single reference having been checked, and it would
+  // never report drift again. Leave it drifted and say nothing.
+  if (refs === null) return;
+
+  const missing = unrecorded(deps, hit.entry, refs);
 
   if (missing.length === 0) {
     bump(hit.key, new Date().toISOString());

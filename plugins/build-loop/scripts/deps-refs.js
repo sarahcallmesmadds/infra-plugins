@@ -101,7 +101,7 @@ function jsRequires(filePath, content) {
 function markdownScriptRefs(filePath, content) {
   const found = [];
   const pluginRoot = pluginRootFor(filePath);
-  if (!pluginRoot) return found;
+  if (!pluginRoot) return null;          // outside a plugin there is no scripts/ to resolve against
   const siblings = path.dirname(pluginRoot);
   // Captures any `plugins/<name>/` written immediately before the script path,
   // which is how a doc names a script belonging to somebody else. Without it
@@ -144,11 +144,11 @@ function pluginRootFor(filePath) {
 // the file is itself a mapped target, so leaving it out meant every hook
 // registration edit kept producing the drift line this replaces.
 function hooksJsonRefs(filePath, content) {
-  if (path.basename(filePath) !== 'hooks.json') return [];
+  if (path.basename(filePath) !== 'hooks.json') return null;   // a plugin.json carries no references
   const pluginRoot = pluginRootFor(filePath);
-  if (!pluginRoot) return [];
+  if (!pluginRoot) return null;
   let parsed;
-  try { parsed = JSON.parse(content); } catch (_) { return []; }
+  try { parsed = JSON.parse(content); } catch (_) { return null; }   // unparseable is unchecked, not clean
   const found = [];
   const re = /(?:hooks|scripts)\/([\w.-]+)\.js/g;
   const walk = (node) => {
@@ -176,12 +176,24 @@ function hooksJsonRefs(filePath, content) {
   return found;
 }
 
+// Returns an array of resolved paths when the file was genuinely read, and
+// `null` when nothing could be read from it at all.
+//
+// THAT DISTINCTION IS THE POINT. Both used to be an empty array, and an empty
+// array told the hook the file was checked and clean, so it stamped the entry
+// as confirmed. Editing something nothing can be read from, a plugin.json, or a
+// SKILL.md living outside any plugin, which is where the documented default
+// roots put every one of them, marked the entry current without a single
+// reference having been examined. Each later edit re-stamped it, so the entry
+// never reported drift again. An unreadable file has to stay drifted: not
+// knowing is exactly the state the warning exists to report.
 function extractRefs(filePath, content) {
   const ext = path.extname(filePath).toLowerCase();
-  let refs = [];
+  let refs = null;
   if (ext === '.js') refs = jsRequires(filePath, content);
   else if (ext === '.md') refs = markdownScriptRefs(filePath, content);
   else if (ext === '.json') refs = hooksJsonRefs(filePath, content);
+  if (refs === null) return null;
   // A file never depends on itself. require('./x') from x.js is not a thing,
   // but a markdown file naming its own plugin's script it happens to live
   // beside is, and self-edges are not what the map records.
