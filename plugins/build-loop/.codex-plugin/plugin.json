@@ -1,6 +1,6 @@
 {
   "name": "build-loop",
-  "version": "0.8.5",
+  "version": "0.9.0",
   "description": "Keep everything you build honest. Log what a skill, hook, command, plugin, or script got wrong the moment it happens, fix it from the queue with an approval gate, know what else the fix puts at risk, and keep a to-build list that closes itself when the work actually ships.",
   "author": {
     "name": "Sarah Madden",
@@ -22,7 +22,7 @@
   "interface": {
     "displayName": "Build Loop",
     "shortDescription": "The maintenance half of building your own tooling",
-    "longDescription": "Writing a skill or a hook is the easy part. Most of the work is noticing it did the wrong thing, remembering that a week later, and knowing what else breaks when you fix it. Build Loop closes that loop for anything you build: skills, hooks, slash commands, whole plugins, and loose scripts. Log a correction the moment you spot it, work the queue when you have time, and get warned about dependents before you change anything. It also keeps a to-build list of what you meant to build, and offers to close the items you have already shipped rather than letting the list quietly go stale. Every write is gated on your explicit approval, and fixes are committed so they can be reverted cleanly.",
+    "longDescription": "Writing a skill or a hook is the easy part. Most of the work is noticing it did the wrong thing, remembering that a week later, and knowing what else breaks when you fix it. Build Loop closes that loop for anything you build: skills, hooks, slash commands, whole plugins, and loose scripts. Log a correction the moment you spot it, work the queue when you have time, and get warned about dependents before you change anything. It also keeps a to-build list of what you meant to build, and offers to close the items you have already shipped rather than letting the list quietly go stale. Every write is gated on your explicit approval, apart from a confirmation date stamped onto the dependency map after an edit that changed nothing about what depends on what, and fixes are committed so they can be reverted cleanly.",
     "developerName": "Sarah Madden",
     "category": "Engineering",
     "capabilities": [

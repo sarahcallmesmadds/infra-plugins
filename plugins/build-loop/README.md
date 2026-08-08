@@ -156,8 +156,13 @@ a list of skill roots. You do not need to change it.
 
 ## What it will not do
 
-**It never writes without asking.** Every command that changes a file shows you
-a draft or a diff first and stops. There is no silent-write path.
+**It never writes without asking, with one named exception.** Every command that
+changes a file shows you a draft or a diff first and stops. The exception is
+`deps-watch`, which stamps a confirmation date onto a `DEPS.json` entry after an
+edit that added no new dependency. It writes one timestamp field and nothing
+else: it never adds, removes, or edits an edge, because writing an edge means
+writing the sentence explaining why two things are connected, and that is a
+judgment `/audit-deps` still takes to you for approval.
 
 **It never pushes.** Fixes are committed locally. Pushing stays a deliberate
 thing you do.
@@ -169,6 +174,47 @@ answer, not its conclusion.
 **It does not judge quality.** It records what you said was wrong. It has no
 opinion about whether something is any good, and it will not rewrite anything
 you did not complain about.
+
+## Upgrading to 0.9.0
+
+The dependency map now keeps itself current for ordinary edits, and the drift
+warning finally means something.
+
+**What was wrong.** The session brief called a target drifted when its file had
+been modified more recently than the date its entry was confirmed. Any edit
+tripped it: a typo, a comment, a test tweak. On 2026-08-07 it reported 12
+changed targets, and checking each one by hand found that all 12 already
+recorded the right dependencies. The warning had never once been real, so it was
+correctly ignored every session, and the edit that does move a dependency
+produces an identical-looking line.
+
+**What replaces it.** `deps-watch` runs after any Write or Edit. When the file
+is in the map, it reads what the file now actually calls and compares that to
+the recorded edges.
+
+| Outcome | What happens |
+|---|---|
+| Nothing new appeared | The entry is stamped as confirmed, silently. No warning accumulates. |
+| The file calls a mapped target with no recorded edge | It says so in the conversation and does **not** stamp, so the drift stays visible until `/audit-deps` records the edge. |
+
+**It reports one direction only, on purpose.** A call with no recorded edge is
+dangerous, because `/flag-issue` reads the map to decide what a fix puts at
+risk, so a missing edge means a dependent never gets reviewed. The reverse, a
+recorded edge with no visible call, is usually correct: plenty of real
+dependencies are semantic, `/apply-fix` reads what `/flag-issue` wrote and
+neither file names the other. Extraction cannot see those, and reporting them as
+gone would rebuild the false alarms this removes. A clean result means "nothing
+new appeared", never "the map is complete". `/audit-deps` still judges that.
+
+**What counts as a call** is only what is mechanically certain. In a `.js` file,
+a `require()` of a relative path that resolves on disk. In a `.md` file, a
+`scripts/<name>.js` inside a fenced code block, which is how a skill invokes
+one. Prose is excluded deliberately: `queue.js` names `roots.js` in a line
+comment and never calls it, and a text search would have called that a
+dependency, reproducing the exact problem being fixed. That case is pinned in
+`tests/deps-watch.test.js`.
+
+Nothing to do on upgrade. The hook registers itself and stays quiet.
 
 ## Upgrading to 0.8.1
 
