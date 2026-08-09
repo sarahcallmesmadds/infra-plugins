@@ -479,8 +479,117 @@ function recentHandoffs({ home = os.homedir(), limit = 5 } = {}) {
   return out.sort((a, b) => b.mtime - a.mtime).slice(0, limit);
 }
 
+// The repository a directory belongs to, following a worktree back to its main
+// checkout. Two handoffs for the same project can record different directories,
+// because work moves into a worktree, and a plain string compare on those paths
+// says they are unrelated. That is exactly how the AlwaysAllow design system was
+// lost on 2026-08-08: the handoff carrying it recorded
+// `~/Projects/always-allow`, the one that superseded it recorded
+// `/private/tmp/alwaysallow-homepage-atf`, and nothing connected them.
+//
+// Returns null for a directory that is not in a repository, in which case the
+// caller falls back to the realpath of the directory itself.
+function repoRoot(dir) {
+  const { execFileSync } = require('child_process');
+  try {
+    const out = execFileSync(
+      'git', ['-C', dir, 'rev-parse', '--path-format=absolute', '--git-common-dir'],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
+    ).trim();
+    if (!out) return null;
+    return out.replace(/\/\.git\/?$/, '') || null;
+  } catch (_) {
+    return null;
+  }
+}
+
+// The scope key two handoffs must share for one to inherit the other's
+// constraints. Repository if there is one, resolved real path otherwise.
+function scopeKey(dir) {
+  if (!dir) return null;
+  const repo = repoRoot(dir);
+  if (repo) return repo;
+  try { return fs.realpathSync(dir); } catch (_) { return path.resolve(dir); }
+}
+
+// The directory a handoff document says it was written from. Two header spellings
+// are in the wild: `**Working directory:** <path>` from the current template and
+// `**Repository:** \`<path>\`` from handoffs written before it. Both are read,
+// because the older ones are exactly the documents holding constraints nobody has
+// re-recorded yet.
+function handoffDir(text) {
+  const m = text.match(/^\*\*(?:Working directory|Repository|Repo):\*\*\s*`?([^`\n(]+)`?/mi);
+  if (!m) return null;
+  return m[1].trim().replace(/^~(?=\/|$)/, os.homedir());
+}
+
+// Bullets under a `## Constraints still in force` heading.
+//
+// Two kinds of line are dropped rather than returned. A `Retired this session:`
+// bullet is a record that a constraint stopped applying, and reading it back as
+// a live constraint would make retirement impossible: the thing would be carried
+// forward for ever by the very line saying it should not be. And an unfilled
+// template bullet still wrapped in square brackets is not a constraint, so a
+// handoff written from the template without this section being completed
+// contributes nothing instead of contributing the placeholder text.
+function constraintsIn(text) {
+  // The end-of-input assertion is `$(?![\s\S])`, not `\Z`. JavaScript has no
+  // `\Z`, so it parses as a literal Z, and the section then only terminates at
+  // the next `## ` heading. A handoff whose constraints are the last thing in
+  // the file, which is the common shape, matched nothing at all and reported
+  // zero constraints while the section sat there in plain sight. The unit tests
+  // passed throughout because every fixture happened to have a heading after it.
+  const m = text.match(/^##+\s*Constraints still in force\s*$([\s\S]*?)(?=^##\s|$(?![\s\S]))/mi);
+  if (!m) return [];
+  return m[1]
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l.startsWith('- '))
+    .map((l) => l.slice(2).trim())
+    .filter(Boolean)
+    .filter((l) => !/^retired this session\b/i.test(l))
+    .filter((l) => !l.startsWith('['));
+}
+
+// Every constraint recorded by a handoff for the same project as `cwd`, newest
+// document first, deduplicated on the constraint text.
+//
+// Archived handoffs are read. A constraint does not stop applying because the
+// document carrying it went quiet for 30 days, and archiving is driven by
+// mtime rather than by anything retiring it.
+function carriedConstraints({ cwd = process.cwd(), home = os.homedir(), limit = 40 } = {}) {
+  const want = scopeKey(cwd);
+  const rows = recentHandoffs({ home, limit });
+  const out = [];
+  const seen = new Set();
+  const scanned = [];
+
+  for (const r of rows) {
+    let text;
+    try { text = fs.readFileSync(r.path, 'utf8'); } catch (_) { continue; }
+    const dir = handoffDir(text);
+    const key = dir ? scopeKey(dir) : null;
+    const items = constraintsIn(text);
+    scanned.push({ slug: r.slug, path: r.path, dir, matched: Boolean(want && key === want), found: items.length });
+    if (!want || key !== want) continue;
+    for (const c of items) {
+      const norm = c.toLowerCase().replace(/\s+/g, ' ');
+      if (seen.has(norm)) continue;
+      seen.add(norm);
+      out.push({ text: c, from: r.slug, path: r.path });
+    }
+  }
+
+  return { scope: want, constraints: out, scanned };
+}
+
 module.exports = {
   DEFAULT_STALE_DAYS,
+  repoRoot,
+  scopeKey,
+  handoffDir,
+  constraintsIn,
+  carriedConstraints,
   handoffRoot,
   archiveRoot,
   indexPath,

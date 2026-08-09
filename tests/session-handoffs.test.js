@@ -761,5 +761,60 @@ check('the failure ending exists and does not offer a pickup slug', () => {
     'a slug pointing at no file sends the next session looking for nothing');
 });
 
+// ------------------------------------------------- carrying constraints ----
+// Added 2026-08-09, with the defect each one exists to catch.
+
+check('a constraints section at the end of a file is read', () => {
+  // The one that shipped broken. The terminator was written `\Z`, which
+  // JavaScript has no such assertion for, so it matched a literal Z and the
+  // section only ended at the next `## ` heading. Constraints written last in
+  // the document, which is where they usually land, read back as none at all,
+  // and the command cheerfully reported zero. Every fixture written by hand had
+  // a heading afterwards, so the unit tests agreed with it.
+  const got = handoffs.constraintsIn('# H\n\n## Constraints still in force\n- only one\n');
+  assert.deepStrictEqual(got, ['only one']);
+});
+
+check('a retired constraint is not carried forward as a live one', () => {
+  const got = handoffs.constraintsIn(
+    '## Constraints still in force\n- live one\n- Retired this session: old one, because reasons.\n'
+  );
+  assert.deepStrictEqual(got, ['live one'],
+    'a line recording that a constraint was dropped would otherwise keep it alive for ever');
+});
+
+check('an unfilled template bullet is not a constraint', () => {
+  const got = handoffs.constraintsIn(
+    '## Constraints still in force\n- [What governs future work, and the handoff it came from.]\n'
+  );
+  assert.deepStrictEqual(got, []);
+});
+
+check('constraints stop at the next heading', () => {
+  const got = handoffs.constraintsIn(
+    '## Constraints still in force\n- mine\n\n## Decisions made\n- not mine\n'
+  );
+  assert.deepStrictEqual(got, ['mine']);
+});
+
+check('a worktree shares a scope with its main checkout', () => {
+  // The mismatch that hid the AlwaysAllow design system: one handoff recorded
+  // the repository, the next recorded a worktree of it, and a path compare said
+  // they were unrelated projects.
+  const root = path.join(__dirname, '..');
+  assert.strictEqual(handoffs.scopeKey(root), handoffs.scopeKey(path.join(root, 'plugins')),
+    'two directories in one repository must resolve to the same scope');
+});
+
+check('both handoff header spellings give up the directory', () => {
+  assert.strictEqual(handoffs.handoffDir('**Working directory:** /tmp/x'), '/tmp/x');
+  assert.strictEqual(handoffs.handoffDir('**Repository:** `/tmp/y`'), '/tmp/y',
+    'handoffs written before the current template say Repository, and those are the old ones holding constraints');
+});
+
+check('a handoff with no constraints section contributes nothing', () => {
+  assert.deepStrictEqual(handoffs.constraintsIn('# H\n\n## Decisions made\n- a\n'), []);
+});
+
 process.stdout.write(`\n${failures === 0 ? 'all passed' : `${failures} failed`}\n`);
 process.exit(failures === 0 ? 0 : 1);

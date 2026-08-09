@@ -10,6 +10,7 @@
 //   cli.js forget <slug>         drop an index entry, leaving the document
 //   cli.js recent                the newest handoffs, for the pickup menu
 //   cli.js target [topic]        where wrap should write from here
+//   cli.js constraints           what earlier handoffs say is still binding here
 //   cli.js memory                the memory directory for this project, if any
 //   cli.js memory-check          is that directory still worth loading
 //   cli.js mcp-probe             transition-only core-tools monitor
@@ -258,6 +259,36 @@ const COMMANDS = {
       const age = Math.round((Date.now() - r.mtime) / 86400000);
       return `  ${r.slug}${r.archived ? ' (archived)' : ''}  ${age}d  ${r.path}`;
     }));
+  },
+
+  // What earlier handoffs for this same project say is still binding.
+  //
+  // Wrap calls this before writing, so a constraint recorded once keeps being
+  // recorded until something retires it on purpose. Without it a constraint
+  // survives exactly as long as nobody starts a new thread of work: the
+  // AlwaysAllow design system was named in the 2026-08-05 handoff, the
+  // 2026-08-08 handoff for the same repository never mentioned it, and every
+  // pickup after that began with the governing document invisible.
+  //
+  // Scope is the repository rather than the directory, so a worktree inherits
+  // from its main checkout. That specific mismatch is what hid it.
+  constraints(opts) {
+    const r = handoffs.carriedConstraints({ cwd: opts.cwd, home: opts.home });
+    if (opts.json) return emit(opts, r, []);
+    if (!r.scope) return emit(opts, {}, ['Not in a project, so nothing to inherit.']);
+    if (!r.constraints.length) {
+      return emit(opts, {}, [
+        `No constraints recorded yet for ${r.scope}.`,
+        '  Read the handoffs it scanned before concluding there are none:',
+        ...r.scanned.map((s) => `    ${s.matched ? '*' : ' '} ${s.slug}  (${s.found} found)`),
+        '  A "*" is a handoff for this project. If one of those carries a binding',
+        '  constraint in prose, record it under "## Constraints still in force".',
+      ]);
+    }
+    emit(opts, {}, [
+      `${r.constraints.length} constraint${r.constraints.length === 1 ? '' : 's'} still in force for ${r.scope}:`,
+      ...r.constraints.map((c) => `  - ${c.text}\n      (from ${c.from})`),
+    ]);
   },
 
   // Where wrap should write, and a note of it so pickup can find it later.

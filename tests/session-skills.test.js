@@ -137,6 +137,60 @@ check('wrap checks the handoff exists after writing it', () => {
   );
 });
 
+// Added 2026-08-09. The AlwaysAllow design system was approved on 08-05, named
+// in that day's handoff with its full path, and mentioned zero times by the
+// 08-08 handoff that superseded it. Every pickup after that began without it,
+// and a homepage was built and rejected as a result. Nothing was broken: wrap
+// recorded state, next actions and traps exactly as instructed, and constraints
+// were simply not a category it carried.
+//
+// These pin the three parts that make a constraint survive: gathering it,
+// giving it somewhere to live, and making removal say so out loud. The third is
+// the load-bearing one. Without it a constraint can leave by omission, which is
+// indistinguishable from being forgotten and is precisely what happened.
+
+check('wrap gathers constraints from earlier handoffs before writing', () => {
+  const text = skill('wrap');
+  const gatherAt = text.indexOf('cli.js constraints');
+  const writeAt = text.indexOf('## Step 2');
+  assert.ok(gatherAt !== -1, 'wrap no longer runs `cli.js constraints`, so nothing carries a constraint past the session that set it');
+  assert.ok(
+    gatherAt < writeAt,
+    'wrap gathers constraints after the write step, so the handoff is composed before it knows what is binding'
+  );
+});
+
+check('the handoff template has somewhere for constraints to live', () => {
+  const text = skill('wrap');
+  const template = fences(text).find((f) => f.info === 'markdown' && f.body.includes('# Session Handoff'));
+  assert.ok(template, 'the handoff template is gone');
+  // The exact heading, because cli.js constraints matches on it. Reword it here
+  // and the command silently reads back nothing for ever.
+  assert.match(
+    template.body,
+    /^##\s*Constraints still in force\s*$/m,
+    'the template has no "Constraints still in force" heading, which is the string cli.js constraints matches on'
+  );
+});
+
+check('wrap requires a dropped constraint to say it was dropped', () => {
+  const text = skill('wrap');
+  assert.match(
+    text,
+    /silence is not retirement/i,
+    'wrap no longer says that dropping a constraint requires saying so, so one can leave by omission again'
+  );
+});
+
+check('wrap forbids backfilling constraints into old handoffs', () => {
+  const text = skill('wrap');
+  assert.match(
+    text,
+    /never edit an old handoff/i,
+    'wrap no longer forbids editing earlier handoffs, which rewrites the record of what was true when they were written'
+  );
+});
+
 check('wrap says the index is not evidence the file exists', () => {
   const text = skill('wrap');
   // The reason the check exists. Without it the step reads as a formality and
