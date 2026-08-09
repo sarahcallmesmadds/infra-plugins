@@ -157,6 +157,35 @@ check('it counts the to-build list when asked', () => {
   assert.strictEqual(count(home, ['--list', 'to-build']), '2 open, 0 closed');
 });
 
+check('THE SECOND REGRESSION: Built and Dropped close a to-build item', () => {
+  // The first version of this command asked the queue's question of both
+  // lists. `CLOSED_ON_DISK` is `Resolved` and `Won't Fix`, neither of which
+  // appears in the to-build enum, so every finished item fell through to the
+  // open tally and the count climbed exactly like the file count it replaced.
+  // Against the real list it reported 38 open where 11 were open.
+  const home = sandbox();
+  put(home, 'to-build', 'a', 'Open');
+  put(home, 'to-build', 'b', 'Built');
+  put(home, 'to-build', 'c', 'Built');
+  put(home, 'to-build', 'd', 'Dropped');
+  assert.strictEqual(count(home, ['--list', 'to-build']), '1 open, 3 closed');
+});
+
+check('one list closed word does not close an entry on the other list', () => {
+  // The two enums share no closed value, so neither vocabulary may leak into
+  // the other. A status that is not one of a list's own closed words is not
+  // finished work on that list, whatever it means elsewhere.
+  const onToBuild = sandbox();
+  put(onToBuild, 'to-build', 'a', 'Resolved');
+  assert.strictEqual(count(onToBuild, ['--list', 'to-build']), '1 open, 0 closed',
+    'a queue closed word closed a to-build item');
+
+  const onQueue = sandbox();
+  put(onQueue, 'queue', 'a', 'Built');
+  assert.strictEqual(count(onQueue), '1 open, 0 closed',
+    'a to-build closed word closed a queue entry');
+});
+
 check('an unknown list is refused rather than counted as empty', () => {
   const home = sandbox();
   let threw = false;

@@ -79,14 +79,23 @@ function dirFor(name) {
 // that readers still take `fix attempted / unresolved` because entries written
 // before 0.3.1 carry it, so a lint that called it invalid would report correct
 // history as corruption.
+// `closed` and `inFlight` are per list for the same reason `write` is: the two
+// enums share no closed value at all. Reading the queue's words against the
+// to-build list counted `Built` and `Dropped` as open, so that count climbed
+// exactly like the file count it was written to replace, reporting 38 open
+// against 11. One list's vocabulary is never the other's.
 const STATUSES = new Map([
   ['queue', {
     write: ['Open', 'In Progress', 'Resolved', "Won't Fix", 'fix applied, watching'],
     retired: ['fix attempted / unresolved'],
+    closed: ['Resolved', "Won't Fix"],
+    inFlight: ['fix applied, watching'],
   }],
   ['to-build', {
     write: ['Open', 'In Progress', 'Built', 'Dropped'],
     retired: [],
+    closed: ['Built', 'Dropped'],
+    inFlight: [],
   }],
 ]);
 
@@ -116,11 +125,22 @@ function loosely(value) {
 // The retired `fix attempted / unresolved` is deliberately absent. Despite
 // being retired it describes an unresolved entry, so moving it to either
 // closed status is a real first closure and has to write a resolution.
-const CLOSED_ON_DISK = ['Resolved', "Won't Fix"];
+// Derived rather than written out again, so the queue has one list of closed
+// words instead of two that can drift apart.
+const CLOSED_ON_DISK = STATUSES.get('queue').closed;
 
 function alreadyClosed(status) {
   if (status === undefined || status === null) return false;
   return CLOSED_ON_DISK.some((known) => loosely(known) === loosely(status));
+}
+
+// The same question asked of whichever list is being read. `alreadyClosed`
+// above is deliberately left queue-only: its other caller is already gated on
+// `listNameFor(dir) === 'queue'` and it governs the resolution rule, which is a
+// queue concept with no to-build equivalent.
+function statusIn(spec, key, status) {
+  if (status === undefined || status === null) return false;
+  return (spec[key] || []).some((known) => loosely(known) === loosely(status));
 }
 
 // `JSON.parse` accepts `null`, `3`, `"x"` and `[]` as valid JSON, and none of
@@ -957,6 +977,7 @@ function parseArgs(argv) {
 // closed one, and quietly picking a side is how the first version went wrong.
 function cmdCount(args) {
   const dir = dirFor(args.list);
+  const spec = statusesFor(args.list);
   let open = 0;
   let watching = 0;
   let closed = 0;
@@ -975,15 +996,17 @@ function cmdCount(args) {
       unreadable += 1;
       continue;
     }
-    if (alreadyClosed(entry.status)) {
+    if (statusIn(spec, 'closed', entry.status)) {
       closed += 1;
       continue;
     }
     // `fix applied, watching` is neither. Folding it into the open count made
     // the total disagree with what the user counts as open by exactly the
     // number of fixes in flight, and folding it into closed would hide work
-    // that still has to be confirmed. It gets its own word.
-    if (loosely(entry.status) === loosely('fix applied, watching')) {
+    // that still has to be confirmed. It gets its own word. The to-build list
+    // has no such status, and asking it against that list simply matches
+    // nothing rather than needing a branch here.
+    if (statusIn(spec, 'inFlight', entry.status)) {
       watching += 1;
       continue;
     }
