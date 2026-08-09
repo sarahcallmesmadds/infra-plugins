@@ -79,14 +79,23 @@ function dirFor(name) {
 // that readers still take `fix attempted / unresolved` because entries written
 // before 0.3.1 carry it, so a lint that called it invalid would report correct
 // history as corruption.
+// `closed` and `inFlight` are per list for the same reason `write` is: the two
+// enums share no closed value at all. Reading the queue's words against the
+// to-build list counted `Built` and `Dropped` as open, so that count climbed
+// exactly like the file count it was written to replace, reporting 38 open
+// against 11. One list's vocabulary is never the other's.
 const STATUSES = new Map([
   ['queue', {
     write: ['Open', 'In Progress', 'Resolved', "Won't Fix", 'fix applied, watching'],
     retired: ['fix attempted / unresolved'],
+    closed: ['Resolved', "Won't Fix"],
+    inFlight: ['fix applied, watching'],
   }],
   ['to-build', {
     write: ['Open', 'In Progress', 'Built', 'Dropped'],
     retired: [],
+    closed: ['Built', 'Dropped'],
+    inFlight: [],
   }],
 ]);
 
@@ -116,11 +125,22 @@ function loosely(value) {
 // The retired `fix attempted / unresolved` is deliberately absent. Despite
 // being retired it describes an unresolved entry, so moving it to either
 // closed status is a real first closure and has to write a resolution.
-const CLOSED_ON_DISK = ['Resolved', "Won't Fix"];
+// Derived rather than written out again, so the queue has one list of closed
+// words instead of two that can drift apart.
+const CLOSED_ON_DISK = STATUSES.get('queue').closed;
 
 function alreadyClosed(status) {
   if (status === undefined || status === null) return false;
   return CLOSED_ON_DISK.some((known) => loosely(known) === loosely(status));
+}
+
+// The same question asked of whichever list is being read. `alreadyClosed`
+// above is deliberately left queue-only: its other caller is already gated on
+// `listNameFor(dir) === 'queue'` and it governs the resolution rule, which is a
+// queue concept with no to-build equivalent.
+function statusIn(spec, key, status) {
+  if (status === undefined || status === null) return false;
+  return (spec[key] || []).some((known) => loosely(known) === loosely(status));
 }
 
 // `JSON.parse` accepts `null`, `3`, `"x"` and `[]` as valid JSON, and none of
@@ -941,6 +961,74 @@ function parseArgs(argv) {
 //
 // Exit 0 clean, 3 when something is off-enum, matching roots.js in using a
 // distinct code rather than 1, so a caller can tell a finding from a crash.
+// How many entries are actually live, counted by reading each status.
+//
+// It exists because every reader before it counted files instead. `ls
+// queue/*.json | wc -l` was what flag-issue printed as "Queue now has N open
+// items", and a closed entry stays in the same directory with its status
+// changed, so that number only ever climbed. On 2026-08-09 it reported 85 open
+// against 19 that were open, the other 66 being finished work. A queue with
+// seven live bugs in it read as one nobody had touched in months, which is the
+// opposite of what a count is for, and it is a number the user cannot check
+// without opening 85 files.
+//
+// Unreadable files are reported separately rather than folded into either
+// total. A file that cannot be parsed is not evidence of an open entry or of a
+// closed one, and quietly picking a side is how the first version went wrong.
+function cmdCount(args) {
+  const dir = dirFor(args.list);
+  const spec = statusesFor(args.list);
+  let open = 0;
+  let watching = 0;
+  let closed = 0;
+  let unreadable = 0;
+  const openByType = new Map();
+
+  for (const file of listFiles(dir)) {
+    let entry;
+    try {
+      entry = JSON.parse(fs.readFileSync(path.join(dir, file), 'utf8'));
+    } catch {
+      unreadable += 1;
+      continue;
+    }
+    if (!isEntry(entry)) {
+      unreadable += 1;
+      continue;
+    }
+    if (statusIn(spec, 'closed', entry.status)) {
+      closed += 1;
+      continue;
+    }
+    // `fix applied, watching` is neither. Folding it into the open count made
+    // the total disagree with what the user counts as open by exactly the
+    // number of fixes in flight, and folding it into closed would hide work
+    // that still has to be confirmed. It gets its own word. The to-build list
+    // has no such status, and asking it against that list simply matches
+    // nothing rather than needing a branch here.
+    if (statusIn(spec, 'inFlight', entry.status)) {
+      watching += 1;
+      continue;
+    }
+    open += 1;
+    const type = entry.type || 'primary';
+    openByType.set(type, (openByType.get(type) || 0) + 1);
+  }
+
+  const parts = [...openByType.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([type, n]) => `${n} ${type}`);
+  const breakdown = parts.length > 1 ? ` (${parts.join(', ')})` : '';
+  const segments = [`${open} open${breakdown}`];
+  if (watching > 0) segments.push(`${watching} watching`);
+  segments.push(`${closed} closed`);
+  process.stdout.write(`${segments.join(', ')}\n`);
+  if (unreadable > 0) {
+    process.stdout.write(`${unreadable} could not be read and are in neither total.\n`);
+  }
+  return 0;
+}
+
 function cmdLint(args) {
   const dir = dirFor(args.list);
   const list = args.list === undefined ? 'queue' : String(args.list);
@@ -1007,7 +1095,7 @@ function cmdLint(args) {
 }
 
 const COMMANDS = {
-  update: cmdUpdate, create: cmdCreate, show: cmdShow, lint: cmdLint,
+  update: cmdUpdate, create: cmdCreate, show: cmdShow, lint: cmdLint, count: cmdCount,
 };
 
 function main(argv) {
@@ -1022,6 +1110,7 @@ function main(argv) {
       '              [--json key=FILE] [--field key=value]',
       '  create <file.json> [--dedup-window MINUTES]    add one, dedup under the same lock',
       '  lint                                           report statuses no reader matches',
+      '  count  [--list L]                              how many are open, by reading statuses',
       '',
       '  A status is checked against the list it is written to. Exit 3 from lint',
       '  means something on disk is off-enum.',

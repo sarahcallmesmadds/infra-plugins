@@ -296,8 +296,12 @@ Then:
    The old flow could not reach this state: the dedup decision happened before
    the single Write, so there was no way to be refused after deciding to write.
    `create` can refuse, so the branch has to exist.
-6. Count open items: `ls ~/.claude/build-loop/queue/*.json 2>/dev/null | wc -l`
-7. Do NOT confirm here — proceed directly to Step 4b (dep-review flagging). Confirmation happens in Step 4c after flagging completes.
+6. Do NOT count here, and do NOT confirm here. Go straight to Step 4b. The
+   count is taken in Step 4c, after the dep-review entries exist.
+
+   It used to be taken at this point, and every dep-review written afterwards
+   made it wrong by one. The confirmation then reported a total and, in the next
+   breath, announced N entries the total did not include.
 
 ---
 
@@ -426,14 +430,38 @@ So fold `P` in wherever the value is an identifier, and leave it out wherever th
 
 ### Step 4c — Confirmation message
 
-The confirmation message from the current Step 4 is REPLACED. Instead of "Logged to {filename}. Queue now has N open items.", use this rule:
+The confirmation message from the current Step 4 is REPLACED. Instead of "Logged to {filename}. Queue now has N open items.", use this rule.
+
+**Take the count now, after every write above has landed:**
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/queue.js" count
+```
+
+**Count statuses, never files.** This used to be `ls queue/*.json | wc -l`,
+which counts every entry ever written. A resolved entry stays in the same
+directory with its status changed, so that number only ever grows: on
+2026-08-09 it reported 85 open items against 19 that were actually open, the
+other 66 being resolved or closed. Reporting it as "open" made a queue with
+seven live bugs in it look abandoned, which is the opposite of what the number
+is for.
+
+**And take it here rather than before Step 4b.** It used to run right after the
+primary entry was written, so every dep-review written afterwards left it short
+by one. The message then gave a total and immediately announced N entries that
+total did not include, which is a plainer contradiction than the one this
+replaced, because both halves are on screen at once.
+
+`{count}` is the line that command printed, repeated as it came. **Do not
+restate part of it as a total of your own.** The fault this replaced was a
+number presented as "open items" that was not one, and quoting half of a correct
+line reintroduces it in a smaller way.
 
 - If `dep_reviews_written == 0`:
-  > "Logged to `{filename}`. Queue now has {N} open items."
-  (Same as Phase 1 — no change.)
+  > "Logged to `{filename}`. Queue: {count}."
 
 - If `dep_reviews_written > 0`:
-  > "Logged to `{filename}`. Queue now has {N} open items."
+  > "Logged to `{filename}`. Queue: {count}."
   > "Also flagged {dep_reviews_written} dep-review {entr(y|ies)}: {comma-separated target names}."
 
 Pluralization: use "entry" when `dep_reviews_written == 1`, "entries" otherwise.

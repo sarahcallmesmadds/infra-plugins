@@ -255,11 +255,22 @@ Then:
 
    The judgment half of Step A2, whether two differently worded items describe
    the same work, stays where it is. Nothing in a script can do it.
-5. Count what is open: read every file in the directory and count those with status `Open` or `In Progress`.
+5. Count what is open, after the write above has landed:
 
-Confirm:
+   ```bash
+   node "${CLAUDE_PLUGIN_ROOT}/scripts/queue.js" count --list to-build
+   ```
 
-> "Added to the to-build list. {N} open items. Run `/to-build` to see them, or `/built-check` to close the ones you have already built."
+   This used to be "read every file and count those with status `Open` or `In
+   Progress`", which is the right question asked by hand. The command asks it
+   in the one place both lists ask it, and it knows that `Built` and `Dropped`
+   are what finished looks like here while `Resolved` and `Won't Fix` are what
+   it looks like in the queue. Two hand-written definitions of open is how the
+   two lists come to disagree about the word.
+
+Confirm, quoting the line it printed as it came:
+
+> "Added to the to-build list. {count}. Run `/to-build` to see them, or `/built-check` to close the ones you have already built."
 
 ---
 
