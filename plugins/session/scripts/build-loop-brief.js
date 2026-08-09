@@ -152,8 +152,17 @@ function depsLine(root, { home, deadline = Infinity } = {}) {
     let stat;
     try { stat = fs.statSync(targetPath); }
     catch (_) { missing += 1; continue; }
-    const recorded = Date.parse(target.last_updated || '');
-    if (Number.isFinite(recorded) && stat.mtimeMs > recorded) changed += 1;
+    // `last_auto_checked` wins when it is present and later. deps-watch writes
+    // it after an edit that added no new dependency, and it is deliberately a
+    // different field from `last_updated`: that one is the human and audit
+    // review date, and /audit-deps compares it against the mtime to decide an
+    // entry needs its edges re-inferred. Reading only `last_updated` here left
+    // this line firing on every ordinary edit, which is what made it noise.
+    const stamps = [target.last_auto_checked, target.last_updated]
+      .map((value) => Date.parse(value || ''))
+      .filter(Number.isFinite);
+    if (!stamps.length) continue;
+    if (stat.mtimeMs > Math.max(...stamps)) changed += 1;
   }
 
   if (!missing && !changed) {

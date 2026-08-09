@@ -167,6 +167,8 @@ Classify everything into one of three buckets:
 **ORPHANED** — in `existing` but not on disk. These may have been renamed or deleted.
 **EXISTING** — in both. Check whether the file mtime from Step 1 is newer than the entry's `last_updated` field. Parse both as timestamps and compare. If newer, the entry is STALE and may need `depends_on` re-inferred.
 
+**Compare against `last_updated`, never `last_auto_checked`.** The second is written by the `deps-watch` hook after an ordinary edit, and it means only that every reference the file mechanically makes was already recorded. It cannot see a semantic edge, one thing reading a file another writes, which is the kind this map exists to catch. Treating it as a review date would empty this bucket of exactly the entries that most need looking at. Carry the field through unchanged on write; it is not yours to set.
+
 If `$ARGUMENTS` is non-empty, filter all three buckets to entries whose name or composite key matches, so `/audit-deps daily-brief` reviews one thing without scanning every change.
 
 ## Step 4 — For each MISSING entry, infer its depends_on
@@ -253,6 +255,12 @@ After applying the approved additions/removals/changes:
 ## Step 7 — Atomic write (prevents corruption)
 
 This is the critical discipline — if Claude is killed during a Write, DEPS.json must NOT be left half-written.
+
+0. Set `$schema_version` to the version SCHEMA-DEPS.md declares as current, and set the top-level `last_updated` to now.
+
+   This skill is the only thing that rewrites the whole map, so it is the only place the version can be stamped. Without this step the field was documentation-only: the schema said 4 while every map on disk said 3, and the schema's own rule to bump it in `DEPS.json` in the same commit could not be satisfied by any shipped code path. Readers here are version-agnostic, so this is not urgent, but a version field nothing maintains is worse than none: it looks like a migration signal and never moves.
+
+   Never write `last_auto_checked` here. That one belongs to the hook.
 
 1. Build the final JSON string (2-space indent).
 2. Write to `~/.claude/build-loop/DEPS.json.tmp` using the Write tool.

@@ -22,7 +22,7 @@ There is exactly ONE `DEPS.json` for the whole build loop, not one per repositor
 
 ```json
 {
-  "$schema_version": 3,
+  "$schema_version": 4,
   "last_updated": "2026-07-27T14:30:00.000Z",
   "targets": {
     "personal:capture": {  },
@@ -36,7 +36,7 @@ Top-level fields:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `$schema_version` | int | Currently 3. Increment whenever a field is added, renamed, or removed. |
+| `$schema_version` | int | Currently 4. Increment whenever a field is added, renamed, or removed. |
 | `last_updated` | string | ISO-8601 UTC timestamp of the last write to this file. |
 | `targets` | object | Keyed by composite key, see below. One entry per thing found in any configured root. Called `skills` before v2. |
 
@@ -163,7 +163,8 @@ The general shape, outside a `plugin-repo` root:
 | `depends_on` | array | yes | Things this one depends on. Empty array if none. | See Dependency Edge Format below. |
 | `dependents` | array | yes | Things that depend on this one. Empty array if none. | See Dependency Edge Format below. |
 | `confidence` | string | yes | Overall confidence in the accuracy of this entry's map. | `high`, `medium`, or `low`. See Confidence Levels below. |
-| `last_updated` | string | yes | ISO-8601 UTC timestamp of the last time this entry was reviewed or updated. | |
+| `last_updated` | string | yes | ISO-8601 UTC timestamp of the last time this entry was **reviewed by a person or by `/audit-deps`**. | Never written by an automatic check. See `last_auto_checked`. |
+| `last_auto_checked` | string | no | ISO-8601 UTC timestamp of the last time `deps-watch` read the file and found every reference it makes already recorded. | Added in v4. Absent until the file is next edited. |
 | `notes` | string | no | Free-text authoring quirks. | Use when the disk name differs from the frontmatter name, or when a dependency was uncertain. Not a structured field. |
 
 ---
@@ -245,6 +246,34 @@ When something depends on infrastructure, record it in `notes` as free text. Nev
 
 ---
 
+## Two Dates, and Why They Are Not One
+
+`last_updated` is a review date. `last_auto_checked` is a machine check. They
+answer different questions and a reader that conflates them goes wrong in a way
+nothing reports.
+
+| | `last_updated` | `last_auto_checked` |
+|---|---|---|
+| Written by | a person, or `/audit-deps` | `deps-watch`, unattended |
+| Means | these edges were judged correct | every reference this file makes is already recorded |
+| Read by | `/audit-deps`, to decide an entry is STALE and may need `depends_on` re-inferred | the session brief, to decide whether to raise a drift warning |
+
+The distinction is not stylistic. `deps-watch` can only see mechanical
+references: a `require()`, a fenced `scripts/<name>.js`, a `hooks.json`
+command. A semantic edge, one thing reading a file another writes, is invisible
+to it and is exactly the kind the Coverage Rule says gets missed most often.
+
+So an automatic check saying "nothing new appeared" is a much weaker statement
+than a review saying "these edges are right". Writing the weaker one into the
+stronger one's field means an edit that adds a semantic edge leaves the entry
+looking freshly reviewed, it never enters the STALE bucket, and the edge is
+never recorded. Nothing surfaces that, because the field says the entry is
+current and the field is what gets asked.
+
+**An automatic check never writes the top-level `last_updated` either.** That
+field records the last write to the map, and readers that present it as "when
+the map was last audited" would otherwise be reading a machine stamp.
+
 ## Confidence Levels
 
 | Level | Meaning |
@@ -267,4 +296,5 @@ Everything found in a configured root gets an entry, including standalone things
 |---------|------|--------|
 | v1 | 2026-04-23 | Initial schema. One map across all repositories, composite keys. |
 | v2 | 2026-07-27 | The map covers anything you build, not only skills. Top-level `skills` becomes `targets`, entry and edge field `skill` becomes `target`, and `kind` is added to both. Readers map the v1 names at read time, so a v1 file keeps working until `/audit-deps` next writes. |
+| v4 | 2026-08-08 | `last_auto_checked` added, so an unattended check stops overwriting a review date. `deps-watch` was stamping `last_updated` after any edit that added no new dependency, and that is the field `/audit-deps` compares against the file mtime to decide an entry is STALE. Since extraction cannot see a semantic edge, an edit that added one left the entry looking freshly reviewed and it never came up for review again. Readers of older maps need no change: the field is simply absent. |
 | v3 | 2026-07-27 | Under a `plugin-repo` root the name portion of the key becomes `{plugin}/{name}`. One root holding four plugins was producing `plugins:cli` for three different files, so later entries silently overwrote earlier ones and a fix flagged the wrong plugin's dependents. Lookups fall back to a unique `/{target}` suffix match, so a pre-v3 map keeps resolving, and report an ambiguous match instead of choosing. |

@@ -156,8 +156,14 @@ a list of skill roots. You do not need to change it.
 
 ## What it will not do
 
-**It never writes without asking.** Every command that changes a file shows you
-a draft or a diff first and stops. There is no silent-write path.
+**It never writes without asking, with one named exception.** Every command that
+changes a file shows you a draft or a diff first and stops. The exception is
+`deps-watch`, which stamps `last_auto_checked` onto a `DEPS.json` entry after an
+edit that added no new dependency. It writes that one field and nothing else: it
+never adds, removes, or edits an edge, never touches the `last_updated` review
+date, and abandons its own write rather than overwrite a change you approved.
+Writing an edge means writing the sentence explaining why two things are
+connected, and that is a judgment `/audit-deps` still takes to you for approval.
 
 **It never pushes.** Fixes are committed locally. Pushing stays a deliberate
 thing you do.
@@ -169,6 +175,104 @@ answer, not its conclusion.
 **It does not judge quality.** It records what you said was wrong. It has no
 opinion about whether something is any good, and it will not rewrite anything
 you did not complain about.
+
+## Upgrading to 0.9.0
+
+The dependency map now keeps itself current for ordinary edits, and the drift
+warning finally means something.
+
+**What was wrong.** The session brief called a target drifted when its file had
+been modified more recently than the date its entry was confirmed. Any edit
+tripped it: a typo, a comment, a test tweak. On 2026-08-07 it reported 12
+changed targets, and checking each one by hand found that all 12 already
+recorded the right dependencies. The warning had never once been real, so it was
+correctly ignored every session, and the edit that does move a dependency
+produces an identical-looking line.
+
+**What replaces it.** `deps-watch` runs after any Write or Edit. When the file
+is in the map, it reads what the file now actually calls and compares that to
+the recorded edges.
+
+| Outcome | What happens |
+|---|---|
+| Nothing new appeared | `last_auto_checked` is stamped, silently. No warning accumulates. |
+| The file calls a mapped target with no recorded edge | It says so in the conversation and does **not** stamp, so the drift stays visible until `/audit-deps` records the edge. |
+
+**Two dates, kept apart.** The hook writes `last_auto_checked` and never
+`last_updated`. `last_updated` is the review date, and `/audit-deps` compares it
+against the file's modification time to decide an entry is stale and may need
+its dependencies worked out again. Writing a machine check into that field
+would have emptied that bucket: the hook cannot see a dependency that no call
+expresses, one thing reading a file another writes, so an edit adding one would
+have left the entry looking freshly reviewed and it would never have come up
+again. The map's own top-level `last_updated` is left alone for the same reason.
+
+**It yields rather than overwrites.** The lock only stops another hook.
+`/audit-deps` rewrites the whole map through the Write tool and takes no lock at
+all, so if edges you just approved land while the hook is mid-write, the hook
+checks and abandons its stamp instead of renaming over them. Losing a stamp
+costs one stale line until the next edit. Losing approved edges costs the map.
+
+**It reports one direction only, on purpose.** A call with no recorded edge is
+dangerous, because `/flag-issue` reads the map to decide what a fix puts at
+risk, so a missing edge means a dependent never gets reviewed. The reverse, a
+recorded edge with no visible call, is usually correct: plenty of real
+dependencies are semantic, `/apply-fix` reads what `/flag-issue` wrote and
+neither file names the other. Extraction cannot see those, and reporting them as
+gone would rebuild the false alarms this removes. A clean result means "nothing
+new appeared", never "the map is complete". `/audit-deps` still judges that.
+
+**What counts as a call** is only what is mechanically certain:
+
+| File | What is read |
+|---|---|
+| `.js` | A `require()` of a relative path that resolves on disk, and a `path.join()` or `path.resolve()` built entirely from string literals that resolves on disk. The second form is how a test suite names its subject: it spawns the thing it tests rather than importing it, so `const HOOK = path.join(__dirname, '..', 'plugins', 'guardrails', 'hooks', 'bash-guard.js')` is the only written record of the dependency. The first segment has to be `__dirname` or a const already resolved the same way, and every later segment has to be a literal, so a fixture path starting at `os.tmpdir()` is dropped rather than guessed at. |
+| `.md` | A `scripts/<name>.js` inside a fenced code block, which is how a skill invokes one. A `plugins/<other>/` written in front of it resolves to that plugin, since `hook-io.js`, `cli.js`, `config.js` and `patterns.js` each exist in more than one plugin here. |
+| `hooks.json` | The `hooks/` and `scripts/` paths named in each `command`. |
+
+Prose is excluded deliberately. `queue.js` names `roots.js` in a line comment
+and never calls it, and a text search would have called that a dependency,
+reproducing the exact problem being fixed. That case is pinned in
+`tests/deps-watch.test.js`.
+
+**Where the old warning can still appear, deliberately.** The hook stamps only
+a file it could actually read. Three cases stay drifted on purpose, because in
+each of them nothing was checked and saying otherwise would be a lie the map
+cannot recover from:
+
+- A mapped target nothing can be read from, which today means the six
+  `plugin.json` manifests, and any `SKILL.md` living outside a plugin, which is
+  where the default roots put every one of them.
+- A `hooks.json` that will not parse. Unreadable is not clean.
+- Any edit made outside Write and Edit: a shell `sed`, a `git checkout`, an
+  external editor.
+
+There is a fourth case that does not stay drifted, and it is worth naming rather
+than leaving to be discovered. A `.js` file whose references are genuinely
+computed, a path assembled at run time from a variable rather than from
+literals, reads as clean and gets stamped. `plugins/session/statusline/install.js`
+is the one example here: it depends on `statusline.js` by generating a shim that
+requires it, and no path in its own source names the file. That is the same
+semantic dependency extraction has never been able to see, so it is bounded by
+the paragraph above rather than by this list. It is called out because the
+literal-path reading added in 0.9.0 closes the mechanical cases and could
+otherwise be mistaken for closing all of them.
+
+The first two are the difference between "checked, nothing new" and "could not
+check". Collapsing them is what made an early version of this hook mark files as
+verified that it had never opened. The third is a real gap, and retiring the
+brief's mtime comparison outright belongs with the Session plugin.
+
+**This release is Claude Code only.** See the Codex section below, which
+explains why that costs a Codex user nothing rather than leaving them worse off.
+
+**`DEPS.json` moves to schema v4.** The only change is the new
+`last_auto_checked` field, which is simply absent on an older map, so nothing
+needs migrating and older readers are unaffected. This release also needs
+Session 0.8.1, which is what teaches the brief to read the new field. Installing
+build-loop 0.9.0 without it leaves the drift line firing exactly as before.
+
+Nothing else to do on upgrade. The hook registers itself and stays quiet.
 
 ## Upgrading to 0.8.1
 
@@ -430,8 +534,28 @@ One line saying the log returned nothing is the only thing that separates
 
 ## Codex
 
-Codex plugins cannot register hooks, and this plugin does not use any, so both
-runtimes get the same thing: eleven commands you invoke. Nothing is degraded here.
+**The eleven commands are identical on both runtimes.** Everything you invoke by
+name behaves the same way, reads the same queue, and writes the same files.
+
+**The four hooks are Claude Code only**, because Codex plugins cannot register
+hooks. This section previously said the plugin used none, which stopped being
+true at 0.3.0 and is worth stating plainly rather than leaving as a claim that
+quietly aged.
+
+| Hook | What a Codex user does instead |
+|---|---|
+| `skill-md-check` | Run `/find-skill`, or rely on the repository's `skill-md-check` test suite, which checks the same frontmatter rules. |
+| `notice-correction` | Invoke `/flag-issue` directly when something misbehaves. It is the same skill; the hook only suggests it. |
+| `capture-event` | Nothing is lost. It records hook payload shapes, which only exist where hooks run. |
+| `deps-watch` | Run `/audit-deps`. See below, because the trade is smaller than it looks. |
+
+**`deps-watch` costs a Codex user nothing, and here is why.** The drift warning
+it exists to quiet is printed by the session brief, which is itself a
+`SessionStart` hook in the Session plugin. Under Codex that brief never runs, so
+the noisy warning never appears in the first place. Both halves are absent
+together rather than one half leaving the other broken. `/audit-deps` remains
+the way to check the map on either runtime, and it is the only way to record a
+new dependency on both, since the hook never writes an edge.
 
 ## Licence
 
