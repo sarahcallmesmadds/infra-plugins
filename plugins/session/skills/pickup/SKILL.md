@@ -45,11 +45,20 @@ else, take the structure as it comes and do not force it into the template.
 ### Then ask what still binds
 
 ```bash
-"${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js constraints
+"${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js constraints --cwd "<the project directory>"
 ```
 
-Run it from the handoff's own directory, so the scope is the project the work is
-in rather than wherever this session happens to have started.
+**Pass `--cwd` explicitly. Do not rely on where the session started.** Scope is
+worked out from the working directory, and Step 4 is what moves to the project,
+two steps after this. Run without the flag and it answers for wherever the
+session opened, usually the home directory, which resolves to a different
+project and reports no constraints. A confident "none" is the worst answer this
+command can give, because it is indistinguishable from a project that genuinely
+has none.
+
+The project directory is the `**Working directory:**` line inside the handoff
+you just read. Use that, not `dirname` of the handoff's own path: a central
+handoff lives in the handoffs folder, which is nobody's project.
 
 **Run it even when the handoff has a `## Constraints still in force` section.**
 That section holds what the last session carried. This asks the project, across

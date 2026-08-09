@@ -601,10 +601,18 @@ function normalizeConstraint(s) {
 
 // A retirement reads `Retired this session: <the constraint>, because <reason>.`
 // The reason is prose that will not appear in the original bullet, so it comes
-// off before matching. Everything before the last `, because` is the quoted
+// off before matching. Everything before the LAST `, because` is the quoted
 // constraint.
+//
+// The last, not the first. `String.replace` with a non-global pattern cuts from
+// the leftmost match, so a constraint whose own wording contains "because" was
+// truncated mid-quote: `Use the glow outline, because contrast` retired with a
+// reason became `use the glow outline`, matched nothing, left the constraint in
+// force, and told the user their exact quote was a typo. The comment here said
+// "last" while the code did "first" for the whole of round one.
 function retiredTarget(s) {
-  const cut = s.replace(/,\s*because\b[\s\S]*$/i, '');
+  const marks = [...s.matchAll(/,\s*because\b/gi)];
+  const cut = marks.length ? s.slice(0, marks[marks.length - 1].index) : s;
   return normalizeConstraint(cut);
 }
 

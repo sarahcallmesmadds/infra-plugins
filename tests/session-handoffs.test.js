@@ -954,6 +954,25 @@ check('a handoff for another project contributes nothing', () => {
   });
 });
 
+check('a constraint whose own wording contains "because" can be retired', () => {
+  // Round one cut the quote at the FIRST `, because`, so a constraint using the
+  // word was truncated mid-quote, matched nothing, stayed in force, and the user
+  // was told their exact quote was a typo. The comment above the function said
+  // "last" the whole time.
+  const cwd = path.join(__dirname, '..');
+  const scope = `**Working directory:** ${cwd}`;
+  withHandoffs([
+    ['older', `${scope}\n\n## Constraints still in force\n- Use the glow outline, because contrast.\n`],
+    ['newer', `${scope}\n\n## Constraints still in force\n- Retired this session: Use the glow outline, because contrast, because superseded.\n`],
+  ], (home) => {
+    const r = handoffs.carriedConstraints({ cwd, home });
+    assert.deepStrictEqual(r.constraints.map((c) => c.text), [],
+      'the retirement quoted the constraint exactly, so it must remove it');
+    assert.deepStrictEqual(r.unmatchedRetirements, [],
+      'an exact quote must never be reported back to the user as a typo');
+  });
+});
+
 check('a truncated scan says so', () => {
   const cwd = path.join(__dirname, '..');
   withHandoffs([

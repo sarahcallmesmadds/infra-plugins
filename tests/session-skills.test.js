@@ -251,6 +251,21 @@ check('pickup asks the project what still binds', () => {
     'pickup no longer asks for constraints, so one recorded on another thread of work stays invisible');
 });
 
+check('pickup pins the scope instead of inheriting the session cwd', () => {
+  const text = skill('pickup');
+  const cmd = text.slice(text.indexOf('cli.js constraints'));
+  assert.match(cmd.slice(0, 120), /--cwd/,
+    'the documented command omits --cwd, so it answers for wherever the session opened rather than for the project');
+  // The step that moves to the project runs later, so the flag is the only
+  // thing making this deterministic.
+  assert.ok(
+    text.indexOf('cli.js constraints') < text.indexOf('Move to the right directory'),
+    'this check assumes the scan still precedes the directory change; if that changed, the reasoning here needs revisiting'
+  );
+  assert.match(text, /not `?dirname`? of the handoff/i,
+    'pickup no longer warns that a central handoff lives in the handoffs folder, which is nobody project directory');
+});
+
 check('pickup asks even when the handoff already lists constraints', () => {
   const text = skill('pickup');
   // Without this the command reads as a fallback, and the case it exists for is
