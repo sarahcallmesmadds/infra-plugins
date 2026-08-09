@@ -275,17 +275,40 @@ const COMMANDS = {
   constraints(opts) {
     const r = handoffs.carriedConstraints({ cwd: opts.cwd, home: opts.home });
     if (opts.json) return emit(opts, r, []);
-    if (!r.scope) return emit(opts, {}, ['Not in a project, so nothing to inherit.']);
+
+    // Anything that makes the answer less than complete is said before the
+    // answer, never after it. A truncated scan and a retirement that hit
+    // nothing both mean the list below may be wrong, and a caveat printed
+    // underneath a confident list is one nobody reads.
+    const warnings = [];
+    if (r.truncated) {
+      warnings.push(
+        `Scan hit its ceiling of ${handoffs.CONSTRAINT_SCAN_CAP} handoffs, so an older one may not have been read.`,
+        'Treat the list below as incomplete.',
+        '',
+      );
+    }
+    for (const u of r.unmatchedRetirements) {
+      warnings.push(
+        `"${u.text}" in ${u.from} retires something no handoff records, so it retires nothing.`,
+        '  Usually a mistyped quote. The constraint has to be repeated exactly as it was written.',
+        '',
+      );
+    }
+
     if (!r.constraints.length) {
+      const matched = r.scanned.filter((s) => s.matched);
       return emit(opts, {}, [
+        ...warnings,
         `No constraints recorded yet for ${r.scope}.`,
-        '  Read the handoffs it scanned before concluding there are none:',
-        ...r.scanned.map((s) => `    ${s.matched ? '*' : ' '} ${s.slug}  (${s.found} found)`),
-        '  A "*" is a handoff for this project. If one of those carries a binding',
-        '  constraint in prose, record it under "## Constraints still in force".',
+        `  ${matched.length} of ${r.scanned.length} handoffs scanned belong to this project:`,
+        ...matched.map((s) => `    ${s.slug}`),
+        '  If one of those carries a binding constraint in prose, record it in the',
+        '  next handoff under "## Constraints still in force".',
       ]);
     }
     emit(opts, {}, [
+      ...warnings,
       `${r.constraints.length} constraint${r.constraints.length === 1 ? '' : 's'} still in force for ${r.scope}:`,
       ...r.constraints.map((c) => `  - ${c.text}\n      (from ${c.from})`),
     ]);

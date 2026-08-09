@@ -51,25 +51,39 @@ session was about something else.** Scope is the repository, so a worktree
 inherits from its main checkout.
 
 - **It lists constraints.** Carry every one into the new handoff, verbatim.
-- **It lists none, and marks prior handoffs for this project with `*`.** Those
+- **It lists none, and names the handoffs it found for this project.** Those
   documents predate the section. Read them, pull out anything binding, and
   propose it to the user before writing:
 
   > These look like they still apply. Carrying them into the handoff unless you
   > say otherwise:
-  > - [constraint, and which handoff it came from]
+  > - the constraint, and which handoff it came from
 
   A constraint is anything that governs work not finished yet: an approved
   design or standard, a path that must be read first, a deploy restriction,
   something declared off limits. Not a completed decision, which belongs under
   "Decisions made".
-- **It says you are not in a project.** Nothing to inherit, carry on.
+- **It warns that the scan was truncated, or that a retirement matched
+  nothing.** Both mean the list is not trustworthy as given. Resolve it before
+  writing rather than carrying a list you have been told is wrong.
 
 **Dropping one requires saying so.** If this session retired a constraint,
-record it as retired with the reason. Silence is not retirement, and a
-constraint that vanishes without a line explaining why is indistinguishable
-from one that was forgotten. That is how the AlwaysAllow design system was lost
-between the 2026-08-05 handoff and the 2026-08-08 one that superseded it.
+record it as retired with the reason:
+
+```
+- Retired this session: <the constraint, quoted exactly as it was written>, because <reason>.
+```
+
+**The quote has to match the original.** Retirement works by matching that text
+against the bullet in the earlier handoff, so an approximation retires nothing
+and the constraint keeps coming back. `cli.js constraints` says so when a
+retirement matches nothing, and that warning means the wording, not the
+decision, is wrong.
+
+Silence is not retirement. A constraint that vanishes without a line explaining
+why is indistinguishable from one that was forgotten, which is how the
+AlwaysAllow design system was lost between the 2026-08-05 handoff and the
+2026-08-08 one that superseded it.
 
 **Never edit an old handoff to backfill this.** Handoffs are owned by this skill
 and are a record of what was true when they were written. The new document is
@@ -108,9 +122,8 @@ not:
 [Two or three sentences. The subject, not the activity.]
 
 ## Constraints still in force
-- [What governs future work, and the handoff it came from. Carried forward
-  whole. Read by `cli.js constraints`, so the heading and the bullets matter.]
-- Retired this session: [constraint], because [reason].
+- [what governs future work, and the handoff it came from]
+- Retired this session: [the constraint, quoted exactly], because [reason].
 
 ## Decisions made
 - [Decision, and why]

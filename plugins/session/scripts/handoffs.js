@@ -494,7 +494,11 @@ function repoRoot(dir) {
   try {
     const out = execFileSync(
       'git', ['-C', dir, 'rev-parse', '--path-format=absolute', '--git-common-dir'],
-      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
+      // A directory recorded in a handoff can sit on a network volume that is
+      // slow or gone, and a synchronous spawn with no timeout hangs the whole
+      // command there. Ten seconds is far past a local answer and far short of
+      // waiting on a dead mount.
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 10000 },
     ).trim();
     if (!out) return null;
     return out.replace(/\/\.git\/?$/, '') || null;
@@ -503,13 +507,26 @@ function repoRoot(dir) {
   }
 }
 
+// One git spawn per distinct directory, not per handoff. A scan reads up to a
+// few hundred documents and most of them name the same handful of directories,
+// so without this the common case was dozens of blocking subprocesses to answer
+// a question that has the same answer every time.
+const scopeCache = new Map();
+
 // The scope key two handoffs must share for one to inherit the other's
-// constraints. Repository if there is one, resolved real path otherwise.
+// constraints. Repository if there is one, resolved real path otherwise, so a
+// project that is not a git checkout still groups with itself.
 function scopeKey(dir) {
   if (!dir) return null;
+  if (scopeCache.has(dir)) return scopeCache.get(dir);
   const repo = repoRoot(dir);
-  if (repo) return repo;
-  try { return fs.realpathSync(dir); } catch (_) { return path.resolve(dir); }
+  let key;
+  if (repo) key = repo;
+  else {
+    try { key = fs.realpathSync(dir); } catch (_) { key = path.resolve(dir); }
+  }
+  scopeCache.set(dir, key);
+  return key;
 }
 
 // The directory a handoff document says it was written from. Two header spellings
@@ -523,72 +540,168 @@ function handoffDir(text) {
   return m[1].trim().replace(/^~(?=\/|$)/, os.homedir());
 }
 
-// Bullets under a `## Constraints still in force` heading.
+// Every bullet under a `## Constraints still in force` heading, split into the
+// live ones and the retirements, because both are needed and only one of them
+// is a constraint.
 //
-// Two kinds of line are dropped rather than returned. A `Retired this session:`
-// bullet is a record that a constraint stopped applying, and reading it back as
-// a live constraint would make retirement impossible: the thing would be carried
-// forward for ever by the very line saying it should not be. And an unfilled
-// template bullet still wrapped in square brackets is not a constraint, so a
-// handoff written from the template without this section being completed
-// contributes nothing instead of contributing the placeholder text.
-function constraintsIn(text) {
+// An unfilled template bullet is dropped. The test is that the WHOLE bullet is
+// bracketed, not that it starts with one: a constraint is very naturally
+// written as a markdown link, `- [the design system](path) governs site/`, and
+// a leading-bracket test threw exactly those away without a word. That is the
+// failure this feature exists to prevent, committed inside the feature.
+function bulletsIn(text) {
+  // Terminator is any ATX heading, `^#{1,6}\s`, not `^##\s`. The narrower form
+  // does not match `### Notes`, because the character after `##` is a `#` and
+  // not whitespace, so a nested subsection did not end the section and its
+  // bullets were collected as constraints.
+  //
   // The end-of-input assertion is `$(?![\s\S])`, not `\Z`. JavaScript has no
-  // `\Z`, so it parses as a literal Z, and the section then only terminates at
-  // the next `## ` heading. A handoff whose constraints are the last thing in
-  // the file, which is the common shape, matched nothing at all and reported
-  // zero constraints while the section sat there in plain sight. The unit tests
-  // passed throughout because every fixture happened to have a heading after it.
-  const m = text.match(/^##+\s*Constraints still in force\s*$([\s\S]*?)(?=^##\s|$(?![\s\S]))/mi);
-  if (!m) return [];
-  return m[1]
+  // `\Z`, so it parsed as a literal Z and the section only ended at the next
+  // heading. Constraints written last in a file, which is where they land,
+  // read back as none while sitting there in plain sight.
+  const m = text.match(/^#{2,6}\s*Constraints still in force\s*$([\s\S]*?)(?=^#{1,6}\s|$(?![\s\S]))/mi);
+  if (!m) return { live: [], retired: [] };
+  const bullets = m[1]
     .split('\n')
     .map((l) => l.trim())
     .filter((l) => l.startsWith('- '))
     .map((l) => l.slice(2).trim())
     .filter(Boolean)
-    .filter((l) => !/^retired this session\b/i.test(l))
-    .filter((l) => !l.startsWith('['));
+    .filter((l) => !/^\[.*\]$/.test(l));
+
+  const live = [];
+  const retired = [];
+  for (const b of bullets) {
+    const r = b.match(/^retired this session\s*:\s*(.+)$/i);
+    if (r) retired.push(r[1].trim());
+    else live.push(b);
+  }
+  return { live, retired };
 }
 
-// Every constraint recorded by a handoff for the same project as `cwd`, newest
-// document first, deduplicated on the constraint text.
+// Bullets under the heading that are live constraints. Retirements are not
+// constraints, so they do not appear here.
+function constraintsIn(text) {
+  return bulletsIn(text).live;
+}
+
+// What a handoff says stopped applying. Read by `carriedConstraints`, which is
+// the only place retirement can actually be honoured: the document doing the
+// retiring is not the document carrying the constraint, so dropping the line at
+// parse time and stopping there made retirement completely inert.
+function retiredIn(text) {
+  return bulletsIn(text).retired;
+}
+
+// The form two constraint texts are compared in. Case, surrounding whitespace
+// and a trailing full stop are all noise here.
+function normalizeConstraint(s) {
+  return s.trim().replace(/\s+/g, ' ').replace(/\.$/, '').toLowerCase();
+}
+
+// A retirement reads `Retired this session: <the constraint>, because <reason>.`
+// The reason is prose that will not appear in the original bullet, so it comes
+// off before matching. Everything before the last `, because` is the quoted
+// constraint.
+function retiredTarget(s) {
+  const cut = s.replace(/,\s*because\b[\s\S]*$/i, '');
+  return normalizeConstraint(cut);
+}
+
+// A ceiling rather than a window. The old default of 40 was applied by
+// `recentHandoffs` across every project before this filtered by project, so in
+// a home directory with many active threads the one handoff carrying a
+// constraint could fall off the end and be dropped in silence, which is the
+// failure this whole feature exists to prevent. It is high enough that hitting
+// it is a real anomaly, and `truncated` says so out loud when it happens.
+const CONSTRAINT_SCAN_CAP = 500;
+
+// Every constraint still in force for the project `cwd` belongs to.
+//
+// Documents are read newest first, and a retirement in a newer one suppresses
+// the matching bullet in every older one. That ordering is the whole mechanism:
+// the document that retires a constraint is never the document that carries it,
+// so retirement can only be honoured here, across documents, and not by a
+// parser looking at one file.
 //
 // Archived handoffs are read. A constraint does not stop applying because the
-// document carrying it went quiet for 30 days, and archiving is driven by
-// mtime rather than by anything retiring it.
-function carriedConstraints({ cwd = process.cwd(), home = os.homedir(), limit = 40 } = {}) {
+// document carrying it went quiet for 30 days, and archiving is driven by mtime
+// rather than by anything retiring it.
+function carriedConstraints({ cwd = process.cwd(), home = os.homedir(), limit = CONSTRAINT_SCAN_CAP } = {}) {
   const want = scopeKey(cwd);
   const rows = recentHandoffs({ home, limit });
-  const out = [];
-  const seen = new Set();
   const scanned = [];
+  const docs = [];
 
+  // Read everything first. Whether a retirement matched anything cannot be
+  // decided while scanning, because the constraint it names lives in an older
+  // document that has not been read yet. Deciding it inline reported every
+  // legitimate retirement as unmatched.
   for (const r of rows) {
     let text;
     try { text = fs.readFileSync(r.path, 'utf8'); } catch (_) { continue; }
     const dir = handoffDir(text);
     const key = dir ? scopeKey(dir) : null;
-    const items = constraintsIn(text);
-    scanned.push({ slug: r.slug, path: r.path, dir, matched: Boolean(want && key === want), found: items.length });
-    if (!want || key !== want) continue;
-    for (const c of items) {
-      const norm = c.toLowerCase().replace(/\s+/g, ' ');
+    const { live, retired } = bulletsIn(text);
+    scanned.push({
+      slug: r.slug, path: r.path, dir, matched: key === want, found: live.length,
+    });
+    if (key !== want) continue;
+    docs.push({ row: r, live, retired });
+  }
+
+  const everLive = new Set();
+  for (const d of docs) for (const c of d.live) everLive.add(normalizeConstraint(c));
+
+  const out = [];
+  const seen = new Set();
+  for (const d of docs) {
+    // Live bullets first, so a document that states a constraint and retires it
+    // keeps it. Contradicting yourself inside one handoff is not a retirement.
+    for (const c of d.live) {
+      const norm = normalizeConstraint(c);
       if (seen.has(norm)) continue;
       seen.add(norm);
-      out.push({ text: c, from: r.slug, path: r.path });
+      out.push({ text: c, from: d.row.slug, path: d.row.path });
+    }
+    // Then the retirements, marked seen so no older document can resurrect
+    // them. Nothing is emitted for these; they exist only to suppress.
+    for (const t of d.retired) {
+      const norm = retiredTarget(t);
+      if (norm) seen.add(norm);
     }
   }
 
-  return { scope: want, constraints: out, scanned };
+  // A retirement naming something no handoff ever recorded is almost always a
+  // mistyped quote, and it does nothing. Reported rather than swallowed: a
+  // retirement that silently fails is the same defect as a constraint that
+  // silently vanishes, pointed the other way.
+  const unmatchedRetirements = [];
+  for (const d of docs) {
+    for (const t of d.retired) {
+      const norm = retiredTarget(t);
+      if (norm && !everLive.has(norm)) unmatchedRetirements.push({ text: t, from: d.row.slug });
+    }
+  }
+
+  return {
+    scope: want,
+    constraints: out,
+    scanned,
+    unmatchedRetirements,
+    truncated: rows.length >= limit,
+  };
 }
 
 module.exports = {
   DEFAULT_STALE_DAYS,
+  CONSTRAINT_SCAN_CAP,
   repoRoot,
   scopeKey,
   handoffDir,
+  bulletsIn,
   constraintsIn,
+  retiredIn,
   carriedConstraints,
   handoffRoot,
   archiveRoot,
