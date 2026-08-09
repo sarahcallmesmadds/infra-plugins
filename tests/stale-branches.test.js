@@ -54,12 +54,20 @@ let skipped = 0;
 // when this git cannot do the thing the check is about.
 //
 // Skipping rather than failing, because those are different facts and only one
-// of them is about the code. Five checks here assert what happens to a
-// squash-merged branch, which cannot be set up at all without
-// `merge-tree --write-tree`. On an older git they failed, and a reviewer seeing
-// `41 suites, 1 failed` reasonably goes looking for a regression that is not
-// there. It happened three times in one afternoon on a pull request that
-// touched a different plugin entirely.
+// of them is about the code. Four checks here turn on *detecting* a squash
+// merge, which needs `merge-tree --write-tree`. On an older git they failed,
+// and a reviewer seeing `41 suites, 1 failed` reasonably goes looking for a
+// regression that is not there. It happened three times in one afternoon on a
+// pull request that touched a different plugin entirely.
+//
+// Four, and not the fifth that looks like it belongs. The deadline check builds
+// a squash-merged branch too, but `git merge --squash` is ancient; only reading
+// the result back needs 2.38. That check probes the capability itself and
+// guards its one version-dependent assertion, so it runs correctly everywhere,
+// and marking it here would have dropped real coverage of the rule that an
+// out-of-time run never offers an unresolved branch for deletion. Building the
+// fixture and detecting it are different requirements, and only the second is
+// what this flag is for.
 //
 // The skip line names the version, so the reader can tell in one line whether
 // it applies to them.
@@ -73,9 +81,8 @@ function check(name, fn, opts = {}) {
   catch (e) { failures += 1; process.stdout.write(`  FAIL ${name}\n       ${e.message}\n`); }
 }
 
-// Shorthand for the five checks that cannot be set up without
-// `merge-tree --write-tree`. Every one of them builds a squash-merged branch,
-// which is precisely what an older git cannot distinguish from unmerged work.
+// Shorthand for the four checks whose subject is squash-merge detection, which
+// is precisely what an older git cannot do.
 const checkWriteTree = (name, fn) => check(name, fn, { needs: 'write-tree' });
 
 // ---------------------------------------------------- classification ----
@@ -247,7 +254,7 @@ check('every child process is given a timeout', () => {
   assert.ok(/maxBuffer/.test(src), 'run() should bound output size too');
 });
 
-checkWriteTree('a deadline already past skips the work that costs, and reports it', () => {
+check('a deadline already past skips the work that costs, and reports it', () => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'gh-deadline-'));
   const git = (...a) => execFileSync('git', ['-C', repo, '-c', 'user.email=t@t',
     '-c', 'user.name=t', ...a], { stdio: 'ignore' });
