@@ -51,6 +51,12 @@ session was about something else.** Scope is the repository, so a worktree
 inherits from its main checkout.
 
 - **It lists constraints.** Carry every one into the new handoff, verbatim.
+  **The bullet holds the constraint and nothing else.** No "(from HANDOFF-x)",
+  no date, no note about why it is being carried. Matching is on the text, so
+  an added annotation makes the copy a different constraint from the original:
+  both then show as live, the list grows a near duplicate at every wrap, and a
+  later retirement quoting one of them silently leaves the other in force. The
+  command already reports where each came from on its own line.
 - **It lists none, and names the handoffs it found for this project.** Those
   documents predate the section. Read them, pull out anything binding, and
   propose it to the user before writing:
@@ -122,7 +128,7 @@ not:
 [Two or three sentences. The subject, not the activity.]
 
 ## Constraints still in force
-- [what governs future work, and the handoff it came from]
+- [what governs future work, and nothing else on the line]
 - Retired this session: [the constraint, quoted exactly], because [reason].
 
 ## Decisions made

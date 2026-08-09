@@ -160,6 +160,22 @@ check('wrap gathers constraints from earlier handoffs before writing', () => {
   );
 });
 
+check('the template does not tell the writer to annotate a constraint', () => {
+  // Matching is on the bullet text, so "(from HANDOFF-x)" makes the carried
+  // copy a different constraint from the original. Both then read as live, the
+  // list grows a near duplicate at every wrap, and a retirement quoting one
+  // leaves the other in force. The command reports provenance separately.
+  const text = skill('wrap');
+  const template = fences(text).find((f) => f.info === 'markdown' && f.body.includes('# Session Handoff'));
+  assert.ok(template, 'the handoff template is gone');
+  const section = template.body.slice(template.body.indexOf('## Constraints still in force'));
+  const firstBullet = section.split('\n').find((l) => l.trim().startsWith('- '));
+  assert.doesNotMatch(firstBullet, /came from|from HANDOFF|provenance/i,
+    'the template asks for provenance inside the bullet, which contradicts carrying it verbatim');
+  assert.match(text, /the bullet holds the constraint and nothing else/i,
+    'wrap no longer says the bullet carries the constraint alone');
+});
+
 check('the handoff template has somewhere for constraints to live', () => {
   const text = skill('wrap');
   const template = fences(text).find((f) => f.info === 'markdown' && f.body.includes('# Session Handoff'));

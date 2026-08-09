@@ -281,6 +281,14 @@ const COMMANDS = {
     // nothing both mean the list below may be wrong, and a caveat printed
     // underneath a confident list is one nobody reads.
     const warnings = [];
+    if (r.gitUnavailable) {
+      warnings.push(
+        'git could not be run, so scope fell back to comparing directory paths.',
+        '  A worktree will not be grouped with its main checkout, and constraints',
+        '  recorded from one may be missing below.',
+        '',
+      );
+    }
     if (r.truncated) {
       warnings.push(
         `Scan hit its ceiling of ${handoffs.CONSTRAINT_SCAN_CAP} handoffs, so an older one may not have been read.`,

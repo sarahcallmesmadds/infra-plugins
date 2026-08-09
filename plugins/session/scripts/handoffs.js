@@ -489,20 +489,41 @@ function recentHandoffs({ home = os.homedir(), limit = 5 } = {}) {
 //
 // Returns null for a directory that is not in a repository, in which case the
 // caller falls back to the realpath of the directory itself.
+// True once any git probe has failed for a reason that looks like git itself
+// rather than the directory. Read by carriedConstraints so a silent loss of
+// worktree grouping can be reported instead of quietly changing the answer.
+let gitProbeFailed = false;
+
+function gitProbeHasFailed() { return gitProbeFailed; }
+
 function repoRoot(dir) {
   const { execFileSync } = require('child_process');
+  // A directory recorded in a handoff can sit on a network volume that is slow
+  // or gone, and a synchronous spawn with no timeout hangs the whole command
+  // there. Ten seconds is far past a local answer and far short of waiting on a
+  // dead mount.
+  const opts = { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 10000 };
+  const strip = (out) => (out ? out.trim().replace(/\/\.git\/?$/, '') || null : null);
+
   try {
-    const out = execFileSync(
-      'git', ['-C', dir, 'rev-parse', '--path-format=absolute', '--git-common-dir'],
-      // A directory recorded in a handoff can sit on a network volume that is
-      // slow or gone, and a synchronous spawn with no timeout hangs the whole
-      // command there. Ten seconds is far past a local answer and far short of
-      // waiting on a dead mount.
-      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 10000 },
-    ).trim();
+    return strip(execFileSync(
+      'git', ['-C', dir, 'rev-parse', '--path-format=absolute', '--git-common-dir'], opts,
+    ));
+  } catch (_) { /* fall through */ }
+
+  // `--path-format` arrived in git 2.31. On anything older the whole invocation
+  // fails, and the first version of this treated that as "not a repository",
+  // which silently disabled the worktree grouping this feature exists for. The
+  // bare form works everywhere and may answer relatively, so it is resolved
+  // against the directory it was asked about.
+  try {
+    const out = execFileSync('git', ['-C', dir, 'rev-parse', '--git-common-dir'], opts).trim();
     if (!out) return null;
-    return out.replace(/\/\.git\/?$/, '') || null;
-  } catch (_) {
+    return strip(path.isAbsolute(out) ? out : path.resolve(dir, out));
+  } catch (e) {
+    // ENOENT means no git at all. Anything else here is a directory that is not
+    // a repository, which is ordinary and not worth reporting.
+    if (e && e.code === 'ENOENT') gitProbeFailed = true;
     return null;
   }
 }
@@ -535,9 +556,34 @@ function scopeKey(dir) {
 // because the older ones are exactly the documents holding constraints nobody has
 // re-recorded yet.
 function handoffDir(text) {
-  const m = text.match(/^\*\*(?:Working directory|Repository|Repo):\*\*\s*`?([^`\n(]+)`?/mi);
+  const m = text.match(/^\*\*(?:Working directory|Repository|Repo):\*\*\s*`?([^`\n]+)`?/mi);
   if (!m) return null;
-  return m[1].trim().replace(/^~(?=\/|$)/, os.homedir());
+  const expand = (s) => s.trim().replace(/^~(?=\/|$)/, os.homedir()).replace(/[`,]+$/, '').trim();
+
+  // Handoff headers carry prose after the path often enough to matter:
+  //   **Working directory:** /private/tmp/atf (git worktree of ~/Projects/x)
+  // The first version cut the capture at `(`, which handled that and quietly
+  // broke every project whose folder name contains a bracket. A path like
+  // `/Users/x/Projects (archive)/repo` truncated to `/Users/x/Projects`, so its
+  // constraints vanished and every other project under that parent inherited
+  // the same key and each other's rules.
+  //
+  // So take the whole line, and only strip a trailing parenthetical when the
+  // full string is not a directory that exists. Existence is the evidence; the
+  // bracket alone never was.
+  const whole = expand(m[1]);
+  try { if (fs.statSync(whole).isDirectory()) return whole; } catch (_) { /* not a directory */ }
+
+  const trimmed = expand(whole.replace(/\s*\([^)]*\)\s*$/, ''));
+  if (trimmed && trimmed !== whole) {
+    try { if (fs.statSync(trimmed).isDirectory()) return trimmed; } catch (_) { /* nor this */ }
+  }
+
+  // Neither resolves, which is normal: the handoff may describe a machine this
+  // is not, or a volume that is not mounted. Prefer the trimmed form, since a
+  // trailing annotation is far more common in these headers than a bracket in a
+  // real folder name, and grouping is by string in that case anyway.
+  return trimmed || whole || null;
 }
 
 // Every bullet under a `## Constraints still in force` heading, split into the
@@ -698,6 +744,11 @@ function carriedConstraints({ cwd = process.cwd(), home = os.homedir(), limit = 
     scanned,
     unmatchedRetirements,
     truncated: rows.length >= limit,
+    // Without git, scoping falls back to comparing real paths, which still
+    // groups a directory with itself but cannot tell a worktree from an
+    // unrelated folder. That is the whole mechanism quietly not working, and
+    // the answer it produces is a confident one, so it is reported.
+    gitUnavailable: gitProbeHasFailed(),
   };
 }
 

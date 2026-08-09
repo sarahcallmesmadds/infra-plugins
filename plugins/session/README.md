@@ -299,6 +299,17 @@ and times out after ten seconds, so a recorded path on an unmounted volume slows
 the scan rather than hanging it. Directories that are not git checkouts fall
 back to their real path and still group with themselves.
 
+`--path-format=absolute` is tried first and the bare form is the fallback, since
+the flag arrived in git 2.31 and older versions fail the whole invocation. If
+git cannot be run at all, scope falls back to comparing real paths, which still
+groups a directory with itself but cannot recognise a worktree. The command says
+so rather than quietly answering with less.
+
+The directory is read from the handoff's `**Working directory:**` line, which
+often carries prose after the path. A trailing parenthetical is stripped only
+when the whole string is not a directory that exists, so a project whose folder
+name genuinely contains a bracket is not truncated into its parent.
+
 **Retiring one has to be written down.** A constraint that vanishes with no line
 explaining why is indistinguishable from one that was forgotten, so removal is
 recorded rather than implied:

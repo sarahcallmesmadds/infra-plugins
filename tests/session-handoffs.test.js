@@ -871,6 +871,45 @@ check('a worktree shares a scope with its main checkout', () => {
   }
 });
 
+check('a project folder containing a bracket is not truncated', () => {
+  // The first version cut the capture at `(` to strip a trailing annotation,
+  // which silently rewrote `/x/Projects (archive)/repo` to `/x/Projects`. That
+  // dropped the project's own constraints and gave every other project under
+  // that parent the same scope key, so unrelated projects inherited each
+  // other's rules.
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'br-'));
+  const weird = path.join(base, 'Projects (archive)', 'repo');
+  fs.mkdirSync(weird, { recursive: true });
+  try {
+    assert.strictEqual(handoffs.handoffDir(`**Working directory:** ${weird}`), weird);
+  } finally {
+    fs.rmSync(base, { recursive: true, force: true });
+  }
+});
+
+check('a trailing annotation after the path is still stripped', () => {
+  // The reason the bracket rule existed. Real handoffs write
+  // `**Working directory:** /tmp/x (git worktree of ~/Projects/y, branch z)`,
+  // so the fix for the check above must not reintroduce the annotation.
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'an-'));
+  try {
+    assert.strictEqual(
+      handoffs.handoffDir(`**Working directory:** ${base} (git worktree of ~/Projects/y, branch z)`),
+      base
+    );
+  } finally {
+    fs.rmSync(base, { recursive: true, force: true });
+  }
+});
+
+check('a path that resolves nowhere still drops its annotation', () => {
+  assert.strictEqual(
+    handoffs.handoffDir('**Working directory:** /no/such/place (branch foo)'),
+    '/no/such/place',
+    'a handoff can describe another machine, and grouping is by string there'
+  );
+});
+
 check('both handoff header spellings give up the directory', () => {
   assert.strictEqual(handoffs.handoffDir('**Working directory:** /tmp/x'), '/tmp/x');
   assert.strictEqual(handoffs.handoffDir('**Repository:** `/tmp/y`'), '/tmp/y',
