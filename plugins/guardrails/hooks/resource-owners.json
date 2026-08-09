@@ -9,6 +9,16 @@
       "owners": ["session:wrap"]
     },
     {
+      "id": "alwaysallow-site",
+      "label": "the alwaysallow.com site",
+      "type": "directory",
+      "path": "~/Projects/always-allow/site/",
+      "paths": ["/private/tmp/alwaysallow-homepage-atf/site/"],
+      "owners": [],
+      "requiresRead": ["~/.planning/DECISION-alwaysallow-homepage-design-system.md"],
+      "readReason": "The design system was approved on 2026-08-05 and governs every route, below the fold as well as above it. A below-the-fold build that ignored it was thrown away on 2026-08-09 after five days of work."
+    },
+    {
       "id": "build-loop-bug-queue",
       "label": "the build-loop bug queue",
       "type": "directory",

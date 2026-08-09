@@ -101,7 +101,7 @@ key at a time, so setting one option does not reset the others.
 | `scanForInjection` | `true` | Turn content scanning off entirely |
 | `injectionExcludePaths` | `[]` | Extra regex patterns to skip when scanning |
 
-### Skill-owned resources
+### Skill-owned resources, and documents that must be read first
 
 The default registry is `hooks/resource-owners.json`. It protects:
 
@@ -109,12 +109,45 @@ The default registry is `hooks/resource-owners.json`. It protects:
 - `~/.claude/build-loop/queue/`, owned by `/build-loop:flag-issue`,
   `/build-loop:apply-fix`, `/build-loop:verify-fix`, and
   `/build-loop:revert-fix`
+- `~/Projects/always-allow/site/`, which no skill owns and which requires the
+  approved design system be read before anything under it is edited
 
 To replace that list, create `~/.claude/guardrails.resources.json` with the same
 shape. Each resource has an `id`, human-readable `label`, `type` (`file` or
-`directory`), `path`, and an `owners` array containing canonical skill names.
-The user registry replaces the shipped list rather than merging with it, so a
-local policy is visible in one place.
+`directory`), and `path`. The user registry replaces the shipped list rather
+than merging with it, so a local policy is visible in one place.
+
+A resource then carries either or both of two gates, which answer different
+questions:
+
+| Field | Question it answers |
+|---|---|
+| `owners` | Who is allowed to write this |
+| `requiresRead` | What has to be in front of you before you write it |
+
+`owners` is an array of canonical skill names, and a write is refused unless one
+of them is active. `requiresRead` is an array of file paths, and a write is
+refused until every one of them has been opened in this session. Set only
+`requiresRead` and the resource belongs to nobody in particular; it simply
+cannot be edited from a standing start. `readReason` is optional prose printed
+with the refusal, so the rule arrives with the reason it exists rather than as a
+wall.
+
+**The read check reads the session transcript.** Opening the file with the Read
+tool satisfies it. Running `cat` in a shell does not, and that is deliberate:
+the gate exists so the document is loaded where the work can see it, not so a
+box gets ticked.
+
+**A resource can list more than one location** via an optional `paths` array
+alongside `path`. The site uses it because a git worktree puts the same
+directory in two places at once while a branch is in flight, and a guard that
+knows only the canonical checkout is off exactly when the work is happening.
+Worktrees at other paths need adding there.
+
+The site entry exists because an approved design system sat in a document
+nobody opened for three days while a homepage was built against nothing and
+then thrown away. Every other guard here stops a destructive action. This one
+stops work that would have to be redone.
 
 Only resources with a real public owner are protected by default. In
 particular, the IP inventory is intentionally absent: its current automated

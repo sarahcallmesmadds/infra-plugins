@@ -8,7 +8,7 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 const {
   LEASE_TTL_MS, activeOwner, atomicWriteLease, contains, loadRegistry, matchedResource,
-  leasePath, readLease, writeLease,
+  leasePath, readLease, readsInTranscript, resourcePaths, unreadRequirements, writeLease,
 } = require('../plugins/guardrails/scripts/resource-ownership');
 
 const ROOT = path.join(__dirname, '..');
@@ -25,9 +25,9 @@ function check(name, fn) {
   catch (error) { failed += 1; console.log(`  FAIL  ${name}\n        ${error.message}`); }
 }
 
-check('the shipped registry protects handoffs and the bug queue', () => {
+check('the shipped registry protects handoffs, the site, and the bug queue', () => {
   assert.deepStrictEqual(registry.map((resource) => resource.id), [
-    'session-handoffs', 'build-loop-bug-queue',
+    'session-handoffs', 'alwaysallow-site', 'build-loop-bug-queue',
   ]);
   assert.deepStrictEqual(handoffs.owners, ['session:wrap']);
 });
@@ -160,6 +160,104 @@ check('the wired hooks deny a bypass and allow the owning skill', () => {
     assert.strictEqual(run.status, 0);
     assert.strictEqual(run.stdout, '');
   } finally { fs.rmSync(testHome, { recursive: true, force: true }); }
+});
+
+// ------------------------------------------------ read-before-write gate ----
+//
+// Added 2026-08-09. An approved design system sat in a document nobody opened
+// for three days while a homepage was built against nothing and thrown away.
+// Owning a resource and requiring a document be read first are different
+// questions, so they are separate gates on the same resource.
+
+const site = registry.find((resource) => resource.id === 'alwaysallow-site');
+const GUARD = path.join(ROOT, 'plugins', 'guardrails', 'hooks', 'resource-owner-guard.js');
+
+function guard(event) {
+  const run = spawnSync(process.execPath, [GUARD], { input: JSON.stringify(event), encoding: 'utf8' });
+  try { return JSON.parse(run.stdout).hookSpecificOutput.permissionDecisionReason; }
+  catch (_) { return null; }
+}
+
+function transcriptWith(files) {
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'tr-')), 't.jsonl');
+  fs.writeFileSync(file, files.map((f) => JSON.stringify({
+    type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Read', input: { file_path: f } }] },
+  })).join('\n'));
+  return file;
+}
+
+check('a resource covers every path it lists, not only the first', () => {
+  // The worktree case. The site is checked out in two places while a branch is
+  // in flight, and a guard that knows only the canonical path is off exactly
+  // when the work is happening.
+  assert.ok(resourcePaths(site).length > 1, 'the site resource no longer lists more than one location');
+  assert.ok(contains(site, '~/Projects/always-allow/site/index.html', '/tmp'));
+  assert.ok(contains(site, '/private/tmp/alwaysallow-homepage-atf/site/index.html', '/tmp'));
+  assert.ok(!contains(site, '~/Projects/always-allow/README.md', '/tmp'), 'the guard must not cover the whole repository');
+});
+
+check('reads are counted from the transcript, and only Read tool calls', () => {
+  // Compared through realpath on both sides. On macOS /tmp is a symlink to
+  // /private/tmp, and resolving that is the point: a handoff and an edit can
+  // spell the same file two ways, and the gate has to see them as one.
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'rd-')));
+  const target = path.join(dir, 'a.md');
+  fs.writeFileSync(target, 'x');
+  const seen = readsInTranscript(transcriptWith([target]));
+  assert.ok(seen.has(target), [...seen].join(', '));
+
+  const catOnly = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'tr-')), 't.jsonl');
+  fs.writeFileSync(catOnly, JSON.stringify({
+    type: 'assistant',
+    message: { content: [{ type: 'tool_use', name: 'Bash', input: { command: 'cat /tmp/a.md' } }] },
+  }));
+  assert.strictEqual(readsInTranscript(catOnly).size, 0,
+    'scrolling a file past in a shell is not the same as having it loaded, which is the whole point of the gate');
+});
+
+check('a resource requiring nothing is never gated on reading', () => {
+  assert.deepStrictEqual(unreadRequirements(handoffs, transcriptWith([]), '/tmp'), [],
+    'every resource that existed before this must be unaffected');
+});
+
+check('the gate blocks a site edit until the design system is read', () => {
+  const reason = guard({
+    session_id: 's', cwd: '/tmp', transcript_path: transcriptWith(['/tmp/unrelated.md']),
+    tool_name: 'Edit', tool_input: { file_path: '/private/tmp/alwaysallow-homepage-atf/site/index.html' },
+  });
+  assert.ok(reason, 'the edit was allowed through');
+  assert.match(reason, /DECISION-alwaysallow-homepage-design-system\.md/,
+    'the block must name the document, or it is a wall rather than an instruction');
+  assert.match(reason, /thrown away/, 'the reason the rule exists is what stops it being deleted as noise');
+});
+
+check('the gate opens once the document has been read', () => {
+  const read = path.join(os.homedir(), '.planning', 'DECISION-alwaysallow-homepage-design-system.md');
+  const reason = guard({
+    session_id: 's', cwd: '/tmp', transcript_path: transcriptWith([read]),
+    tool_name: 'Edit', tool_input: { file_path: '/private/tmp/alwaysallow-homepage-atf/site/index.html' },
+  });
+  assert.strictEqual(reason, null, 'the gate stayed shut after the document was read');
+});
+
+check('a resource with no owners is not blocked for lacking one', () => {
+  // The site has requiresRead and no owners. Before the guard split the two
+  // questions, an empty owners list would have blocked every write with a
+  // message naming no skill at all.
+  const read = path.join(os.homedir(), '.planning', 'DECISION-alwaysallow-homepage-design-system.md');
+  const reason = guard({
+    session_id: 's', cwd: '/tmp', transcript_path: transcriptWith([read]),
+    tool_name: 'Write', tool_input: { file_path: '~/Projects/always-allow/site/new.html' },
+  });
+  assert.strictEqual(reason, null);
+});
+
+check('ownership still blocks independently of reading', () => {
+  const reason = guard({
+    session_id: 's', cwd: '/tmp', transcript_path: transcriptWith([]),
+    tool_name: 'Edit', tool_input: { file_path: '~/.planning/handoffs/HANDOFF-x.md' },
+  });
+  assert.match(reason, /owned by \/session:wrap/, 'the ownership gate regressed when the read gate was added');
 });
 
 console.log(`\n${ran} checks, ${failed} failed`);
