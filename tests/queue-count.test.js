@@ -1,0 +1,168 @@
+#!/usr/bin/env node
+// `queue.js count` must count statuses, never files.
+//
+// Run: node tests/queue-count.test.js
+//
+// The fault: flag-issue ended every run with "Queue now has N open items",
+// where N came from `ls queue/*.json | wc -l`. A closed entry stays in the same
+// directory with its status changed, so that number counted finished work as
+// open and only ever climbed. On 2026-08-09 it reported 85 open against 19 that
+// were open, the other 66 being resolved or closed.
+//
+// It is a bad failure for a reason worth writing down: the number is the one
+// thing in that message the user cannot check without opening every file, and
+// being told there are 85 open bugs when there are 19 makes a queue that is
+// being worked look abandoned. The wrong number was also stable and plausible,
+// so nothing about it invited a second look.
+//
+// HOME is redirected to a temp directory, so every assertion runs against a
+// queue built for the test and the real one is never touched.
+
+'use strict';
+
+const assert = require('assert');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const { execFileSync } = require('child_process');
+
+const QUEUE_JS = path.join(
+  __dirname, '..', 'plugins', 'build-loop', 'scripts', 'queue.js'
+);
+
+let failed = 0;
+let ran = 0;
+function check(what, fn) {
+  ran += 1;
+  try {
+    fn();
+    console.log(`  ok    ${what}`);
+  } catch (error) {
+    failed += 1;
+    console.log(`  FAIL  ${what}\n        ${error.message}`);
+  }
+}
+
+function sandbox() {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'queue-count-'));
+  for (const list of ['queue', 'to-build']) {
+    fs.mkdirSync(path.join(home, '.claude', 'build-loop', list), { recursive: true });
+  }
+  return home;
+}
+
+// Writes an entry straight into the list directory. `create` is deliberately
+// not used: these cases need statuses `create` would not write, and the point
+// is what `count` reads off disk rather than how it got there.
+function put(home, list, id, status, type = 'primary') {
+  const dir = path.join(home, '.claude', 'build-loop', list);
+  fs.writeFileSync(path.join(dir, `${id}.json`), JSON.stringify({
+    $schema_version: 5,
+    id,
+    created_at: '2026-08-09T00:00:00.000Z',
+    status,
+    type,
+    parent_id: null,
+    target: 'thing',
+    target_kind: 'script',
+    target_path: '/tmp/thing.js',
+    repo: 'plugins',
+    session_id: '',
+    session_cwd: '',
+    what_happened: 'x',
+    what_expected: 'y',
+    correct_example: 'z',
+    source: 'manual',
+    urgency_hint: 'normal',
+    dedup_key: `thing::${id}`,
+    notes: [],
+    resolution: null,
+  }, null, 2));
+}
+
+function count(home, args = []) {
+  return execFileSync(process.execPath, [QUEUE_JS, 'count', ...args], {
+    encoding: 'utf8',
+    env: { ...process.env, HOME: home },
+  }).trim();
+}
+
+check('an empty queue is nothing open and nothing closed', () => {
+  assert.strictEqual(count(sandbox()), '0 open, 0 closed');
+});
+
+check('THE REGRESSION: closed entries never reach the open count', () => {
+  // This is the whole fault. Counting files gives 5 here, and 5 was reported
+  // as "open items" while only 2 were open.
+  const home = sandbox();
+  put(home, 'queue', 'a', 'Open');
+  put(home, 'queue', 'b', 'Open');
+  put(home, 'queue', 'c', 'Resolved');
+  put(home, 'queue', 'd', 'Resolved');
+  put(home, 'queue', 'e', "Won't Fix");
+  assert.strictEqual(count(home), '2 open, 3 closed');
+});
+
+check('In Progress is open, because it is work that is not finished', () => {
+  const home = sandbox();
+  put(home, 'queue', 'a', 'Open');
+  put(home, 'queue', 'b', 'In Progress');
+  assert.strictEqual(count(home), '2 open, 0 closed');
+});
+
+check('fix applied, watching is counted as neither open nor closed', () => {
+  // Folding it into open made the total disagree with what the user counts as
+  // open by exactly the number of fixes in flight. Folding it into closed
+  // would hide work that still has to be confirmed.
+  const home = sandbox();
+  put(home, 'queue', 'a', 'Open');
+  put(home, 'queue', 'b', 'fix applied, watching');
+  put(home, 'queue', 'c', 'Resolved');
+  assert.strictEqual(count(home), '1 open, 1 watching, 1 closed');
+});
+
+check('a loosely spelled closed status still counts as closed', () => {
+  // `Wontfix` sat on disk for four days and no reader matched it. A count that
+  // compares strictly would put it back in the open total.
+  const home = sandbox();
+  put(home, 'queue', 'a', 'Wontfix');
+  assert.strictEqual(count(home), '0 open, 1 closed');
+});
+
+check('open entries are broken down by type when there is more than one', () => {
+  const home = sandbox();
+  put(home, 'queue', 'a', 'Open', 'primary');
+  put(home, 'queue', 'b', 'Open', 'dep-review');
+  put(home, 'queue', 'c', 'Open', 'dep-review');
+  assert.strictEqual(count(home), '3 open (2 dep-review, 1 primary), 0 closed');
+});
+
+check('an unreadable file is reported and lands in neither total', () => {
+  // Picking a side for a file that cannot be parsed is how the first version
+  // went wrong. It is not evidence of an open entry or of a closed one.
+  const home = sandbox();
+  put(home, 'queue', 'a', 'Open');
+  fs.writeFileSync(path.join(home, '.claude', 'build-loop', 'queue', 'bad.json'), '{ not json');
+  fs.writeFileSync(path.join(home, '.claude', 'build-loop', 'queue', 'null.json'), 'null');
+  const out = count(home);
+  assert.ok(out.startsWith('1 open, 0 closed'), `open and closed totals moved: ${out}`);
+  assert.match(out, /2 could not be read/, `the unreadable files were not reported: ${out}`);
+});
+
+check('it counts the to-build list when asked', () => {
+  const home = sandbox();
+  put(home, 'queue', 'a', 'Open');
+  put(home, 'to-build', 'x', 'Open');
+  put(home, 'to-build', 'y', 'Open');
+  assert.strictEqual(count(home, ['--list', 'to-build']), '2 open, 0 closed');
+});
+
+check('an unknown list is refused rather than counted as empty', () => {
+  const home = sandbox();
+  let threw = false;
+  try { count(home, ['--list', 'nope']); } catch (_) { threw = true; }
+  assert.ok(threw, 'an unknown list returned a count instead of a refusal');
+});
+
+console.log(`\n${ran} checks, ${failed} failed`);
+process.exit(failed === 0 ? 0 : 1);
