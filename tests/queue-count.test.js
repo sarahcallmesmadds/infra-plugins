@@ -193,5 +193,51 @@ check('an unknown list is refused rather than counted as empty', () => {
   assert.ok(threw, 'an unknown list returned a count instead of a refusal');
 });
 
+// --- the skills that report the number -----------------------------------
+//
+// Asserted against the skill text because that text is the program: nothing
+// executes these steps but a model reading them in order, so an ordering fault
+// there is as real as one in the script, and nothing else in this repository
+// would catch it.
+
+const SKILL = (name) => fs.readFileSync(
+  path.join(__dirname, '..', 'plugins', 'build-loop', 'skills', name, 'SKILL.md'), 'utf8'
+);
+
+check('flag-issue counts after writing the dep-reviews, not before', () => {
+  // The count used to be taken right after the primary entry, so every
+  // dep-review written afterwards left it short by one. The message then gave
+  // a total and in the next breath announced N entries that total did not
+  // include, with both halves on screen at once.
+  const src = SKILL('flag-issue');
+  const countAt = src.indexOf('queue.js" count');
+  const depWritesAt = src.indexOf('## Step 4b');
+  assert.ok(countAt > 0, 'flag-issue no longer runs queue.js count at all');
+  assert.ok(depWritesAt > 0, 'the dep-review step is no longer called Step 4b');
+  assert.ok(
+    countAt > depWritesAt,
+    'flag-issue takes the queue count before the dep-review entries are written, '
+    + 'so the number it reports is short by however many it then announces'
+  );
+});
+
+check('flag-issue does not count files anywhere', () => {
+  const src = SKILL('flag-issue');
+  const offending = src.split('\n').filter((line) => (
+    /queue\/\*\.json.*wc -l/.test(line) && !/used to be/.test(line)
+  ));
+  assert.deepStrictEqual(offending, [], 'a file count came back as a live instruction');
+});
+
+check('to-build asks the same command for its count', () => {
+  // Two hand-written definitions of open is how the two lists come to disagree
+  // about the word, and this one has a different set of closed statuses.
+  const src = SKILL('to-build');
+  assert.match(
+    src, /queue\.js" count --list to-build/,
+    'to-build counts its open items some other way than the one tested command'
+  );
+});
+
 console.log(`\n${ran} checks, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);
