@@ -226,7 +226,7 @@ new appeared", never "the map is complete". `/audit-deps` still judges that.
 
 | File | What is read |
 |---|---|
-| `.js` | A `require()` of a relative path that resolves on disk. |
+| `.js` | A `require()` of a relative path that resolves on disk, and a `path.join()` or `path.resolve()` built entirely from string literals that resolves on disk. The second form is how a test suite names its subject: it spawns the thing it tests rather than importing it, so `const HOOK = path.join(__dirname, '..', 'plugins', 'guardrails', 'hooks', 'bash-guard.js')` is the only written record of the dependency. The first segment has to be `__dirname` or a const already resolved the same way, and every later segment has to be a literal, so a fixture path starting at `os.tmpdir()` is dropped rather than guessed at. |
 | `.md` | A `scripts/<name>.js` inside a fenced code block, which is how a skill invokes one. A `plugins/<other>/` written in front of it resolves to that plugin, since `hook-io.js`, `cli.js`, `config.js` and `patterns.js` each exist in more than one plugin here. |
 | `hooks.json` | The `hooks/` and `scripts/` paths named in each `command`. |
 
@@ -246,6 +246,17 @@ cannot recover from:
 - A `hooks.json` that will not parse. Unreadable is not clean.
 - Any edit made outside Write and Edit: a shell `sed`, a `git checkout`, an
   external editor.
+
+There is a fourth case that does not stay drifted, and it is worth naming rather
+than leaving to be discovered. A `.js` file whose references are genuinely
+computed, a path assembled at run time from a variable rather than from
+literals, reads as clean and gets stamped. `plugins/session/statusline/install.js`
+is the one example here: it depends on `statusline.js` by generating a shim that
+requires it, and no path in its own source names the file. That is the same
+semantic dependency extraction has never been able to see, so it is bounded by
+the paragraph above rather than by this list. It is called out because the
+literal-path reading added in 0.9.0 closes the mechanical cases and could
+otherwise be mistaken for closing all of them.
 
 The first two are the difference between "checked, nothing new" and "could not
 check". Collapsing them is what made an early version of this hook mark files as

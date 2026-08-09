@@ -80,6 +80,79 @@ check('a file does not depend on itself', () => {
   assert.deepStrictEqual(extractRefs(f, fs.readFileSync(f, 'utf8')), []);
 });
 
+// --- paths assembled from literals ---------------------------------------
+//
+// A test suite spawns its subject rather than importing it, so there is no
+// require() to read and the dependency is written only as a path constant.
+// Reading require() alone left 12 of the 98 mapped entries with nothing to
+// find, and nothing found is stamped as confirmed, so the suites reaching
+// across the most plugins were the ones the hook did nothing for.
+
+check('a path built from __dirname and literals is a reference', () => {
+  const f = path.join(plugin, 'hooks', 'joined.js');
+  fs.writeFileSync(f, "const H = path.join(__dirname, '..', 'scripts', 'roots.js');\n");
+  assert.deepStrictEqual(extractRefs(f, fs.readFileSync(f, 'utf8')), [path.resolve(rootsJs)]);
+});
+
+check('a path built on an earlier const resolves, and the const itself is not a reference', () => {
+  // The two-step form every session and git-hygiene suite uses. ROOT names a
+  // directory, so it must never be reported: it is how the next line reaches a
+  // dependency, not a dependency.
+  const f = path.join(plugin, 'hooks', 'two-step.js');
+  fs.writeFileSync(f, [
+    "const ROOT = path.join(__dirname, '..');",
+    "const CLI = path.join(ROOT, 'scripts', 'roots.js');",
+  ].join('\n'));
+  assert.deepStrictEqual(extractRefs(f, fs.readFileSync(f, 'utf8')), [path.resolve(rootsJs)]);
+});
+
+check('path.resolve counts the same as path.join', () => {
+  const f = path.join(plugin, 'hooks', 'resolved.js');
+  fs.writeFileSync(f, "const H = path.resolve(__dirname, '..', 'scripts', 'roots.js');\n");
+  assert.deepStrictEqual(extractRefs(f, fs.readFileSync(f, 'utf8')), [path.resolve(rootsJs)]);
+});
+
+check('a join inside a require or a spawn argument list still counts', () => {
+  // Where the path is written does not change what it names.
+  const f = path.join(plugin, 'hooks', 'wrapped.js');
+  fs.writeFileSync(f, [
+    "const r = require(path.join(__dirname, '..', 'scripts', 'roots.js'));",
+    "spawnSync(process.execPath, [path.join(__dirname, 'demo-hook.js')]);",
+  ].join('\n'));
+  const refs = extractRefs(f, fs.readFileSync(f, 'utf8'));
+  assert.ok(refs.includes(path.resolve(rootsJs)), 'the require form was missed');
+  assert.ok(refs.includes(path.resolve(hookJs)), 'the spawn form was missed');
+});
+
+check('a path starting from a computed value is NOT a reference', () => {
+  // THE REGRESSION THAT MATTERS. deps-watch.test.js builds its whole fixture
+  // plugin under a temp directory, and those joins name real files on disk
+  // while the run lasts. Accepting a base that is a call rather than a literal
+  // would turn every fixture in this file into a dependency, which is the same
+  // manufactured false positive as matching roots.js in a prose line.
+  const f = path.join(plugin, 'hooks', 'computed-base.js');
+  fs.writeFileSync(f, [
+    "const T = path.join(os.tmpdir(), 'whatever');",
+    "const S = path.join(T, 'scripts', 'roots.js');",
+  ].join('\n'));
+  assert.deepStrictEqual(extractRefs(f, fs.readFileSync(f, 'utf8')), []);
+});
+
+check('a path with a computed segment is NOT a reference', () => {
+  const f = path.join(plugin, 'hooks', 'computed-segment.js');
+  fs.writeFileSync(f, [
+    'const name = pick();',
+    "const S = path.join(__dirname, '..', 'scripts', name);",
+  ].join('\n'));
+  assert.deepStrictEqual(extractRefs(f, fs.readFileSync(f, 'utf8')), []);
+});
+
+check('a literal path that does not exist on disk is NOT a reference', () => {
+  const f = path.join(plugin, 'hooks', 'absent.js');
+  fs.writeFileSync(f, "const S = path.join(__dirname, '..', 'scripts', 'nope.js');\n");
+  assert.deepStrictEqual(extractRefs(f, fs.readFileSync(f, 'utf8')), []);
+});
+
 check('a script named inside a fenced block is a reference', () => {
   fs.writeFileSync(skillMd, [
     '---', 'name: thing', 'description: demo', '---',

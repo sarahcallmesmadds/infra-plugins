@@ -28,7 +28,16 @@
 // WHAT COUNTS AS A REFERENCE. Only what is mechanically certain, because a
 // guess here costs the same trust the timestamp check already spent:
 //
-//   .js    require() of a relative path that resolves to a file on disk.
+//   .js    require() of a relative path that resolves to a file on disk, and a
+//          path.join()/path.resolve() built entirely from string literals that
+//          resolves to a file on disk. The second form is how every test suite
+//          here names the thing it tests: a suite spawns its subject rather than
+//          importing it, so `const HOOK = path.join(__dirname, '..', 'plugins',
+//          'guardrails', 'hooks', 'bash-guard.js')` is the only place the
+//          dependency is written down. Reading only require() left 12 of the 98
+//          mapped entries with nothing to find, and an empty result is stamped
+//          as confirmed, so the suites that reach across the most plugins were
+//          the ones this hook silently did nothing for.
 //   .md    scripts/<name>.js appearing inside a fenced code block, which is how
 //          a skill invokes one. Prose is excluded on purpose. queue.js mentions
 //          roots.js in a line comment and does not call it; matching that would
@@ -83,6 +92,75 @@ function jsRequires(filePath, content) {
         if (fs.statSync(candidate).isFile()) { found.push(candidate); break; }
       } catch (_) { /* try the next form */ }
     }
+  }
+  return found;
+}
+
+// A path assembled from string literals, which is the other half of how a .js
+// file names a file it depends on. A test suite spawns its subject as a child
+// process rather than importing it, precisely so it exercises the real process
+// boundary, so there is no require() anywhere and the only written form of the
+// dependency is the path constant:
+//
+//   const ROOT = path.join(__dirname, '..', 'plugins', 'session');
+//   const CLI  = path.join(ROOT, 'scripts', 'cli.js');
+//
+// Two rules hold this to the same standard as a require(). The first segment
+// must be __dirname or a const already resolved by this same rule, and every
+// later segment must be a string literal. Then the result must exist on disk.
+//
+// Anything computed fails the first rule and is dropped rather than guessed at,
+// which is what keeps the fixtures out: a temp path starts at os.tmpdir(), a
+// call rather than a literal, and the files under it are written during the run
+// and are not in the map. deps-watch.test.js is full of them and none resolve.
+const JOIN_ARGS = '\\(([^()]*)\\)';
+const JOIN_CALL = `path\\.(?:join|resolve)${JOIN_ARGS}`;
+const CONST_JOIN = `(?:^|\\n)\\s*const\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*${JOIN_CALL}`;
+const STRING_LIT = /^(['"])([^'"]*)\1$/;
+
+// Returns the resolved path, or null when any segment is not certain.
+function resolveJoin(argsSrc, dirname, bindings) {
+  const parts = argsSrc.split(',').map((s) => s.trim()).filter((s) => s.length > 0);
+  if (parts.length === 0) return null;
+  const [head, ...rest] = parts;
+  let base;
+  if (head === '__dirname') base = dirname;
+  else if (Object.prototype.hasOwnProperty.call(bindings, head)) base = bindings[head];
+  else return null;                 // a call, a parameter, a bare literal: not certain
+  const segments = [];
+  for (const part of rest) {
+    const lit = STRING_LIT.exec(part);
+    if (!lit) return null;          // one computed segment makes the whole path a guess
+    segments.push(lit[2]);
+  }
+  return path.join(base, ...segments);
+}
+
+function jsPathJoins(filePath, content) {
+  const dirname = path.dirname(path.resolve(filePath));
+
+  // Collected in source order, so a const built on an earlier one resolves.
+  // A binding naming a directory is kept but never reported: ROOT above is not
+  // itself a dependency, it is how the next line reaches one.
+  const bindings = Object.create(null);
+  const bindingRe = new RegExp(CONST_JOIN, 'g');
+  let b;
+  while ((b = bindingRe.exec(content)) !== null) {
+    const resolved = resolveJoin(b[2], dirname, bindings);
+    if (resolved !== null) bindings[b[1]] = resolved;
+  }
+
+  // Every join anywhere in the file, including inside a require() or a spawn
+  // argument list, since where it is written does not change what it names.
+  const found = [];
+  const callRe = new RegExp(JOIN_CALL, 'g');
+  let m;
+  while ((m = callRe.exec(content)) !== null) {
+    const resolved = resolveJoin(m[1], dirname, bindings);
+    if (resolved === null) continue;
+    try {
+      if (fs.statSync(resolved).isFile()) found.push(resolved);
+    } catch (_) { /* names something that is not here; not this map's business */ }
   }
   return found;
 }
@@ -190,7 +268,7 @@ function hooksJsonRefs(filePath, content) {
 function extractRefs(filePath, content) {
   const ext = path.extname(filePath).toLowerCase();
   let refs = null;
-  if (ext === '.js') refs = jsRequires(filePath, content);
+  if (ext === '.js') refs = [...jsRequires(filePath, content), ...jsPathJoins(filePath, content)];
   else if (ext === '.md') refs = markdownScriptRefs(filePath, content);
   else if (ext === '.json') refs = hooksJsonRefs(filePath, content);
   if (refs === null) return null;
