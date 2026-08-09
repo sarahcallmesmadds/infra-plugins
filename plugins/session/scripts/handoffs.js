@@ -505,6 +505,14 @@ function gitDegradedReason() { return gitDegraded; }
 
 // Only these mean "this git cannot take the flag". Anything else is a real
 // answer about the directory, and retrying costs a second spawn for nothing.
+//
+// Unverified, because no pre-2.31 git is available here to test against: some
+// older `rev-parse` versions echo an unrecognised `--flag` on stdout and exit
+// zero rather than failing. In that case this fallback never runs and the scope
+// key is the echoed flag plus the common dir. That string is still the same for
+// a worktree and its main checkout, so grouping stays correct and nothing is
+// silently lost; it is only uglier than intended. Worth confirming against a
+// real old git before relying on the fallback path itself.
 const UNSUPPORTED_FLAG = /unknown option|unrecognized|error: invalid|usage: git rev-parse/i;
 
 function repoRoot(dir) {
@@ -705,7 +713,15 @@ const CONSTRAINT_SCAN_CAP = 500;
 // rather than by anything retiring it.
 function carriedConstraints({ cwd = process.cwd(), home = os.homedir(), limit = CONSTRAINT_SCAN_CAP } = {}) {
   const want = scopeKey(cwd);
-  const rows = recentHandoffs({ home, limit });
+  // One more than the cap, so "exactly at the ceiling" and "more than the
+  // ceiling" can be told apart. recentHandoffs slices to whatever it is given,
+  // so asking for the cap made both cases return an array of that length, and
+  // a scan that had in fact read everything announced itself as incomplete.
+  // Wrap then tells the model to stop and resolve a truncation that never
+  // happened.
+  const peeked = recentHandoffs({ home, limit: limit + 1 });
+  const truncated = peeked.length > limit;
+  const rows = peeked.slice(0, limit);
   const scanned = [];
   const docs = [];
 
@@ -765,7 +781,7 @@ function carriedConstraints({ cwd = process.cwd(), home = os.homedir(), limit = 
     constraints: out,
     scanned,
     unmatchedRetirements,
-    truncated: rows.length >= limit,
+    truncated,
     // Without git, scoping falls back to comparing real paths, which still
     // groups a directory with itself but cannot tell a worktree from an
     // unrelated folder. That is the whole mechanism quietly not working, and

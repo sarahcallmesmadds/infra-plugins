@@ -1075,6 +1075,22 @@ check('warnings print above the list, not below it', () => {
   });
 });
 
+check('a scan that read everything is not called truncated', () => {
+  // The boundary the first version got wrong. Asking for exactly the cap made
+  // "there were exactly this many" and "there were more" produce the same
+  // array length, so a complete scan announced itself as incomplete and wrap
+  // was told to go and resolve a truncation that had not happened.
+  const cwd = path.join(__dirname, '..');
+  withHandoffs([
+    ['one', `**Working directory:** ${cwd}\n\n## Constraints still in force\n- A.\n`],
+    ['two', `**Working directory:** ${cwd}\n\n## Constraints still in force\n- B.\n`],
+  ], (home) => {
+    const r = handoffs.carriedConstraints({ cwd, home, limit: 2 });
+    assert.strictEqual(r.truncated, false, 'exactly at the ceiling is complete, not cut short');
+    assert.strictEqual(r.constraints.length, 2);
+  });
+});
+
 check('a truncated scan says so', () => {
   const cwd = path.join(__dirname, '..');
   withHandoffs([
