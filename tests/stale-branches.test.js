@@ -23,11 +23,60 @@ const CLI = path.join(ROOT, 'scripts', 'cli.js');
 const NOW = Date.parse('2026-07-27T00:00:00Z');
 const d = (days) => new Date(NOW - days * 86400000).toISOString();
 
+// Whether this git can do `merge-tree --write-tree`, which arrived in 2.38 and
+// is the only way to tell a squash merge from unmerged work. Probed once, for
+// real, in a throwaway repository, because that is the same standard the
+// product code holds itself to: collect.js probes rather than parsing
+// `git --version`, and a test that guessed differently would disagree with the
+// thing it is testing.
+const WRITE_TREE = (() => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wt-probe-'));
+  try {
+    const g = (...a) => execFileSync('git', ['-C', dir, ...a], { stdio: 'pipe' });
+    execFileSync('git', ['init', '-q', '-b', 'main', dir], { stdio: 'pipe' });
+    g('config', 'user.email', 'test@example.com');
+    g('config', 'user.name', 'test');
+    fs.writeFileSync(path.join(dir, 'f.txt'), 'base\n');
+    g('add', '.'); g('commit', '-qm', 'base');
+    g('merge-tree', '--write-tree', 'HEAD', 'HEAD');
+    return true;
+  } catch (_) {
+    return false;
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+})();
+
 let failures = 0;
-function check(name, fn) {
+let skipped = 0;
+
+// `check(name, fn)` as before. `check(name, fn, { needs: 'write-tree' })` skips
+// when this git cannot do the thing the check is about.
+//
+// Skipping rather than failing, because those are different facts and only one
+// of them is about the code. Five checks here assert what happens to a
+// squash-merged branch, which cannot be set up at all without
+// `merge-tree --write-tree`. On an older git they failed, and a reviewer seeing
+// `41 suites, 1 failed` reasonably goes looking for a regression that is not
+// there. It happened three times in one afternoon on a pull request that
+// touched a different plugin entirely.
+//
+// The skip line names the version, so the reader can tell in one line whether
+// it applies to them.
+function check(name, fn, opts = {}) {
+  if (opts.needs === 'write-tree' && !WRITE_TREE) {
+    skipped += 1;
+    process.stdout.write(`  skip ${name}\n       needs git 2.38 for merge-tree --write-tree; this git does not have it\n`);
+    return;
+  }
   try { fn(); process.stdout.write(`  ok   ${name}\n`); }
   catch (e) { failures += 1; process.stdout.write(`  FAIL ${name}\n       ${e.message}\n`); }
 }
+
+// Shorthand for the five checks that cannot be set up without
+// `merge-tree --write-tree`. Every one of them builds a squash-merged branch,
+// which is precisely what an older git cannot distinguish from unmerged work.
+const checkWriteTree = (name, fn) => check(name, fn, { needs: 'write-tree' });
 
 // ---------------------------------------------------- classification ----
 
@@ -198,7 +247,7 @@ check('every child process is given a timeout', () => {
   assert.ok(/maxBuffer/.test(src), 'run() should bound output size too');
 });
 
-check('a deadline already past skips the work that costs, and reports it', () => {
+checkWriteTree('a deadline already past skips the work that costs, and reports it', () => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'gh-deadline-'));
   const git = (...a) => execFileSync('git', ['-C', repo, '-c', 'user.email=t@t',
     '-c', 'user.name=t', ...a], { stdio: 'ignore' });
@@ -472,7 +521,7 @@ check('outside a repo with no --repo, it explains rather than reporting nothing'
 // under test is what git reports, and a fixture would only record what we
 // already believe it reports.
 
-check('a squash-merged branch is safe to delete, an unmerged one is not', () => {
+checkWriteTree('a squash-merged branch is safe to delete, an unmerged one is not', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'squash-'));
   const g = (...args) => execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8' });
 
@@ -546,7 +595,7 @@ check('merge evidence never rescues an unknown aheadBy', () => {
 // merges it is behind by exactly the merge being asked about. Comparing only
 // against it kept branches that were genuinely merged, and only --repo cleared
 // them. Found while verifying the fix above, in a separate session.
-check('a branch merged into origin/main is cleared even when local main is behind', () => {
+checkWriteTree('a branch merged into origin/main is cleared even when local main is behind', () => {
   const origin = fs.mkdtempSync(path.join(os.tmpdir(), 'origin-'));
   const work = fs.mkdtempSync(path.join(os.tmpdir(), 'work-'));
   execFileSync('git', ['init', '-q', '--bare', '-b', 'main', origin]);
@@ -605,7 +654,7 @@ check('a branch merged into origin/main is cleared even when local main is behin
 // squash merge never brings to zero, so every branch the merge signal cleared
 // was offered, approved, then refused with a message saying something had
 // landed in between. Nothing had.
-check('--verify clears a squash-merged branch and asks for the delete that works', () => {
+checkWriteTree('--verify clears a squash-merged branch and asks for the delete that works', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'verify-'));
   const g = (...a) => execFileSync('git', ['-C', dir, ...a], { encoding: 'utf8', stdio: 'pipe' });
   execFileSync('git', ['init', '-q', '-b', 'main', dir], { stdio: 'pipe' });
@@ -787,7 +836,7 @@ check('the force path re-checks each branch immediately before deleting it', () 
 // The number of explanation lines varies: a branch cleared by merge evidence
 // gets a needs-force line, one cleared by ancestry does not. A caller counting
 // from the top runs prose as a shell command.
-check('the delete command is the last line of verify output, whatever else is printed', () => {
+checkWriteTree('the delete command is the last line of verify output, whatever else is printed', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lastline-'));
   const g = (...a) => execFileSync('git', ['-C', dir, ...a], { encoding: 'utf8', stdio: 'pipe' });
   execFileSync('git', ['init', '-q', '-b', 'main', dir], { stdio: 'pipe' });
@@ -910,5 +959,14 @@ check('the README sample output matches what the command actually prints', () =>
 
 fs.unlinkSync(fixture);
 
+// The skip count is printed on its own line rather than folded into the pass
+// message, because a run that skipped five checks proved less than one that
+// skipped none, and a summary that reads identically to a full run hides that.
+if (skipped > 0) {
+  process.stdout.write(
+    `\n${skipped} check${skipped === 1 ? '' : 's'} skipped: this git cannot do `
+    + 'merge-tree --write-tree, which arrived in 2.38. Squash-merge evidence is untested here.\n'
+  );
+}
 process.stdout.write(failures === 0 ? '\nAll stale-branch tests passed.\n' : `\n${failures} test(s) failed.\n`);
 process.exit(failures === 0 ? 0 : 1);
