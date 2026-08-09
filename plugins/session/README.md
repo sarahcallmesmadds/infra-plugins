@@ -273,10 +273,74 @@ missing document in a surviving directory was deleted or renamed. A missing
 directory means the project moved or its volume is not mounted, and nothing here
 can tell those apart, so it does not guess.
 
+## Constraints that outlive the session that set them
+
+A handoff records what happened. It also has to record what is still binding,
+because a decision made in one session does not stop applying when the next
+session is about something else.
+
+`/wrap` writes a `## Constraints still in force` section and carries every entry
+into the handoff that supersedes it. `/pickup` prints them first, above the next
+actions, verbatim. Both read them with:
+
+```bash
+cli.js constraints [--cwd <project directory>]
+```
+
+Without `--cwd` it answers for the current working directory, which is why
+`/pickup` passes the directory recorded inside the handoff rather than relying
+on where the session opened.
+
+**Scope is the repository, not the directory.** The command runs `git rev-parse
+--git-common-dir` on the directory each handoff records, so a worktree inherits
+from its main checkout and two handoffs for the same project group together even
+when their recorded paths look unrelated. That call is memoized per directory
+and times out after ten seconds, so a recorded path on an unmounted volume slows
+the scan rather than hanging it. Directories that are not git checkouts fall
+back to their real path and still group with themselves.
+
+`--path-format=absolute` is tried first and the bare form is the fallback, since
+the flag arrived in git 2.31 and older versions fail the whole invocation. The
+fallback runs only when git says the flag is unsupported, so a directory that is
+simply not a repository costs one probe rather than two, and a path on a dead
+mount costs one timeout rather than two.
+
+Scope falls back to comparing real paths when git cannot be run, or when a probe
+times out. That still groups a directory with itself but cannot recognise a
+worktree, so the command says which of the two happened rather than quietly
+answering with less.
+
+The directory is read from the handoff's `**Working directory:**` line, which
+often carries prose after the path. A trailing parenthetical is stripped only
+when the whole string is not a directory that exists, so a project whose folder
+name genuinely contains a bracket is not truncated into its parent.
+
+**Retiring one has to be written down.** A constraint that vanishes with no line
+explaining why is indistinguishable from one that was forgotten, so removal is
+recorded rather than implied:
+
+```
+- Retired this session: <the constraint, quoted exactly as it was written>, because <reason>.
+```
+
+The quote is matched against the bullet in the earlier handoff, so an
+approximation retires nothing. When a retirement matches nothing the command
+says so, because a retirement that silently fails is the same defect as a
+constraint that silently vanishes.
+
+**Limits worth knowing.** The scan reads at most 500 handoffs, newest first, and
+says so when it hits that ceiling. Archived handoffs are read: a constraint does
+not stop applying because the document carrying it went quiet for 30 days.
+
 ## What pickup deliberately does not do
 
 It does not open the files the handoff mentions. It lists them and waits to be
 asked.
+
+The exception is a document a constraint names. That is not context that might
+be useful, it is what the work has to comply with, so `/pickup` says which it is
+and that it gets read before work starts in the area it governs. It still does
+not load it here.
 
 Bulk-loading them is the largest avoidable context cost at the start of a
 session, and most are never touched before the conversation goes somewhere else.

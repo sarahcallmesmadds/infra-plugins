@@ -40,6 +40,61 @@ Read back over the whole conversation and pull out:
    never answered.
 5. **Next actions.** Concrete enough to start on without rereading anything.
 
+Then collect what is still binding from before this session:
+
+```bash
+"${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js constraints
+```
+
+**A decision made in an earlier session does not stop applying because this
+session was about something else.** Scope is the repository, so a worktree
+inherits from its main checkout.
+
+- **It lists constraints.** Carry every one into the new handoff, verbatim.
+  **The bullet holds the constraint and nothing else.** No "(from HANDOFF-x)",
+  no date, no note about why it is being carried. Matching is on the text, so
+  an added annotation makes the copy a different constraint from the original:
+  both then show as live, the list grows a near duplicate at every wrap, and a
+  later retirement quoting one of them silently leaves the other in force. The
+  command already reports where each came from on its own line.
+- **It lists none, and names the handoffs it found for this project.** Those
+  documents predate the section. Read them, pull out anything binding, and
+  propose it to the user before writing:
+
+  > These look like they still apply. Carrying them into the handoff unless you
+  > say otherwise:
+  > - the constraint, and which handoff it came from
+
+  A constraint is anything that governs work not finished yet: an approved
+  design or standard, a path that must be read first, a deploy restriction,
+  something declared off limits. Not a completed decision, which belongs under
+  "Decisions made".
+- **It warns that the scan was truncated, or that a retirement matched
+  nothing.** Both mean the list is not trustworthy as given. Resolve it before
+  writing rather than carrying a list you have been told is wrong.
+
+**Dropping one requires saying so.** If this session retired a constraint,
+record it as retired with the reason:
+
+```
+- Retired this session: <the constraint, quoted exactly as it was written>, because <reason>.
+```
+
+**The quote has to match the original.** Retirement works by matching that text
+against the bullet in the earlier handoff, so an approximation retires nothing
+and the constraint keeps coming back. `cli.js constraints` says so when a
+retirement matches nothing, and that warning means the wording, not the
+decision, is wrong.
+
+Silence is not retirement. A constraint that vanishes without a line explaining
+why is indistinguishable from one that was forgotten, which is how the
+AlwaysAllow design system was lost between the 2026-08-05 handoff and the
+2026-08-08 one that superseded it.
+
+**Never edit an old handoff to backfill this.** Handoffs are owned by this skill
+and are a record of what was true when they were written. The new document is
+the carrier.
+
 **Prefer what was verified over what was intended.** A version number, a
 manifest and a passing manifest entry all report intent. Only running something
 reports behaviour. Where the two differ in this session, write down which is
@@ -71,6 +126,10 @@ not:
 
 ## What was worked on
 [Two or three sentences. The subject, not the activity.]
+
+## Constraints still in force
+- [what governs future work, and nothing else on the line]
+- [Retired this session: the constraint quoted exactly, because the reason. Drop this line unless something was actually retired.]
 
 ## Decisions made
 - [Decision, and why]

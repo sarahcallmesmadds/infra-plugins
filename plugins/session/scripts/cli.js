@@ -10,6 +10,7 @@
 //   cli.js forget <slug>         drop an index entry, leaving the document
 //   cli.js recent                the newest handoffs, for the pickup menu
 //   cli.js target [topic]        where wrap should write from here
+//   cli.js constraints           what earlier handoffs say is still binding here
 //   cli.js memory                the memory directory for this project, if any
 //   cli.js memory-check          is that directory still worth loading
 //   cli.js mcp-probe             transition-only core-tools monitor
@@ -258,6 +259,80 @@ const COMMANDS = {
       const age = Math.round((Date.now() - r.mtime) / 86400000);
       return `  ${r.slug}${r.archived ? ' (archived)' : ''}  ${age}d  ${r.path}`;
     }));
+  },
+
+  // What earlier handoffs for this same project say is still binding.
+  //
+  // Wrap calls this before writing, so a constraint recorded once keeps being
+  // recorded until something retires it on purpose. Without it a constraint
+  // survives exactly as long as nobody starts a new thread of work: the
+  // AlwaysAllow design system was named in the 2026-08-05 handoff, the
+  // 2026-08-08 handoff for the same repository never mentioned it, and every
+  // pickup after that began with the governing document invisible.
+  //
+  // Scope is the repository rather than the directory, so a worktree inherits
+  // from its main checkout. That specific mismatch is what hid it.
+  constraints(opts) {
+    const r = handoffs.carriedConstraints({ cwd: opts.cwd, home: opts.home });
+    if (opts.json) return emit(opts, r, []);
+
+    // Anything that makes the answer less than complete is said before the
+    // answer, never after it. A truncated scan and a retirement that hit
+    // nothing both mean the list below may be wrong, and a caveat printed
+    // underneath a confident list is one nobody reads.
+    const warnings = [];
+    if (r.gitDegraded) {
+      warnings.push(
+        r.gitDegraded === 'timeout'
+          ? 'A git probe timed out, so scope fell back to comparing directory paths.'
+          : 'git could not be run, so scope fell back to comparing directory paths.',
+        '  A worktree will not be grouped with its main checkout, and constraints',
+        '  recorded from one may be missing below.',
+        r.gitDegraded === 'timeout'
+          ? '  Usually a recorded path on a volume that is not mounted.'
+          : '',
+        '',
+      );
+    }
+    if (r.truncated) {
+      warnings.push(
+        `Scan hit its ceiling of ${handoffs.CONSTRAINT_SCAN_CAP} handoffs, so an older one may not have been read.`,
+        'Treat the list below as incomplete.',
+        '',
+      );
+    }
+    for (const u of r.unmatchedRetirements) {
+      warnings.push(
+        `"${u.text}" in ${u.from} retires something no handoff records, so it retires nothing.`,
+        '  Usually a mistyped quote. The constraint has to be repeated exactly as it was written.',
+        '',
+      );
+    }
+
+    if (!r.constraints.length) {
+      const matched = r.scanned.filter((s) => s.matched);
+      // Two different answers, and only one of them is about this project.
+      // Printing a colon and then no list, followed by a sentence about "those",
+      // was the same defect as everything else fixed on this branch: output that
+      // reads as complete while describing nothing.
+      const tail = matched.length
+        ? [
+          `  ${matched.length} of ${r.scanned.length} handoffs scanned belong to this project:`,
+          ...matched.map((s) => `    ${s.slug}`),
+          '  If one of those carries a binding constraint in prose, record it in the',
+          '  next handoff under "## Constraints still in force".',
+        ]
+        : [
+          `  None of the ${r.scanned.length} handoffs scanned belong to this project, so there was`,
+          '  nothing to inherit from. This is expected for the first wrap here.',
+        ];
+      return emit(opts, {}, [...warnings, `No constraints recorded yet for ${r.scope}.`, ...tail]);
+    }
+    emit(opts, {}, [
+      ...warnings,
+      `${r.constraints.length} constraint${r.constraints.length === 1 ? '' : 's'} still in force for ${r.scope}:`,
+      ...r.constraints.map((c) => `  - ${c.text}\n      (from ${c.from})`),
+    ]);
   },
 
   // Where wrap should write, and a note of it so pickup can find it later.

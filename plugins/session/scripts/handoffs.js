@@ -479,8 +479,327 @@ function recentHandoffs({ home = os.homedir(), limit = 5 } = {}) {
   return out.sort((a, b) => b.mtime - a.mtime).slice(0, limit);
 }
 
+// The repository a directory belongs to, following a worktree back to its main
+// checkout. Two handoffs for the same project can record different directories,
+// because work moves into a worktree, and a plain string compare on those paths
+// says they are unrelated. That is exactly how the AlwaysAllow design system was
+// lost on 2026-08-08: the handoff carrying it recorded
+// `~/Projects/always-allow`, the one that superseded it recorded
+// `/private/tmp/alwaysallow-homepage-atf`, and nothing connected them.
+//
+// Returns null for a directory that is not in a repository, in which case the
+// caller falls back to the realpath of the directory itself.
+// Why repository scoping stopped working, when it did. Null means it is fine.
+//
+// Anything recorded here means the answer the command gives is arrived at by
+// comparing paths rather than by asking git, so a worktree will not be grouped
+// with its main checkout. That produces a confident, wrong "no constraints",
+// which is the failure this feature exists to prevent, so it is never inferred
+// from silence.
+//
+// A directory that is simply not a repository is not degradation and is not
+// recorded: that is the ordinary case for a handoff written outside a checkout.
+let gitDegraded = null;   // null | 'missing' | 'timeout'
+
+function gitDegradedReason() { return gitDegraded; }
+
+// Only these mean "this git cannot take the flag". Anything else is a real
+// answer about the directory, and retrying costs a second spawn for nothing.
+//
+// Unverified, because no pre-2.31 git is available here to test against: some
+// older `rev-parse` versions echo an unrecognised `--flag` on stdout and exit
+// zero rather than failing. In that case this fallback never runs and the scope
+// key is the echoed flag plus the common dir. That string is still the same for
+// a worktree and its main checkout, so grouping stays correct and nothing is
+// silently lost; it is only uglier than intended. Worth confirming against a
+// real old git before relying on the fallback path itself.
+const UNSUPPORTED_FLAG = /unknown option|unrecognized|error: invalid|usage: git rev-parse/i;
+
+function repoRoot(dir) {
+  const { execFileSync } = require('child_process');
+  // A directory recorded in a handoff can sit on a network volume that is slow
+  // or gone, and a synchronous spawn with no timeout hangs the whole command
+  // there. Ten seconds is far past a local answer and far short of waiting on a
+  // dead mount.
+  const opts = { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 10000 };
+  const strip = (out) => (out ? out.trim().replace(/\/\.git\/?$/, '') || null : null);
+
+  // Records why a probe failed, and says whether a second attempt is worth
+  // making. The first version retried unconditionally, so every directory that
+  // was not a repository cost two spawns, and a dead mount cost the full
+  // timeout twice.
+  const classify = (e) => {
+    if (!e) return false;
+    if (e.code === 'ENOENT') { gitDegraded = 'missing'; return false; }
+    if (e.code === 'ETIMEDOUT' || e.signal === 'SIGTERM') { gitDegraded = gitDegraded || 'timeout'; return false; }
+    return UNSUPPORTED_FLAG.test(String(e.stderr || ''));
+  };
+
+  try {
+    return strip(execFileSync(
+      'git', ['-C', dir, 'rev-parse', '--path-format=absolute', '--git-common-dir'], opts,
+    ));
+  } catch (e) {
+    // `--path-format` arrived in git 2.31. On anything older the whole
+    // invocation fails, and the first version read that as "not a repository",
+    // which silently disabled the worktree grouping this feature exists for.
+    if (!classify(e)) return null;
+  }
+
+  // Old git. The bare form works everywhere and may answer relatively, so it is
+  // resolved against the directory it was asked about.
+  try {
+    const out = execFileSync('git', ['-C', dir, 'rev-parse', '--git-common-dir'], opts).trim();
+    if (!out) return null;
+    return strip(path.isAbsolute(out) ? out : path.resolve(dir, out));
+  } catch (e) {
+    classify(e);
+    return null;
+  }
+}
+
+// One git spawn per distinct directory, not per handoff. A scan reads up to a
+// few hundred documents and most of them name the same handful of directories,
+// so without this the common case was dozens of blocking subprocesses to answer
+// a question that has the same answer every time.
+const scopeCache = new Map();
+
+// The scope key two handoffs must share for one to inherit the other's
+// constraints. Repository if there is one, resolved real path otherwise, so a
+// project that is not a git checkout still groups with itself.
+function scopeKey(dir) {
+  if (!dir) return null;
+  if (scopeCache.has(dir)) return scopeCache.get(dir);
+  const repo = repoRoot(dir);
+  let key;
+  if (repo) key = repo;
+  else {
+    try { key = fs.realpathSync(dir); } catch (_) { key = path.resolve(dir); }
+  }
+  scopeCache.set(dir, key);
+  return key;
+}
+
+// The directory a handoff document says it was written from. Two header spellings
+// are in the wild: `**Working directory:** <path>` from the current template and
+// `**Repository:** \`<path>\`` from handoffs written before it. Both are read,
+// because the older ones are exactly the documents holding constraints nobody has
+// re-recorded yet.
+function handoffDir(text) {
+  const m = text.match(/^\*\*(?:Working directory|Repository|Repo):\*\*\s*`?([^`\n]+)`?/mi);
+  if (!m) return null;
+  const expand = (s) => s.trim().replace(/^~(?=\/|$)/, os.homedir()).replace(/[`,]+$/, '').trim();
+
+  // Handoff headers carry prose after the path often enough to matter:
+  //   **Working directory:** /private/tmp/atf (git worktree of ~/Projects/x)
+  // The first version cut the capture at `(`, which handled that and quietly
+  // broke every project whose folder name contains a bracket. A path like
+  // `/Users/x/Projects (archive)/repo` truncated to `/Users/x/Projects`, so its
+  // constraints vanished and every other project under that parent inherited
+  // the same key and each other's rules.
+  //
+  // So take the whole line, and only strip a trailing parenthetical when the
+  // full string is not a directory that exists. Existence is the evidence; the
+  // bracket alone never was.
+  const whole = expand(m[1]);
+  try { if (fs.statSync(whole).isDirectory()) return whole; } catch (_) { /* not a directory */ }
+
+  const trimmed = expand(whole.replace(/\s*\([^)]*\)\s*$/, ''));
+  if (trimmed && trimmed !== whole) {
+    try { if (fs.statSync(trimmed).isDirectory()) return trimmed; } catch (_) { /* nor this */ }
+  }
+
+  // Neither resolves, which is normal: the handoff may describe a machine this
+  // is not, or a volume that is not mounted. Prefer the trimmed form, since a
+  // trailing annotation is far more common in these headers than a bracket in a
+  // real folder name, and grouping is by string in that case anyway.
+  return trimmed || whole || null;
+}
+
+// Every bullet under a `## Constraints still in force` heading, split into the
+// live ones and the retirements, because both are needed and only one of them
+// is a constraint.
+//
+// An unfilled template bullet is dropped. The test is that the WHOLE bullet is
+// bracketed, not that it starts with one: a constraint is very naturally
+// written as a markdown link, `- [the design system](path) governs site/`, and
+// a leading-bracket test threw exactly those away without a word. That is the
+// failure this feature exists to prevent, committed inside the feature.
+function bulletsIn(text) {
+  // Terminator is any ATX heading, `^#{1,6}\s`, not `^##\s`. The narrower form
+  // does not match `### Notes`, because the character after `##` is a `#` and
+  // not whitespace, so a nested subsection did not end the section and its
+  // bullets were collected as constraints.
+  //
+  // The end-of-input assertion is `$(?![\s\S])`, not `\Z`. JavaScript has no
+  // `\Z`, so it parsed as a literal Z and the section only ended at the next
+  // heading. Constraints written last in a file, which is where they land,
+  // read back as none while sitting there in plain sight.
+  const m = text.match(/^#{2,6}\s*Constraints still in force\s*$([\s\S]*?)(?=^#{1,6}\s|$(?![\s\S]))/mi);
+  if (!m) return { live: [], retired: [] };
+  const bullets = m[1]
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l.startsWith('- '))
+    .map((l) => l.slice(2).trim())
+    .filter(Boolean)
+    .filter((l) => !/^\[.*\]$/.test(l));
+
+  const live = [];
+  const retired = [];
+  for (const b of bullets) {
+    const r = b.match(/^retired this session\s*:\s*(.+)$/i);
+    if (r) retired.push(r[1].trim());
+    else live.push(b);
+  }
+  return { live, retired };
+}
+
+// Bullets under the heading that are live constraints. Retirements are not
+// constraints, so they do not appear here.
+function constraintsIn(text) {
+  return bulletsIn(text).live;
+}
+
+// What a handoff says stopped applying. Read by `carriedConstraints`, which is
+// the only place retirement can actually be honoured: the document doing the
+// retiring is not the document carrying the constraint, so dropping the line at
+// parse time and stopping there made retirement completely inert.
+function retiredIn(text) {
+  return bulletsIn(text).retired;
+}
+
+// The form two constraint texts are compared in. Case, surrounding whitespace
+// and a trailing full stop are all noise here.
+function normalizeConstraint(s) {
+  return s.trim().replace(/\s+/g, ' ').replace(/\.$/, '').toLowerCase();
+}
+
+// A retirement reads `Retired this session: <the constraint>, because <reason>.`
+// The reason is prose that will not appear in the original bullet, so it comes
+// off before matching. Everything before the LAST `, because` is the quoted
+// constraint.
+//
+// The last, not the first. `String.replace` with a non-global pattern cuts from
+// the leftmost match, so a constraint whose own wording contains "because" was
+// truncated mid-quote: `Use the glow outline, because contrast` retired with a
+// reason became `use the glow outline`, matched nothing, left the constraint in
+// force, and told the user their exact quote was a typo. The comment here said
+// "last" while the code did "first" for the whole of round one.
+function retiredTarget(s) {
+  const marks = [...s.matchAll(/,\s*because\b/gi)];
+  const cut = marks.length ? s.slice(0, marks[marks.length - 1].index) : s;
+  return normalizeConstraint(cut);
+}
+
+// A ceiling rather than a window. The old default of 40 was applied by
+// `recentHandoffs` across every project before this filtered by project, so in
+// a home directory with many active threads the one handoff carrying a
+// constraint could fall off the end and be dropped in silence, which is the
+// failure this whole feature exists to prevent. It is high enough that hitting
+// it is a real anomaly, and `truncated` says so out loud when it happens.
+const CONSTRAINT_SCAN_CAP = 500;
+
+// Every constraint still in force for the project `cwd` belongs to.
+//
+// Documents are read newest first, and a retirement in a newer one suppresses
+// the matching bullet in every older one. That ordering is the whole mechanism:
+// the document that retires a constraint is never the document that carries it,
+// so retirement can only be honoured here, across documents, and not by a
+// parser looking at one file.
+//
+// Archived handoffs are read. A constraint does not stop applying because the
+// document carrying it went quiet for 30 days, and archiving is driven by mtime
+// rather than by anything retiring it.
+function carriedConstraints({ cwd = process.cwd(), home = os.homedir(), limit = CONSTRAINT_SCAN_CAP } = {}) {
+  const want = scopeKey(cwd);
+  // One more than the cap, so "exactly at the ceiling" and "more than the
+  // ceiling" can be told apart. recentHandoffs slices to whatever it is given,
+  // so asking for the cap made both cases return an array of that length, and
+  // a scan that had in fact read everything announced itself as incomplete.
+  // Wrap then tells the model to stop and resolve a truncation that never
+  // happened.
+  const peeked = recentHandoffs({ home, limit: limit + 1 });
+  const truncated = peeked.length > limit;
+  const rows = peeked.slice(0, limit);
+  const scanned = [];
+  const docs = [];
+
+  // Read everything first. Whether a retirement matched anything cannot be
+  // decided while scanning, because the constraint it names lives in an older
+  // document that has not been read yet. Deciding it inline reported every
+  // legitimate retirement as unmatched.
+  for (const r of rows) {
+    let text;
+    try { text = fs.readFileSync(r.path, 'utf8'); } catch (_) { continue; }
+    const dir = handoffDir(text);
+    const key = dir ? scopeKey(dir) : null;
+    const { live, retired } = bulletsIn(text);
+    scanned.push({
+      slug: r.slug, path: r.path, dir, matched: key === want, found: live.length,
+    });
+    if (key !== want) continue;
+    docs.push({ row: r, live, retired });
+  }
+
+  const everLive = new Set();
+  for (const d of docs) for (const c of d.live) everLive.add(normalizeConstraint(c));
+
+  const out = [];
+  const seen = new Set();
+  for (const d of docs) {
+    // Live bullets first, so a document that states a constraint and retires it
+    // keeps it. Contradicting yourself inside one handoff is not a retirement.
+    for (const c of d.live) {
+      const norm = normalizeConstraint(c);
+      if (seen.has(norm)) continue;
+      seen.add(norm);
+      out.push({ text: c, from: d.row.slug, path: d.row.path });
+    }
+    // Then the retirements, marked seen so no older document can resurrect
+    // them. Nothing is emitted for these; they exist only to suppress.
+    for (const t of d.retired) {
+      const norm = retiredTarget(t);
+      if (norm) seen.add(norm);
+    }
+  }
+
+  // A retirement naming something no handoff ever recorded is almost always a
+  // mistyped quote, and it does nothing. Reported rather than swallowed: a
+  // retirement that silently fails is the same defect as a constraint that
+  // silently vanishes, pointed the other way.
+  const unmatchedRetirements = [];
+  for (const d of docs) {
+    for (const t of d.retired) {
+      const norm = retiredTarget(t);
+      if (norm && !everLive.has(norm)) unmatchedRetirements.push({ text: t, from: d.row.slug });
+    }
+  }
+
+  return {
+    scope: want,
+    constraints: out,
+    scanned,
+    unmatchedRetirements,
+    truncated,
+    // Without git, scoping falls back to comparing real paths, which still
+    // groups a directory with itself but cannot tell a worktree from an
+    // unrelated folder. That is the whole mechanism quietly not working, and
+    // the answer it produces is a confident one, so it is reported.
+    gitDegraded: gitDegradedReason(),
+  };
+}
+
 module.exports = {
   DEFAULT_STALE_DAYS,
+  CONSTRAINT_SCAN_CAP,
+  repoRoot,
+  scopeKey,
+  handoffDir,
+  bulletsIn,
+  constraintsIn,
+  retiredIn,
+  carriedConstraints,
   handoffRoot,
   archiveRoot,
   indexPath,

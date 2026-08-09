@@ -761,5 +761,347 @@ check('the failure ending exists and does not offer a pickup slug', () => {
     'a slug pointing at no file sends the next session looking for nothing');
 });
 
+// ------------------------------------------------- carrying constraints ----
+// Added 2026-08-09, with the defect each one exists to catch.
+
+check('a constraints section at the end of a file is read', () => {
+  // The one that shipped broken. The terminator was written `\Z`, which
+  // JavaScript has no such assertion for, so it matched a literal Z and the
+  // section only ended at the next `## ` heading. Constraints written last in
+  // the document, which is where they usually land, read back as none at all,
+  // and the command cheerfully reported zero. Every fixture written by hand had
+  // a heading afterwards, so the unit tests agreed with it.
+  const got = handoffs.constraintsIn('# H\n\n## Constraints still in force\n- only one\n');
+  assert.deepStrictEqual(got, ['only one']);
+});
+
+check('a retired constraint is not carried forward as a live one', () => {
+  const got = handoffs.constraintsIn(
+    '## Constraints still in force\n- live one\n- Retired this session: old one, because reasons.\n'
+  );
+  assert.deepStrictEqual(got, ['live one'],
+    'a line recording that a constraint was dropped would otherwise keep it alive for ever');
+});
+
+check('a retirement is readable, not only droppable', () => {
+  // Dropping the line at parse time and stopping there is what made retirement
+  // inert: the document doing the retiring never carries the constraint, so the
+  // only place it can be honoured is across documents.
+  const got = handoffs.retiredIn(
+    '## Constraints still in force\n- live one\n- Retired this session: old one, because reasons.\n'
+  );
+  assert.deepStrictEqual(got, ['old one, because reasons.']);
+});
+
+check('an unfilled template bullet is not a constraint', () => {
+  const got = handoffs.constraintsIn(
+    '## Constraints still in force\n- [what governs future work, and the handoff it came from]\n'
+  );
+  assert.deepStrictEqual(got, []);
+});
+
+check('the real wrap template placeholder is excluded', () => {
+  // Reads the template rather than a copy of it. The fixture above passes
+  // against a placeholder written to suit the parser; this fails if the two
+  // ever disagree, which is the only way the check is worth having.
+  const wrap = fs.readFileSync(
+    path.join(__dirname, '..', 'plugins', 'session', 'skills', 'wrap', 'SKILL.md'), 'utf8'
+  );
+  const block = wrap.match(/```markdown\n([\s\S]*?)```/);
+  assert.ok(block, 'the handoff template is gone');
+  assert.deepStrictEqual(handoffs.constraintsIn(block[1]), [],
+    'the template placeholder reads back as a real constraint, so every handoff written from it carries a fake one');
+});
+
+check('a constraint written as a markdown link survives', () => {
+  // Dropped by the first version, which treated any leading `[` as a
+  // placeholder. Naming a document is the single most likely thing a constraint
+  // does, and a link is the natural way to write it, so the filter deleted
+  // exactly the constraints that mattered most, without a word.
+  const got = handoffs.constraintsIn(
+    '## Constraints still in force\n- [the design system](docs/design.md) governs anything under site/\n'
+  );
+  assert.deepStrictEqual(got, ['[the design system](docs/design.md) governs anything under site/']);
+});
+
+check('constraints stop at the next heading, including a nested one', () => {
+  assert.deepStrictEqual(
+    handoffs.constraintsIn('## Constraints still in force\n- mine\n\n## Decisions made\n- not mine\n'),
+    ['mine']
+  );
+  // `^##\s` does not match `### Notes`, because the character after `##` is a
+  // `#` rather than whitespace, so a nested subsection did not close the block
+  // and its bullets were collected as constraints.
+  assert.deepStrictEqual(
+    handoffs.constraintsIn('## Constraints still in force\n- mine\n\n### Notes\n- not mine\n'),
+    ['mine']
+  );
+});
+
+check('a worktree shares a scope with its main checkout', () => {
+  // The mismatch that hid the AlwaysAllow design system: one handoff recorded
+  // the repository, the next recorded a worktree of it, and a path compare said
+  // they were unrelated projects.
+  //
+  // This builds a real linked worktree. The earlier version compared the repo
+  // root with a subdirectory of the same checkout, which exercises none of the
+  // `--git-common-dir` behaviour the feature rests on, and failed outside a git
+  // checkout because both sides fell back to different real paths.
+  const { execFileSync } = require('child_process');
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'wt-'));
+  const repo = path.join(base, 'repo');
+  const tree = path.join(base, 'tree');
+  const git = (args, cwd) => execFileSync('git', args, { cwd, stdio: ['ignore', 'pipe', 'ignore'] });
+  try {
+    fs.mkdirSync(repo);
+    git(['init', '-q', '-b', 'main'], repo);
+    git(['config', 'user.email', 't@t'], repo);
+    git(['config', 'user.name', 't'], repo);
+    fs.writeFileSync(path.join(repo, 'f'), 'x');
+    git(['add', '.'], repo);
+    git(['commit', '-qm', 'x'], repo);
+    git(['worktree', 'add', '-q', tree], repo);
+
+    assert.strictEqual(handoffs.scopeKey(tree), handoffs.scopeKey(repo),
+      'a linked worktree must resolve to the same scope as its main checkout');
+    assert.notStrictEqual(fs.realpathSync(tree), fs.realpathSync(repo),
+      'the two paths must genuinely differ, or this proves nothing');
+  } finally {
+    fs.rmSync(base, { recursive: true, force: true });
+  }
+});
+
+check('a project folder containing a bracket is not truncated', () => {
+  // The first version cut the capture at `(` to strip a trailing annotation,
+  // which silently rewrote `/x/Projects (archive)/repo` to `/x/Projects`. That
+  // dropped the project's own constraints and gave every other project under
+  // that parent the same scope key, so unrelated projects inherited each
+  // other's rules.
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'br-'));
+  const weird = path.join(base, 'Projects (archive)', 'repo');
+  fs.mkdirSync(weird, { recursive: true });
+  try {
+    assert.strictEqual(handoffs.handoffDir(`**Working directory:** ${weird}`), weird);
+  } finally {
+    fs.rmSync(base, { recursive: true, force: true });
+  }
+});
+
+check('a trailing annotation after the path is still stripped', () => {
+  // The reason the bracket rule existed. Real handoffs write
+  // `**Working directory:** /tmp/x (git worktree of ~/Projects/y, branch z)`,
+  // so the fix for the check above must not reintroduce the annotation.
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'an-'));
+  try {
+    assert.strictEqual(
+      handoffs.handoffDir(`**Working directory:** ${base} (git worktree of ~/Projects/y, branch z)`),
+      base
+    );
+  } finally {
+    fs.rmSync(base, { recursive: true, force: true });
+  }
+});
+
+check('a path that resolves nowhere still drops its annotation', () => {
+  assert.strictEqual(
+    handoffs.handoffDir('**Working directory:** /no/such/place (branch foo)'),
+    '/no/such/place',
+    'a handoff can describe another machine, and grouping is by string there'
+  );
+});
+
+check('both handoff header spellings give up the directory', () => {
+  assert.strictEqual(handoffs.handoffDir('**Working directory:** /tmp/x'), '/tmp/x');
+  assert.strictEqual(handoffs.handoffDir('**Repository:** `/tmp/y`'), '/tmp/y',
+    'handoffs written before the current template say Repository, and those are the old ones holding constraints');
+});
+
+check('a handoff with no constraints section contributes nothing', () => {
+  assert.deepStrictEqual(handoffs.constraintsIn('# H\n\n## Decisions made\n- a\n'), []);
+});
+
+// Retirement across documents, which is the only place it can happen and the
+// only place it was never tested. The unit check above passes against a broken
+// implementation, because it asks the parser a question the parser answers
+// correctly while the behaviour the feature promises does not work at all.
+function withHandoffs(docs, fn) {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ch-'));
+  const dir = path.join(home, '.planning', 'handoffs');
+  fs.mkdirSync(dir, { recursive: true });
+  let t = Date.now() - docs.length * 60000;
+  for (const [slug, body] of docs) {
+    const p = path.join(dir, `HANDOFF-${slug}.md`);
+    fs.writeFileSync(p, body);
+    t += 60000;                       // written oldest first, so mtime orders them
+    fs.utimesSync(p, new Date(t), new Date(t));
+  }
+  try { return fn(home); } finally { fs.rmSync(home, { recursive: true, force: true }); }
+}
+
+check('retiring a constraint actually removes it', () => {
+  const cwd = path.join(__dirname, '..');
+  const scope = `**Working directory:** ${cwd}`;
+  withHandoffs([
+    ['older', `${scope}\n\n## Constraints still in force\n- Use the glow outline everywhere.\n`],
+    ['newer', `${scope}\n\n## Constraints still in force\n- Retired this session: Use the glow outline everywhere, because it distracted.\n`],
+  ], (home) => {
+    const r = handoffs.carriedConstraints({ cwd, home });
+    assert.deepStrictEqual(r.constraints.map((c) => c.text), [],
+      'the older handoff still lists it live, so retirement has to suppress across documents or it does nothing');
+    assert.deepStrictEqual(r.unmatchedRetirements, [],
+      'this retirement matched, so it must not be reported as a typo');
+  });
+});
+
+check('a retirement that matches nothing is reported, not swallowed', () => {
+  const cwd = path.join(__dirname, '..');
+  const scope = `**Working directory:** ${cwd}`;
+  withHandoffs([
+    ['older', `${scope}\n\n## Constraints still in force\n- Use the glow outline everywhere.\n`],
+    ['newer', `${scope}\n\n## Constraints still in force\n- Retired this session: use the glo outline everywhere, because typo.\n`],
+  ], (home) => {
+    const r = handoffs.carriedConstraints({ cwd, home });
+    assert.strictEqual(r.constraints.length, 1, 'a mistyped retirement must not remove anything');
+    assert.strictEqual(r.unmatchedRetirements.length, 1,
+      'a retirement that silently does nothing is the same defect as a constraint that silently vanishes');
+  });
+});
+
+check('a constraint restated after being retired comes back', () => {
+  const cwd = path.join(__dirname, '..');
+  const scope = `**Working directory:** ${cwd}`;
+  withHandoffs([
+    ['a-oldest', `${scope}\n\n## Constraints still in force\n- No production deploys.\n`],
+    ['b-middle', `${scope}\n\n## Constraints still in force\n- Retired this session: No production deploys, because launch.\n`],
+    ['c-newest', `${scope}\n\n## Constraints still in force\n- No production deploys.\n`],
+  ], (home) => {
+    const r = handoffs.carriedConstraints({ cwd, home });
+    assert.deepStrictEqual(r.constraints.map((c) => c.text), ['No production deploys.'],
+      'a constraint put back after being retired is live again; retirement is not permanent');
+    assert.strictEqual(r.constraints[0].from, 'c-newest');
+  });
+});
+
+check('a handoff for another project contributes nothing', () => {
+  const cwd = path.join(__dirname, '..');
+  withHandoffs([
+    ['mine', `**Working directory:** ${cwd}\n\n## Constraints still in force\n- Mine.\n`],
+    ['theirs', `**Working directory:** ${os.tmpdir()}\n\n## Constraints still in force\n- Theirs.\n`],
+  ], (home) => {
+    const r = handoffs.carriedConstraints({ cwd, home });
+    assert.deepStrictEqual(r.constraints.map((c) => c.text), ['Mine.']);
+  });
+});
+
+check('a constraint whose own wording contains "because" can be retired', () => {
+  // Round one cut the quote at the FIRST `, because`, so a constraint using the
+  // word was truncated mid-quote, matched nothing, stayed in force, and the user
+  // was told their exact quote was a typo. The comment above the function said
+  // "last" the whole time.
+  const cwd = path.join(__dirname, '..');
+  const scope = `**Working directory:** ${cwd}`;
+  withHandoffs([
+    ['older', `${scope}\n\n## Constraints still in force\n- Use the glow outline, because contrast.\n`],
+    ['newer', `${scope}\n\n## Constraints still in force\n- Retired this session: Use the glow outline, because contrast, because superseded.\n`],
+  ], (home) => {
+    const r = handoffs.carriedConstraints({ cwd, home });
+    assert.deepStrictEqual(r.constraints.map((c) => c.text), [],
+      'the retirement quoted the constraint exactly, so it must remove it');
+    assert.deepStrictEqual(r.unmatchedRetirements, [],
+      'an exact quote must never be reported back to the user as a typo');
+  });
+});
+
+// ------------------------------------------ the constraints printing path ----
+//
+// This file's own header says every bug this repository has shipped lived in a
+// printing path no test executed, and the first fourteen checks for this feature
+// all called handoffs.js directly or grepped markdown. Nothing ran the command.
+// The empty-list branch was printing a colon and then no list, followed by a
+// sentence about "those", which is exactly the class of defect that survives
+// when only the layer underneath is tested.
+
+function cliText(args, home) {
+  const run = spawnSync(process.execPath, [CLI, ...args, '--home', home], { encoding: 'utf8' });
+  return run.stdout;
+}
+
+check('the command prints a constraint with where it came from', () => {
+  const cwd = path.join(__dirname, '..');
+  withHandoffs([
+    ['origin-thread', `**Working directory:** ${cwd}\n\n## Constraints still in force\n- No production deploys.\n`],
+  ], (home) => {
+    const out = cliText(['constraints', '--cwd', cwd], home);
+    assert.match(out, /1 constraint still in force/);
+    assert.match(out, /- No production deploys\./);
+    assert.match(out, /\(from origin-thread\)/, 'provenance is printed by the command, which is why it must not be written into the bullet');
+  });
+});
+
+check('the empty branch does not promise a list it cannot print', () => {
+  const cwd = path.join(__dirname, '..');
+  withHandoffs([
+    ['elsewhere', '**Working directory:** /somewhere/else\n\n## Constraints still in force\n- Theirs.\n'],
+  ], (home) => {
+    const out = cliText(['constraints', '--cwd', cwd], home);
+    assert.match(out, /None of the 1 handoffs scanned belong to this project/);
+    assert.doesNotMatch(out, /belong to this project:\s*\n\s*If one of those/,
+      'a colon followed by no list, and then a sentence referring to it, reads as complete while describing nothing');
+  });
+});
+
+check('the command names the project handoffs when there are some but no constraints', () => {
+  const cwd = path.join(__dirname, '..');
+  withHandoffs([
+    ['bare-one', `**Working directory:** ${cwd}\n\n## Decisions made\n- nothing binding\n`],
+  ], (home) => {
+    const out = cliText(['constraints', '--cwd', cwd], home);
+    assert.match(out, /1 of 1 handoffs scanned belong to this project:/);
+    assert.match(out, /bare-one/, 'the handoffs worth reading have to be named, or the advice is unactionable');
+  });
+});
+
+check('warnings print above the list, not below it', () => {
+  const cwd = path.join(__dirname, '..');
+  withHandoffs([
+    ['a-old', `**Working directory:** ${cwd}\n\n## Constraints still in force\n- Kept.\n`],
+    ['b-new', `**Working directory:** ${cwd}\n\n## Constraints still in force\n- Retired this session: something never recorded, because typo.\n`],
+  ], (home) => {
+    const out = cliText(['constraints', '--cwd', cwd], home);
+    const warn = out.indexOf('retires something no handoff records');
+    const list = out.indexOf('still in force for');
+    assert.ok(warn !== -1, 'the unmatched retirement is not reported');
+    assert.ok(warn < list, 'a caveat printed under a confident list is one nobody reads');
+  });
+});
+
+check('a scan that read everything is not called truncated', () => {
+  // The boundary the first version got wrong. Asking for exactly the cap made
+  // "there were exactly this many" and "there were more" produce the same
+  // array length, so a complete scan announced itself as incomplete and wrap
+  // was told to go and resolve a truncation that had not happened.
+  const cwd = path.join(__dirname, '..');
+  withHandoffs([
+    ['one', `**Working directory:** ${cwd}\n\n## Constraints still in force\n- A.\n`],
+    ['two', `**Working directory:** ${cwd}\n\n## Constraints still in force\n- B.\n`],
+  ], (home) => {
+    const r = handoffs.carriedConstraints({ cwd, home, limit: 2 });
+    assert.strictEqual(r.truncated, false, 'exactly at the ceiling is complete, not cut short');
+    assert.strictEqual(r.constraints.length, 2);
+  });
+});
+
+check('a truncated scan says so', () => {
+  const cwd = path.join(__dirname, '..');
+  withHandoffs([
+    ['one', `**Working directory:** ${cwd}\n\n## Constraints still in force\n- A.\n`],
+    ['two', `**Working directory:** ${cwd}\n\n## Constraints still in force\n- B.\n`],
+  ], (home) => {
+    const r = handoffs.carriedConstraints({ cwd, home, limit: 1 });
+    assert.strictEqual(r.truncated, true,
+      'a scan that stopped early must say so, or a missing constraint reads as an absent one');
+  });
+});
+
 process.stdout.write(`\n${failures === 0 ? 'all passed' : `${failures} failed`}\n`);
 process.exit(failures === 0 ? 0 : 1);

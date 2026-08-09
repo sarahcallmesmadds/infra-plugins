@@ -137,6 +137,90 @@ check('wrap checks the handoff exists after writing it', () => {
   );
 });
 
+// Added 2026-08-09. The AlwaysAllow design system was approved on 08-05, named
+// in that day's handoff with its full path, and mentioned zero times by the
+// 08-08 handoff that superseded it. Every pickup after that began without it,
+// and a homepage was built and rejected as a result. Nothing was broken: wrap
+// recorded state, next actions and traps exactly as instructed, and constraints
+// were simply not a category it carried.
+//
+// These pin the three parts that make a constraint survive: gathering it,
+// giving it somewhere to live, and making removal say so out loud. The third is
+// the load-bearing one. Without it a constraint can leave by omission, which is
+// indistinguishable from being forgotten and is precisely what happened.
+
+check('wrap gathers constraints from earlier handoffs before writing', () => {
+  const text = skill('wrap');
+  const gatherAt = text.indexOf('cli.js constraints');
+  const writeAt = text.indexOf('## Step 2');
+  assert.ok(gatherAt !== -1, 'wrap no longer runs `cli.js constraints`, so nothing carries a constraint past the session that set it');
+  assert.ok(
+    gatherAt < writeAt,
+    'wrap gathers constraints after the write step, so the handoff is composed before it knows what is binding'
+  );
+});
+
+check('the template does not tell the writer to annotate a constraint', () => {
+  // Matching is on the bullet text, so "(from HANDOFF-x)" makes the carried
+  // copy a different constraint from the original. Both then read as live, the
+  // list grows a near duplicate at every wrap, and a retirement quoting one
+  // leaves the other in force. The command reports provenance separately.
+  const text = skill('wrap');
+  const template = fences(text).find((f) => f.info === 'markdown' && f.body.includes('# Session Handoff'));
+  assert.ok(template, 'the handoff template is gone');
+  const section = template.body.slice(template.body.indexOf('## Constraints still in force'));
+  const firstBullet = section.split('\n').find((l) => l.trim().startsWith('- '));
+  assert.doesNotMatch(firstBullet, /came from|from HANDOFF|provenance/i,
+    'the template asks for provenance inside the bullet, which contradicts carrying it verbatim');
+  assert.match(text, /the bullet holds the constraint and nothing else/i,
+    'wrap no longer says the bullet carries the constraint alone');
+});
+
+check('no line of the template parses as real content', () => {
+  // The live placeholder was excluded from the start. The retirement placeholder
+  // beside it was not, and parsed as a retirement targeting "[the constraint,
+  // quoted exactly]", so a template copied wholesale reported a phantom
+  // unmatched retirement at every run, which wrap then tells the model to go and
+  // resolve. The earlier check only asked about constraintsIn, which passed
+  // either way.
+  const handoffs = require(path.join(__dirname, '..', 'plugins', 'session', 'scripts', 'handoffs.js'));
+  const template = fences(skill('wrap')).find((f) => f.info === 'markdown' && f.body.includes('# Session Handoff'));
+  assert.ok(template, 'the handoff template is gone');
+  assert.deepStrictEqual(handoffs.constraintsIn(template.body), [], 'a placeholder reads back as a live constraint');
+  assert.deepStrictEqual(handoffs.retiredIn(template.body), [], 'a placeholder reads back as a real retirement');
+});
+
+check('the handoff template has somewhere for constraints to live', () => {
+  const text = skill('wrap');
+  const template = fences(text).find((f) => f.info === 'markdown' && f.body.includes('# Session Handoff'));
+  assert.ok(template, 'the handoff template is gone');
+  // The exact heading, because cli.js constraints matches on it. Reword it here
+  // and the command silently reads back nothing for ever.
+  assert.match(
+    template.body,
+    /^##\s*Constraints still in force\s*$/m,
+    'the template has no "Constraints still in force" heading, which is the string cli.js constraints matches on'
+  );
+});
+
+check('wrap requires a dropped constraint to say it was dropped', () => {
+  const text = skill('wrap');
+  assert.match(
+    text,
+    /silence is not retirement/i,
+    'wrap no longer says that dropping a constraint requires saying so, so one can leave by omission again'
+  );
+});
+
+check('wrap forbids backfilling constraints into old handoffs', () => {
+  const text = skill('wrap');
+  assert.match(
+    text,
+    /never edit an old handoff/i,
+    'wrap no longer forbids editing earlier handoffs, which rewrites the record of what was true when they were written'
+  );
+});
+
 check('wrap says the index is not evidence the file exists', () => {
   const text = skill('wrap');
   // The reason the check exists. Without it the step reads as a formality and
@@ -186,6 +270,66 @@ check('wrap forbids printing the pickup line when the check found nothing', () =
 });
 
 // --------------------------------------------------------------- pickup ----
+
+// Added 2026-08-09, the other half of the constraints fix. Wrap carrying them
+// forward is worth nothing if the skill that loads a handoff buries them under
+// the next actions or paraphrases them into a gist.
+
+check('pickup asks the project what still binds', () => {
+  const text = skill('pickup');
+  assert.match(text, /cli\.js constraints/,
+    'pickup no longer asks for constraints, so one recorded on another thread of work stays invisible');
+});
+
+check('pickup pins the scope instead of inheriting the session cwd', () => {
+  const text = skill('pickup');
+  const cmd = text.slice(text.indexOf('cli.js constraints'));
+  assert.match(cmd.slice(0, 120), /--cwd/,
+    'the documented command omits --cwd, so it answers for wherever the session opened rather than for the project');
+  // The step that moves to the project runs later, so the flag is the only
+  // thing making this deterministic.
+  assert.ok(
+    text.indexOf('cli.js constraints') < text.indexOf('Move to the right directory'),
+    'this check assumes the scan still precedes the directory change; if that changed, the reasoning here needs revisiting'
+  );
+  assert.match(text, /not `?dirname`? of the handoff/i,
+    'pickup no longer warns that a central handoff lives in the handoffs folder, which is nobody project directory');
+});
+
+check('pickup asks even when the handoff already lists constraints', () => {
+  const text = skill('pickup');
+  // Without this the command reads as a fallback, and the case it exists for is
+  // the one where the handoff looks complete and is missing something.
+  assert.match(
+    text,
+    /run it even when the handoff has/i,
+    'pickup treats the handoff section as sufficient, so a constraint dropped by the last wrap is never noticed'
+  );
+});
+
+check('constraints are surfaced first and are not optional', () => {
+  const text = skill('pickup');
+  const template = fences(text).find((f) => f.body.includes('Resuming from:'));
+  assert.ok(template, 'the pickup output template is gone');
+  const binding = template.body.indexOf('Still binding');
+  const next = template.body.indexOf('Next actions');
+  assert.ok(binding !== -1, 'the output no longer surfaces constraints at all');
+  assert.ok(binding < next,
+    'constraints print below the next actions, which is where they get skimmed past on the way to the task');
+  assert.match(text, /never shortened, never\s*summarized/i,
+    'pickup no longer forbids summarizing a constraint, and a paraphrased one is not checkable');
+});
+
+check('pickup keeps constraint documents out of the do-not-load rule', () => {
+  const text = skill('pickup');
+  const dontLoad = text.indexOf('Do not load the referenced files');
+  assert.ok(dontLoad !== -1, 'the do-not-load step is gone');
+  assert.match(
+    text.slice(dontLoad),
+    /not on that list/i,
+    'a document a constraint names reads as optional context again, which is how the design system got skipped'
+  );
+});
 
 check('pickup resolves the slug with the CLI rather than guessing', () => {
   const text = skill('pickup');
