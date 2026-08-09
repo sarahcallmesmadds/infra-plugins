@@ -42,12 +42,34 @@ If the match is an archived handoff, open the summary with:
 Read the matched file. Handoffs written by `/wrap` have known headings. Anything
 else, take the structure as it comes and do not force it into the template.
 
+### Then ask what still binds
+
+```bash
+"${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js constraints
+```
+
+Run it from the handoff's own directory, so the scope is the project the work is
+in rather than wherever this session happens to have started.
+
+**Run it even when the handoff has a `## Constraints still in force` section.**
+That section holds what the last session carried. This asks the project, across
+every handoff written for it, including ones for other threads of work. A
+constraint set on one thread governs the next one, and the thread that set it is
+not the thread that breaks it.
+
+If the two disagree, show both and say which came from where. Do not silently
+prefer either: a constraint in the project but not in this handoff is the exact
+shape of something that was dropped, and it is worth the user seeing that.
+
 ---
 
 ## Step 3: Surface it
 
 ```
 Resuming from: {path}
+
+**Still binding:**
+{every constraint, verbatim, with the document each one names}
 
 **Last session ({date}):**
 {two or three sentences, paraphrased, not copied}
@@ -65,6 +87,14 @@ Resuming from: {path}
 Omit any section the handoff does not have. Do not fill a gap with a guess: a
 fabricated "where we left off" is worse than an absent one, because it reads
 exactly like a real one.
+
+**"Still binding" is the exception, and it goes first.** It is dropped only when
+the handoff and the project both genuinely have none, never shortened, never
+summarized, and never moved below the next actions. A constraint paraphrased
+into a gist stops being checkable, and one printed under the fold is one that
+gets skimmed past on the way to the task. This section exists because an
+approved design system sat in a document nobody opened for three days while a
+page was built against nothing and then thrown away.
 
 If the handoff is more than seven days old, open with:
 
@@ -93,6 +123,19 @@ End with one line:
 > This references {N} files. Name the ones you want and I will open them.
 
 Open a file only once it is named. Never open the list.
+
+**A document named by a constraint is not on that list.** It is not context that
+might be useful, it is the thing the work has to comply with, and treating it as
+optional reading is how it gets skipped. Do not bulk-load it here either. Say
+which it is and that it has to be read before work starts in the area it
+governs:
+
+> The design system at {path} governs anything under `site/`. I will read it
+> before touching that, not now.
+
+The distinction is worth holding on to. Everything else in a handoff describes
+what happened, and can be caught up on lazily or never. A constraint describes
+what is allowed, and being unaware of it does not make it stop applying.
 
 ---
 

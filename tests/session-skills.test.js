@@ -241,6 +241,51 @@ check('wrap forbids printing the pickup line when the check found nothing', () =
 
 // --------------------------------------------------------------- pickup ----
 
+// Added 2026-08-09, the other half of the constraints fix. Wrap carrying them
+// forward is worth nothing if the skill that loads a handoff buries them under
+// the next actions or paraphrases them into a gist.
+
+check('pickup asks the project what still binds', () => {
+  const text = skill('pickup');
+  assert.match(text, /cli\.js constraints/,
+    'pickup no longer asks for constraints, so one recorded on another thread of work stays invisible');
+});
+
+check('pickup asks even when the handoff already lists constraints', () => {
+  const text = skill('pickup');
+  // Without this the command reads as a fallback, and the case it exists for is
+  // the one where the handoff looks complete and is missing something.
+  assert.match(
+    text,
+    /run it even when the handoff has/i,
+    'pickup treats the handoff section as sufficient, so a constraint dropped by the last wrap is never noticed'
+  );
+});
+
+check('constraints are surfaced first and are not optional', () => {
+  const text = skill('pickup');
+  const template = fences(text).find((f) => f.body.includes('Resuming from:'));
+  assert.ok(template, 'the pickup output template is gone');
+  const binding = template.body.indexOf('Still binding');
+  const next = template.body.indexOf('Next actions');
+  assert.ok(binding !== -1, 'the output no longer surfaces constraints at all');
+  assert.ok(binding < next,
+    'constraints print below the next actions, which is where they get skimmed past on the way to the task');
+  assert.match(text, /never shortened, never\s*summarized/i,
+    'pickup no longer forbids summarizing a constraint, and a paraphrased one is not checkable');
+});
+
+check('pickup keeps constraint documents out of the do-not-load rule', () => {
+  const text = skill('pickup');
+  const dontLoad = text.indexOf('Do not load the referenced files');
+  assert.ok(dontLoad !== -1, 'the do-not-load step is gone');
+  assert.match(
+    text.slice(dontLoad),
+    /not on that list/i,
+    'a document a constraint names reads as optional context again, which is how the design system got skipped'
+  );
+});
+
 check('pickup resolves the slug with the CLI rather than guessing', () => {
   const text = skill('pickup');
   assert.ok(
