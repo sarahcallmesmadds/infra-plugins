@@ -281,11 +281,16 @@ const COMMANDS = {
     // nothing both mean the list below may be wrong, and a caveat printed
     // underneath a confident list is one nobody reads.
     const warnings = [];
-    if (r.gitUnavailable) {
+    if (r.gitDegraded) {
       warnings.push(
-        'git could not be run, so scope fell back to comparing directory paths.',
+        r.gitDegraded === 'timeout'
+          ? 'A git probe timed out, so scope fell back to comparing directory paths.'
+          : 'git could not be run, so scope fell back to comparing directory paths.',
         '  A worktree will not be grouped with its main checkout, and constraints',
         '  recorded from one may be missing below.',
+        r.gitDegraded === 'timeout'
+          ? '  Usually a recorded path on a volume that is not mounted.'
+          : '',
         '',
       );
     }
@@ -306,14 +311,22 @@ const COMMANDS = {
 
     if (!r.constraints.length) {
       const matched = r.scanned.filter((s) => s.matched);
-      return emit(opts, {}, [
-        ...warnings,
-        `No constraints recorded yet for ${r.scope}.`,
-        `  ${matched.length} of ${r.scanned.length} handoffs scanned belong to this project:`,
-        ...matched.map((s) => `    ${s.slug}`),
-        '  If one of those carries a binding constraint in prose, record it in the',
-        '  next handoff under "## Constraints still in force".',
-      ]);
+      // Two different answers, and only one of them is about this project.
+      // Printing a colon and then no list, followed by a sentence about "those",
+      // was the same defect as everything else fixed on this branch: output that
+      // reads as complete while describing nothing.
+      const tail = matched.length
+        ? [
+          `  ${matched.length} of ${r.scanned.length} handoffs scanned belong to this project:`,
+          ...matched.map((s) => `    ${s.slug}`),
+          '  If one of those carries a binding constraint in prose, record it in the',
+          '  next handoff under "## Constraints still in force".',
+        ]
+        : [
+          `  None of the ${r.scanned.length} handoffs scanned belong to this project, so there was`,
+          '  nothing to inherit from. This is expected for the first wrap here.',
+        ];
+      return emit(opts, {}, [...warnings, `No constraints recorded yet for ${r.scope}.`, ...tail]);
     }
     emit(opts, {}, [
       ...warnings,

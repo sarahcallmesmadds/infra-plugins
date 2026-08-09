@@ -1012,6 +1012,69 @@ check('a constraint whose own wording contains "because" can be retired', () => 
   });
 });
 
+// ------------------------------------------ the constraints printing path ----
+//
+// This file's own header says every bug this repository has shipped lived in a
+// printing path no test executed, and the first fourteen checks for this feature
+// all called handoffs.js directly or grepped markdown. Nothing ran the command.
+// The empty-list branch was printing a colon and then no list, followed by a
+// sentence about "those", which is exactly the class of defect that survives
+// when only the layer underneath is tested.
+
+function cliText(args, home) {
+  const run = spawnSync(process.execPath, [CLI, ...args, '--home', home], { encoding: 'utf8' });
+  return run.stdout;
+}
+
+check('the command prints a constraint with where it came from', () => {
+  const cwd = path.join(__dirname, '..');
+  withHandoffs([
+    ['origin-thread', `**Working directory:** ${cwd}\n\n## Constraints still in force\n- No production deploys.\n`],
+  ], (home) => {
+    const out = cliText(['constraints', '--cwd', cwd], home);
+    assert.match(out, /1 constraint still in force/);
+    assert.match(out, /- No production deploys\./);
+    assert.match(out, /\(from origin-thread\)/, 'provenance is printed by the command, which is why it must not be written into the bullet');
+  });
+});
+
+check('the empty branch does not promise a list it cannot print', () => {
+  const cwd = path.join(__dirname, '..');
+  withHandoffs([
+    ['elsewhere', '**Working directory:** /somewhere/else\n\n## Constraints still in force\n- Theirs.\n'],
+  ], (home) => {
+    const out = cliText(['constraints', '--cwd', cwd], home);
+    assert.match(out, /None of the 1 handoffs scanned belong to this project/);
+    assert.doesNotMatch(out, /belong to this project:\s*\n\s*If one of those/,
+      'a colon followed by no list, and then a sentence referring to it, reads as complete while describing nothing');
+  });
+});
+
+check('the command names the project handoffs when there are some but no constraints', () => {
+  const cwd = path.join(__dirname, '..');
+  withHandoffs([
+    ['bare-one', `**Working directory:** ${cwd}\n\n## Decisions made\n- nothing binding\n`],
+  ], (home) => {
+    const out = cliText(['constraints', '--cwd', cwd], home);
+    assert.match(out, /1 of 1 handoffs scanned belong to this project:/);
+    assert.match(out, /bare-one/, 'the handoffs worth reading have to be named, or the advice is unactionable');
+  });
+});
+
+check('warnings print above the list, not below it', () => {
+  const cwd = path.join(__dirname, '..');
+  withHandoffs([
+    ['a-old', `**Working directory:** ${cwd}\n\n## Constraints still in force\n- Kept.\n`],
+    ['b-new', `**Working directory:** ${cwd}\n\n## Constraints still in force\n- Retired this session: something never recorded, because typo.\n`],
+  ], (home) => {
+    const out = cliText(['constraints', '--cwd', cwd], home);
+    const warn = out.indexOf('retires something no handoff records');
+    const list = out.indexOf('still in force for');
+    assert.ok(warn !== -1, 'the unmatched retirement is not reported');
+    assert.ok(warn < list, 'a caveat printed under a confident list is one nobody reads');
+  });
+});
+
 check('a truncated scan says so', () => {
   const cwd = path.join(__dirname, '..');
   withHandoffs([

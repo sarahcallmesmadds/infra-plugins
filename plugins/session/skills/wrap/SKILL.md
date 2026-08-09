@@ -129,7 +129,7 @@ not:
 
 ## Constraints still in force
 - [what governs future work, and nothing else on the line]
-- Retired this session: [the constraint, quoted exactly], because [reason].
+- [Retired this session: the constraint quoted exactly, because the reason. Drop this line unless something was actually retired.]
 
 ## Decisions made
 - [Decision, and why]

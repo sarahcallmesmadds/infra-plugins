@@ -176,6 +176,20 @@ check('the template does not tell the writer to annotate a constraint', () => {
     'wrap no longer says the bullet carries the constraint alone');
 });
 
+check('no line of the template parses as real content', () => {
+  // The live placeholder was excluded from the start. The retirement placeholder
+  // beside it was not, and parsed as a retirement targeting "[the constraint,
+  // quoted exactly]", so a template copied wholesale reported a phantom
+  // unmatched retirement at every run, which wrap then tells the model to go and
+  // resolve. The earlier check only asked about constraintsIn, which passed
+  // either way.
+  const handoffs = require(path.join(__dirname, '..', 'plugins', 'session', 'scripts', 'handoffs.js'));
+  const template = fences(skill('wrap')).find((f) => f.info === 'markdown' && f.body.includes('# Session Handoff'));
+  assert.ok(template, 'the handoff template is gone');
+  assert.deepStrictEqual(handoffs.constraintsIn(template.body), [], 'a placeholder reads back as a live constraint');
+  assert.deepStrictEqual(handoffs.retiredIn(template.body), [], 'a placeholder reads back as a real retirement');
+});
+
 check('the handoff template has somewhere for constraints to live', () => {
   const text = skill('wrap');
   const template = fences(text).find((f) => f.info === 'markdown' && f.body.includes('# Session Handoff'));

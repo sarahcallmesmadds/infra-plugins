@@ -489,12 +489,23 @@ function recentHandoffs({ home = os.homedir(), limit = 5 } = {}) {
 //
 // Returns null for a directory that is not in a repository, in which case the
 // caller falls back to the realpath of the directory itself.
-// True once any git probe has failed for a reason that looks like git itself
-// rather than the directory. Read by carriedConstraints so a silent loss of
-// worktree grouping can be reported instead of quietly changing the answer.
-let gitProbeFailed = false;
+// Why repository scoping stopped working, when it did. Null means it is fine.
+//
+// Anything recorded here means the answer the command gives is arrived at by
+// comparing paths rather than by asking git, so a worktree will not be grouped
+// with its main checkout. That produces a confident, wrong "no constraints",
+// which is the failure this feature exists to prevent, so it is never inferred
+// from silence.
+//
+// A directory that is simply not a repository is not degradation and is not
+// recorded: that is the ordinary case for a handoff written outside a checkout.
+let gitDegraded = null;   // null | 'missing' | 'timeout'
 
-function gitProbeHasFailed() { return gitProbeFailed; }
+function gitDegradedReason() { return gitDegraded; }
+
+// Only these mean "this git cannot take the flag". Anything else is a real
+// answer about the directory, and retrying costs a second spawn for nothing.
+const UNSUPPORTED_FLAG = /unknown option|unrecognized|error: invalid|usage: git rev-parse/i;
 
 function repoRoot(dir) {
   const { execFileSync } = require('child_process');
@@ -502,28 +513,39 @@ function repoRoot(dir) {
   // or gone, and a synchronous spawn with no timeout hangs the whole command
   // there. Ten seconds is far past a local answer and far short of waiting on a
   // dead mount.
-  const opts = { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 10000 };
+  const opts = { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 10000 };
   const strip = (out) => (out ? out.trim().replace(/\/\.git\/?$/, '') || null : null);
+
+  // Records why a probe failed, and says whether a second attempt is worth
+  // making. The first version retried unconditionally, so every directory that
+  // was not a repository cost two spawns, and a dead mount cost the full
+  // timeout twice.
+  const classify = (e) => {
+    if (!e) return false;
+    if (e.code === 'ENOENT') { gitDegraded = 'missing'; return false; }
+    if (e.code === 'ETIMEDOUT' || e.signal === 'SIGTERM') { gitDegraded = gitDegraded || 'timeout'; return false; }
+    return UNSUPPORTED_FLAG.test(String(e.stderr || ''));
+  };
 
   try {
     return strip(execFileSync(
       'git', ['-C', dir, 'rev-parse', '--path-format=absolute', '--git-common-dir'], opts,
     ));
-  } catch (_) { /* fall through */ }
+  } catch (e) {
+    // `--path-format` arrived in git 2.31. On anything older the whole
+    // invocation fails, and the first version read that as "not a repository",
+    // which silently disabled the worktree grouping this feature exists for.
+    if (!classify(e)) return null;
+  }
 
-  // `--path-format` arrived in git 2.31. On anything older the whole invocation
-  // fails, and the first version of this treated that as "not a repository",
-  // which silently disabled the worktree grouping this feature exists for. The
-  // bare form works everywhere and may answer relatively, so it is resolved
-  // against the directory it was asked about.
+  // Old git. The bare form works everywhere and may answer relatively, so it is
+  // resolved against the directory it was asked about.
   try {
     const out = execFileSync('git', ['-C', dir, 'rev-parse', '--git-common-dir'], opts).trim();
     if (!out) return null;
     return strip(path.isAbsolute(out) ? out : path.resolve(dir, out));
   } catch (e) {
-    // ENOENT means no git at all. Anything else here is a directory that is not
-    // a repository, which is ordinary and not worth reporting.
-    if (e && e.code === 'ENOENT') gitProbeFailed = true;
+    classify(e);
     return null;
   }
 }
@@ -748,7 +770,7 @@ function carriedConstraints({ cwd = process.cwd(), home = os.homedir(), limit = 
     // groups a directory with itself but cannot tell a worktree from an
     // unrelated folder. That is the whole mechanism quietly not working, and
     // the answer it produces is a confident one, so it is reported.
-    gitUnavailable: gitProbeHasFailed(),
+    gitDegraded: gitDegradedReason(),
   };
 }
 

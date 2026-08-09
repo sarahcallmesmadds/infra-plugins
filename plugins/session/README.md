@@ -300,10 +300,15 @@ the scan rather than hanging it. Directories that are not git checkouts fall
 back to their real path and still group with themselves.
 
 `--path-format=absolute` is tried first and the bare form is the fallback, since
-the flag arrived in git 2.31 and older versions fail the whole invocation. If
-git cannot be run at all, scope falls back to comparing real paths, which still
-groups a directory with itself but cannot recognise a worktree. The command says
-so rather than quietly answering with less.
+the flag arrived in git 2.31 and older versions fail the whole invocation. The
+fallback runs only when git says the flag is unsupported, so a directory that is
+simply not a repository costs one probe rather than two, and a path on a dead
+mount costs one timeout rather than two.
+
+Scope falls back to comparing real paths when git cannot be run, or when a probe
+times out. That still groups a directory with itself but cannot recognise a
+worktree, so the command says which of the two happened rather than quietly
+answering with less.
 
 The directory is read from the handoff's `**Working directory:**` line, which
 often carries prose after the path. A trailing parenthetical is stripped only
