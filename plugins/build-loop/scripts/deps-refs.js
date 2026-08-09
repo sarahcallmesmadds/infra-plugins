@@ -358,6 +358,20 @@ function unrecorded(deps, entry, refPaths, home = os.homedir()) {
 
 const LOCK_STALE_MS = 30_000;
 const LOCK_WAIT_MS = 2_000;
+const LOCK_POLL_MS = 25;
+
+// Blocking sleep, the same one queue.js uses and for the same reason: this
+// process has nothing else to do while it waits, and the alternative is an
+// async rewrite of a hook whose whole job is a short critical section.
+//
+// It has to be a real sleep rather than a loop on the clock. A loop holds a
+// core at full load for the entire wait, and this runs on every Write and Edit
+// with three sessions contending for the same map, so the cost lands on
+// ordinary saves. An earlier version of this helper span, and the comment below
+// claimed parity with queue.js while queue.js was already parking the thread.
+function sleep(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
 
 function acquire(lockPath) {
   const deadline = Date.now() + LOCK_WAIT_MS;
@@ -365,21 +379,19 @@ function acquire(lockPath) {
   // Every path that goes round again comes through here, so there is no way to
   // retry without both checking the deadline and pausing first.
   //
-  // queue.js carries this same helper and the same comment, because it hit this
-  // exact fault first: a retry that jumped back to the top skipped both checks
-  // and the loop spun at full CPU with no exit. This file reproduced it on two
-  // branches, and a lock directory that cannot be removed, one owned by another
-  // user or sitting under a read-only parent, is enough to trigger it.
+  // queue.js carries the same helper, down to the blocking sleep, because it
+  // hit this exact fault first: a retry that jumped back to the top skipped
+  // both checks and the loop spun at full CPU with no exit. This file
+  // reproduced it on two branches, and a lock directory that cannot be removed,
+  // one owned by another user or sitting under a read-only parent, is enough to
+  // trigger it.
   //
   // It is worse here than in queue.js. hook-io.js clears its stdin timeout
   // before calling the handler, so a spinning hook has nothing else to stop it:
   // every file edit would leave a runaway process behind.
   const waitOrGiveUp = () => {
     if (Date.now() > deadline) return false;
-    // Busy-wait rather than async: a hook is a short-lived process and the
-    // window being covered is one small write.
-    const until = Date.now() + 25;
-    while (Date.now() < until) { /* pause */ }
+    sleep(LOCK_POLL_MS);
     return true;
   };
 

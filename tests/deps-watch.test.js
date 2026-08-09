@@ -461,6 +461,34 @@ check('bump gives up rather than waiting out a held lock', () => {
   }
 });
 
+check('waiting out a held lock costs almost no CPU', () => {
+  // The previous helper waited by looping on the clock, which holds a core at
+  // full load for the whole 2000ms deadline. deps-watch runs on every Write and
+  // Edit and the map is contended by design, so that landed on ordinary saves.
+  //
+  // Asserting on the code shape would not have caught it, since the spin was
+  // inside a helper whose name and comment both said it paused. This measures
+  // the thing that was actually wrong: a spin burns CPU time roughly equal to
+  // the wall time it waits, a real sleep burns almost none. The bar is set well
+  // clear of both so a slow or loaded machine cannot fail it.
+  const p = path.join(tmp, 'DEPS-5.json');
+  fs.writeFileSync(p, JSON.stringify(depsFor(), null, 2));
+  const lock = path.join(path.dirname(p), '.deps.lock');
+  fs.mkdirSync(lock);
+  try {
+    const cpuBefore = process.cpuUsage();
+    const wallBefore = Date.now();
+    assert.strictEqual(bump('demo:demo/roots', '2026-08-07T12:00:00.000Z', p), 'locked');
+    const wallMs = Date.now() - wallBefore;
+    const cpu = process.cpuUsage(cpuBefore);
+    const cpuMs = (cpu.user + cpu.system) / 1000;
+    assert.ok(wallMs > 500, `gave up after ${wallMs}ms, so it never really waited and the measurement means nothing`);
+    assert.ok(cpuMs < wallMs / 4, `waiting burned ${Math.round(cpuMs)}ms of CPU over ${wallMs}ms of waiting, which is a spin`);
+  } finally {
+    fs.rmSync(lock, { recursive: true, force: true });
+  }
+});
+
 check('bump leaves no lock behind', () => {
   const p = path.join(tmp, 'DEPS-4.json');
   fs.writeFileSync(p, JSON.stringify(depsFor(), null, 2));
