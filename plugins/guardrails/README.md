@@ -103,19 +103,21 @@ key at a time, so setting one option does not reset the others.
 
 ### Skill-owned resources, and documents that must be read first
 
-The default registry is `hooks/resource-owners.json`. It protects:
+The default registry is `hooks/resource-owners.json`. It protects only the
+locations this marketplace's own skills write, which are the same on every
+machine:
 
 - `~/.planning/handoffs/`, owned by `/session:wrap`
 - `~/.claude/build-loop/queue/`, owned by `/build-loop:flag-issue`,
   `/build-loop:apply-fix`, `/build-loop:verify-fix`, and
   `/build-loop:revert-fix`
-- `~/Projects/always-allow/site/`, which no skill owns and which requires the
-  approved design system be read before anything under it is edited
 
-To replace that list, create `~/.claude/guardrails.resources.json` with the same
-shape. Each resource has an `id`, human-readable `label`, `type` (`file` or
-`directory`), and `path`. The user registry replaces the shipped list rather
-than merging with it, so a local policy is visible in one place.
+Your own projects go in your own registry, never here. To replace the list,
+create `~/.claude/guardrails.resources.json` with the same shape. Each resource
+has an `id`, human-readable `label`, `type` (`file` or `directory`), and `path`.
+The user registry replaces the shipped list rather than merging with it, so a
+local policy is visible in one place. That means copying across any shipped
+entry you still want, and it is why the shipped list is short.
 
 A resource then carries either or both of two gates, which answer different
 questions:
@@ -139,15 +141,38 @@ the gate exists so the document is loaded where the work can see it, not so a
 box gets ticked.
 
 **A resource can list more than one location** via an optional `paths` array
-alongside `path`. The site uses it because a git worktree puts the same
-directory in two places at once while a branch is in flight, and a guard that
-knows only the canonical checkout is off exactly when the work is happening.
-Worktrees at other paths need adding there.
+alongside `path`. A git worktree is the case that calls for it, because it puts
+the same directory in two places at once while a branch is in flight, and a
+guard that knows only the canonical checkout is off exactly when the work is
+happening. Worktrees at other paths need adding there. Every location is
+compared through realpath, so registering `/tmp/x` and writing to
+`/private/tmp/x` is the same place as far as the guard is concerned.
 
-The site entry exists because an approved design system sat in a document
-nobody opened for three days while a homepage was built against nothing and
-then thrown away. Every other guard here stops a destructive action. This one
-stops work that would have to be redone.
+Put together, a user registry that guards a project directory behind the
+standard governing it looks like this:
+
+```json
+{
+  "$schema_version": 1,
+  "resources": [
+    {
+      "id": "my-site",
+      "label": "the marketing site",
+      "type": "directory",
+      "path": "~/Projects/my-site/site/",
+      "paths": ["/private/tmp/my-site-worktree/site/"],
+      "owners": [],
+      "requiresRead": ["~/.planning/DECISION-site-design-system.md"],
+      "readReason": "The design system governs every route. A build that ignored it was thrown away after five days."
+    }
+  ]
+}
+```
+
+That shape exists because an approved design system sat in a document nobody
+opened for three days while a homepage was built against nothing and then
+thrown away. Every other guard here stops a destructive action. This one stops
+work that would have to be redone.
 
 Only resources with a real public owner are protected by default. In
 particular, the IP inventory is intentionally absent: its current automated

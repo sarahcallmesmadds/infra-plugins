@@ -7,8 +7,9 @@ const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
 const {
-  LEASE_TTL_MS, activeOwner, atomicWriteLease, contains, loadRegistry, matchedResource,
-  leasePath, readLease, readsInTranscript, resourcePaths, unreadRequirements, writeLease,
+  LEASE_TTL_MS, activeOwner, atomicWriteLease, bashWritesPath, contains, loadRegistry,
+  matchedResource, leasePath, readLease, readsInTranscript, resourcePaths, unreadRequirements,
+  writeLease,
 } = require('../plugins/guardrails/scripts/resource-ownership');
 
 const ROOT = path.join(__dirname, '..');
@@ -25,11 +26,25 @@ function check(name, fn) {
   catch (error) { failed += 1; console.log(`  FAIL  ${name}\n        ${error.message}`); }
 }
 
-check('the shipped registry protects handoffs, the site, and the bug queue', () => {
+check('the shipped registry protects handoffs and the bug queue', () => {
   assert.deepStrictEqual(registry.map((resource) => resource.id), [
-    'session-handoffs', 'alwaysallow-site', 'build-loop-bug-queue',
+    'session-handoffs', 'build-loop-bug-queue',
   ]);
   assert.deepStrictEqual(handoffs.owners, ['session:wrap']);
+});
+
+check('the shipped registry names nobody in particular', () => {
+  // A personal project folder in the product registry means every installer
+  // carries a rule that only means something on the author's machine, and any
+  // user who happens to have that folder is blocked until they open a document
+  // that does not exist for them. Machine-specific policy belongs in
+  // ~/.claude/guardrails.resources.json.
+  const locations = registry.flatMap((resource) => [
+    ...resourcePaths(resource), ...(resource.requiresRead || []),
+  ]);
+  const personal = locations.filter((location) => !/^~\/(?:\.claude|\.planning)\//.test(location));
+  assert.deepStrictEqual(personal, [],
+    `only locations this marketplace's own skills write may ship: ${personal.join(', ')}`);
 });
 
 check('directory matching respects path boundaries', () => {
@@ -169,11 +184,58 @@ check('the wired hooks deny a bypass and allow the owning skill', () => {
 // Owning a resource and requiring a document be read first are different
 // questions, so they are separate gates on the same resource.
 
-const site = registry.find((resource) => resource.id === 'alwaysallow-site');
+// The policy under test is a fixture in a temporary HOME, never the shipped
+// registry and never the developer's own. A user registry replaces the shipped
+// list outright, so a suite that spawns the guard with the ambient environment
+// asserts against whatever policy the machine running it happens to carry.
 const GUARD = path.join(ROOT, 'plugins', 'guardrails', 'hooks', 'resource-owner-guard.js');
 
-function guard(event) {
-  const run = spawnSync(process.execPath, [GUARD], { input: JSON.stringify(event), encoding: 'utf8' });
+function fixture() {
+  const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'owner-read-home-')));
+  const worktree = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'owner-read-tree-')));
+  const standard = path.join(home, '.planning', 'DECISION-design-system.md');
+  const canonical = path.join(home, 'Projects', 'thing', 'site');
+  const mirrored = path.join(worktree, 'site');
+  fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+  fs.mkdirSync(path.join(home, '.planning'), { recursive: true });
+  fs.mkdirSync(canonical, { recursive: true });
+  fs.mkdirSync(mirrored, { recursive: true });
+  fs.writeFileSync(standard, 'the approved design system');
+  const site = {
+    id: 'guarded-site',
+    label: 'the guarded site',
+    type: 'directory',
+    path: `${canonical}/`,
+    paths: [`${mirrored}/`],
+    owners: [],
+    requiresRead: [standard],
+    readReason: 'A build that ignored it was thrown away after five days.',
+  };
+  fs.writeFileSync(path.join(home, '.claude', 'guardrails.resources.json'), JSON.stringify({
+    $schema_version: 1,
+    resources: [
+      { id: 'session-handoffs', label: 'session handoffs', type: 'directory', path: '~/.planning/handoffs/', owners: ['session:wrap'] },
+      site,
+    ],
+  }));
+  return {
+    home, standard, site, canonical, mirrored,
+    cleanup() {
+      fs.rmSync(home, { recursive: true, force: true });
+      fs.rmSync(worktree, { recursive: true, force: true });
+    },
+  };
+}
+
+function withFixture(fn) {
+  const built = fixture();
+  try { return fn(built); }
+  finally { built.cleanup(); }
+}
+
+function guard(event, home) {
+  const env = { ...process.env, HOME: home };
+  const run = spawnSync(process.execPath, [GUARD], { env, input: JSON.stringify(event), encoding: 'utf8' });
   try { return JSON.parse(run.stdout).hookSpecificOutput.permissionDecisionReason; }
   catch (_) { return null; }
 }
@@ -187,13 +249,56 @@ function transcriptWith(files) {
 }
 
 check('a resource covers every path it lists, not only the first', () => {
-  // The worktree case. The site is checked out in two places while a branch is
-  // in flight, and a guard that knows only the canonical path is off exactly
-  // when the work is happening.
-  assert.ok(resourcePaths(site).length > 1, 'the site resource no longer lists more than one location');
-  assert.ok(contains(site, '~/Projects/always-allow/site/index.html', '/tmp'));
-  assert.ok(contains(site, '/private/tmp/alwaysallow-homepage-atf/site/index.html', '/tmp'));
-  assert.ok(!contains(site, '~/Projects/always-allow/README.md', '/tmp'), 'the guard must not cover the whole repository');
+  // The worktree case. A checkout lives in two places while a branch is in
+  // flight, and a guard that knows only the canonical path is off exactly when
+  // the work is happening.
+  withFixture(({ site, canonical, mirrored }) => {
+    assert.ok(resourcePaths(site).length > 1);
+    assert.ok(contains(site, path.join(canonical, 'index.html'), '/tmp'));
+    assert.ok(contains(site, path.join(mirrored, 'index.html'), '/tmp'));
+    assert.ok(!contains(site, path.join(canonical, '..', 'README.md'), '/tmp'),
+      'the guard must not cover the whole repository');
+  });
+});
+
+check('a bash write is caught through any spelling of the same place', () => {
+  // Judged with `contains` rather than by string comparison against the
+  // registry entry, so a symlinked route reaches the same verdict. On macOS
+  // /tmp is a symlink to /private/tmp, which is exactly how a worktree gets
+  // written through a spelling nobody registered.
+  const temp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'owner-bash-')));
+  try {
+    const real = path.join(temp, 'real');
+    const alias = path.join(temp, 'alias');
+    fs.mkdirSync(real);
+    fs.symlinkSync(real, alias);
+    const resource = { id: 'r', type: 'directory', path: `${real}/` };
+    const out = path.join(alias, 'out.txt');
+    assert.ok(bashWritesPath(`echo x > ${out}`, resource, temp), 'a redirect through the alias');
+    assert.ok(bashWritesPath(`sudo tee ${out}`, resource, temp), 'a write command behind sudo');
+    assert.ok(!bashWritesPath(`cat ${out}`, resource, temp), 'reading is not writing');
+  } finally { fs.rmSync(temp, { recursive: true, force: true }); }
+});
+
+check('a subcommand that shares a write command name is not a write', () => {
+  // A bare argument resolves against the event cwd, so anyone whose shell sits
+  // inside a guarded directory would have `npm install` read as a write to it
+  // if the verb were matched in any token position rather than at the program
+  // name. Judged from inside the directory, which is where it goes wrong.
+  const temp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'owner-verb-')));
+  try {
+    const resource = { id: 'r', type: 'directory', path: `${temp}/` };
+    for (const command of [
+      'npm install --prefix ./x', 'yarn install', 'pip install requests',
+      'make install DESTDIR=./out', 'docker rm mycontainer', 'git commit -m wip',
+      'find /etc -name x -exec rm {} \\;', 'touch /tmp/scratch',
+    ]) {
+      assert.ok(!bashWritesPath(command, resource, temp), `blocked: ${command}`);
+    }
+    for (const command of ['rm f.txt', 'mkdir -p build', 'git rm --cached f.txt', 'FOO=bar rm f.txt']) {
+      assert.ok(bashWritesPath(command, resource, temp), `allowed through: ${command}`);
+    }
+  } finally { fs.rmSync(temp, { recursive: true, force: true }); }
 });
 
 check('reads are counted from the transcript, and only Read tool calls', () => {
@@ -215,49 +320,79 @@ check('reads are counted from the transcript, and only Read tool calls', () => {
     'scrolling a file past in a shell is not the same as having it loaded, which is the whole point of the gate');
 });
 
+check('an unreadable transcript is not treated as nobody having read it', () => {
+  // Every hook here fails open. This is the one gate that could turn "we
+  // cannot tell" into a refusal that never lifts, because it would name a
+  // document the person may already have open.
+  withFixture(({ site }) => {
+    assert.strictEqual(readsInTranscript(undefined), null, 'a missing transcript path');
+    assert.strictEqual(readsInTranscript('/nonexistent/transcript.jsonl'), null, 'an unreadable transcript');
+    assert.deepStrictEqual(unreadRequirements(site, undefined, '/tmp'), []);
+    assert.deepStrictEqual(unreadRequirements(site, '/nonexistent/transcript.jsonl', '/tmp'), []);
+  });
+});
+
 check('a resource requiring nothing is never gated on reading', () => {
   assert.deepStrictEqual(unreadRequirements(handoffs, transcriptWith([]), '/tmp'), [],
     'every resource that existed before this must be unaffected');
 });
 
-check('the gate blocks a site edit until the design system is read', () => {
-  const reason = guard({
-    session_id: 's', cwd: '/tmp', transcript_path: transcriptWith(['/tmp/unrelated.md']),
-    tool_name: 'Edit', tool_input: { file_path: '/private/tmp/alwaysallow-homepage-atf/site/index.html' },
+check('the gate blocks a site edit until the governing document is read', () => {
+  withFixture(({ home, mirrored }) => {
+    const reason = guard({
+      session_id: 's', cwd: '/tmp', transcript_path: transcriptWith(['/tmp/unrelated.md']),
+      tool_name: 'Edit', tool_input: { file_path: path.join(mirrored, 'index.html') },
+    }, home);
+    assert.ok(reason, 'the edit was allowed through');
+    assert.match(reason, /DECISION-design-system\.md/,
+      'the block must name the document, or it is a wall rather than an instruction');
+    assert.match(reason, /thrown away/, 'the reason the rule exists is what stops it being deleted as noise');
   });
-  assert.ok(reason, 'the edit was allowed through');
-  assert.match(reason, /DECISION-alwaysallow-homepage-design-system\.md/,
-    'the block must name the document, or it is a wall rather than an instruction');
-  assert.match(reason, /thrown away/, 'the reason the rule exists is what stops it being deleted as noise');
 });
 
 check('the gate opens once the document has been read', () => {
-  const read = path.join(os.homedir(), '.planning', 'DECISION-alwaysallow-homepage-design-system.md');
-  const reason = guard({
-    session_id: 's', cwd: '/tmp', transcript_path: transcriptWith([read]),
-    tool_name: 'Edit', tool_input: { file_path: '/private/tmp/alwaysallow-homepage-atf/site/index.html' },
+  withFixture(({ home, standard, mirrored }) => {
+    const reason = guard({
+      session_id: 's', cwd: '/tmp', transcript_path: transcriptWith([standard]),
+      tool_name: 'Edit', tool_input: { file_path: path.join(mirrored, 'index.html') },
+    }, home);
+    assert.strictEqual(reason, null, 'the gate stayed shut after the document was read');
   });
-  assert.strictEqual(reason, null, 'the gate stayed shut after the document was read');
+});
+
+check('the gate opens when the guard cannot read the transcript at all', () => {
+  withFixture(({ home, mirrored }) => {
+    const reason = guard({
+      session_id: 's', cwd: '/tmp',
+      tool_name: 'Edit', tool_input: { file_path: path.join(mirrored, 'index.html') },
+    }, home);
+    assert.strictEqual(reason, null,
+      'an unavailable transcript refused the write with no way through');
+  });
 });
 
 check('a resource with no owners is not blocked for lacking one', () => {
   // The site has requiresRead and no owners. Before the guard split the two
   // questions, an empty owners list would have blocked every write with a
   // message naming no skill at all.
-  const read = path.join(os.homedir(), '.planning', 'DECISION-alwaysallow-homepage-design-system.md');
-  const reason = guard({
-    session_id: 's', cwd: '/tmp', transcript_path: transcriptWith([read]),
-    tool_name: 'Write', tool_input: { file_path: '~/Projects/always-allow/site/new.html' },
+  withFixture(({ home, standard, canonical }) => {
+    const reason = guard({
+      session_id: 's', cwd: '/tmp', transcript_path: transcriptWith([standard]),
+      tool_name: 'Write', tool_input: { file_path: path.join(canonical, 'new.html') },
+    }, home);
+    assert.strictEqual(reason, null);
   });
-  assert.strictEqual(reason, null);
 });
 
 check('ownership still blocks independently of reading', () => {
-  const reason = guard({
-    session_id: 's', cwd: '/tmp', transcript_path: transcriptWith([]),
-    tool_name: 'Edit', tool_input: { file_path: '~/.planning/handoffs/HANDOFF-x.md' },
+  withFixture(({ home }) => {
+    const reason = guard({
+      session_id: 's', cwd: '/tmp', transcript_path: transcriptWith([]),
+      tool_name: 'Edit', tool_input: { file_path: path.join(home, '.planning', 'handoffs', 'HANDOFF-x.md') },
+    }, home);
+    assert.match(reason, /owned by \/session:wrap/,
+      'the ownership gate regressed when the read gate was added');
   });
-  assert.match(reason, /owned by \/session:wrap/, 'the ownership gate regressed when the read gate was added');
 });
 
 console.log(`\n${ran} checks, ${failed} failed`);
