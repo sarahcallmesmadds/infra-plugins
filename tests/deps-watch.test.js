@@ -175,6 +175,25 @@ check('a directory is never a reference, with or without the extension', () => {
   assert.deepStrictEqual(extractRefs(f, fs.readFileSync(f, 'utf8')), []);
 });
 
+check('a path naming a directory does NOT fall back to a sibling .js', () => {
+  // The one place this cannot copy jsRequires. There the fallback is node's own
+  // resolution order, which really does prefer `x.js` over `x/`. A path.join has
+  // no such semantics: a path naming a directory was named on purpose, and
+  // reaching for the file beside it records an edge the source never wrote.
+  //
+  // Both exist here, which is the whole test: `bin/` as a directory and `bin.js`
+  // as its neighbour. Nothing in the repository is shaped this way yet.
+  const dir = path.join(plugin, 'bin');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(plugin, 'bin.js'), "module.exports = {};\n");
+  const f = path.join(plugin, 'hooks', 'dir-with-sibling.js');
+  fs.writeFileSync(f, "const CMD = path.join(__dirname, '..', 'bin');\n");
+  assert.deepStrictEqual(
+    extractRefs(f, fs.readFileSync(f, 'utf8')), [],
+    'the directory fell through to bin.js, recording a file the source never named'
+  );
+});
+
 check('a literal path that does not exist on disk is NOT a reference', () => {
   const f = path.join(plugin, 'hooks', 'absent.js');
   fs.writeFileSync(f, "const S = path.join(__dirname, '..', 'scripts', 'nope.js');\n");
