@@ -158,9 +158,19 @@ function jsPathJoins(filePath, content) {
   while ((m = callRe.exec(content)) !== null) {
     const resolved = resolveJoin(m[1], dirname, bindings);
     if (resolved === null) continue;
-    try {
-      if (fs.statSync(resolved).isFile()) found.push(resolved);
-    } catch (_) { /* names something that is not here; not this map's business */ }
+    // Both forms, exactly as jsRequires does, because node resolves both and
+    // this codebase writes both. Every guardrails hook reaches its modules as
+    // `require(path.join(ROOT, 'scripts', 'hook-io'))`, with no extension, and
+    // matching only the exact string dropped all 28 of those on this branch:
+    // hook-io, config, scan, command and resource-ownership, from bash-guard,
+    // read-scan, write-scan, both resource-owner hooks and three cli.js files.
+    // They are the densest real edges in the repository and none of them were
+    // visible.
+    for (const candidate of [resolved, `${resolved}.js`]) {
+      try {
+        if (fs.statSync(candidate).isFile()) { found.push(candidate); break; }
+      } catch (_) { /* try the next form */ }
+    }
   }
   return found;
 }
