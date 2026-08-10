@@ -98,14 +98,45 @@ function supportsWriteTree(cwd, ref) {
 // has been missed.
 //
 // Failure is silence, in every direction. No remote configured, no network, no
-// `ls-remote` on the path, an unparseable line: the answer is false, no note is
-// printed, and nothing else about the run changes.
+// `ls-remote` on the path, an unparseable line, credentials this cannot supply:
+// the answer is false, no note is printed, and nothing else about the run
+// changes.
+//
+// The ref is matched fully qualified, and then the returned line is checked
+// again by name. `ls-remote <pattern>` matches on the tail of a ref rather than
+// the whole of it, so a bare `main` also matches `refs/heads/foo/main`, and the
+// output is sorted by ref name, which puts the nested one first. Taking the
+// first line therefore read an unrelated branch's commit, found it different
+// from `origin/main`, and printed the staleness note on every run in any
+// repository that happens to have such a branch. A note that never clears
+// teaches people to ignore the notes.
+//
+// The comparison by name is not redundant with the qualified pattern. It is
+// what makes the guarantee independent of how `ls-remote` chooses to match,
+// which is the part that was wrong here in the first place.
+//
+// The environment is set so the probe cannot become interactive. `stdio` closes
+// stdin, but git reads credentials from `/dev/tty` regardless, so an HTTPS
+// remote with nothing cached can sit at a prompt with only the timeout bounding
+// it, and an askpass helper spawned underneath may outlive the signal that
+// stops git. A probe whose whole contract is "failure is silence" must not be
+// able to ask for anything.
 function remoteMoved(cwd, def, cachedSha) {
   if (!cachedSha) return false;
-  const out = tryRun('git', ['-C', cwd, 'ls-remote', '--heads', 'origin', def],
-    { timeout: REMOTE_PROBE_TIMEOUT_MS });
+  const qualified = `refs/heads/${def}`;
+  const out = tryRun('git', ['-C', cwd, 'ls-remote', '--heads', 'origin', qualified], {
+    timeout: REMOTE_PROBE_TIMEOUT_MS,
+    env: Object.assign({}, process.env, {
+      GIT_TERMINAL_PROMPT: '0',
+      GIT_SSH_COMMAND: process.env.GIT_SSH_COMMAND || 'ssh -o BatchMode=yes',
+    }),
+  });
   if (!out) return false;
-  const sha = out.split('\n')[0].split('\t')[0];
+  const row = out.split('\n')
+    .map((l) => l.split('\t'))
+    .find((p) => p.length >= 2 && p[1].trim() === qualified);
+  if (!row) return false;
+  const sha = row[0].trim();
   if (!/^[0-9a-f]{7,40}$/.test(sha)) return false;
   return sha !== cachedSha;
 }

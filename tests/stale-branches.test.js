@@ -1085,6 +1085,80 @@ check('the probe is skipped for the pre-delete re-check and under a deadline', (
   });
 });
 
+// `ls-remote <pattern>` matches the tail of a ref, not the whole of it, so a
+// bare `main` also matches `refs/heads/foo/main`. Output is sorted by ref name,
+// which puts the nested one first, so reading the first line took an unrelated
+// branch's commit and reported a current copy as stale on every single run.
+//
+// A warning that can never be cleared by doing what it asks is worse than no
+// warning, because the next real one gets ignored with it.
+check('a branch whose last segment matches the default does not fake staleness', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tail-match-'));
+  const remote = path.join(dir, 'remote.git');
+  const local = path.join(dir, 'work');
+  const g = (at, ...a) => execFileSync('git', ['-C', at, ...a], { encoding: 'utf8', stdio: 'pipe' });
+
+  execFileSync('git', ['init', '-q', '--bare', '-b', 'main', remote], { stdio: 'pipe' });
+  execFileSync('git', ['clone', '-q', remote, local], { stdio: 'pipe' });
+  g(local, 'config', 'user.email', 'test@example.com');
+  g(local, 'config', 'user.name', 'test');
+  fs.writeFileSync(path.join(local, 'f.txt'), 'base\n');
+  g(local, 'add', '.'); g(local, 'commit', '-qm', 'base');
+  g(local, 'push', '-q', 'origin', 'main');
+
+  // A branch called `foo/main`, at a different commit from `main`, pushed. The
+  // differing commit is the point: matching it would look exactly like the
+  // remote having moved.
+  g(local, 'checkout', '-qb', 'foo/main');
+  fs.appendFileSync(path.join(local, 'f.txt'), 'unrelated\n');
+  g(local, 'commit', '-qam', 'unrelated work on a confusingly named branch');
+  g(local, 'push', '-q', 'origin', 'foo/main');
+  g(local, 'checkout', '-q', 'main');
+  g(local, 'fetch', '-q', 'origin');
+
+  // Sorted first, which is why taking line one was wrong.
+  const listing = g(local, 'ls-remote', '--heads', 'origin', 'main');
+  assert.ok(/refs\/heads\/foo\/main/.test(listing),
+    'the bare pattern must still match both, or this test is not exercising the bug');
+  assert.ok(listing.indexOf('refs/heads/foo/main') < listing.indexOf('refs/heads/main\n'),
+    'and the unrelated one must sort first, which is what made it the one read');
+
+  assert.strictEqual(collect.localBranches(local).remoteStale, false,
+    'the copy of main is current, whatever else on the remote ends in "main"');
+  const out = execFileSync('node', [CLI, '--cwd', local], { encoding: 'utf8' });
+  assert.ok(!/last `git fetch`/.test(out), 'so no note, on this run or any other');
+
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// A caller parsing the JSON was getting the same answer as the text output with
+// the reasons to distrust it stripped off.
+check('--json carries the caveats, present whether or not they are set', () => {
+  withOriginAndSquashMerge(({ local, g }) => {
+    const stale = JSON.parse(execFileSync('node', [CLI, '--cwd', local, '--json'], { encoding: 'utf8' }));
+    assert.strictEqual(stale.remoteStale, true, 'the caveat has to survive the format');
+    assert.strictEqual(typeof stale.mergeCheckUnavailable, 'boolean');
+
+    g(local, 'fetch', '-q', 'origin');
+    const fresh = JSON.parse(execFileSync('node', [CLI, '--cwd', local, '--json'], { encoding: 'utf8' }));
+    assert.strictEqual(fresh.remoteStale, false,
+      'and must be present as false rather than absent, which is what an older '
+      + 'version without the key looks like');
+    assert.ok(Object.prototype.hasOwnProperty.call(fresh, 'remoteStale'));
+  });
+});
+
+// The probe's contract is that failure is silent. Prompting is the one failure
+// that is not: it stops the run and waits, with only the timeout bounding it,
+// and git reads credentials from /dev/tty whatever is done with stdin.
+check('the remote probe cannot become interactive', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'scripts', 'collect.js'), 'utf8');
+  const fn = src.slice(src.indexOf('function remoteMoved'), src.indexOf('function localBranches'));
+  assert.ok(/GIT_TERMINAL_PROMPT: '0'/.test(fn), 'terminal prompting must be off for this call');
+  assert.ok(/BatchMode=yes/.test(fn), 'and ssh must not prompt either');
+  assert.ok(/refs\/heads\//.test(fn), 'and the ref must be matched fully qualified');
+});
+
 // A repository with no origin at all is the ordinary case for local-only work,
 // and it must not produce a warning about a remote that does not exist.
 check('no remote means no note', () => {

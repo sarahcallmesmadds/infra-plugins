@@ -237,7 +237,22 @@ function main() {
   }
 
   if (opts.json) {
-    process.stdout.write(JSON.stringify({ where, safe: result.safe, keep: result.keep }, null, 2) + '\n');
+    // The caveats ride along, because the text output carries them and a caller
+    // parsing this one otherwise gets the same answer with the reasons to
+    // distrust it stripped off. `--json --cwd .` against a checkout that has not
+    // fetched is exactly the case this release exists to stop being silent.
+    //
+    // Both are always present, never omitted when false. A key that appears only
+    // when something is wrong cannot be told apart from an older version that
+    // never had it, and a consumer reading `undefined` as "fine" is the failure
+    // being fixed rather than a new one.
+    process.stdout.write(JSON.stringify({
+      where,
+      remoteStale: !!(lookup && lookup.remoteStale),
+      mergeCheckUnavailable: !!(lookup && lookup.mergeCheckUnavailable),
+      safe: result.safe,
+      keep: result.keep,
+    }, null, 2) + '\n');
   } else {
     process.stdout.write(render(result, where, lookup) + '\n');
   }
