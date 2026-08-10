@@ -964,16 +964,43 @@ check('the README sample output matches what the command actually prints', () =>
     `README shows a safe-list header the command no longer prints. Expected to find:\n  ${phrase}`);
 });
 
+check('the skip count rides in the final line, where run-all can see it', () => {
+  // Pinned on the source rather than the output, because the summary is written
+  // after every check has run and nothing here can observe it. The failure this
+  // guards against is not a wrong count, it is a correct count printed where
+  // the aggregate runner never looks.
+  const self = fs.readFileSync(__filename, 'utf8');
+  const summary = self.slice(self.lastIndexOf('All stale-branch tests passed'));
+  assert.ok(/\$\{skipNote\}/.test(summary),
+    'the pass line no longer carries the skip count, so a full run cannot tell a '
+    + 'complete pass from one that skipped half the squash-merge coverage');
+
+  // The coupling is real and worth failing on. If run-all stops taking the last
+  // line, this whole arrangement needs revisiting rather than silently drifting.
+  const runAll = fs.readFileSync(path.join(__dirname, 'run-all.js'), 'utf8');
+  assert.ok(/\.pop\(\)/.test(runAll),
+    'run-all no longer summarises a suite by its last line, which is the only '
+    + 'reason the skip count has to live there');
+});
+
 fs.unlinkSync(fixture);
 
-// The skip count is printed on its own line rather than folded into the pass
-// message, because a run that skipped five checks proved less than one that
-// skipped none, and a summary that reads identically to a full run hides that.
-if (skipped > 0) {
-  process.stdout.write(
-    `\n${skipped} check${skipped === 1 ? '' : 's'} skipped: this git cannot do `
-    + 'merge-tree --write-tree, which arrived in 2.38. Squash-merge evidence is untested here.\n'
-  );
-}
-process.stdout.write(failures === 0 ? '\nAll stale-branch tests passed.\n' : `\n${failures} test(s) failed.\n`);
+// The skip count goes INSIDE the last line, and that is the whole point rather
+// than a formatting preference. run-all.js shows one line per suite, and it
+// takes the last non-empty one (tests/run-all.js:41). A count printed above
+// that line is invisible to every full run, which is the only way most people
+// see this suite.
+//
+// The first version of this printed the count on its own line, directly above a
+// pass message that then read identically to a complete run. It carried a
+// comment saying a summary that reads identically to a full run hides what was
+// skipped, and it produced exactly that summary. Saying it and doing it are two
+// different edits.
+const skipNote = skipped > 0
+  ? ` (${skipped} skipped: this git lacks merge-tree --write-tree, which arrived in 2.38,`
+    + ' so squash-merge evidence went untested)'
+  : '';
+process.stdout.write(failures === 0
+  ? `\nAll stale-branch tests passed${skipNote}.\n`
+  : `\n${failures} test(s) failed${skipNote}.\n`);
 process.exit(failures === 0 ? 0 : 1);
