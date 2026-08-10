@@ -23,11 +23,67 @@ const CLI = path.join(ROOT, 'scripts', 'cli.js');
 const NOW = Date.parse('2026-07-27T00:00:00Z');
 const d = (days) => new Date(NOW - days * 86400000).toISOString();
 
+// Whether this git can do `merge-tree --write-tree`, which arrived in 2.38 and
+// is the only way to tell a squash merge from unmerged work. Probed once, for
+// real, in a throwaway repository, because that is the same standard the
+// product code holds itself to: collect.js probes rather than parsing
+// `git --version`, and a test that guessed differently would disagree with the
+// thing it is testing.
+const WRITE_TREE = (() => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wt-probe-'));
+  try {
+    const g = (...a) => execFileSync('git', ['-C', dir, ...a], { stdio: 'pipe' });
+    execFileSync('git', ['init', '-q', '-b', 'main', dir], { stdio: 'pipe' });
+    g('config', 'user.email', 'test@example.com');
+    g('config', 'user.name', 'test');
+    fs.writeFileSync(path.join(dir, 'f.txt'), 'base\n');
+    g('add', '.'); g('commit', '-qm', 'base');
+    g('merge-tree', '--write-tree', 'HEAD', 'HEAD');
+    return true;
+  } catch (_) {
+    return false;
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+})();
+
 let failures = 0;
-function check(name, fn) {
+let skipped = 0;
+
+// `check(name, fn)` as before. `check(name, fn, { needs: 'write-tree' })` skips
+// when this git cannot do the thing the check is about.
+//
+// Skipping rather than failing, because those are different facts and only one
+// of them is about the code. Four checks here turn on *detecting* a squash
+// merge, which needs `merge-tree --write-tree`. On an older git they failed,
+// and a reviewer seeing `41 suites, 1 failed` reasonably goes looking for a
+// regression that is not there. It happened three times in one afternoon on a
+// pull request that touched a different plugin entirely.
+//
+// Four, and not the fifth that looks like it belongs. The deadline check builds
+// a squash-merged branch too, but `git merge --squash` is ancient; only reading
+// the result back needs 2.38. That check probes the capability itself and
+// guards its one version-dependent assertion, so it runs correctly everywhere,
+// and marking it here would have dropped real coverage of the rule that an
+// out-of-time run never offers an unresolved branch for deletion. Building the
+// fixture and detecting it are different requirements, and only the second is
+// what this flag is for.
+//
+// The skip line names the version, so the reader can tell in one line whether
+// it applies to them.
+function check(name, fn, opts = {}) {
+  if (opts.needs === 'write-tree' && !WRITE_TREE) {
+    skipped += 1;
+    process.stdout.write(`  skip ${name}\n       needs git 2.38 for merge-tree --write-tree; this git does not have it\n`);
+    return;
+  }
   try { fn(); process.stdout.write(`  ok   ${name}\n`); }
   catch (e) { failures += 1; process.stdout.write(`  FAIL ${name}\n       ${e.message}\n`); }
 }
+
+// Shorthand for the four checks whose subject is squash-merge detection, which
+// is precisely what an older git cannot do.
+const checkWriteTree = (name, fn) => check(name, fn, { needs: 'write-tree' });
 
 // ---------------------------------------------------- classification ----
 
@@ -472,7 +528,7 @@ check('outside a repo with no --repo, it explains rather than reporting nothing'
 // under test is what git reports, and a fixture would only record what we
 // already believe it reports.
 
-check('a squash-merged branch is safe to delete, an unmerged one is not', () => {
+checkWriteTree('a squash-merged branch is safe to delete, an unmerged one is not', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'squash-'));
   const g = (...args) => execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8' });
 
@@ -546,7 +602,7 @@ check('merge evidence never rescues an unknown aheadBy', () => {
 // merges it is behind by exactly the merge being asked about. Comparing only
 // against it kept branches that were genuinely merged, and only --repo cleared
 // them. Found while verifying the fix above, in a separate session.
-check('a branch merged into origin/main is cleared even when local main is behind', () => {
+checkWriteTree('a branch merged into origin/main is cleared even when local main is behind', () => {
   const origin = fs.mkdtempSync(path.join(os.tmpdir(), 'origin-'));
   const work = fs.mkdtempSync(path.join(os.tmpdir(), 'work-'));
   execFileSync('git', ['init', '-q', '--bare', '-b', 'main', origin]);
@@ -605,7 +661,7 @@ check('a branch merged into origin/main is cleared even when local main is behin
 // squash merge never brings to zero, so every branch the merge signal cleared
 // was offered, approved, then refused with a message saying something had
 // landed in between. Nothing had.
-check('--verify clears a squash-merged branch and asks for the delete that works', () => {
+checkWriteTree('--verify clears a squash-merged branch and asks for the delete that works', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'verify-'));
   const g = (...a) => execFileSync('git', ['-C', dir, ...a], { encoding: 'utf8', stdio: 'pipe' });
   execFileSync('git', ['init', '-q', '-b', 'main', dir], { stdio: 'pipe' });
@@ -787,7 +843,7 @@ check('the force path re-checks each branch immediately before deleting it', () 
 // The number of explanation lines varies: a branch cleared by merge evidence
 // gets a needs-force line, one cleared by ancestry does not. A caller counting
 // from the top runs prose as a shell command.
-check('the delete command is the last line of verify output, whatever else is printed', () => {
+checkWriteTree('the delete command is the last line of verify output, whatever else is printed', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lastline-'));
   const g = (...a) => execFileSync('git', ['-C', dir, ...a], { encoding: 'utf8', stdio: 'pipe' });
   execFileSync('git', ['init', '-q', '-b', 'main', dir], { stdio: 'pipe' });
@@ -908,7 +964,43 @@ check('the README sample output matches what the command actually prints', () =>
     `README shows a safe-list header the command no longer prints. Expected to find:\n  ${phrase}`);
 });
 
+check('the skip count rides in the final line, where run-all can see it', () => {
+  // Pinned on the source rather than the output, because the summary is written
+  // after every check has run and nothing here can observe it. The failure this
+  // guards against is not a wrong count, it is a correct count printed where
+  // the aggregate runner never looks.
+  const self = fs.readFileSync(__filename, 'utf8');
+  const summary = self.slice(self.lastIndexOf('All stale-branch tests passed'));
+  assert.ok(/\$\{skipNote\}/.test(summary),
+    'the pass line no longer carries the skip count, so a full run cannot tell a '
+    + 'complete pass from one that skipped half the squash-merge coverage');
+
+  // The coupling is real and worth failing on. If run-all stops taking the last
+  // line, this whole arrangement needs revisiting rather than silently drifting.
+  const runAll = fs.readFileSync(path.join(__dirname, 'run-all.js'), 'utf8');
+  assert.ok(/\.pop\(\)/.test(runAll),
+    'run-all no longer summarises a suite by its last line, which is the only '
+    + 'reason the skip count has to live there');
+});
+
 fs.unlinkSync(fixture);
 
-process.stdout.write(failures === 0 ? '\nAll stale-branch tests passed.\n' : `\n${failures} test(s) failed.\n`);
+// The skip count goes INSIDE the last line, and that is the whole point rather
+// than a formatting preference. run-all.js shows one line per suite, and it
+// takes the last non-empty one (tests/run-all.js:41). A count printed above
+// that line is invisible to every full run, which is the only way most people
+// see this suite.
+//
+// The first version of this printed the count on its own line, directly above a
+// pass message that then read identically to a complete run. It carried a
+// comment saying a summary that reads identically to a full run hides what was
+// skipped, and it produced exactly that summary. Saying it and doing it are two
+// different edits.
+const skipNote = skipped > 0
+  ? ` (${skipped} skipped: this git lacks merge-tree --write-tree, which arrived in 2.38,`
+    + ' so squash-merge evidence went untested)'
+  : '';
+process.stdout.write(failures === 0
+  ? `\nAll stale-branch tests passed${skipNote}.\n`
+  : `\n${failures} test(s) failed${skipNote}.\n`);
 process.exit(failures === 0 ? 0 : 1);
