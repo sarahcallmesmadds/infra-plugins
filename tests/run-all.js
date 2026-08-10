@@ -38,7 +38,25 @@ for (const suite of suites) {
   // Every suite ends with its own summary line. Take the last non-empty line
   // rather than parsing counts, so a suite that reports differently still gets
   // its own words shown instead of being flattened into a number.
-  const summary = output.trim().split('\n').filter(Boolean).pop() || '(no output)';
+  //
+  // From stdout, and only from stdout while there is any. This used to read the
+  // concatenation, and since stderr is appended after stdout, one line on stderr
+  // became the summary of the whole suite. Two suites hit it: stale-branches
+  // reported "never-existed is not in this repository any more" and queue-count
+  // reported "queue.js: unknown list "nope"". Both lines are incidental output
+  // from checks that exercise a refusal on purpose, so the suites testing error
+  // handling most carefully were the ones whose results were hidden. Neither
+  // suite was doing anything wrong; the rule was.
+  //
+  // It also silently capped what a suite could tell you. stale-branches moved
+  // its skipped-check count into its final line specifically so a full run would
+  // show it, and a stray stderr line outranked it anyway.
+  //
+  // stderr is still the fallback, for a suite that crashed before printing
+  // anything. There the error IS the result, and "(no output)" would throw away
+  // the only thing worth reading.
+  const lastLine = (text) => text.trim().split('\n').filter(Boolean).pop() || '';
+  const summary = lastLine(run.stdout || '') || lastLine(run.stderr || '') || '(no output)';
   results.push({ suite, ok: run.status === 0, summary, output });
 }
 
