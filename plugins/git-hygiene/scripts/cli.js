@@ -104,6 +104,18 @@ function render(result, where, lookup) {
   // Said out loud rather than left to look like a clean result. Without the
   // comparison, a squash-merged branch is indistinguishable here from one
   // holding real work, and every one of them lands in Keep.
+  // The comparison ran against a copy of the remote that a fetch has not caught
+  // up with, so anything merged since then is sitting in Keep with a commit
+  // count beside it. Said here rather than left implied, because a stale answer
+  // and a current one look exactly alike on screen.
+  if (lookup && lookup.remoteStale) {
+    lines.push('');
+    lines.push(`Note: \`origin/${lookup.defaultBranch || 'main'}\` is a copy from your last \`git fetch\`, and the`);
+    lines.push('remote has moved since. Anything merged in between is listed under Keep with a');
+    lines.push('commit count, which is what an unmerged branch looks like too.');
+    lines.push('Run `git fetch` and try again for a current answer.');
+  }
+
   if (lookup && lookup.mergeCheckUnavailable) {
     lines.push('');
     lines.push('Note: this git cannot run `merge-tree --write-tree`, which needs 2.38 or newer,');

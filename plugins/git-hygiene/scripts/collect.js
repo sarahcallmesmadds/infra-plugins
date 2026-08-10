@@ -31,6 +31,12 @@ const MAX_BUFFER = 8 * 1024 * 1024;
 // matches the other calls.
 const MERGED_PR_TIMEOUT_MS = 20000;
 
+// The only call in the local path that leaves the machine. Short, because what
+// it produces is a caveat rather than a fact anything depends on: every branch
+// is classified exactly the same way whether this answers or not. A run that
+// stalls waiting for it has already cost more than the caveat is worth.
+const REMOTE_PROBE_TIMEOUT_MS = 3000;
+
 function run(cmd, args, opts) {
   return execFileSync(cmd, args, Object.assign({
     encoding: 'utf8',
@@ -71,6 +77,37 @@ function isGitRepo(cwd) {
 // caller has already resolved.
 function supportsWriteTree(cwd, ref) {
   return tryRun('git', ['-C', cwd, 'merge-tree', '--write-tree', ref, ref]) !== null;
+}
+
+// Whether `origin/<def>` still matches the branch it is a copy of.
+//
+// `origin/main` is not the remote. It is a ref this checkout last wrote during a
+// fetch, and everything below compares against it as though it were current. A
+// pull request merging between that fetch and this run is invisible here: the
+// comparison correctly finds those commits absent from the snapshot it was
+// given, the branches come back under Keep with a real-looking commit count, and
+// nothing printed says the question was asked of old data.
+//
+// That is not hypothetical. A run at 19:15 compared against a 16:47 fetch and
+// reported seven branches as holding work, all seven of which had squash merged
+// in between. The same tool with `--repo`, which asks GitHub live, cleared all
+// seven and named the pull request for each.
+//
+// Compared by commit rather than by tree, because the question is whether this
+// copy is current, and two different commits sharing a tree still mean a fetch
+// has been missed.
+//
+// Failure is silence, in every direction. No remote configured, no network, no
+// `ls-remote` on the path, an unparseable line: the answer is false, no note is
+// printed, and nothing else about the run changes.
+function remoteMoved(cwd, def, cachedSha) {
+  if (!cachedSha) return false;
+  const out = tryRun('git', ['-C', cwd, 'ls-remote', '--heads', 'origin', def],
+    { timeout: REMOTE_PROBE_TIMEOUT_MS });
+  if (!out) return false;
+  const sha = out.split('\n')[0].split('\t')[0];
+  if (!/^[0-9a-f]{7,40}$/.test(sha)) return false;
+  return sha !== cachedSha;
 }
 
 // opts.deadline is an epoch milliseconds value. A caller that has to finish
@@ -153,6 +190,7 @@ function localBranches(cwd, opts) {
   // somewhere that is not this branch. Skipped when the two agree, which is the
   // steady state, so it costs nothing in the common case.
   const remoteDef = `origin/${def}`;
+  const remoteDefSha = tryRun('git', ['-C', cwd, 'rev-parse', remoteDef]);
   const remoteDefTree = tryRun('git', ['-C', cwd, 'rev-parse', `${remoteDef}^{tree}`]);
   const compareAgainst = [{ ref: def, tree: defTree, label: 'already in the default branch' }];
   if (remoteDefTree && remoteDefTree !== defTree) {
@@ -171,6 +209,26 @@ function localBranches(cwd, opts) {
   // git version problem would send someone to upgrade a git that is fine.
   const versionOk = defTree ? supportsWriteTree(cwd, def) : null;
   const canCompare = !!defTree && versionOk === true;
+
+  // Asked for the listing and not for `only`, the re-check that runs immediately
+  // before each delete. Two reasons, and either one is enough.
+  //
+  // A twenty branch cleanup calls this path twenty times, and a network round
+  // trip per branch is the cost this function's `only` parameter exists to
+  // avoid in the first place.
+  //
+  // More importantly it cannot change that path's answer safely or otherwise. A
+  // stale copy of the remote makes branches look less merged than they are,
+  // never more, so its only effect is keeping something that could have gone.
+  // The re-check exists to catch the opposite: work appearing on a branch
+  // already cleared. Staleness cannot cause that.
+  //
+  // A deadline means the caller is the session hook, which prints one line and
+  // has a budget measured against it. Advisory prose it will not print is not
+  // worth spending that budget on.
+  const remoteStale = (only === null && deadline === null)
+    ? remoteMoved(cwd, def, remoteDefSha)
+    : false;
 
   const branches = rows.map((line) => {
     const [name, date, aheadBehind] = line.split('\t');
@@ -237,7 +295,7 @@ function localBranches(cwd, opts) {
   // Specifically "this git is too old", not "the comparison did not run". The
   // note the caller prints tells someone to check their git version, and that
   // is only the right advice for one of those.
-  return { defaultBranch: def, branches, truncated, mergeCheckUnavailable: versionOk === false };
+  return { defaultBranch: def, branches, truncated, remoteStale, mergeCheckUnavailable: versionOk === false };
 }
 
 // --------------------------------------------------------------- remote ----

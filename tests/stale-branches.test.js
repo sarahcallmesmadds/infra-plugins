@@ -983,6 +983,128 @@ check('the skip count rides in the final line, where run-all can see it', () => 
     + 'reason the skip count has to live there');
 });
 
+// ------------------------------------- a copy of the remote is not the remote ----
+//
+// Every comparison in the local path runs against `origin/<def>`, which a fetch
+// wrote at some point in the past. When the real branch has moved since, work
+// that has merged is still absent from the copy, so the branches holding it come
+// back under Keep with an ordinary looking commit count. The classification is
+// right about what it was given. The output is wrong about what it means.
+//
+// Built against a real bare repository rather than a stub, because the failure
+// is specifically about the gap between a remote-tracking ref and the thing it
+// tracks, and a stub cannot have that gap.
+function withOriginAndSquashMerge(fn) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stale-origin-'));
+  const remote = path.join(dir, 'remote.git');
+  const local = path.join(dir, 'work');
+  const g = (at, ...a) => execFileSync('git', ['-C', at, ...a], { encoding: 'utf8', stdio: 'pipe' });
+
+  execFileSync('git', ['init', '-q', '--bare', '-b', 'main', remote], { stdio: 'pipe' });
+  execFileSync('git', ['clone', '-q', remote, local], { stdio: 'pipe' });
+  g(local, 'config', 'user.email', 'test@example.com');
+  g(local, 'config', 'user.name', 'test');
+  fs.writeFileSync(path.join(local, 'f.txt'), 'base\n');
+  g(local, 'add', '.'); g(local, 'commit', '-qm', 'base');
+  g(local, 'push', '-q', 'origin', 'main');
+
+  // A branch with real work, pushed so the remote has it too.
+  g(local, 'checkout', '-qb', 'feature');
+  fs.appendFileSync(path.join(local, 'f.txt'), 'work\n');
+  g(local, 'commit', '-qam', 'work');
+  g(local, 'push', '-q', 'origin', 'feature');
+  g(local, 'checkout', '-q', 'main');
+
+  // Now squash it into main through a second clone, so the remote moves and the
+  // first checkout's `origin/main` does not. This is the shape of someone else
+  // merging your pull request, or of you merging it in the browser.
+  const other = path.join(dir, 'other');
+  execFileSync('git', ['clone', '-q', remote, other], { stdio: 'pipe' });
+  g(other, 'config', 'user.email', 'test@example.com');
+  g(other, 'config', 'user.name', 'test');
+  g(other, 'merge', '-q', '--squash', 'origin/feature');
+  g(other, 'commit', '-qm', 'feature (#1)');
+  g(other, 'push', '-q', 'origin', 'main');
+
+  try {
+    return fn({ dir, local, remote, g });
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+check('a remote that has moved since the last fetch is reported, not hidden', () => {
+  withOriginAndSquashMerge(({ local }) => {
+    const r = collect.localBranches(local);
+    assert.strictEqual(r.remoteStale, true,
+      'the copy is behind the branch it tracks, and that has to reach the caller');
+
+    // And the branch really does look unmerged from here, which is why the note
+    // matters. Without this the test could pass on a run where nothing was
+    // misreported anyway.
+    const feature = r.branches.find((b) => b.name === 'feature');
+    assert.strictEqual(feature.merged, false,
+      'the whole point is that the merge is invisible against a stale copy');
+    assert.ok(feature.aheadBy > 0, 'so it carries a commit count like unmerged work does');
+
+    const out = execFileSync('node', [CLI, '--cwd', local], { encoding: 'utf8' });
+    assert.ok(/last `git fetch`/.test(out), 'the note must be printed, not just returned');
+    assert.ok(/git fetch` and try again/.test(out), 'and must say what to do about it');
+    assert.ok(out.indexOf('feature') > out.indexOf('Keep'),
+      'with the branch it explains still listed under Keep');
+  });
+});
+
+check('a fetched copy prints no note, and the branch is cleared', () => {
+  withOriginAndSquashMerge(({ local, g }) => {
+    g(local, 'fetch', '-q', 'origin');
+    const r = collect.localBranches(local);
+    assert.strictEqual(r.remoteStale, false, 'up to date is up to date');
+
+    const out = execFileSync('node', [CLI, '--cwd', local], { encoding: 'utf8' });
+    assert.ok(!/last `git fetch`/.test(out), 'no caveat when there is nothing to caveat');
+
+    // Only meaningful on a git that can see a squash merge at all. Elsewhere the
+    // branch stays in Keep for a reason this test is not about.
+    if (WRITE_TREE) {
+      const feature = r.branches.find((b) => b.name === 'feature');
+      assert.strictEqual(feature.merged, true,
+        'and once fetched, the merge the note warned about is visible');
+    }
+  });
+});
+
+// Both skips are about cost rather than correctness, and both are safe because
+// a stale copy can only hold a branch back from deletion.
+check('the probe is skipped for the pre-delete re-check and under a deadline', () => {
+  withOriginAndSquashMerge(({ local }) => {
+    assert.strictEqual(collect.localBranches(local, { only: 'feature' }).remoteStale, false,
+      'one network round trip per branch is what `only` exists to avoid');
+    assert.strictEqual(collect.localBranches(local, { deadline: Date.now() + 60000 }).remoteStale, false,
+      'a caller under a budget does not print this note and should not pay for it');
+  });
+});
+
+// A repository with no origin at all is the ordinary case for local-only work,
+// and it must not produce a warning about a remote that does not exist.
+check('no remote means no note', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'no-origin-'));
+  const g = (...a) => execFileSync('git', ['-C', dir, ...a], { encoding: 'utf8', stdio: 'pipe' });
+  execFileSync('git', ['init', '-q', '-b', 'main', dir], { stdio: 'pipe' });
+  g('config', 'user.email', 'test@example.com');
+  g('config', 'user.name', 'test');
+  fs.writeFileSync(path.join(dir, 'f.txt'), 'base\n');
+  g('add', '.'); g('commit', '-qm', 'base');
+  g('branch', 'other');
+
+  const r = collect.localBranches(dir);
+  assert.strictEqual(r.remoteStale, false, 'nothing to be out of date with');
+  const out = execFileSync('node', [CLI, '--cwd', dir], { encoding: 'utf8' });
+  assert.ok(!/last `git fetch`/.test(out), 'and nothing said about one');
+
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 fs.unlinkSync(fixture);
 
 // The skip count goes INSIDE the last line, and that is the whole point rather
