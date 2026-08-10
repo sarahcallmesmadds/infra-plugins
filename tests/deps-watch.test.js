@@ -147,6 +147,53 @@ check('a path with a computed segment is NOT a reference', () => {
   assert.deepStrictEqual(extractRefs(f, fs.readFileSync(f, 'utf8')), []);
 });
 
+check('a path built without the .js resolves, the same as a require does', () => {
+  // THE MISS. Every guardrails hook reaches its modules this way:
+  //   require(path.join(ROOT, 'scripts', 'hook-io'))
+  // Node resolves that; matching only the exact string did not, so all 28 of
+  // them were invisible. jsRequires had always tried both forms and this had
+  // not, which is the kind of gap that survives precisely because the two
+  // readers look like they agree.
+  const f = path.join(plugin, 'hooks', 'no-ext.js');
+  fs.writeFileSync(f, "const r = require(path.join(__dirname, '..', 'scripts', 'roots'));\n");
+  assert.deepStrictEqual(extractRefs(f, fs.readFileSync(f, 'utf8')), [path.resolve(rootsJs)]);
+});
+
+check('the extensionless form still does not invent a file', () => {
+  // The candidate loop must not turn any bare word into a hit. `nope.js` does
+  // not exist, so neither form resolves and nothing is recorded.
+  const f = path.join(plugin, 'hooks', 'no-ext-absent.js');
+  fs.writeFileSync(f, "const r = require(path.join(__dirname, '..', 'scripts', 'nope'));\n");
+  assert.deepStrictEqual(extractRefs(f, fs.readFileSync(f, 'utf8')), []);
+});
+
+check('a directory is never a reference, with or without the extension', () => {
+  // scripts/ exists as a directory. The isFile check is what stops a path that
+  // resolves to it from being recorded as a dependency.
+  const f = path.join(plugin, 'hooks', 'dir-ref.js');
+  fs.writeFileSync(f, "const d = path.join(__dirname, '..', 'scripts');\n");
+  assert.deepStrictEqual(extractRefs(f, fs.readFileSync(f, 'utf8')), []);
+});
+
+check('a path naming a directory does NOT fall back to a sibling .js', () => {
+  // The one place this cannot copy jsRequires. There the fallback is node's own
+  // resolution order, which really does prefer `x.js` over `x/`. A path.join has
+  // no such semantics: a path naming a directory was named on purpose, and
+  // reaching for the file beside it records an edge the source never wrote.
+  //
+  // Both exist here, which is the whole test: `bin/` as a directory and `bin.js`
+  // as its neighbour. Nothing in the repository is shaped this way yet.
+  const dir = path.join(plugin, 'bin');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(plugin, 'bin.js'), "module.exports = {};\n");
+  const f = path.join(plugin, 'hooks', 'dir-with-sibling.js');
+  fs.writeFileSync(f, "const CMD = path.join(__dirname, '..', 'bin');\n");
+  assert.deepStrictEqual(
+    extractRefs(f, fs.readFileSync(f, 'utf8')), [],
+    'the directory fell through to bin.js, recording a file the source never named'
+  );
+});
+
 check('a literal path that does not exist on disk is NOT a reference', () => {
   const f = path.join(plugin, 'hooks', 'absent.js');
   fs.writeFileSync(f, "const S = path.join(__dirname, '..', 'scripts', 'nope.js');\n");

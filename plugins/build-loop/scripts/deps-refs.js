@@ -118,6 +118,13 @@ const JOIN_CALL = `path\\.(?:join|resolve)${JOIN_ARGS}`;
 const CONST_JOIN = `(?:^|\\n)\\s*const\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*${JOIN_CALL}`;
 const STRING_LIT = /^(['"])([^'"]*)\1$/;
 
+// stat, or null when there is nothing there. Distinguishing "absent" from
+// "present but not a file" is the whole point: a directory has to stop the
+// extensionless fallback, and a thrown ENOENT has to let it through.
+function statOrNull(p) {
+  try { return fs.statSync(p); } catch (_) { return null; }
+}
+
 // Returns the resolved path, or null when any segment is not certain.
 function resolveJoin(argsSrc, dirname, bindings) {
   const parts = argsSrc.split(',').map((s) => s.trim()).filter((s) => s.length > 0);
@@ -158,9 +165,29 @@ function jsPathJoins(filePath, content) {
   while ((m = callRe.exec(content)) !== null) {
     const resolved = resolveJoin(m[1], dirname, bindings);
     if (resolved === null) continue;
-    try {
-      if (fs.statSync(resolved).isFile()) found.push(resolved);
-    } catch (_) { /* names something that is not here; not this map's business */ }
+    // Both forms, because this codebase writes both. Every guardrails hook
+    // reaches its modules as `require(path.join(ROOT, 'scripts', 'hook-io'))`,
+    // with no extension, and matching only the exact string dropped all 28 of
+    // those: hook-io, config, scan, command and resource-ownership, from
+    // bash-guard, read-scan, write-scan, both resource-owner hooks and three
+    // cli.js files. They are the densest real edges here and none were visible.
+    //
+    // The fallback fires only when the path names nothing at all. A path that
+    // names a directory stops here rather than trying the sibling file, and
+    // that is the one place this cannot copy jsRequires. There the fallback is
+    // node's own resolution order, which really does prefer `x.js` over `x/`.
+    // A path.join has no such semantics: `path.join(ROOT, 'commands')` is a
+    // directory the author named on purpose, and reaching for a `commands.js`
+    // beside it would record an edge to a file the source never mentions.
+    // Nothing in this repository is shaped that way today, which is what makes
+    // it worth pinning now rather than after it appears.
+    const exact = statOrNull(resolved);
+    if (exact) {
+      if (exact.isFile()) found.push(resolved);
+      continue;
+    }
+    const withExtension = statOrNull(`${resolved}.js`);
+    if (withExtension && withExtension.isFile()) found.push(`${resolved}.js`);
   }
   return found;
 }
