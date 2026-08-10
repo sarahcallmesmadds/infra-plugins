@@ -115,21 +115,52 @@ function supportsWriteTree(cwd, ref) {
 // what makes the guarantee independent of how `ls-remote` chooses to match,
 // which is the part that was wrong here in the first place.
 //
-// The environment is set so the probe cannot become interactive. `stdio` closes
-// stdin, but git reads credentials from `/dev/tty` regardless, so an HTTPS
-// remote with nothing cached can sit at a prompt with only the timeout bounding
-// it, and an askpass helper spawned underneath may outlive the signal that
-// stops git. A probe whose whole contract is "failure is silence" must not be
-// able to ask for anything.
+// The probe is made non-interactive on four fronts, because closing one of them
+// closes almost nothing. A probe whose whole contract is "failure is silence"
+// must not be able to ask a human for anything, and every route below was
+// checked by running it rather than reasoned about.
+//
+//   1. `GIT_TERMINAL_PROMPT=0` stops git's own terminal prompt. On its own it
+//      stops nothing else. With an askpass helper configured, git runs the
+//      helper instead, and it ran twice in a fixture built to force the case.
+//      Editors configure one as a matter of course: VS Code exports
+//      `GIT_ASKPASS` into every integrated terminal.
+//   2. So `GIT_ASKPASS` and `SSH_ASKPASS` are removed from the child's
+//      environment, and `core.askPass` is emptied for this one command. With
+//      all three closed the same fixture fails immediately with "terminal
+//      prompts disabled", which is the wanted behaviour: no dialog, no wait.
+//      Removed rather than set empty, so nothing downstream tries to execute
+//      the empty string.
+//   3. `BatchMode=yes` is appended to whatever `GIT_SSH_COMMAND` the caller
+//      already has, rather than used only as a default. Exporting a custom one
+//      for an identity file or a proxy is ordinary, and the previous form
+//      handed that value through untouched, so exactly the people who set it
+//      kept an ssh that could ask for a passphrase or a host key confirmation.
+//      Appending works because later ssh options win.
+//   4. `credential.interactive=false` is set, which is how Git Credential
+//      Manager is told never to open a window. Other helpers ignore the key.
+//
+// Credential helpers themselves are deliberately left enabled. A helper that
+// answers from a keychain without showing anything is not an interruption, and
+// disabling them would break the probe for everyone whose remote is HTTPS with
+// working stored credentials, which is a large share of the people this is for.
+// The line drawn here is at asking a human, not at using an answer already
+// given.
 function remoteMoved(cwd, def, cachedSha) {
   if (!cachedSha) return false;
   const qualified = `refs/heads/${def}`;
-  const out = tryRun('git', ['-C', cwd, 'ls-remote', '--heads', 'origin', qualified], {
+  const env = Object.assign({}, process.env, {
+    GIT_TERMINAL_PROMPT: '0',
+    GIT_SSH_COMMAND: `${process.env.GIT_SSH_COMMAND || 'ssh'} -o BatchMode=yes`,
+  });
+  delete env.GIT_ASKPASS;
+  delete env.SSH_ASKPASS;
+  const out = tryRun('git', ['-C', cwd,
+    '-c', 'core.askPass=',
+    '-c', 'credential.interactive=false',
+    'ls-remote', '--heads', 'origin', qualified], {
     timeout: REMOTE_PROBE_TIMEOUT_MS,
-    env: Object.assign({}, process.env, {
-      GIT_TERMINAL_PROMPT: '0',
-      GIT_SSH_COMMAND: process.env.GIT_SSH_COMMAND || 'ssh -o BatchMode=yes',
-    }),
+    env,
   });
   if (!out) return false;
   const row = out.split('\n')
@@ -222,6 +253,7 @@ function localBranches(cwd, opts) {
   // steady state, so it costs nothing in the common case.
   const remoteDef = `origin/${def}`;
   const remoteDefSha = tryRun('git', ['-C', cwd, 'rev-parse', remoteDef]);
+  const defSha = tryRun('git', ['-C', cwd, 'rev-parse', def]);
   const remoteDefTree = tryRun('git', ['-C', cwd, 'rev-parse', `${remoteDef}^{tree}`]);
   const compareAgainst = [{ ref: def, tree: defTree, label: 'already in the default branch' }];
   if (remoteDefTree && remoteDefTree !== defTree) {
@@ -257,8 +289,25 @@ function localBranches(cwd, opts) {
   // A deadline means the caller is the session hook, which prints one line and
   // has a budget measured against it. Advisory prose it will not print is not
   // worth spending that budget on.
+  // Which ref the comparison actually ran against, and therefore which one the
+  // probe has to check for freshness.
+  //
+  // Normally that is `origin/<def>`. When no such ref exists the comparison
+  // above silently falls back to the local branch alone, and a local branch can
+  // be arbitrarily far behind: a single-branch or shallow clone, a checkout
+  // whose remote refs were pruned, or a repository fetched with `--depth` all
+  // land here. Skipping the probe because there is no remote-tracking ref left
+  // exactly the silent stale answer this release exists to remove, reached from
+  // a different starting state.
+  //
+  // So the probe compares against whichever ref was used, and the caller is
+  // told which, because the note has to name a real thing. Telling someone
+  // `origin/main` is out of date when they have no `origin/main` sends them
+  // looking for something that was never there.
+  const staleRef = remoteDefSha ? remoteDef : def;
+  const staleSha = remoteDefSha || defSha;
   const remoteStale = (only === null && deadline === null)
-    ? remoteMoved(cwd, def, remoteDefSha)
+    ? remoteMoved(cwd, def, staleSha)
     : false;
 
   const branches = rows.map((line) => {
@@ -326,7 +375,14 @@ function localBranches(cwd, opts) {
   // Specifically "this git is too old", not "the comparison did not run". The
   // note the caller prints tells someone to check their git version, and that
   // is only the right advice for one of those.
-  return { defaultBranch: def, branches, truncated, remoteStale, mergeCheckUnavailable: versionOk === false };
+  return {
+    defaultBranch: def,
+    branches,
+    truncated,
+    remoteStale,
+    remoteStaleRef: remoteStale ? staleRef : null,
+    mergeCheckUnavailable: versionOk === false,
+  };
 }
 
 // --------------------------------------------------------------- remote ----

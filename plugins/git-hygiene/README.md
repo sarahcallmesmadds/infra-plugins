@@ -171,8 +171,13 @@ What that costs, and when it is skipped:
 - One network round trip per listing, bounded at 3 seconds. Offline, on a remote
   that cannot be reached, or where credentials are not already available, the
   probe fails, no note is printed, and every branch is classified exactly as
-  before. It cannot prompt for anything: terminal prompting is disabled and ssh
-  runs in batch mode for this one call.
+  before. It cannot ask you for anything: git's terminal prompt is off, the
+  `GIT_ASKPASS` and `SSH_ASKPASS` helpers are removed from the environment for
+  this one call along with `core.askPass`, the credential manager is told not to
+  open a window, and `BatchMode=yes` is appended to whatever `GIT_SSH_COMMAND`
+  you already have rather than replacing it. Credential helpers are left on, so
+  a stored credential answered from a keychain still works. The line is drawn at
+  asking you, not at using an answer you have already given.
 - Not run for `--verify`, the re-check before each delete, which would otherwise
   make a twenty-branch cleanup twenty round trips.
 - Not run under a deadline, which is how the session notice calls it. That notice

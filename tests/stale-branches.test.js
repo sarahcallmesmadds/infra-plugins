@@ -1048,7 +1048,7 @@ check('a remote that has moved since the last fetch is reported, not hidden', ()
     assert.ok(feature.aheadBy > 0, 'so it carries a commit count like unmerged work does');
 
     const out = execFileSync('node', [CLI, '--cwd', local], { encoding: 'utf8' });
-    assert.ok(/last `git fetch`/.test(out), 'the note must be printed, not just returned');
+    assert.ok(/the remote has moved past it/.test(out), 'the note must be printed, not just returned');
     assert.ok(/git fetch` and try again/.test(out), 'and must say what to do about it');
     assert.ok(out.indexOf('feature') > out.indexOf('Keep'),
       'with the branch it explains still listed under Keep');
@@ -1062,7 +1062,7 @@ check('a fetched copy prints no note, and the branch is cleared', () => {
     assert.strictEqual(r.remoteStale, false, 'up to date is up to date');
 
     const out = execFileSync('node', [CLI, '--cwd', local], { encoding: 'utf8' });
-    assert.ok(!/last `git fetch`/.test(out), 'no caveat when there is nothing to caveat');
+    assert.ok(!/the remote has moved past it/.test(out), 'no caveat when there is nothing to caveat');
 
     // Only meaningful on a git that can see a squash merge at all. Elsewhere the
     // branch stays in Keep for a reason this test is not about.
@@ -1126,7 +1126,7 @@ check('a branch whose last segment matches the default does not fake staleness',
   assert.strictEqual(collect.localBranches(local).remoteStale, false,
     'the copy of main is current, whatever else on the remote ends in "main"');
   const out = execFileSync('node', [CLI, '--cwd', local], { encoding: 'utf8' });
-  assert.ok(!/last `git fetch`/.test(out), 'so no note, on this run or any other');
+  assert.ok(!/the remote has moved past it/.test(out), 'so no note, on this run or any other');
 
   fs.rmSync(dir, { recursive: true, force: true });
 });
@@ -1149,14 +1149,83 @@ check('--json carries the caveats, present whether or not they are set', () => {
 });
 
 // The probe's contract is that failure is silent. Prompting is the one failure
-// that is not: it stops the run and waits, with only the timeout bounding it,
-// and git reads credentials from /dev/tty whatever is done with stdin.
-check('the remote probe cannot become interactive', () => {
+// that is not: it stops the run and waits, with only the timeout bounding it.
+//
+// Source assertions, matching how the rest of the credential path is pinned in
+// this file: reaching it for real needs a remote that demands authentication,
+// and a suite that depends on the network fails for reasons that are not about
+// the code.
+//
+// The behaviour behind each line below was checked by hand against real git
+// before it was written, because `GIT_TERMINAL_PROMPT=0` closes one route and
+// reads as though it closed all of them. With an askpass helper configured and
+// credential helpers off, the helper was invoked twice despite that variable
+// being set. With `GIT_ASKPASS` and `SSH_ASKPASS` removed and `core.askPass`
+// emptied, the same command failed immediately with "terminal prompts
+// disabled". The first version of this shipped believing the one variable was
+// enough.
+check('the remote probe closes every interactive route', () => {
   const src = fs.readFileSync(path.join(ROOT, 'scripts', 'collect.js'), 'utf8');
   const fn = src.slice(src.indexOf('function remoteMoved'), src.indexOf('function localBranches'));
-  assert.ok(/GIT_TERMINAL_PROMPT: '0'/.test(fn), 'terminal prompting must be off for this call');
-  assert.ok(/BatchMode=yes/.test(fn), 'and ssh must not prompt either');
-  assert.ok(/refs\/heads\//.test(fn), 'and the ref must be matched fully qualified');
+  assert.ok(/GIT_TERMINAL_PROMPT: '0'/.test(fn), "git's own terminal prompt");
+  assert.ok(/delete env\.GIT_ASKPASS/.test(fn) && /delete env\.SSH_ASKPASS/.test(fn),
+    'the askpass helpers, which GIT_TERMINAL_PROMPT does not cover');
+  assert.ok(/'core\.askPass='/.test(fn), 'the config form of the same thing');
+  assert.ok(/credential\.interactive=false/.test(fn), 'and the credential manager window');
+  assert.ok(/refs\/heads\//.test(fn), 'the ref must be matched fully qualified');
+
+  // The inherited value has to be extended rather than replaced or preserved.
+  // Keeping it verbatim gave exactly the people who set GIT_SSH_COMMAND an ssh
+  // that could still ask for a passphrase.
+  assert.ok(/\$\{process\.env\.GIT_SSH_COMMAND \|\| 'ssh'\} -o BatchMode=yes/.test(fn),
+    'BatchMode must be appended to any inherited GIT_SSH_COMMAND, not only used as a default');
+  assert.ok(!/GIT_SSH_COMMAND: process\.env\.GIT_SSH_COMMAND \|\|/.test(fn),
+    'and the old form, which handed a custom command through untouched, must be gone');
+});
+
+// A checkout with an origin but no `refs/remotes/origin/<def>`: single-branch
+// clones, shallow clones, pruned remote refs. The comparison falls back to the
+// local branch, which can be arbitrarily far behind, so skipping the probe here
+// reproduces the silent stale answer this release exists to remove.
+check('staleness is still reported when there is no remote-tracking ref', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'no-tracking-'));
+  const remote = path.join(dir, 'remote.git');
+  const local = path.join(dir, 'work');
+  const g = (at, ...a) => execFileSync('git', ['-C', at, ...a], { encoding: 'utf8', stdio: 'pipe' });
+
+  execFileSync('git', ['init', '-q', '--bare', '-b', 'main', remote], { stdio: 'pipe' });
+  execFileSync('git', ['clone', '-q', remote, local], { stdio: 'pipe' });
+  g(local, 'config', 'user.email', 'test@example.com');
+  g(local, 'config', 'user.name', 'test');
+  fs.writeFileSync(path.join(local, 'f.txt'), 'base\n');
+  g(local, 'add', '.'); g(local, 'commit', '-qm', 'base');
+  g(local, 'push', '-q', 'origin', 'main');
+  g(local, 'branch', 'feature');
+
+  // Move the remote on, through a second clone, then delete every
+  // remote-tracking ref this checkout has.
+  const other = path.join(dir, 'other');
+  execFileSync('git', ['clone', '-q', remote, other], { stdio: 'pipe' });
+  g(other, 'config', 'user.email', 'test@example.com');
+  g(other, 'config', 'user.name', 'test');
+  fs.appendFileSync(path.join(other, 'f.txt'), 'more\n');
+  g(other, 'commit', '-qam', 'more'); g(other, 'push', '-q', 'origin', 'main');
+  for (const ref of g(local, 'for-each-ref', '--format=%(refname)', 'refs/remotes/').split('\n').filter(Boolean)) {
+    g(local, 'update-ref', '-d', ref.trim());
+  }
+  assert.strictEqual(g(local, 'for-each-ref', '--format=%(refname)', 'refs/remotes/').trim(), '',
+    'the fixture must really have no remote-tracking refs, or it tests nothing');
+
+  const r = collect.localBranches(local);
+  assert.strictEqual(r.remoteStale, true, 'the local branch is behind the remote and that has to be said');
+  assert.strictEqual(r.remoteStaleRef, 'main',
+    'and the note must name the ref actually compared against, which is not origin/main here');
+
+  const out = execFileSync('node', [CLI, '--cwd', local], { encoding: 'utf8' });
+  assert.ok(/compared against `main`/.test(out), 'the printed note must name it too');
+  assert.ok(!/origin\/main/.test(out), 'and must not name a ref this checkout does not have');
+
+  fs.rmSync(dir, { recursive: true, force: true });
 });
 
 // A repository with no origin at all is the ordinary case for local-only work,
@@ -1174,7 +1243,7 @@ check('no remote means no note', () => {
   const r = collect.localBranches(dir);
   assert.strictEqual(r.remoteStale, false, 'nothing to be out of date with');
   const out = execFileSync('node', [CLI, '--cwd', dir], { encoding: 'utf8' });
-  assert.ok(!/last `git fetch`/.test(out), 'and nothing said about one');
+  assert.ok(!/the remote has moved past it/.test(out), 'and nothing said about one');
 
   fs.rmSync(dir, { recursive: true, force: true });
 });
