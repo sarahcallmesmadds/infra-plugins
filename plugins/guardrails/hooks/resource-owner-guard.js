@@ -46,6 +46,9 @@ readEvent((event) => {
       + 'file with the Read tool is what satisfies it; `cat` in a shell command does '
       + 'not, because the point is that the document is loaded where the work can see '
       + 'it rather than that it scrolled past.\n\n'
+      + 'If you already opened it: a Read that failed does not count, and neither does '
+      + 'one narrowed with offset or limit, since part of a governing document is not '
+      + 'the document. Read the whole file.\n\n'
       + 'To change what is required here, edit ~/.claude/guardrails.resources.json.'
     );
   }

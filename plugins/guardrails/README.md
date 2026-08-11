@@ -130,6 +130,22 @@ past. If the record cannot be read at all, the gate opens rather than closing,
 in line with every other hook here. An unreadable record looks exactly like a
 session where nothing was read, and a block on that basis could never be lifted.
 
+Two kinds of read do not count, and the refusal says so:
+
+- **A read that failed.** A Read that hit a missing file or a refused
+  permission still leaves a record that it was asked for. Only the result
+  decides. A read whose result is simply not in the record yet still counts, so
+  an incomplete record cannot hold the gate shut.
+- **A read narrowed by `offset` or `limit`.** Part of a governing document is
+  not the document.
+
+**Both gates apply independently.** A resource that sets `owners` and
+`requiresRead` asks for both: invoking the owning skill satisfies the first and
+does nothing about the second, so the skill's own writes are refused until the
+document has been opened in that session. A skill can satisfy it by using the
+Read tool like anyone else. If you want a lease to be sufficient on its own, put
+the two rules on separate resources rather than on one.
+
 A resource may also list several locations with a `paths` array beside `path`.
 A git worktree puts the same directory in two places while a branch is in
 flight, and a guard that knows only the canonical checkout is off at exactly the
@@ -237,8 +253,18 @@ Also in this release:
 - Every resource covering a write is now evaluated rather than only the first
   match, so registry order no longer decides which rules apply.
 
-Nothing to do on upgrade. A registry with none of the new fields behaves exactly
-as before.
+Nothing to do on upgrade, with one exception worth checking.
+
+**A resource with no `owners` no longer blocks on the ownership gate.** It used
+to, because any matched resource without a live lease was refused, and an entry
+with an empty or missing `owners` array produced a refusal reading "is owned by"
+with nothing after it. That was a degenerate message rather than a designed
+behaviour, but it did work as a blanket deny, and anyone whose own
+`~/.claude/guardrails.resources.json` relies on that will find it has stopped.
+An ownerless entry now means "not owned by any skill", which is what the field
+says and what `requiresRead`-only resources need. If you were using one as a
+hard deny, give it an `owners` list naming the skill that should hold it, or a
+`requiresRead` naming the document that governs it.
 
 Shell write detection is unchanged and still matches registered paths literally.
 See the limit noted under Protected resources.

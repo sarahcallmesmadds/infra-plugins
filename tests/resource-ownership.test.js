@@ -169,10 +169,27 @@ const {
 } = require('../plugins/guardrails/scripts/resource-ownership');
 
 // A transcript line in the shape the gate reads: a Read tool_use with a path.
+let toolUseId = 0;
+function readLine(file, extra = {}) {
+  const id = `toolu_${++toolUseId}`;
+  return {
+    id,
+    line: JSON.stringify({
+      message: {
+        content: [{ type: 'tool_use', id, name: 'Read', input: { file_path: file, ...extra } }],
+      },
+    }),
+  };
+}
+
+function resultLine(id, isError) {
+  return JSON.stringify({
+    message: { content: [{ type: 'tool_result', tool_use_id: id, is_error: isError }] },
+  });
+}
+
 function transcriptWith(files) {
-  return files.map((file) => JSON.stringify({
-    message: { content: [{ type: 'tool_use', name: 'Read', input: { file_path: file } }] },
-  })).join('\n') + '\n';
+  return files.map((file) => readLine(file).line).join('\n') + '\n';
 }
 
 function withTemp(fn) {
@@ -220,6 +237,82 @@ check('an unavailable session record fails open rather than blocking forever', (
       'no record, no block');
     assert.deepStrictEqual(unreadRequirements(resource, path.join(dir, 'missing.jsonl'), dir), [],
       'unreadable record, no block');
+  });
+});
+
+// Asking for a file and receiving it are different events, and only the second
+// means the document is loaded. A Read that hit a missing file or a refused
+// permission leaves a record identical in shape to one that worked.
+check('a read that failed does not satisfy the gate, and one with no result still does', () => {
+  withTemp((dir) => {
+    const doc = path.join(dir, 'DECISION.md');
+    fs.writeFileSync(doc, '# decision\n');
+    const resource = { id: 'r', type: 'directory', path: path.join(dir, 'site'), requiresRead: [doc] };
+
+    const failed = readLine(doc);
+    const errored = path.join(dir, 'errored.jsonl');
+    fs.writeFileSync(errored, `${failed.line}\n${resultLine(failed.id, true)}\n`);
+    assert.deepStrictEqual(unreadRequirements(resource, errored, dir), [doc],
+      'the read errored, so nothing was loaded and the gate must stay shut');
+
+    const ok = readLine(doc);
+    const succeeded = path.join(dir, 'ok.jsonl');
+    fs.writeFileSync(succeeded, `${ok.line}\n${resultLine(ok.id, false)}\n`);
+    assert.deepStrictEqual(unreadRequirements(resource, succeeded, dir), [],
+      'and a result that is not an error lifts it');
+
+    // Fail open: a request whose result is not in the record yet is not
+    // evidence of failure, and an incomplete record must not hold the gate shut.
+    const pending = readLine(doc);
+    const inFlight = path.join(dir, 'pending.jsonl');
+    fs.writeFileSync(inFlight, `${pending.line}\n`);
+    assert.deepStrictEqual(unreadRequirements(resource, inFlight, dir), [],
+      'no result recorded is not the same as a result that failed');
+  });
+});
+
+check('a partial read does not satisfy the gate', () => {
+  withTemp((dir) => {
+    const doc = path.join(dir, 'DECISION.md');
+    fs.writeFileSync(doc, '# decision\n');
+    const resource = { id: 'r', type: 'directory', path: path.join(dir, 'site'), requiresRead: [doc] };
+
+    for (const narrowed of [{ offset: 40 }, { limit: 10 }, { offset: 40, limit: 10 }]) {
+      const partial = readLine(doc, narrowed);
+      const file = path.join(dir, `p${Object.keys(narrowed).join('')}.jsonl`);
+      fs.writeFileSync(file, `${partial.line}\n${resultLine(partial.id, false)}\n`);
+      assert.deepStrictEqual(unreadRequirements(resource, file, dir), [doc],
+        `part of a governing document is not the document: ${JSON.stringify(narrowed)}`);
+    }
+  });
+});
+
+// The refusal has to explain both, or someone who did open the file is left
+// arguing with a gate that will not say why their read did not count.
+check('the refusal explains why a read might not have counted', () => {
+  const guard = fs.readFileSync(path.join(
+    ROOT, 'plugins', 'guardrails', 'hooks', 'resource-owner-guard.js'
+  ), 'utf8');
+  assert.ok(/Read that failed does not count/.test(guard));
+  assert.ok(/offset or limit/.test(guard));
+});
+
+// An ownerless entry used to block everything, with a refusal reading "is owned
+// by" and nothing after it. That was a degenerate message rather than a design,
+// but it worked as a blanket deny, so the change is called out in the README.
+check('a resource with no owners does not block on the ownership gate', () => {
+  withTemp((dir) => {
+    const site = path.join(dir, 'site');
+    fs.mkdirSync(site);
+    const resource = { id: 'r', label: 'r', type: 'directory', path: site, owners: [] };
+    const event = {
+      tool_name: 'Write', cwd: dir, tool_input: { file_path: path.join(site, 'x.html') },
+    };
+    assert.deepStrictEqual(matchedResources(event, [resource]).map((r) => r.id), ['r'],
+      'it still matches, so a requiresRead on it would still apply');
+    const readme = fs.readFileSync(path.join(ROOT, 'plugins', 'guardrails', 'README.md'), 'utf8');
+    assert.ok(/no `owners` no longer blocks/.test(readme),
+      'a silent relaxation of someone else policy has to be written down');
   });
 });
 

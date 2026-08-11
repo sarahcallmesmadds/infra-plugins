@@ -237,26 +237,60 @@ function activeOwner(resource, sessionId, now = Date.now(), leaseDir) {
 // Returns null, and not an empty set, when the record cannot be consulted at
 // all. The two are different facts and the caller has to be able to tell them
 // apart: "nothing was read" is a reason to refuse, "we could not look" is not.
+// A read counts when it was asked for AND came back, and when it asked for the
+// whole file.
+//
+// Asking is not the same as receiving. A Read that hit a missing file, a
+// permission refusal, or a denied prompt still leaves a `tool_use` block in the
+// record, identical in shape to one that worked. Counting the request alone
+// makes this a proxy for "the model tried to open the document" when the whole
+// premise is that the document is loaded where the work can see it.
+//
+// So the paired `tool_result` decides it, and only an error seen positively
+// disqualifies a read. A request with no result yet, or one whose result is not
+// in the file, still counts: that is the same fail-open rule the rest of this
+// gate follows, and a record that is merely incomplete must not hold the gate
+// shut.
+//
+// A read narrowed by `offset` or `limit` does not count either. Those are
+// explicit requests for part of a file, and part of a governing document is not
+// the document. This is deliberately not the same call as the one above: there
+// the record could not tell us, here it told us plainly that a slice was asked
+// for. The refusal message says so, or someone who did read it is left arguing
+// with a gate that will not explain itself.
 function readsInTranscript(transcriptPath, cwd) {
   if (!transcriptPath) return null;
   let raw;
   try { raw = fs.readFileSync(transcriptPath, 'utf8'); } catch (_) { return null; }
-  const seen = new Set();
+
+  const requested = new Map();   // tool_use id -> resolved file path
+  const failed = new Set();      // tool_use ids whose result came back an error
+
   for (const line of raw.split('\n')) {
-    if (!line || line.indexOf('"Read"') === -1) continue;
+    if (!line || (line.indexOf('"Read"') === -1 && line.indexOf('"tool_result"') === -1)) continue;
     let entry;
     try { entry = JSON.parse(line); } catch (_) { continue; }
     const content = entry && entry.message && entry.message.content;
     if (!Array.isArray(content)) continue;
     for (const block of content) {
-      if (!block || block.type !== 'tool_use' || block.name !== 'Read') continue;
-      const file = block.input && block.input.file_path;
+      if (!block) continue;
+      if (block.type === 'tool_result' && block.is_error && block.tool_use_id) {
+        failed.add(block.tool_use_id);
+        continue;
+      }
+      if (block.type !== 'tool_use' || block.name !== 'Read') continue;
+      const input = block.input || {};
+      if (!input.file_path) continue;
+      if (input.offset !== undefined || input.limit !== undefined) continue;
       // Resolved against the event's cwd, the same base the required files use,
       // so a relative path on either side cannot compare against two different
       // roots and hold the gate shut forever.
-      if (file) seen.add(realPathWithMissingTail(absolutePath(file, cwd)));
+      requested.set(block.id, realPathWithMissingTail(absolutePath(input.file_path, cwd)));
     }
   }
+
+  const seen = new Set();
+  for (const [id, file] of requested) if (!failed.has(id)) seen.add(file);
   return seen;
 }
 
