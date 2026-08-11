@@ -87,9 +87,9 @@ retirement matches nothing, and that warning means the wording, not the
 decision, is wrong.
 
 Silence is not retirement. A constraint that vanishes without a line explaining
-why is indistinguishable from one that was forgotten, which is how the
-AlwaysAllow design system was lost between the 2026-08-05 handoff and the
-2026-08-08 one that superseded it.
+why is indistinguishable from one that was forgotten, which is how an
+approved design system was lost between one handoff and the one that
+superseded it three days later.
 
 **Never edit an old handoff to backfill this.** Handoffs are owned by this skill
 and are a record of what was true when they were written. The new document is
