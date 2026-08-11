@@ -511,9 +511,9 @@ The primary entry write is never rolled back because a dep-review write failed. 
   > path there is nothing to work it out from. Log it anyway, or name the file?"
 
   Answering with a real path is the whole remedy, as long as it sits under a
-  configured root: Step 3 sets `repo` from the root it matched. A path outside
-  every root still leaves `repo: "unknown"`, so say so at that point rather than
-  letting them believe the question is settled.
+  configured root: the `target_path` resolution in Step 1 sets `repo` from the
+  root it matched. A path outside every root still leaves `repo: "unknown"`, so
+  say so at that point rather than letting them believe the question is settled.
 
   If they choose to log it anyway, the confirmation names what it is, and names
   the field that actually unblocks it:

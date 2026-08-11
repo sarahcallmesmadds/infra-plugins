@@ -47,7 +47,7 @@ const SCHEMA_BUILD = read(BUILD_LOOP, 'reference', 'SCHEMA-BUILD.md');
 // Derived and compared, for the reason set out in deps-keys.test.js: counting
 // as they run fixes a stale tally, and comparing still catches a check that
 // quietly disappears.
-const EXPECTED_CHECKS = 18;
+const EXPECTED_CHECKS = 19;
 
 let failed = 0;
 let ran = 0;
@@ -399,6 +399,76 @@ check('the rename is recorded in the changelog', () => {
   assert.ok(
     /occurrence_count/.test(changelog),
     'the changelog records a bump without naming the rename that caused it'
+  );
+});
+
+// --- a step pointer has to point at the step that does the thing -----------
+
+check('every step cross-reference names a step that mentions the field', () => {
+  // Round 4 wrote "Step 3 sets `repo` from the root it matched". Step 3 of
+  // flag-issue is the dedup check and never touches repo; the sentence meant
+  // field 3 of Step 1. Someone recovering a blocked entry would be sent to a
+  // step that does nothing about the blockage.
+  //
+  // A check that the heading exists would have passed this, because Step 3
+  // exists. What catches it is asking whether the step named does the thing
+  // claimed, so this reads the referenced section and looks for the field.
+  //
+  // It only sees claims shaped "Step N verb `field`", where the field is
+  // backticked or is a snake_case name. A pointer with no field in it is still
+  // on trust, and that limit is worth stating rather than implying the whole
+  // class is now covered.
+  //
+  // The first version of this check matched any word after the verb and
+  // reported two false positives, "Step 2a discards them" and "Step 5 writes
+  // every", by reading a pronoun and a quantifier as field names. A linter that
+  // cries wolf on correct prose gets switched off, so the pattern now requires
+  // the field to look like one.
+  const VERBS = 'sets|maps|writes|reads|collects|discards|lists|counts|applies';
+  const offenders = [];
+
+  for (const [name, text] of Object.entries({
+    'flag-issue/SKILL.md': FLAG_ISSUE,
+    'whats-breaking/SKILL.md': WHATS_BREAKING,
+    'to-build/SKILL.md': TO_BUILD,
+  })) {
+    // Split into sections on the step headings the file actually declares.
+    const headings = [...text.matchAll(/^#{2,3} Step (\d[a-z]?)\b.*$/gm)];
+    if (!headings.length) continue;
+    const section = {};
+    headings.forEach((h, i) => {
+      const end = i + 1 < headings.length ? headings[i + 1].index : text.length;
+      // A sub-step lives inside its parent, so Step 2 owns 2a through 2d.
+      section[h[1]] = text.slice(h.index, end);
+    });
+    for (const [num, body] of Object.entries(section)) {
+      if (!/^\d$/.test(num)) continue;
+      for (const [sub, subBody] of Object.entries(section)) {
+        if (sub.length > 1 && sub[0] === num) section[num] = body + subBody;
+      }
+    }
+
+    const claim = new RegExp(
+      String.raw`Step (\d[a-z]?) (?:${VERBS}) (?:\`([\w.-]+)\`|(\w+_\w+))`, 'g'
+    );
+    for (const m of text.matchAll(claim)) {
+      const [whole, num, backticked, snake] = m;
+      const field = backticked || snake;
+      const body = section[num];
+      if (body === undefined) {
+        offenders.push(`${name}: "${whole}" names a step this file has no heading for`);
+        continue;
+      }
+      if (!body.includes(field)) {
+        offenders.push(`${name}: "${whole}" but Step ${num} never mentions ${field}`);
+      }
+    }
+  }
+
+  assert.strictEqual(
+    offenders.length, 0,
+    `a step pointer names a step that does not do what the sentence claims:\n        `
+    + offenders.join('\n        ')
   );
 });
 
