@@ -39,7 +39,7 @@ const { execFileSync, spawnSync } = require('child_process');
 const ROOT = path.join(__dirname, '..');
 const PROBE = path.join(ROOT, 'plugins', 'build-loop', 'hooks', 'hook-health-probe.sh');
 
-const EXPECTED_CHECKS = 12;
+const EXPECTED_CHECKS = 14;
 
 // The probe calls these and nothing else. `sh` is not among them: the kernel
 // reads the shebang and runs /bin/sh by absolute path, so PATH never decides
@@ -322,6 +322,57 @@ check('PATH is recorded on a failure and left off a recovery', () => {
   assert.ok(
     !lines[1].includes('path='),
     `the recovery line carries the machine's PATH for no diagnostic gain:\n        ${lines[1]}`
+  );
+});
+
+check('a failure line names the search path without naming the machine', () => {
+  // CWE-532. The directories are the evidence for a 127; the home directory
+  // inside them is a username and a layout, which identify whose machine this
+  // is and diagnose nothing. The file is meant to be pasted into a bug report,
+  // so the two are separated rather than the whole field being dropped.
+  const home = sandbox();
+  const inHome = path.join(home, '.local', 'bin');
+  fs.mkdirSync(inHome, { recursive: true });
+  for (const tool of PROBE_NEEDS) fs.symlinkSync(locate(tool), path.join(inHome, tool));
+
+  const r = spawnSync('env', ['-i', `HOME=${home}`, `PATH=${inHome}`, PROBE],
+    { input: eventFor(SESSION), encoding: 'utf8' });
+  assert.strictEqual(r.status, 0, `the probe exited ${r.status}`);
+
+  const line = readLog(home).trim();
+  assert.ok(
+    line.includes('path=~/.local/bin'),
+    `the search path was not recorded, or was not reduced to ~:\n        ${line}`
+  );
+  assert.ok(
+    !line.includes(home),
+    `the line carries the home directory, so it names the user:\n        ${line}`
+  );
+});
+
+check('a home directory that reads as a regular expression is masked, in silence', () => {
+  // The first version of the masking passed HOME into sed, where data is a
+  // pattern. A bracket in a home directory produced "unbalanced brackets" on
+  // stderr and no substitution, so a probe whose contract is that it never
+  // speaks spoke, on the one path where the session is already broken. Both
+  // halves are asserted: the mask still happens, and nothing is said.
+  const home = path.join(sandbox(), 'ho[me');
+  const inHome = path.join(home, 'bin');
+  fs.mkdirSync(inHome, { recursive: true });
+  for (const tool of PROBE_NEEDS) fs.symlinkSync(locate(tool), path.join(inHome, tool));
+
+  const r = spawnSync('env', ['-i', `HOME=${home}`, `PATH=${inHome}`, PROBE],
+    { input: eventFor(SESSION), encoding: 'utf8' });
+  assert.strictEqual(r.status, 0, `the probe exited ${r.status}`);
+  assert.strictEqual(
+    r.stderr, '',
+    `the probe wrote to stderr: ${JSON.stringify(r.stderr)}`
+  );
+
+  const line = readLog(home).trim();
+  assert.ok(
+    line.includes('path=~/bin'),
+    `a home directory holding a bracket defeated the mask:\n        ${line}`
   );
 });
 

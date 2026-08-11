@@ -129,15 +129,46 @@ stamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 # PATH goes on a failure line and only on a failure line. Exit 127 means a
 # command could not be found, so the list of places that were searched is the
 # evidence, and without it the line names a symptom and no cause. On a recovery
-# it explains nothing and the file is one a user pastes into a bug report, where
-# a home directory and a toolchain layout are somebody's machine rather than
-# somebody's fault.
+# it explains nothing, so it is left off there.
+#
+# What goes on the failure line is the search path and not the machine. This
+# file is one somebody pastes into a bug report, and a username is no part of
+# the diagnosis, so the home directory is masked below.
 if [ -z "${missing}" ]; then
     printf '%s RECOVERED session=%s %s\n' \
         "${stamp}" "${sid}" "${state}" >> "${log}" 2>/dev/null
 else
+    # The home directory is reduced to ~, entry by entry. A username and a home
+    # layout identify whose machine this is and diagnose nothing, while the
+    # directories on either side of them are the whole evidence, so the two come
+    # apart cleanly and only one of them needs to be here.
+    #
+    # Done in the shell rather than with sed, which was the first attempt. HOME
+    # is data, and inside a sed expression data is a regular expression: a home
+    # directory containing a bracket made sed exit with "unbalanced brackets" on
+    # stderr, and a probe whose whole contract is that it never speaks had
+    # started speaking, on the one path where a session is already broken. A
+    # case pattern in quotes is matched literally, so nothing here reads as a
+    # pattern and no fallback is needed.
+    logged_path=""
+    saved_ifs="${IFS}"
+    IFS=":"
+    for dir in ${PATH}; do
+        case "${HOME}" in
+            ""|/) ;;
+            *)
+                case "${dir}" in
+                    "${HOME}") dir="~" ;;
+                    "${HOME}"/*) dir="~${dir#"${HOME}"}" ;;
+                esac
+                ;;
+        esac
+        logged_path="${logged_path}${logged_path:+:}${dir}"
+    done
+    IFS="${saved_ifs}"
+
     printf '%s MISSING session=%s %s path=%s\n' \
-        "${stamp}" "${sid}" "${state}" "${PATH}" >> "${log}" 2>/dev/null
+        "${stamp}" "${sid}" "${state}" "${logged_path}" >> "${log}" 2>/dev/null
 fi
 
 exit 0

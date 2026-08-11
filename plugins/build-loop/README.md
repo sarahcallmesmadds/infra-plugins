@@ -108,11 +108,13 @@ record anywhere in Claude Code, so this exists to name the missing command at
 the moment it goes missing rather than a week later.
 
 It writes one line when something breaks, nothing more while it stays broken,
-and one line when it comes back. A failure line carries your `PATH`, because
-"not found" is a question about where the search looked, so treat the file as
-you would any diagnostic before pasting it somewhere public. The probe prints
-nothing to the conversation and never blocks a prompt. Deleting the file is
-safe: nothing reads it but you.
+and one line when it comes back. A failure line carries the `PATH` that was
+searched, because "not found" is a question about where the search looked, with
+your home directory reduced to `~` so the line describes the search rather than
+the machine. It is still a diagnostic, so read it before pasting it somewhere
+public, the same as you would any other. The probe prints nothing to the
+conversation and never blocks a prompt. Deleting the file is safe: nothing
+reads it but you.
 
 ## Configuration
 
