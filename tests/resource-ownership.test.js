@@ -66,24 +66,79 @@ check('the lease hook is gone and nothing is wired to it', () => {
   assert.ok(!manifest.includes('"Skill"'), 'hooks.json still matches the Skill tool');
 });
 
-// The whole point of the removal, stated as a test: a write that the gate would
-// have refused now goes through, with no lease anywhere on the machine.
-check('a write into a formerly owned directory is allowed', () => {
-  const testHome = fs.mkdtempSync(path.join(os.tmpdir(), 'no-owner-gate-'));
-  try {
-    const guard = path.join(ROOT, 'plugins', 'guardrails', 'hooks', 'resource-owner-guard.js');
-    const run = spawnSync(guard, {
-      env: { ...process.env, HOME: testHome },
+// Run the real guard against a registry we control.
+//
+// The subprocess loads its own registry off disk and cannot see a resource
+// object built in this process, so a spawn test that does not write one is
+// asserting nothing. It also has to be given a HOME, or it reads whatever
+// policy the person running the suite happens to have in
+// ~/.claude/guardrails.resources.json and the result depends on their machine.
+//
+// Both of those were wrong in the first version of these two tests. They passed
+// because nothing matched, which is the same output a working gate produces,
+// so they would have passed with the gate still live.
+const GUARD_HOOK = path.join(ROOT, 'plugins', 'guardrails', 'hooks', 'resource-owner-guard.js');
+
+// A real but empty transcript is part of the setup, not a detail. With no
+// `transcript_path` the requiresRead gate cannot consult the record and fails
+// open by design, so a control that omits it never denies and proves nothing.
+// An empty transcript is the honest input: the record is readable and shows
+// nothing was read.
+function withGuardHome(fn) {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'guard-home-'));
+  fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+  const transcript = path.join(home, 'transcript.jsonl');
+  fs.writeFileSync(transcript, '');
+
+  const runGuard = (resources, filePath, extra = {}) => {
+    fs.writeFileSync(
+      path.join(home, '.claude', 'guardrails.resources.json'),
+      JSON.stringify({ resources })
+    );
+    return spawnSync(GUARD_HOOK, {
+      env: { ...process.env, HOME: home },
       input: JSON.stringify({
         hook_event_name: 'PreToolUse', session_id: 'no-lease-anywhere', cwd: '/tmp',
-        tool_name: 'Write',
-        tool_input: { file_path: path.join(testHome, '.planning', 'handoffs', 'x.md'), content: 'x' },
+        transcript_path: transcript,
+        tool_name: 'Write', tool_input: { file_path: filePath, content: 'x' }, ...extra,
       }),
       encoding: 'utf8',
     });
-    assert.strictEqual(run.status, 0);
-    assert.strictEqual(run.stdout, '', 'a write was still refused with no lease anywhere');
-  } finally { fs.rmSync(testHome, { recursive: true, force: true }); }
+  };
+
+  try { fn(home, runGuard); } finally { fs.rmSync(home, { recursive: true, force: true }); }
+}
+
+// The whole point of the removal, stated as a test: a write the gate would have
+// refused now goes through, with no lease anywhere on the machine.
+//
+// The requiresRead case is a control rather than decoration. Without it, an
+// empty output proves only that nothing matched, and "the resource was never
+// seen" and "the resource was seen and allowed" are the same result. Making the
+// same resource at the same path refuse for the other reason is what proves the
+// guard is actually reaching it.
+check('a write into a formerly owned directory is allowed', () => {
+  withGuardHome((home, runGuard) => {
+    const target = path.join(home, '.planning', 'handoffs', 'x.md');
+    const owned = {
+      id: 'session-handoffs', label: 'session handoffs', type: 'directory',
+      path: path.join(home, '.planning', 'handoffs'), owners: ['session:wrap'],
+    };
+
+    const allowed = runGuard([owned], target);
+    assert.strictEqual(allowed.status, 0);
+    assert.strictEqual(allowed.stdout, '', 'an owned directory still refused a write');
+
+    const control = runGuard(
+      [{ ...owned, requiresRead: [path.join(home, 'DECISION.md')] }],
+      target
+    );
+    assert.match(
+      JSON.parse(control.stdout).hookSpecificOutput.permissionDecisionReason,
+      /governed by a document/,
+      'the guard never matched this resource, so the check above proved nothing'
+    );
+  });
 });
 
 check('directory matching respects path boundaries', () => {
@@ -288,22 +343,36 @@ check('the refusal explains why a read might not have counted', () => {
 // changing what a resource does. It matches on path as it always did, and any
 // `requiresRead` beside it still applies.
 check('a leftover owners field is inert rather than blocking', () => {
-  withTemp((dir) => {
-    const site = path.join(dir, 'site');
+  withGuardHome((home, runGuard) => {
+    const site = path.join(home, 'site');
     fs.mkdirSync(site);
-    const event = {
-      tool_name: 'Write', cwd: dir, tool_input: { file_path: path.join(site, 'x.html') },
-    };
+    const target = path.join(site, 'x.html');
+
     for (const owners of [[], ['session:wrap'], undefined]) {
       const resource = { id: 'r', label: 'r', type: 'directory', path: site, owners };
-      assert.deepStrictEqual(matchedResources(event, [resource]).map((r) => r.id), ['r'],
-        'it still matches, so a requiresRead on it would still apply');
-      const guard = path.join(ROOT, 'plugins', 'guardrails', 'hooks', 'resource-owner-guard.js');
-      const run = spawnSync(guard, {
-        input: JSON.stringify({ ...event, hook_event_name: 'PreToolUse', session_id: 'none' }),
-        encoding: 'utf8',
-      });
-      assert.strictEqual(run.stdout, '', `owners: ${JSON.stringify(owners)} still refused a write`);
+      const label = `owners: ${JSON.stringify(owners)}`;
+
+      assert.deepStrictEqual(
+        matchedResources({ tool_name: 'Write', cwd: home, tool_input: { file_path: target } },
+          [resource]).map((r) => r.id),
+        ['r'], `${label} stopped matching on path`
+      );
+
+      const allowed = runGuard([resource], target);
+      assert.strictEqual(allowed.stdout, '', `${label} still refused a write`);
+
+      // Same resource, same path, one reason to refuse added. If this does not
+      // deny, the guard is not seeing the resource at all and the line above is
+      // measuring nothing.
+      const control = runGuard(
+        [{ ...resource, requiresRead: [path.join(home, 'DECISION.md')] }],
+        target
+      );
+      assert.match(
+        JSON.parse(control.stdout).hookSpecificOutput.permissionDecisionReason,
+        /governed by a document/,
+        `${label}: the guard never matched this resource`
+      );
     }
   });
 });
