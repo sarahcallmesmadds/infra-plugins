@@ -356,7 +356,7 @@ Both runtimes share one copy of the logic in `scripts/`.
 ## Install
 
 ```
-/plugin marketplace add sarahcallmesmadds/plugins
+/plugin marketplace add sarahcallmesmadds/infra-plugins
 /plugin install session@smadds
 ```
 

@@ -117,7 +117,7 @@ It never blocks anything.
 ## Install
 
 ```
-/plugin marketplace add sarahcallmesmadds/plugins
+/plugin marketplace add sarahcallmesmadds/infra-plugins
 /plugin install git-hygiene@smadds
 ```
 

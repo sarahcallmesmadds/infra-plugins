@@ -131,7 +131,7 @@ So: on a document whose subject is writing quality, ignore the result.
 ## Install
 
 ```
-/plugin marketplace add sarahcallmesmadds/plugins
+/plugin marketplace add sarahcallmesmadds/infra-plugins
 /plugin install slop-check@smadds
 ```
 
