@@ -92,9 +92,22 @@ state="missing=[${missing}] cmux_bin=${cmux_state}"
 # Session id, so a line points back at the conversation it came from. Best
 # effort: this is a diagnostic, and a missing id is not worth a JSON parser in
 # a shell script.
-sid=$(printf '%s' "${event}" \
-    | sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' 2>/dev/null \
-    | head -n 1 2>/dev/null)
+#
+# Shell expansions rather than sed and head. Everything from here to the write
+# has to work when nothing resolves, because the id decides which lane the
+# change-of-state check reads and a broken lane means a line per prompt. It also
+# takes the first "session_id" in the event where the sed took the last, since
+# `.*` is greedy, and the first one is the field rather than something quoted
+# back inside a prompt.
+sid=""
+case "${event}" in
+    *'"session_id"'*)
+        sid="${event#*\"session_id\"}"
+        sid="${sid#*:}"
+        sid="${sid#*\"}"
+        sid="${sid%%\"*}"
+        ;;
+esac
 [ -n "${sid}" ] || sid="unknown"
 
 # The last line this session wrote, and nothing else. State belongs to a
@@ -107,9 +120,25 @@ sid=$(printf '%s' "${event}" \
 # Sessions whose id could not be parsed share the `unknown` lane and can still
 # talk over each other. That is the honest limit of a diagnostic that does not
 # carry a JSON parser, and it is quieter than the alternative.
+#
+# Read with the shell's own `read`, not with grep and tail. This was a pipeline
+# of both, which is a change-of-state check that asks two external commands
+# whether the state has changed. On a PATH broken badly enough to lose them the
+# substitution came back empty, nothing ever matched, and the probe appended the
+# same line on every prompt, on exactly the machine it was written for. A
+# diagnostic must not depend on the health of the thing it is diagnosing.
+#
+# The cost is reading the file each prompt instead of spawning two processes.
+# The file holds one line per change of state, so it is a handful of lines on
+# any machine where this logic is working, and where it is not, that is the
+# defect rather than the file size.
 last=""
 if [ -f "${log}" ]; then
-    last=$(grep -F "session=${sid} " "${log}" 2>/dev/null | tail -n 1)
+    while IFS= read -r line || [ -n "${line}" ]; do
+        case "${line}" in
+            *"session=${sid} "*) last="${line}" ;;
+        esac
+    done < "${log}"
 fi
 
 # Only on a change.

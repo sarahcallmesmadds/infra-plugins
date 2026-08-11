@@ -39,12 +39,18 @@ const { execFileSync, spawnSync } = require('child_process');
 const ROOT = path.join(__dirname, '..');
 const PROBE = path.join(ROOT, 'plugins', 'build-loop', 'hooks', 'hook-health-probe.sh');
 
-const EXPECTED_CHECKS = 16;
+const EXPECTED_CHECKS = 17;
 
 // The probe calls these and nothing else. `sh` is not among them: the kernel
 // reads the shebang and runs /bin/sh by absolute path, so PATH never decides
 // which interpreter starts.
-const PROBE_NEEDS = ['cat', 'sed', 'head', 'tail', 'grep', 'date', 'mkdir'];
+//
+// This list used to hold sed, head, grep and tail as well. They went when the
+// session id and the change-of-state lookup moved into shell expansions: a
+// probe that asks external commands whether it has already reported a problem
+// stops deduplicating on the machines where those commands are missing, which
+// are the machines it exists for.
+const PROBE_NEEDS = ['cat', 'date', 'mkdir'];
 
 // First match for `name` on this process's PATH, or null. A plain search rather
 // than `which`, so the lookup does not itself depend on a utility being found.
@@ -421,6 +427,31 @@ check('an empty PATH still produces a line, and still produces no noise', () => 
   assert.ok(
     !line.startsWith(' '),
     `the timestamp field is empty, so every field after it has shifted:\n        ${line}`
+  );
+});
+
+check('an empty PATH records the fault once, not once per prompt', () => {
+  // The check above runs the probe a single time, so it could not see this.
+  // The change-of-state lookup was a grep and a tail, which is a probe asking
+  // two external commands whether it has already reported that external
+  // commands are missing. With them gone the lookup returned nothing, no line
+  // ever matched, and the same line landed on every prompt: unreadable, on the
+  // one machine the file was written for.
+  const home = sandbox();
+  fs.mkdirSync(path.dirname(logPath(home)), { recursive: true });
+
+  for (let i = 0; i < 4; i += 1) {
+    const r = spawnSync('env', ['-i', `HOME=${home}`, 'PATH=', PROBE],
+      { input: eventFor(SESSION), encoding: 'utf8' });
+    assert.strictEqual(r.status, 0, `prompt ${i + 1} exited ${r.status}`);
+    assert.strictEqual(r.stderr, '', `prompt ${i + 1} spoke: ${JSON.stringify(r.stderr)}`);
+  }
+
+  const lines = readLog(home).trim().split('\n').filter(Boolean);
+  assert.strictEqual(
+    lines.length, 1,
+    `four prompts on a machine where nothing resolves produced ${lines.length} `
+    + `lines:\n        ` + lines.join('\n        ')
   );
 });
 
