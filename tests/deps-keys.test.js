@@ -53,7 +53,7 @@ const SKILLS = {
 // should be noticed. So the count is derived AND compared, and this constant
 // has to move when a check is added or removed. Forgetting now fails the suite
 // instead of printing a smaller number nobody reads.
-const EXPECTED_CHECKS = 23;
+const EXPECTED_CHECKS = 25;
 
 let failed = 0;
 let ran = 0;
@@ -364,6 +364,45 @@ check('audit-deps says a plugin row stores the manifest, not the directory', () 
     /`path` for a `kind: plugin` entry is the plugin's\n\s*`\.claude-plugin\/plugin\.json`/.test(SKILLS['audit-deps']),
     'audit-deps never says what path a plugin entry stores, so the directory '
     + 'the glob returns and the manifest already in the map both look correct'
+  );
+});
+
+// --- the two ways this skill used to lose information silently --------------
+
+// Step 6 said "prune dependents with no matching depends_on" and nothing else.
+// Run against the live map on 2026-08-11 that deleted 101 of 242 back-edges,
+// 42 percent, almost all of them test coverage links. No error, no count, the
+// file just came back smaller and every reader kept working.
+check('audit-deps does not prune back-edges without being told to', () => {
+  const step6 = SKILLS['audit-deps'];
+  assert.ok(
+    /Collect, do not delete/.test(step6),
+    'audit-deps still prunes one-sided dependents as a silent step'
+  );
+  assert.ok(
+    /Never prune without an explicit `remove`/.test(step6),
+    'audit-deps never says pruning needs permission, so it reads as automatic'
+  );
+  assert.ok(
+    /keep \/ add-missing \/ remove/.test(step6),
+    'audit-deps offers no way to repair a one-sided edge, so the only options '
+    + 'are keep it broken or delete the evidence'
+  );
+});
+
+// `last_updated` means a person or this skill judged the edges correct. v4 added
+// `last_auto_checked` so an unattended check would stop writing into it. Step 5
+// then told this skill to stamp it on entries nobody looked at, which is the
+// same fault in the place the fix did not reach.
+check('audit-deps does not stamp a review that did not happen', () => {
+  const skill = SKILLS['audit-deps'];
+  assert.ok(
+    /If they decline, leave `last_updated` alone/.test(skill),
+    'audit-deps still bumps last_updated on entries it did not re-infer'
+  );
+  assert.ok(
+    !/this acknowledges the file was inspected/.test(skill),
+    'the old instruction to stamp an uninspected entry is still present'
   );
 });
 

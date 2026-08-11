@@ -237,7 +237,18 @@ On the user's response:
 
 For orphaned entries specifically, ask explicitly: "Remove {composite_key} from DEPS.json, or leave it?" Default is LEAVE — do not remove unless the user confirms.
 
-For stale entries, only re-infer if the user confirms. Otherwise just bump the entry's `last_updated` without changing `depends_on` — this acknowledges the file was inspected.
+For stale entries, only re-infer if the user confirms. **If they decline, leave `last_updated` alone.**
+
+This used to say to bump it anyway, to acknowledge the file was inspected. Nothing inspected it. SCHEMA-DEPS.md defines `last_updated` as the date the edges were judged correct by a person or by this skill, and v4 added `last_auto_checked` precisely so an unattended check would stop writing into that field. Stamping it after a version bump records a review that did not happen, and since it is also what this skill compares against the file mtime, the entry then never comes up for review again.
+
+It is the same fault v4 was written to fix, reappearing in the skill instead of the hook. On 2026-08-11 following it would have marked 64 entries reviewed because a rename changed a URL string in them.
+
+Say what was skipped instead:
+
+```
+Stale (64): left alone. Re-inferring these means reading 64 files, so say
+which ones you want. Nothing was stamped as reviewed.
+```
 
 ## Step 6 — Recompute dependents across the whole map
 
@@ -249,7 +260,31 @@ After applying the approved additions/removals/changes:
    `A.plugin` is a field on the entry, written in Step 4. It is not derived here and it is not parsed out of A's key. If an older entry has no `plugin` but its key carries one, take the plugin from the key rather than dropping it, because a dependent with no plugin is ambiguous the moment two plugins share a name. Omit the field entirely, never `null`, when A genuinely is not inside a plugin.
 
    Resolve T to its entry using the ordered lookup in SCHEMA-DEPS.md rather than string-matching the key, so an edge written before v3 still finds its target.
-3. Prune `dependents` entries that no longer have a matching `depends_on` edge in the source.
+3. **Collect, do not delete, every `dependents` entry with no matching `depends_on` edge.** Adding a back-edge is safe and needs no permission. Removing one destroys the only copy of a relationship somebody wrote down, so it goes through the user like every other removal in this skill.
+
+   This step used to say "prune" and nothing else. Measured against the live map on 2026-08-11, following it deleted **101 of 242** back-edges in one pass, 42 percent, and almost all of them were test coverage links of the shape `guardrails/bash-guard <- bash-guard.test`. Those are the rows that answer "what does this fix put at risk", which is the question the map exists for. Nothing errored. The file came back smaller, `/apply-fix` reported fewer dependents than it should, and everything looked healthy.
+
+   A one-sided edge is usually a **missing `depends_on`, not a stale dependent.** `run-all` lists every test as a dependent while its own `depends_on` is empty, and the relationship is real either way. Deleting the only record of it is the one option that loses information.
+
+   Report them like the other buckets in Step 5, worst case first, and ask:
+
+   ```
+   One-sided (N):
+     ! {key} <- {dependent}
+       recorded as a dependent, but {dependent} has no depends_on pointing back
+
+   These are relationships with only one half written down. Removing them
+   deletes the only record. Adding the missing depends_on keeps it.
+
+   keep / add-missing / remove?   Default: keep.
+   ```
+
+   - `keep`: leave them exactly as they are. This is the default and what happens on no answer.
+   - `add-missing`: write the mirroring `depends_on` onto the source entry, so the pair is whole. Carry the reason across.
+   - `remove`: prune, having been told to.
+
+   **Never prune without an explicit `remove`.** If the count is more than a tenth of all `dependents` rows, say the percentage out loud in the prompt. A step that quietly removes a large share of the map is indistinguishable from one that worked.
+
 4. Alphabetize the top-level `targets` keys so diffs stay clean.
 
 ## Step 7 — Atomic write (prevents corruption)
