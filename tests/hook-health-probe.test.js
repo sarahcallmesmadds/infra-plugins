@@ -39,7 +39,7 @@ const { execFileSync, spawnSync } = require('child_process');
 const ROOT = path.join(__dirname, '..');
 const PROBE = path.join(ROOT, 'plugins', 'build-loop', 'hooks', 'hook-health-probe.sh');
 
-const EXPECTED_CHECKS = 14;
+const EXPECTED_CHECKS = 16;
 
 // The probe calls these and nothing else. `sh` is not among them: the kernel
 // reads the shebang and runs /bin/sh by absolute path, so PATH never decides
@@ -373,6 +373,54 @@ check('a home directory that reads as a regular expression is masked, in silence
   assert.ok(
     line.includes('path=~/bin'),
     `a home directory holding a bracket defeated the mask:\n        ${line}`
+  );
+});
+
+check('a log it cannot write to is not something it complains about', () => {
+  // A shell applies redirections left to right, so `>> log 2>/dev/null` silences
+  // stderr only after the append has already failed and printed. The order is
+  // the fix and this is the guard on it.
+  //
+  // The unwritable log here is a directory rather than a file with its write
+  // bit off, because a suite running as root, which is most CI images, would
+  // write straight through the permission bit and the case would prove nothing
+  // in the place it most needs to.
+  const home = sandbox();
+  fs.mkdirSync(logPath(home), { recursive: true });
+
+  const r = runProbe(home, { withNode: false });
+  assert.strictEqual(r.status, 0, `the probe exited ${r.status}, it must never fail a prompt`);
+  assert.strictEqual(
+    r.stderr, '',
+    'a log it cannot write to made the probe speak, on a machine that is '
+    + `already having a bad day: ${JSON.stringify(r.stderr)}`
+  );
+  assert.strictEqual(r.stdout, '', `the probe wrote to stdout: ${JSON.stringify(r.stdout)}`);
+});
+
+check('an empty PATH still produces a line, and still produces no noise', () => {
+  // The worst machine this can run on, and the one it was written for: nothing
+  // resolves, not even the utilities the probe itself calls. It used to say
+  // three "No such file or directory" lines and record nothing, because
+  // `mkdir -p || exit 0` gave up when mkdir was the thing that could not be
+  // found, so the report was thrown away on the only machine that needed it.
+  // printf is a builtin, so with the directory already there the line lands.
+  const home = sandbox();
+  fs.mkdirSync(path.dirname(logPath(home)), { recursive: true });
+
+  const r = spawnSync('env', ['-i', `HOME=${home}`, 'PATH=', PROBE],
+    { input: eventFor(SESSION), encoding: 'utf8' });
+  assert.strictEqual(r.status, 0, `the probe exited ${r.status}`);
+  assert.strictEqual(r.stderr, '', `the probe spoke: ${JSON.stringify(r.stderr)}`);
+
+  const line = readLog(home).trim();
+  assert.ok(
+    line.includes('MISSING') && line.includes('node'),
+    `nothing was recorded on a machine where nothing resolves:\n        ${JSON.stringify(line)}`
+  );
+  assert.ok(
+    !line.startsWith(' '),
+    `the timestamp field is empty, so every field after it has shifted:\n        ${line}`
   );
 });
 

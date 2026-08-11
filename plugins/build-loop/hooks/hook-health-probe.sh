@@ -34,7 +34,14 @@
 
 # Consume the event. A hook that leaves stdin unread can take SIGPIPE when the
 # writer closes, which turns a diagnostic into a second fault.
-event=$(cat)
+#
+# Every utility called in this file is silenced, here and below, for the reason
+# the file exists: it runs when commands cannot be found, so the ones it calls
+# itself are as able to go missing as the ones it reports on. A PATH broken
+# badly enough to lose `cat` made the probe print three "No such file or
+# directory" lines of its own, which is the failure it was built to describe
+# arriving as noise instead.
+event=$(cat 2>/dev/null)
 
 log_dir="${HOME}/.claude/build-loop"
 log="${log_dir}/hook-health.log"
@@ -86,8 +93,8 @@ state="missing=[${missing}] cmux_bin=${cmux_state}"
 # effort: this is a diagnostic, and a missing id is not worth a JSON parser in
 # a shell script.
 sid=$(printf '%s' "${event}" \
-    | sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
-    | head -n 1)
+    | sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' 2>/dev/null \
+    | head -n 1 2>/dev/null)
 [ -n "${sid}" ] || sid="unknown"
 
 # The last line this session wrote, and nothing else. State belongs to a
@@ -122,9 +129,20 @@ if [ -z "${missing}" ]; then
     esac
 fi
 
-mkdir -p "${log_dir}" 2>/dev/null || exit 0
+# Only when it is not already there. `mkdir` is a command like any other, so on
+# the badly broken PATH this file exists to describe it is missing too, and
+# `mkdir -p ... || exit 0` then threw away the report on the one machine most in
+# need of it. The directory usually exists, and `printf` is a shell builtin, so
+# skipping the call means the write still lands when nothing else on the system
+# can be found.
+if [ ! -d "${log_dir}" ]; then
+    mkdir -p "${log_dir}" 2>/dev/null || exit 0
+fi
 
-stamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+stamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null)
+# `date` can be missing for the same reason. A line with no timestamp is worth
+# more than no line, and a blank field would silently shift the ones after it.
+[ -n "${stamp}" ] || stamp="time-unknown"
 
 # PATH goes on a failure line and only on a failure line. Exit 127 means a
 # command could not be found, so the list of places that were searched is the
@@ -134,9 +152,18 @@ stamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 # What goes on the failure line is the search path and not the machine. This
 # file is one somebody pastes into a bug report, and a username is no part of
 # the diagnosis, so the home directory is masked below.
+#
+# ORDER MATTERS IN BOTH WRITES BELOW. `2>/dev/null` comes before `>> "${log}"`,
+# not after it. A shell applies redirections left to right, so with the append
+# written first the append is attempted while stderr is still the inherited one,
+# and a log file that cannot be written prints "Permission denied" from a probe
+# that promises never to speak. It fires on exactly the machine least able to
+# absorb it: one where the log was left owned by root by a single run under
+# sudo, where every prompt from then on carries a complaint about a diagnostic
+# nobody asked for.
 if [ -z "${missing}" ]; then
     printf '%s RECOVERED session=%s %s\n' \
-        "${stamp}" "${sid}" "${state}" >> "${log}" 2>/dev/null
+        "${stamp}" "${sid}" "${state}" 2>/dev/null >> "${log}"
 else
     # The home directory is reduced to ~, entry by entry. A username and a home
     # layout identify whose machine this is and diagnose nothing, while the
@@ -168,7 +195,7 @@ else
     IFS="${saved_ifs}"
 
     printf '%s MISSING session=%s %s path=%s\n' \
-        "${stamp}" "${sid}" "${state}" "${logged_path}" >> "${log}" 2>/dev/null
+        "${stamp}" "${sid}" "${state}" "${logged_path}" 2>/dev/null >> "${log}"
 fi
 
 exit 0
