@@ -22,6 +22,11 @@
 # back. A probe that appends on every prompt while a session is broken produces
 # thousands of identical lines and gets deleted rather than read.
 #
+# A change is judged per conversation, against the last line this session wrote.
+# The state being reported is a property of one session's environment, so a
+# healthy session starting beside a broken one is not a recovery, and a session
+# that has recorded nothing yet has nothing to have changed from.
+#
 # It never blocks and never speaks. UserPromptSubmit adds a hook's stdout to the
 # conversation, so anything printed here would land in the context of every
 # prompt for the sake of a diagnostic nobody asked for. It stays silent and
@@ -85,29 +90,54 @@ sid=$(printf '%s' "${event}" \
     | head -n 1)
 [ -n "${sid}" ] || sid="unknown"
 
-# Only on a change. The last line already saying this about this session means
-# the state has not moved.
-if [ -f "${log}" ] && tail -n 1 "${log}" 2>/dev/null \
-    | grep -qF "session=${sid} ${state}"; then
-    exit 0
+# The last line this session wrote, and nothing else. State belongs to a
+# conversation, not to the machine: two sessions can share a HOME and disagree,
+# one running inside cmux and one not, or one started before an update that
+# moved node. Comparing against whichever line happened to land last made each
+# of them read as a transition away from the other, so a persistent fault in
+# one session wrote a line per prompt while the other kept undoing it.
+#
+# Sessions whose id could not be parsed share the `unknown` lane and can still
+# talk over each other. That is the honest limit of a diagnostic that does not
+# carry a JSON parser, and it is quieter than the alternative.
+last=""
+if [ -f "${log}" ]; then
+    last=$(grep -F "session=${sid} " "${log}" 2>/dev/null | tail -n 1)
 fi
 
-# A clean state with no history of a broken one is not a recovery, so there is
-# nothing to report.
-if [ -z "${missing}" ] && ! grep -q "missing=\[[^]]" "${log}" 2>/dev/null; then
-    exit 0
+# Only on a change.
+case "${last}" in
+    *" ${state}"*) exit 0 ;;
+esac
+
+# A recovery needs a failure to recover from, and it has to be this session's
+# failure. This used to ask whether the file had ever held one, anywhere, which
+# meant every new healthy session after any past failure filed a recovery of its
+# own, and then so did the next one, forever. The transition the log exists to
+# make visible was the thing being buried.
+if [ -z "${missing}" ]; then
+    case "${last}" in
+        *" MISSING "*) ;;
+        *) exit 0 ;;
+    esac
 fi
 
 mkdir -p "${log_dir}" 2>/dev/null || exit 0
 
 stamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-if [ -z "${missing}" ]; then
-    verdict="RECOVERED"
-else
-    verdict="MISSING"
-fi
 
-printf '%s %s session=%s %s path=%s\n' \
-    "${stamp}" "${verdict}" "${sid}" "${state}" "${PATH}" >> "${log}" 2>/dev/null
+# PATH goes on a failure line and only on a failure line. Exit 127 means a
+# command could not be found, so the list of places that were searched is the
+# evidence, and without it the line names a symptom and no cause. On a recovery
+# it explains nothing and the file is one a user pastes into a bug report, where
+# a home directory and a toolchain layout are somebody's machine rather than
+# somebody's fault.
+if [ -z "${missing}" ]; then
+    printf '%s RECOVERED session=%s %s\n' \
+        "${stamp}" "${sid}" "${state}" >> "${log}" 2>/dev/null
+else
+    printf '%s MISSING session=%s %s path=%s\n' \
+        "${stamp}" "${sid}" "${state}" "${PATH}" >> "${log}" 2>/dev/null
+fi
 
 exit 0

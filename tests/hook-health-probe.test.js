@@ -19,6 +19,14 @@
 // The environment is stripped with env -i for the failure cases. That is the
 // whole point: `node` is on PATH here through a shell profile, so the only
 // honest way to test "node is missing" is to take it away.
+//
+// Taking it away means building the PATH rather than trimming one. This used to
+// point at /usr/bin:/bin on the reasoning that node lives under ~/.local/bin,
+// which is true on one machine and false on Debian, Ubuntu and most CI images,
+// where the package installs /usr/bin/node. There the negative cases quietly
+// kept node and three checks failed for everybody except the author. Below,
+// PATH is a directory this file fills with links to the handful of utilities
+// the probe actually calls, so node is absent because it was never put there.
 
 'use strict';
 
@@ -31,7 +39,53 @@ const { execFileSync, spawnSync } = require('child_process');
 const ROOT = path.join(__dirname, '..');
 const PROBE = path.join(ROOT, 'plugins', 'build-loop', 'hooks', 'hook-health-probe.sh');
 
-const EXPECTED_CHECKS = 9;
+const EXPECTED_CHECKS = 12;
+
+// The probe calls these and nothing else. `sh` is not among them: the kernel
+// reads the shebang and runs /bin/sh by absolute path, so PATH never decides
+// which interpreter starts.
+const PROBE_NEEDS = ['cat', 'sed', 'head', 'tail', 'grep', 'date', 'mkdir'];
+
+// First match for `name` on this process's PATH, or null. A plain search rather
+// than `which`, so the lookup does not itself depend on a utility being found.
+function locate(name) {
+  for (const dir of (process.env.PATH || '').split(path.delimiter)) {
+    if (!dir) continue;
+    const candidate = path.join(dir, name);
+    try {
+      fs.accessSync(candidate, fs.constants.X_OK);
+      if (fs.statSync(candidate).isFile()) return candidate;
+    } catch (_) { /* next directory */ }
+  }
+  return null;
+}
+
+// A PATH with the probe's utilities and deliberately no node, and a second one
+// holding only node. Which of the two a case gets is the whole experiment, so
+// neither is allowed to inherit anything.
+const BIN = fs.mkdtempSync(path.join(os.tmpdir(), 'probe-bin-'));
+const NODE_BIN = fs.mkdtempSync(path.join(os.tmpdir(), 'probe-node-'));
+
+const unlocatable = [];
+for (const tool of PROBE_NEEDS) {
+  const found = locate(tool);
+  if (!found) { unlocatable.push(tool); continue; }
+  fs.symlinkSync(found, path.join(BIN, tool));
+}
+fs.symlinkSync(process.execPath, path.join(NODE_BIN, 'node'));
+
+if (unlocatable.length > 0) {
+  // Stop rather than run: every case below would fail for a reason that has
+  // nothing to do with the probe, which is the failure this file was rewritten
+  // to stop producing.
+  console.log(
+    `  FAIL  the test environment can supply the utilities the probe calls\n`
+    + `        not found on PATH: ${unlocatable.join(', ')}. The negative cases `
+    + `build a PATH from these, so they cannot run without them.`
+  );
+  console.log('\n0 checks, 1 failed');
+  process.exit(1);
+}
 
 let failed = 0;
 let ran = 0;
@@ -46,13 +100,18 @@ function check(what, fn) {
   }
 }
 
-const EVENT = JSON.stringify({
-  session_id: 'aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb',
-  transcript_path: '/dev/null',
-  cwd: '/tmp',
-  hook_event_name: 'UserPromptSubmit',
-  prompt: 'anything',
-});
+const SESSION = 'aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb';
+const OTHER_SESSION = 'cccccccc-4444-5555-6666-dddddddddddd';
+
+function eventFor(sid) {
+  return JSON.stringify({
+    session_id: sid,
+    transcript_path: '/dev/null',
+    cwd: '/tmp',
+    hook_event_name: 'UserPromptSubmit',
+    prompt: 'anything',
+  });
+}
 
 // A HOME per case, so one case cannot read another's log. The probe writes to
 // $HOME/.claude/build-loop/hook-health.log and nothing else.
@@ -73,17 +132,12 @@ function readLog(home) {
 // pick the interpreter, hand it the event on stdin. `env` builds the whole
 // environment from scratch so a PATH inherited from this process cannot quietly
 // rescue a case that is meant to fail.
-function runProbe(home, { withNode, env = {} } = {}) {
+function runProbe(home, { withNode, env = {}, session = SESSION } = {}) {
   const parts = ['-i', `HOME=${home}`];
-  // /usr/bin and /bin hold sh, sed, date, grep, tail. Never node on this
-  // machine: it lives under ~/.local/bin, which is what makes the negative
-  // case meaningful rather than contrived.
-  parts.push(withNode
-    ? `PATH=${path.dirname(process.execPath)}:/usr/bin:/bin`
-    : 'PATH=/usr/bin:/bin');
+  parts.push(withNode ? `PATH=${NODE_BIN}:${BIN}` : `PATH=${BIN}`);
   for (const [k, v] of Object.entries(env)) parts.push(`${k}=${v}`);
   parts.push(PROBE);
-  return spawnSync('env', parts, { input: EVENT, encoding: 'utf8' });
+  return spawnSync('env', parts, { input: eventFor(session), encoding: 'utf8' });
 }
 
 // --- the interpreter it cannot report on itself ----------------------------
@@ -205,6 +259,70 @@ check('a recovery is recorded once', () => {
   );
   assert.ok(lines[0].includes('MISSING'), 'the first line is not the failure');
   assert.ok(lines[1].includes('RECOVERED'), 'the recovery was not recorded');
+});
+
+check('a healthy session files no recovery for a fault it never saw', () => {
+  // Recovery used to mean "this file has held a failure at some point", which
+  // every session after the first fault satisfies. Each new one wrote its own
+  // RECOVERED line and the next one did it again, so the single transition the
+  // log exists to show ended up buried under reports of a thing that never
+  // happened. It has to mean "the last thing this session recorded was broken".
+  const home = sandbox();
+  runProbe(home, { withNode: false, session: SESSION });
+  runProbe(home, { withNode: true, session: SESSION });
+  const afterFirstSession = readLog(home).trim().split('\n').filter(Boolean);
+  assert.strictEqual(
+    afterFirstSession.length, 2,
+    'the setup did not produce one failure and one recovery, so what follows '
+    + 'proves nothing'
+  );
+
+  runProbe(home, { withNode: true, session: OTHER_SESSION });
+  runProbe(home, { withNode: true, session: 'eeeeeeee-7777-8888-9999-ffffffffffff' });
+  const lines = readLog(home).trim().split('\n').filter(Boolean);
+  assert.strictEqual(
+    lines.length, 2,
+    `two healthy sessions added ${lines.length - 2} line(s) about somebody `
+    + `else's fault:\n        ` + lines.join('\n        ')
+  );
+});
+
+check('two sessions sharing a HOME do not write a line each per prompt', () => {
+  // One session broken and one healthy, prompting in turn. Judged against
+  // whichever line landed last, each reads as a transition away from the other
+  // and they trade lines for as long as both stay open, which is the flooding
+  // the change-of-state rule exists to prevent.
+  const home = sandbox();
+  runProbe(home, { withNode: false, session: SESSION });
+  runProbe(home, { withNode: true, session: OTHER_SESSION });
+  runProbe(home, { withNode: false, session: SESSION });
+  runProbe(home, { withNode: true, session: OTHER_SESSION });
+  runProbe(home, { withNode: false, session: SESSION });
+  const lines = readLog(home).trim().split('\n').filter(Boolean);
+  assert.strictEqual(
+    lines.length, 1,
+    `five prompts across two sessions produced ${lines.length} lines:\n        `
+    + lines.join('\n        ')
+  );
+  assert.ok(lines[0].includes('MISSING'), 'the one line recorded is not the failure');
+});
+
+check('PATH is recorded on a failure and left off a recovery', () => {
+  // Exit 127 is "not found", so the places that were searched are the evidence
+  // and a failure line without them names a symptom. On a recovery it explains
+  // nothing, and this file is one somebody pastes into a bug report.
+  const home = sandbox();
+  runProbe(home, { withNode: false });
+  runProbe(home, { withNode: true });
+  const lines = readLog(home).trim().split('\n').filter(Boolean);
+  assert.ok(
+    lines[0].includes(`path=${BIN}`),
+    `the failure line does not say where it looked:\n        ${lines[0]}`
+  );
+  assert.ok(
+    !lines[1].includes('path='),
+    `the recovery line carries the machine's PATH for no diagnostic gain:\n        ${lines[1]}`
+  );
 });
 
 if (ran !== EXPECTED_CHECKS) {
