@@ -441,11 +441,19 @@ check('every step cross-reference names a step that mentions the field', () => {
       // A sub-step lives inside its parent, so Step 2 owns 2a through 2d.
       section[h[1]] = text.slice(h.index, end);
     });
-    for (const [num, body] of Object.entries(section)) {
-      if (!/^\d$/.test(num)) continue;
-      for (const [sub, subBody] of Object.entries(section)) {
-        if (sub.length > 1 && sub[0] === num) section[num] = body + subBody;
-      }
+    // Accumulate, do not reassign. The first version read `body` once from the
+    // outer loop and wrote `section[num] = body + subBody` on every pass, so
+    // each sub-step overwrote the last and only the final one survived: Step 2
+    // of whats-breaking came out as its own text plus 2d, with 2a, 2b and 2c
+    // dropped. Measured at 2267 characters against 6002 for the whole step.
+    //
+    // It produced no wrong answer, because no sentence in these files is
+    // currently shaped "Step 2 <verb> `field`" for a parent that has sub-steps.
+    // A check quietly reading a quarter of the section it thinks it is reading
+    // is still wrong, and it would have started inventing offenders the first
+    // time somebody wrote one.
+    for (const [sub, subBody] of Object.entries(section)) {
+      if (sub.length > 1 && section[sub[0]] !== undefined) section[sub[0]] += subBody;
     }
 
     const claim = new RegExp(
@@ -459,7 +467,15 @@ check('every step cross-reference names a step that mentions the field', () => {
         offenders.push(`${name}: "${whole}" names a step this file has no heading for`);
         continue;
       }
-      if (!body.includes(field)) {
+      // Word boundaries, not a raw substring. `includes` was the first version
+      // and it matched `source` against "the single source of truth" in Step 2's
+      // own prose, which made a deliberately broken control pass and hid the
+      // aggregation bug this round is fixing. A field name has to appear as a
+      // word for the section to count as talking about it.
+      const mentions = new RegExp(
+        String.raw`(^|[^\w-])${field.replace(/[.*+?^${}()|[\]\\-]/g, '\\$&')}([^\w-]|$)`
+      );
+      if (!mentions.test(body)) {
         offenders.push(`${name}: "${whole}" but Step ${num} never mentions ${field}`);
       }
     }
