@@ -57,6 +57,13 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/cli.js" --repo {owner/name}
 
 Add `--json` when sweeping several repositories, so you can total them up, and render the summary yourself. For a single repository the text output is already in the right shape, so show it as it comes rather than rewriting it.
 
+**When you render the summary yourself, carry the caveats with it.** The JSON has two boolean keys beside `safe` and `keep`, and both mean the answer below them is less certain than it looks:
+
+- `remoteStale` — the comparison ran against a ref the remote has moved past, named in `remoteStaleRef`. Anything merged since then is sitting in "Keep" with a commit count, which is exactly what unmerged work looks like. Say so, and say to run `git fetch` and try again.
+- `mergeCheckUnavailable` — this git is too old to spot a squash merge, so every squash-merged branch is in "Keep".
+
+Printing the counts without these turns a hedged answer into a confident one, which is the one thing this command must never do. The text output prints both as notes on its own; it is only the sweep, where you do the rendering, that can lose them.
+
 Across many repositories this takes a few seconds per repository, because working out the commit count is one API call per branch. Say that before starting a sweep of more than about five, so the wait is expected rather than alarming.
 
 ---

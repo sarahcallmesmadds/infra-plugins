@@ -101,6 +101,24 @@ function render(result, where, lookup) {
   }
   lines.push('');
 
+  // The comparison ran against a ref the remote has since moved past, so
+  // anything merged in between is sitting in Keep with a commit count beside it.
+  // Said here rather than left implied, because a stale answer and a current one
+  // look exactly alike on screen.
+  //
+  // The ref is named by the lookup rather than assumed to be `origin/<default>`.
+  // A single-branch or shallow clone has no remote-tracking ref at all, and the
+  // comparison falls back to the local branch there, so naming a ref the reader
+  // does not have sends them looking for something that never existed.
+  if (lookup && lookup.remoteStale) {
+    const ref = lookup.remoteStaleRef || `origin/${lookup.defaultBranch || 'main'}`;
+    lines.push('');
+    lines.push(`Note: this compared against \`${ref}\`, and the remote has moved past it since`);
+    lines.push('it was last updated. Anything merged in between is listed under Keep with a');
+    lines.push('commit count, which is what an unmerged branch looks like too.');
+    lines.push('Run `git fetch` and try again for a current answer.');
+  }
+
   // Said out loud rather than left to look like a clean result. Without the
   // comparison, a squash-merged branch is indistinguishable here from one
   // holding real work, and every one of them lands in Keep.
@@ -225,7 +243,23 @@ function main() {
   }
 
   if (opts.json) {
-    process.stdout.write(JSON.stringify({ where, safe: result.safe, keep: result.keep }, null, 2) + '\n');
+    // The caveats ride along, because the text output carries them and a caller
+    // parsing this one otherwise gets the same answer with the reasons to
+    // distrust it stripped off. `--json --cwd .` against a checkout that has not
+    // fetched is exactly the case this release exists to stop being silent.
+    //
+    // Both are always present, never omitted when false. A key that appears only
+    // when something is wrong cannot be told apart from an older version that
+    // never had it, and a consumer reading `undefined` as "fine" is the failure
+    // being fixed rather than a new one.
+    process.stdout.write(JSON.stringify({
+      where,
+      remoteStale: !!(lookup && lookup.remoteStale),
+      remoteStaleRef: (lookup && lookup.remoteStaleRef) || null,
+      mergeCheckUnavailable: !!(lookup && lookup.mergeCheckUnavailable),
+      safe: result.safe,
+      keep: result.keep,
+    }, null, 2) + '\n');
   } else {
     process.stdout.write(render(result, where, lookup) + '\n');
   }

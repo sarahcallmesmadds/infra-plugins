@@ -150,6 +150,49 @@ how you end up believing a repository is tidy.
 Nothing about age can ever move a branch into the safe list. There is no setting
 for that and there is not meant to be.
 
+## Upgrading to 0.3.3
+
+Checking a local checkout now contacts the remote once, and says when the copy
+it compared against is out of date.
+
+Everything the local path compares against is `origin/<default>`, a ref your
+last `git fetch` wrote. It is not the remote. When a pull request merges in
+between, those commits are genuinely absent from the copy, so the branches
+holding them are listed under Keep with an ordinary commit count and nothing
+says the answer came from old data. A stale answer and a current one looked
+identical.
+
+So the listing runs one `git ls-remote` against `origin`, compares the real
+branch tip with the cached one, and prints a note when they differ telling you
+to fetch and run it again.
+
+What that costs, and when it is skipped:
+
+- One network round trip per listing, bounded at 3 seconds. Offline, on a remote
+  that cannot be reached, or where credentials are not already available, the
+  probe fails, no note is printed, and every branch is classified exactly as
+  before. It cannot ask you for anything: git's terminal prompt is off, the
+  `GIT_ASKPASS` and `SSH_ASKPASS` helpers are removed from the environment for
+  this one call along with `core.askPass`, the credential manager is told not to
+  open a window, and `BatchMode=yes` is appended to whatever `GIT_SSH_COMMAND`
+  you already have rather than replacing it. Credential helpers are left on, so
+  a stored credential answered from a keychain still works. The line is drawn at
+  asking you, not at using an answer you have already given.
+- Not run for `--verify`, the re-check before each delete, which would otherwise
+  make a twenty-branch cleanup twenty round trips.
+- Not run under a deadline, which is how the session notice calls it. That notice
+  is one line and would not carry the note anyway.
+
+Neither skip can make a delete unsafe. An out-of-date copy makes branches look
+less merged than they are, never more, so its only effect is holding something
+back from deletion.
+
+`--json` output gained two keys, `remoteStale` and `mergeCheckUnavailable`, both
+always present. A caller parsing the JSON was previously getting the same answer
+as the text output with the reasons to distrust it removed.
+
+`--repo owner/name` is unaffected. It has always asked GitHub live.
+
 ## Upgrading to 0.2.0
 
 A squash merge now counts as evidence that a branch is merged.

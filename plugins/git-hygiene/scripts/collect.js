@@ -31,6 +31,12 @@ const MAX_BUFFER = 8 * 1024 * 1024;
 // matches the other calls.
 const MERGED_PR_TIMEOUT_MS = 20000;
 
+// The only call in the local path that leaves the machine. Short, because what
+// it produces is a caveat rather than a fact anything depends on: every branch
+// is classified exactly the same way whether this answers or not. A run that
+// stalls waiting for it has already cost more than the caveat is worth.
+const REMOTE_PROBE_TIMEOUT_MS = 3000;
+
 function run(cmd, args, opts) {
   return execFileSync(cmd, args, Object.assign({
     encoding: 'utf8',
@@ -71,6 +77,99 @@ function isGitRepo(cwd) {
 // caller has already resolved.
 function supportsWriteTree(cwd, ref) {
   return tryRun('git', ['-C', cwd, 'merge-tree', '--write-tree', ref, ref]) !== null;
+}
+
+// Whether `origin/<def>` still matches the branch it is a copy of.
+//
+// `origin/main` is not the remote. It is a ref this checkout last wrote during a
+// fetch, and everything below compares against it as though it were current. A
+// pull request merging between that fetch and this run is invisible here: the
+// comparison correctly finds those commits absent from the snapshot it was
+// given, the branches come back under Keep with a real-looking commit count, and
+// nothing printed says the question was asked of old data.
+//
+// That is not hypothetical. A run at 19:15 compared against a 16:47 fetch and
+// reported seven branches as holding work, all seven of which had squash merged
+// in between. The same tool with `--repo`, which asks GitHub live, cleared all
+// seven and named the pull request for each.
+//
+// Compared by commit rather than by tree, because the question is whether this
+// copy is current, and two different commits sharing a tree still mean a fetch
+// has been missed.
+//
+// Failure is silence, in every direction. No remote configured, no network, no
+// `ls-remote` on the path, an unparseable line, credentials this cannot supply:
+// the answer is false, no note is printed, and nothing else about the run
+// changes.
+//
+// The ref is matched fully qualified, and then the returned line is checked
+// again by name. `ls-remote <pattern>` matches on the tail of a ref rather than
+// the whole of it, so a bare `main` also matches `refs/heads/foo/main`, and the
+// output is sorted by ref name, which puts the nested one first. Taking the
+// first line therefore read an unrelated branch's commit, found it different
+// from `origin/main`, and printed the staleness note on every run in any
+// repository that happens to have such a branch. A note that never clears
+// teaches people to ignore the notes.
+//
+// The comparison by name is not redundant with the qualified pattern. It is
+// what makes the guarantee independent of how `ls-remote` chooses to match,
+// which is the part that was wrong here in the first place.
+//
+// The probe is made non-interactive on four fronts, because closing one of them
+// closes almost nothing. A probe whose whole contract is "failure is silence"
+// must not be able to ask a human for anything, and every route below was
+// checked by running it rather than reasoned about.
+//
+//   1. `GIT_TERMINAL_PROMPT=0` stops git's own terminal prompt. On its own it
+//      stops nothing else. With an askpass helper configured, git runs the
+//      helper instead, and it ran twice in a fixture built to force the case.
+//      Editors configure one as a matter of course: VS Code exports
+//      `GIT_ASKPASS` into every integrated terminal.
+//   2. So `GIT_ASKPASS` and `SSH_ASKPASS` are removed from the child's
+//      environment, and `core.askPass` is emptied for this one command. With
+//      all three closed the same fixture fails immediately with "terminal
+//      prompts disabled", which is the wanted behaviour: no dialog, no wait.
+//      Removed rather than set empty, so nothing downstream tries to execute
+//      the empty string.
+//   3. `BatchMode=yes` is appended to whatever `GIT_SSH_COMMAND` the caller
+//      already has, rather than used only as a default. Exporting a custom one
+//      for an identity file or a proxy is ordinary, and the previous form
+//      handed that value through untouched, so exactly the people who set it
+//      kept an ssh that could ask for a passphrase or a host key confirmation.
+//      Appending works because later ssh options win.
+//   4. `credential.interactive=false` is set, which is how Git Credential
+//      Manager is told never to open a window. Other helpers ignore the key.
+//
+// Credential helpers themselves are deliberately left enabled. A helper that
+// answers from a keychain without showing anything is not an interruption, and
+// disabling them would break the probe for everyone whose remote is HTTPS with
+// working stored credentials, which is a large share of the people this is for.
+// The line drawn here is at asking a human, not at using an answer already
+// given.
+function remoteMoved(cwd, def, cachedSha) {
+  if (!cachedSha) return false;
+  const qualified = `refs/heads/${def}`;
+  const env = Object.assign({}, process.env, {
+    GIT_TERMINAL_PROMPT: '0',
+    GIT_SSH_COMMAND: `${process.env.GIT_SSH_COMMAND || 'ssh'} -o BatchMode=yes`,
+  });
+  delete env.GIT_ASKPASS;
+  delete env.SSH_ASKPASS;
+  const out = tryRun('git', ['-C', cwd,
+    '-c', 'core.askPass=',
+    '-c', 'credential.interactive=false',
+    'ls-remote', '--heads', 'origin', qualified], {
+    timeout: REMOTE_PROBE_TIMEOUT_MS,
+    env,
+  });
+  if (!out) return false;
+  const row = out.split('\n')
+    .map((l) => l.split('\t'))
+    .find((p) => p.length >= 2 && p[1].trim() === qualified);
+  if (!row) return false;
+  const sha = row[0].trim();
+  if (!/^[0-9a-f]{7,40}$/.test(sha)) return false;
+  return sha !== cachedSha;
 }
 
 // opts.deadline is an epoch milliseconds value. A caller that has to finish
@@ -153,6 +252,8 @@ function localBranches(cwd, opts) {
   // somewhere that is not this branch. Skipped when the two agree, which is the
   // steady state, so it costs nothing in the common case.
   const remoteDef = `origin/${def}`;
+  const remoteDefSha = tryRun('git', ['-C', cwd, 'rev-parse', remoteDef]);
+  const defSha = tryRun('git', ['-C', cwd, 'rev-parse', def]);
   const remoteDefTree = tryRun('git', ['-C', cwd, 'rev-parse', `${remoteDef}^{tree}`]);
   const compareAgainst = [{ ref: def, tree: defTree, label: 'already in the default branch' }];
   if (remoteDefTree && remoteDefTree !== defTree) {
@@ -171,6 +272,43 @@ function localBranches(cwd, opts) {
   // git version problem would send someone to upgrade a git that is fine.
   const versionOk = defTree ? supportsWriteTree(cwd, def) : null;
   const canCompare = !!defTree && versionOk === true;
+
+  // Asked for the listing and not for `only`, the re-check that runs immediately
+  // before each delete. Two reasons, and either one is enough.
+  //
+  // A twenty branch cleanup calls this path twenty times, and a network round
+  // trip per branch is the cost this function's `only` parameter exists to
+  // avoid in the first place.
+  //
+  // More importantly it cannot change that path's answer safely or otherwise. A
+  // stale copy of the remote makes branches look less merged than they are,
+  // never more, so its only effect is keeping something that could have gone.
+  // The re-check exists to catch the opposite: work appearing on a branch
+  // already cleared. Staleness cannot cause that.
+  //
+  // A deadline means the caller is the session hook, which prints one line and
+  // has a budget measured against it. Advisory prose it will not print is not
+  // worth spending that budget on.
+  // Which ref the comparison actually ran against, and therefore which one the
+  // probe has to check for freshness.
+  //
+  // Normally that is `origin/<def>`. When no such ref exists the comparison
+  // above silently falls back to the local branch alone, and a local branch can
+  // be arbitrarily far behind: a single-branch or shallow clone, a checkout
+  // whose remote refs were pruned, or a repository fetched with `--depth` all
+  // land here. Skipping the probe because there is no remote-tracking ref left
+  // exactly the silent stale answer this release exists to remove, reached from
+  // a different starting state.
+  //
+  // So the probe compares against whichever ref was used, and the caller is
+  // told which, because the note has to name a real thing. Telling someone
+  // `origin/main` is out of date when they have no `origin/main` sends them
+  // looking for something that was never there.
+  const staleRef = remoteDefSha ? remoteDef : def;
+  const staleSha = remoteDefSha || defSha;
+  const remoteStale = (only === null && deadline === null)
+    ? remoteMoved(cwd, def, staleSha)
+    : false;
 
   const branches = rows.map((line) => {
     const [name, date, aheadBehind] = line.split('\t');
@@ -237,7 +375,14 @@ function localBranches(cwd, opts) {
   // Specifically "this git is too old", not "the comparison did not run". The
   // note the caller prints tells someone to check their git version, and that
   // is only the right advice for one of those.
-  return { defaultBranch: def, branches, truncated, mergeCheckUnavailable: versionOk === false };
+  return {
+    defaultBranch: def,
+    branches,
+    truncated,
+    remoteStale,
+    remoteStaleRef: remoteStale ? staleRef : null,
+    mergeCheckUnavailable: versionOk === false,
+  };
 }
 
 // --------------------------------------------------------------- remote ----
