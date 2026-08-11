@@ -53,7 +53,7 @@ const SKILLS = {
 // should be noticed. So the count is derived AND compared, and this constant
 // has to move when a check is added or removed. Forgetting now fails the suite
 // instead of printing a smaller number nobody reads.
-const EXPECTED_CHECKS = 27;
+const EXPECTED_CHECKS = 29;
 
 let failed = 0;
 let ran = 0;
@@ -393,6 +393,42 @@ check('audit-deps does not prune back-edges without being told to', () => {
 // The bucket is found in Step 3 and put to the user in Step 5, with everything
 // else. Asking in Step 6 would be a second approval for a write they already
 // approved, which is the shape Step 5 exists to prevent.
+// The schema tracks transitive dependents on purpose, so A's depends_on names B
+// and not C while A still appears in C's dependents. Testing for a missing
+// DIRECT edge therefore flags every healthy transitive row, and `add-missing`
+// would then invent a direct A -> C edge the schema does not intend.
+check('one-sided means no path at all, not no direct edge', () => {
+  const skill = SKILLS['audit-deps'];
+  assert.ok(
+    /no `depends_on` path to T at all/.test(skill),
+    'audit-deps defines one-sided by a missing direct edge, which flags every '
+    + 'legitimate transitive back-edge as broken'
+  );
+  assert.ok(
+    /walk its `depends_on` transitively/.test(skill),
+    'audit-deps never says to follow the chain, so an implementation compares '
+    + 'direct edges and inflates the bucket'
+  );
+  assert.ok(
+    /SCHEMA-DEPS\.md tracks transitive dependencies on purpose/.test(skill),
+    'the reason the direct-edge test is wrong is not written down, so it reads '
+    + 'as an arbitrary refinement and gets simplified back'
+  );
+});
+
+check('a scoped audit filters the one-sided bucket too', () => {
+  const skill = SKILLS['audit-deps'];
+  assert.ok(
+    !/filter all three buckets/.test(skill),
+    'the $ARGUMENTS filter still names three buckets, so ONE-SIDED escapes it'
+  );
+  assert.ok(
+    /a row is in scope if either end matches/.test(skill),
+    'audit-deps never says how to scope a one-sided row, which sits between two '
+    + 'entries rather than on one'
+  );
+});
+
 check('audit-deps asks about one-sided edges in the one approval gate', () => {
   const skill = SKILLS['audit-deps'];
   assert.ok(

@@ -166,7 +166,13 @@ Classify everything into one of four buckets:
 **MISSING** — on disk but not in `existing`. These need entries added.
 **ORPHANED** — in `existing` but not on disk. These may have been renamed or deleted.
 **EXISTING** — in both. Check whether the file mtime from Step 1 is newer than the entry's `last_updated` field. Parse both as timestamps and compare. If newer, the entry is STALE and may need `depends_on` re-inferred.
-**ONE-SIDED** — a `dependents` row on any entry with no matching `depends_on` on the entry it names. This one is about the map's internal consistency rather than about disk, so it is computed from `existing` alone and needs no file to have changed.
+**ONE-SIDED** — a `dependents` row on entry T naming A, where **A has no `depends_on` path to T at all**, neither directly nor through other entries. This one is about the map's internal consistency rather than about disk, so it is computed from `existing` alone and needs no file to have changed.
+
+**A missing direct edge is not the test, and using it as the test is wrong.** SCHEMA-DEPS.md tracks transitive dependencies on purpose: if A depends on B and B depends on C, A appears in C's `dependents`. A's `depends_on` correctly names B and not C, so every transitive back-edge in a healthy map looks unmatched if you only compare direct edges. Counting those inflates the bucket with rows that are already right, and `add-missing` would then write a direct A → C edge the schema does not intend, turning a correct indirect relationship into a fabricated direct one.
+
+So follow the forward edges. Take the entry named in the `dependents` row, walk its `depends_on` transitively, and if T is reachable the row is explained and belongs in no bucket. Only a row with no path at all is one-sided.
+
+Measured against the live map on 2026-08-11: 249 `dependents` rows, 147 matched by a direct edge, 3 explained only transitively, 99 genuinely unexplained. Three is small here, and it is three rows this skill would otherwise have reported as broken and offered to "repair" by inventing an edge.
 
 Work ONE-SIDED out here, not later. Step 6 is where the decision is applied, but it is the last approval gate in the skill and Step 5 is the only one, so a bucket discovered after Step 5 would mean asking the user a second question about a write they already approved. Anything the user has to decide is decided in one place.
 
@@ -174,7 +180,9 @@ A few will resolve themselves: if Step 4 infers a `depends_on` that happens to m
 
 **Compare against `last_updated`, never `last_auto_checked`.** The second is written by the `deps-watch` hook after an ordinary edit, and it means only that every reference the file mechanically makes was already recorded. It cannot see a semantic edge, one thing reading a file another writes, which is the kind this map exists to catch. Treating it as a review date would empty this bucket of exactly the entries that most need looking at. Carry the field through unchanged on write; it is not yours to set.
 
-If `$ARGUMENTS` is non-empty, filter all three buckets to entries whose name or composite key matches, so `/audit-deps daily-brief` reviews one thing without scanning every change.
+If `$ARGUMENTS` is non-empty, filter **all four buckets** to entries whose name or composite key matches, so `/audit-deps daily-brief` reviews one thing without scanning every change.
+
+ONE-SIDED needs saying explicitly, because it is the one bucket that does not come from the disk scan. It is computed across every entry in the map, so left unfiltered it flows into the draft and the apply regardless of the argument, and a user who scoped the audit to one target is shown, and can approve, removals on entries they never named. Filter it on the entry the row sits on and on the entry it names: a row is in scope if either end matches.
 
 ## Step 4 — For each MISSING entry, infer its depends_on
 
@@ -278,7 +286,9 @@ After applying the approved additions/removals/changes:
    Resolve T to its entry using the ordered lookup in SCHEMA-DEPS.md rather than string-matching the key, so an edge written before v3 still finds its target.
 3. **Collect, do not delete, every `dependents` entry with no matching `depends_on` edge.** Adding a back-edge is safe and needs no permission. Removing one destroys the only copy of a relationship somebody wrote down, so it goes through the user like every other removal in this skill.
 
-   This step used to say "prune" and nothing else. Measured against the live map on 2026-08-11, following it deleted **101 of 242** back-edges in one pass, 42 percent, and almost all of them were test coverage links of the shape `guardrails/bash-guard <- bash-guard.test`. Those are the rows that answer "what does this fix put at risk", which is the question the map exists for. Nothing errored. The file came back smaller, `/apply-fix` reported fewer dependents than it should, and everything looked healthy.
+   This step used to say "prune" and nothing else. Measured against the live map on 2026-08-11, following it removed **99 of 249** back-edges in one pass, 40 percent, and almost all of them were test coverage links of the shape `guardrails/bash-guard <- bash-guard.test`. Those are the rows that answer "what does this fix put at risk", which is the question the map exists for. Nothing errored. The file came back smaller, `/apply-fix` reported fewer dependents than it should, and everything looked healthy.
+
+   It would also have taken 3 more that are not one-sided at all, being explained by a transitive chain. Those are the rows the definition in Step 3 now excludes.
 
    A one-sided edge is usually a **missing `depends_on`, not a stale dependent.** `run-all` lists every test as a dependent while its own `depends_on` is empty, and the relationship is real either way. Deleting the only record of it is the one option that loses information.
 
