@@ -187,7 +187,9 @@ week, and only that.
 Rules, because this file is read every session and grows forever if nobody
 guards it:
 
-- Read what is there before writing. You are editing, not appending.
+- Read what is there before writing, and place what you are adding against it.
+  You are editing, not appending. Placing it has a procedure, below, because
+  reading and then appending anyway is the failure this step keeps having.
 - Only touch entries related to this session's work.
 - Do not remove earlier entries unless they are now resolved or wrong.
 - Never rewrite the whole thing.
@@ -201,14 +203,41 @@ to the harness, not to this plugin.
 **Skip this step entirely if the session was empty.** An empty session must
 never overwrite durable notes.
 
+### Place it before you write it
+
+Read the headings already in the file. Then, for each thing you are about to
+add, say one of these two sentences, and say which one it is:
+
+- **"This belongs under `<heading>`."** Sharpen that section rather than
+  opening a new one. A section that already covered the shape and now covers it
+  better is the result, not a consolation prize.
+- **"No existing heading covers this."** Name the closest heading you rejected
+  and why it does not fit. Being unable to name a close one is the evidence
+  that it is new.
+
+A new section is the exception. Two sections describing the same shape from
+different directions are one section, and the later arrival is the one that
+should not exist. The rule above was in force for every session that grew
+`plugin-build-lessons.md` to 5,922 words across about 25 dated sections that
+were not 25 distinct lessons, three of which open by explaining how they relate
+to another section in the same file.
+
+**Check the file's declared type while you are writing to it, not only when a
+number flags it later.** If what you are adding never changes, and most of what
+is already there never changes either, the file is durable reference wearing a
+live label, and the fix is to retype it rather than to hold it under a cap it
+was never meant to meet. Propose the retype and let her decide. The same
+guidance sits at the end of this step for the moment `memory-check` flags a
+file, which is a week later than it needs to be.
+
 ### Then measure what you just wrote to
 
 ```bash
 "${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js memory-check
 ```
 
-Everything above this line is advice, and advice is what every component in this
-library has now been caught failing at. This is the number.
+Nothing above this line checks whether any of it happened, and every component
+in this library has now been caught skipping its own rules. This is the number.
 
 It changes nothing and deletes nothing. Surface whatever it reports in the Step
 4 summary, and stay silent when it reports nothing.
