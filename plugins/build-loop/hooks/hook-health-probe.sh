@@ -1,0 +1,113 @@
+#!/bin/sh
+# Records when a hook interpreter cannot be found, so a hook failure names
+# itself instead of being reconstructed later.
+#
+# The 2026-08-07 queue entry said only that a UserPromptSubmit hook failed with
+# exit code 127, which means a command could not be found, and that the command
+# was not known. Identifying it took a full session four days later, and the
+# answer was still short of proof. Two commands run on UserPromptSubmit on that
+# machine: build-loop's notice-correction.js, which needs `node` on PATH, and
+# cmux's status hook, which resolves a binary through an environment variable
+# and falls back to a bare `cmux`. Either can produce a 127. Nothing recorded
+# which one did, because Claude Code does not write UserPromptSubmit hook runs
+# to the transcript at all.
+#
+# THIS IS DELIBERATELY NOT NODE. Every other hook here is, and none of them can
+# report the failure this exists to catch: a node script cannot tell you that
+# node is missing. /bin/sh is on every machine that can run a hook at all, so
+# this is the one probe that still runs when the thing under test is gone.
+#
+# It writes only on a change of state, the same rule as the core-tools monitor:
+# once when something breaks, silence while it stays broken, once when it comes
+# back. A probe that appends on every prompt while a session is broken produces
+# thousands of identical lines and gets deleted rather than read.
+#
+# It never blocks and never speaks. UserPromptSubmit adds a hook's stdout to the
+# conversation, so anything printed here would land in the context of every
+# prompt for the sake of a diagnostic nobody asked for. It stays silent and
+# leaves a file behind.
+
+# Consume the event. A hook that leaves stdin unread can take SIGPIPE when the
+# writer closes, which turns a diagnostic into a second fault.
+event=$(cat)
+
+log_dir="${HOME}/.claude/build-loop"
+log="${log_dir}/hook-health.log"
+
+missing=""
+command -v node >/dev/null 2>&1 || missing="${missing}node "
+
+# cmux is only relevant on a machine running inside it. Reporting it absent
+# everywhere else would mean every prompt on a plain terminal writes a line
+# about software the user has not installed.
+inside_cmux=""
+[ -n "${CMUX_CLAUDE_HOOK_CMUX_BIN}" ] && inside_cmux=1
+[ -n "${CMUX_CLAUDE_PID}" ] && inside_cmux=1
+
+cmux_state="n/a"
+if [ -n "${inside_cmux}" ]; then
+    if [ -z "${CMUX_CLAUDE_HOOK_CMUX_BIN}" ]; then
+        # The wrapper exports this at launch and its own hooks fall back to a
+        # bare `cmux` when it is empty. Unset here means that fallback is live.
+        cmux_state="unset"
+        command -v cmux >/dev/null 2>&1 || missing="${missing}cmux "
+    elif [ -x "${CMUX_CLAUDE_HOOK_CMUX_BIN}" ]; then
+        cmux_state="ok"
+    else
+        # An absolute path that no longer resolves, which 127s on every prompt
+        # until the session restarts.
+        #
+        # This cannot be inherited into a new session: the cmux wrapper runs
+        # `export CMUX_CLAUDE_HOOK_CMUX_BIN="$(resolve_hook_cmux_bin)"` at every
+        # launch, and a value set in the parent environment is overwritten.
+        # Measured on 2026-08-11 by setting it to a missing path and reading it
+        # back from inside a hook, which saw the resolved path instead. So a
+        # stale value means the bundle was replaced while this session was
+        # already running, not that a bad value was passed in.
+        cmux_state="stale"
+        missing="${missing}cmux "
+    fi
+fi
+
+# Nothing wrong and nothing previously wrong: the common case, and it does no
+# work beyond the two lookups above.
+if [ -z "${missing}" ] && [ ! -f "${log}" ]; then
+    exit 0
+fi
+
+state="missing=[${missing}] cmux_bin=${cmux_state}"
+
+# Session id, so a line points back at the conversation it came from. Best
+# effort: this is a diagnostic, and a missing id is not worth a JSON parser in
+# a shell script.
+sid=$(printf '%s' "${event}" \
+    | sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+    | head -n 1)
+[ -n "${sid}" ] || sid="unknown"
+
+# Only on a change. The last line already saying this about this session means
+# the state has not moved.
+if [ -f "${log}" ] && tail -n 1 "${log}" 2>/dev/null \
+    | grep -qF "session=${sid} ${state}"; then
+    exit 0
+fi
+
+# A clean state with no history of a broken one is not a recovery, so there is
+# nothing to report.
+if [ -z "${missing}" ] && ! grep -q "missing=\[[^]]" "${log}" 2>/dev/null; then
+    exit 0
+fi
+
+mkdir -p "${log_dir}" 2>/dev/null || exit 0
+
+stamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+if [ -z "${missing}" ]; then
+    verdict="RECOVERED"
+else
+    verdict="MISSING"
+fi
+
+printf '%s %s session=%s %s path=%s\n' \
+    "${stamp}" "${verdict}" "${sid}" "${state}" "${PATH}" >> "${log}" 2>/dev/null
+
+exit 0

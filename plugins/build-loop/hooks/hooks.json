@@ -21,6 +21,11 @@
           {
             "type": "command",
             "command": "\"${CLAUDE_PLUGIN_ROOT}\"/hooks/notice-correction.js"
+          },
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/hooks/hook-health-probe.sh",
+            "timeout": 5
           }
         ]
       }
