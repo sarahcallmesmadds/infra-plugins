@@ -78,7 +78,7 @@ The `built` object is written by `/built-check` when the item is confirmed done.
 | `where` | string | no | Intended home: a marketplace, a repository, a root name. Empty string when not known yet. **A destination, not a source.** It routinely names something that does not exist yet, which is why it is never path-checked. |
 | `source` | string | no | Material the build reads from: a spec, a prior implementation, a document. One filesystem path, absolute or `~`-relative, or empty. Checked by `/to-build` on every list, and reported when it no longer resolves. Empty string when the item is built from its own `what` and needs nothing else, which is the common case. |
 | `blocked_by` | string | no | Free text describing what has to happen first. Empty string when nothing blocks it. Not a structured reference to another item, because most blockers are not other to-build items. |
-| `session_id` | string | yes | Claude Code session ID. Empty string if unavailable. |
+| `session_id` | string | yes | Claude Code session ID. The route back to the conversation the item came out of, which is where the reasoning for it lives. Resolve it from the scratchpad directory path, `.../{project-slug}/{session-id}/scratchpad`, and confirm it against `~/.claude/projects/*/{session_id}.jsonl`. Empty string only when that fails. |
 | `session_cwd` | string | yes | Working directory when captured. Empty string if unavailable. |
 | `dedup_key` | string | yes | See Dedup Key Rule below. |
 | `notes` | array | no | Append-only array of `{ts, text}` objects. |

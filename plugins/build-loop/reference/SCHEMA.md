@@ -155,8 +155,8 @@ One JSON file per queue entry, stored at:
   "target_kind": "hook",
   "target_path": "~/.claude/hooks/style-lint.js",
   "repo": "hooks",
-  "session_id": "",
-  "session_cwd": "",
+  "session_id": "b41e07c2-5d38-4a91-9f6e-2c7a0d5813be",
+  "session_cwd": "/Users/example/Projects/infra-plugins",
   "what_happened": "The style hook counted the dashes inside a Markdown table separator as em dashes and blocked the response.",
   "what_expected": "Table row separators should not count as prose punctuation.",
   "correct_example": "A table whose separator row is three dashes passes with no finding.",
@@ -213,7 +213,7 @@ One JSON file per queue entry, stored at:
 | `target_kind` | string | yes | What sort of thing the target is. | `skill`, `hook`, `command`, `plugin`, `script`, `other`. A reader that finds no `target_kind` treats it as `"skill"`. |
 | `target_path` | string | yes | Absolute path to the file a fix would edit. Used to route the commit to the right repository. | Example: `~/.claude/hooks/style-lint.js`. Called `skill_path` before v5. |
 | `repo` | string | yes | Which root owns this target. Inferred from `target_path`, see Repo Attribution Rule below. | A root `name`, or `"unknown"` |
-| `session_id` | string | yes | Claude Code session ID. Used to reproduce the failure context. | Fill `""` if not available. |
+| `session_id` | string | yes | Claude Code session ID. The only route from an entry back to the conversation that produced it. | Resolve it from the scratchpad directory path, `.../{project-slug}/{session-id}/scratchpad`, and confirm it against `~/.claude/projects/*/{session_id}.jsonl`. Fill `""` only when that fails. |
 | `session_cwd` | string | yes | Working directory when the correction was captured. | Fill `""` if not available. |
 | `what_happened` | string | yes | Plain-language description of the wrong behaviour. | Write as: "It did X." |
 | `what_expected` | string | yes | Plain-language description of the correct behaviour. | Write as: "It should do Y." |
@@ -518,7 +518,7 @@ Unlike primary dedup, this is NOT time-limited. The same `parent_id` plus depend
 
 ```json
 {
-  "$schema_version": 2,
+  "$schema_version": 3,
   "last_updated": "2026-04-24T00:00:00.000Z",
   "flags": []
 }
@@ -526,7 +526,7 @@ Unlike primary dedup, this is NOT time-limited. The same `parent_id` plus depend
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `$schema_version` | int | yes | Version for this file. Currently 2. |
+| `$schema_version` | int | yes | Version for this file. Currently 3. Moved from 2 in 0.9.6 for the `session_count` to `occurrence_count` rename, under the bump rule above. A v2 file still reads correctly: the mapping in `/whats-breaking` Step 3 keys off the missing field rather than this number, so the bump makes the file say which name it carries rather than being what makes the old one readable. |
 | `last_updated` | string | yes | ISO-8601 timestamp of the most recent write. |
 | `flags` | array | yes | One entry per flagged target. Max one entry per target, updated in place. |
 
@@ -540,7 +540,7 @@ Unlike primary dedup, this is NOT time-limited. The same `parent_id` plus depend
 | `target_path` | string | yes | Absolute path to the file. Called `skill_path` before v5. |
 | `flagged_at` | string | yes | ISO-8601 timestamp when this first crossed the threshold. Never updated after creation. |
 | `correction_count` | int | yes | Total closed primary corrections. Updated each run. |
-| `session_count` | int | yes | Unique sessions in which corrections were captured. Updated each run. |
+| `occurrence_count` | int | yes | How many separate occasions the target was corrected on, by the counting rule in `/whats-breaking` Step 2b. Not a count of sessions: a typed correction counts on its own, so several filed in one sitting are several occurrences and one session. Updated each run. Called `session_count` before 0.9.6, and read under the old name when a flags file still carries it. |
 | `status` | string | yes | See Flag Status Enum below. |
 | `diagnosis` | string | yes | Plain-language description of the recurring issue. 500 characters max, three to five sentences. Names the problem and a structural cause hypothesis. NOT a fix prescription. |
 | `example_entries` | array | yes | Up to 5 queue entry IDs evidencing the pattern. |
@@ -570,7 +570,11 @@ The file is not rewritten on read. `/whats-breaking` writes every flag back unde
 
 ### Detection rule
 
-Group by `target`. Three or more closed primary corrections for the same target, across three or more unique sessions. A correction is "closed primary" if `type == "primary"` (or the field is missing) AND `status` is `Resolved` or `fix applied, watching`. Dedup by `session_id || id` when counting unique sessions.
+Group by `target`. Three or more closed primary corrections for the same target, on three or more separate occasions. A correction is "closed primary" if `type == "primary"` (or the field is missing) AND `status` is `Resolved` or `fix applied, watching`.
+
+The counting token comes from `source`. A `slash-capture` entry counts by `id`, one occurrence each, because somebody typed it. Anything else, including `manual` and a missing `source`, counts by `session_id || id`, so a stop-hook firing repeatedly in one sitting counts once. Do not read this off an empty `session_id`: that coupling is what broke on PR #96 the moment `/flag-issue` started filling the field in.
+
+**Occurrences are not sessions, and the report must not call them sessions.** Several `slash-capture` corrections typed in one sitting are several occurrences and one session, so naming them sessions tells the reader a problem recurred across occasions it did not. `/whats-breaking` records the number as `occurrence_count` for that reason.
 
 ### Write rule
 
@@ -599,3 +603,4 @@ parse-check plus `mv` sequence.
 | v4 | 2026-04-24 | Added the pattern-flags.json schema. Queue entry schema unchanged. |
 | v5 | 2026-07-27 | The queue covers anything you build, not only skills. `skill` becomes `target`, `skill_path` becomes `target_path`, and `target_kind` is added. The roots config gains a `kind`, plus two default roots for hooks and commands. Readers map the old field names at read time, so no migration runs and pre-v5 entries keep working. pattern-flags.json goes to v2 for the same rename. |
 | v5, no bump | 2026-07-28 | `fix attempted / unresolved` retired from the writers. Added in v3 and never reachable by any `/list-bugs` filter, so rejecting a fix removed the entry from the only view that lists open work. A rejected diff or a failed write now leaves the entry `Open` with the attempt in `notes`. **No version bump:** readers still accept the old value, and a pre-0.3.1 reader handles `Open` because `Open` is v1. Compatible in both directions, so bumping would signal a migration that does not exist. |
+| v5, no bump | 2026-08-11 | `session_id` becomes a resolved field rather than an optional one, and `/whats-breaking` counts occurrences instead of unique sessions. **pattern-flags.json goes to v3** for the `session_count` to `occurrence_count` rename, on the same rule and the same precedent as the v2 bump in the v5 row above. Step 3 maps the old name at read time, so a v2 file keeps its counts and no migration runs. **No queue entry bump:** no queue entry field was added, renamed or removed. `session_id` and `source` both already existed and are v1 and v2 fields; what changed is that they are now filled in and read, which is a change to the writers and not to the shape. |

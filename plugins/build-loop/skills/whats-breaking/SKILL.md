@@ -1,7 +1,7 @@
 ---
 name: whats-breaking
 type: human
-description: A weekly report on what broke, what got fixed, and what keeps coming back. Reads the bug queue, finds the things corrected three or more times across three or more sessions, writes the report to ~/.claude/build-loop/summaries/YYYY-WW.md, and offers to post it to Slack. Use when the user asks "what keeps breaking", "what's breaking", "what did I fix this week", "show me the patterns", or explicitly invokes /whats-breaking. Runs on a local machine only, never in a cloud runtime.
+description: A weekly report on what broke, what got fixed, and what keeps coming back. Reads the bug queue, finds the things corrected three or more times on three or more separate occasions, writes the report to ~/.claude/build-loop/summaries/YYYY-WW.md, and offers to post it to Slack. Use when the user asks "what keeps breaking", "what's breaking", "what did I fix this week", "show me the patterns", or explicitly invokes /whats-breaking. Runs on a local machine only, never in a cloud runtime.
 allowed-tools: [Read, Write, Bash, mcp__slack__*]
 ---
 
@@ -37,7 +37,7 @@ To run on a schedule, use a local-only mechanism:
 
 ## Overview
 
-This skill is the weekly rhythm for the build loop. It reads the correction queue, detects structural patterns (things that have been corrected 3+ times across 3+ sessions), writes a pattern-flags.json file for the maintainer co-development review, generates a weekly summary report at `~/.claude/build-loop/summaries/YYYY-WW.md`, and optionally posts that summary to Slack.
+This skill is the weekly rhythm for the build loop. It reads the correction queue, detects structural patterns (things that have been corrected 3+ times on 3+ separate occasions), writes a pattern-flags.json file for the maintainer co-development review, generates a weekly summary report at `~/.claude/build-loop/summaries/YYYY-WW.md`, and optionally posts that summary to Slack.
 
 **When to invoke:** Manually any time you want a fresh read of the queue, or automatically via a local `launchd` or terminal `cron` job that opens a Claude Code session (NOT Claude Desktop's "New Task" UI — see Runtime Requirements above; that path runs in Cowork and silently does nothing).
 
@@ -45,7 +45,7 @@ This skill is the weekly rhythm for the build loop. It reads the correction queu
 **Plan 04-03 adds Steps 7–10 (summary report generation, file write to `summaries/YYYY-WW.md`, optional Slack post, hot-cache.md update).**
 
 **Load-bearing context from Phase 4 design (see `.planning/phases/04-intelligence-layer/04-DESIGN.md` in the build loop project if you need the full spec):**
-- "Same type" for pattern flagging = target-level grouping. 3+ closed primary corrections for the same target across 3+ unique sessions = structural flag. No semantic classification.
+- "Same type" for pattern flagging = target-level grouping. 3+ closed primary corrections for the same target on 3+ occurrences = structural flag. No semantic classification.
 - Pattern detection runs ONLY inside this skill. Not on every queue close. Not as a standalone hook. Weekly cadence is correct at current volume.
 - One flag entry per target in pattern-flags.json, forever. Updates are always in-place — never create a second flag for the same target.
 - Structural fixes from pattern flags are NEVER auto-applied. PATT-03 requires the maintainer co-development review. The flag surfaces the problem; it does not trigger changes. Status stays `pending-review` until the maintainer and the user change it manually.
@@ -68,13 +68,14 @@ For each file returned, use the Read tool to load its JSON contents. If a file f
 Collect parsed entries into a working list. Each entry should have these fields (from the SCHEMA.md v5 queue entry schema):
 
 ```
-id: string (unique entry id, used as fallback dedup key when session_id is empty)
+id: string (unique entry id, and the counting token for a deliberate correction)
 target: string (the name of the thing corrected — grouping key)
 target_kind: "skill" | "hook" | "command" | "plugin" | "script" | "other"
 repo: string (name of the root it lives in, or "unknown")
 type: "primary" | "dep-review" (missing field defaults to "primary")
 status: "Resolved" | "fix applied, watching" | "Open" | "In Progress" | "fix attempted / unresolved" (retired in 0.3.1, still readable on older entries)
-session_id: string (may be empty string "" — fall back to entry.id for dedup)
+session_id: string (the session that filed it, may be empty on entries written before 0.9.6)
+source: string (which entry point wrote it, and what decides how it is counted)
 what_happened: string (free text — read for diagnosis generation in Step 2d)
 target_path: string (absolute path to the file a fix would edit — copied into flag entries)
 ```
@@ -85,6 +86,9 @@ Missing fields should be treated as follows:
 - Missing `target_kind` → treat as `"skill"`
 - Missing `target_path` → read `skill_path` instead, and if that is absent too, leave as empty string in flag output
 - Missing `session_id` → treat as empty string `""`
+- Missing `source` → treat as `"stop-hook"`. That is the conservative reading:
+  it dedups by session, which is what every entry did before the field was
+  consulted, so an old entry counts exactly as it always has.
 - Missing `repo` → treat as `"unknown"`
 
 ---
@@ -110,47 +114,86 @@ Discard everything else:
 
 This filter is strict. Only closed primary corrections feed pattern detection.
 
-### Step 2b — Group by target name, deduplicate by session
+### Step 2b — Group by target name, count occurrences
 
 For each qualifying entry:
 - Grouping key = `entry.target`
-- Dedup token = `entry.session_id` if it is a non-empty string, else `entry.id`
+- Counting token, decided by `entry.source`:
+  - `"slash-capture"` → `entry.id`
+  - anything else, including `"manual"` and a missing `source` → `entry.session_id`
+    if it is a non-empty string, else `entry.id`
 
 Build this map:
 
 ```
 byTarget = {
   "<target-name>": {
-    sessions: Set of dedup tokens,
+    occurrences: Set of counting tokens,
     entries: list of full entry objects (preserved for diagnosis and example_entries)
   },
   ...
 }
 ```
 
-**Dedup rule:** Each unique `session_id` counts as one data point. Entries with empty `session_id` (typically from `/flag-issue` slash-capture source) fall back to the entry `id` — since entry ids are unique, each `/flag-issue` entry counts as a separate data point. This prevents undercounting captures without session context and prevents overcounting stop-hook bursts in a single session.
+**Say occurrences, not sessions.** They were the same thing until 0.9.6 and are
+not any more, and the number is printed to somebody who will act on it. Three
+`/flag-issue` corrections typed in one sitting are three occurrences and one
+sitting. Reporting that as "three sessions" tells the reader a problem recurred
+across three separate occasions when it happened on one, which turns a single bad
+afternoon into a standing pattern: exactly the thing the dedup half of this rule
+exists to prevent. Devin caught it on PR #96, in the round that introduced it.
+
+**Counting rule:** the rule has always had two jobs. A stop-hook can fire many
+times in one sitting, and counting each firing would let one afternoon look like
+a pattern, so those dedup by session. A correction someone typed through
+`/flag-issue` is a deliberate act, and three of them about the same target is
+three separate decisions to complain, so those count one each.
+
+**Only `slash-capture` counts per entry.** It is the one source whose behaviour
+the 0.9.6 `session_id` fix changed, so it is the only one this rule restores.
+`manual` was briefly included on the argument that a hand-written entry is also
+deliberate. That argument is not evidence, no fault ever motivated it, and the
+effect would have been to let a few hand-written entries cross the threshold on
+their own. A behaviour here changes on a fault, not on a reason it might be nice.
+
+**Read that from `source`, never from an empty `session_id`.** Until 0.9.6
+`/flag-issue` left `session_id` blank, so slash-capture entries fell through to
+`entry.id` and got the per-entry counting by accident. The rule looked like it
+was about missing session context and was actually about who filed the entry.
+When 0.9.6 started resolving the id, three corrections filed in one sitting
+collapsed to one data point and dropped below the threshold, silently. Devin
+caught it on PR #96 before it shipped. `source` says what the entry is, and it
+cannot be quietly changed by an unrelated fix somewhere else.
+
+Entries of type `dep-review` never reach this step. Step 2a discards them, so a
+dep-review copying its parent's `session_id` cannot affect any count.
 
 ### Step 2c — Apply threshold
 
 ```
-flaggedTargets = targets where byTarget[target].sessions.size >= 3
+flaggedTargets = targets where byTarget[target].occurrences.size >= 3
 ```
 
-Threshold is exactly 3 unique sessions. Targets with fewer than 3 unique sessions of closed corrections are NOT flagged, no matter how many total correction entries they have.
+Threshold is exactly 3 occurrences. Targets with fewer than 3 occurrences of closed corrections are NOT flagged, no matter how many total correction entries they have.
 
 ### Step 2d — For each flagged target, generate a diagnosis
 
 Read all the `what_happened` strings from qualifying entries for that target. Synthesize a diagnosis of 3–5 sentences, max ~500 characters, covering:
 
-1. How many corrections, across how many sessions.
+1. How many corrections, across how many occasions.
 2. What the corrections cluster around — name 2–4 specific recurring issues directly, pulled from the what_happened text.
 3. A structural cause hypothesis — what about its design is likely causing the recurrence.
 
 **Required format:**
 
 ```
-{target} has been corrected {N} times across {M} sessions. The corrections cluster around: (1) {issue one}, (2) {issue two}[, (3) {issue three}]. Its structure likely {structural cause hypothesis}.
+{target} has been corrected {N} times on {M} separate occasions. The corrections cluster around: (1) {issue one}, (2) {issue two}[, (3) {issue three}]. Its structure likely {structural cause hypothesis}.
 ```
+
+`{M}` is `occurrence_count`, and it is not a count of sessions. Do not reword it
+back into one. Several `/flag-issue` corrections typed in a single sitting are
+several occasions here and one session, so calling them sessions overstates how
+far the problem has spread.
 
 **Hard cap: 500 characters.** This cap exists so the diagnosis fits in the summary file without blowing the 9,000-char session-start context cap downstream.
 
@@ -158,7 +201,7 @@ Read all the `what_happened` strings from qualifying entries for that target. Sy
 
 Also collect for each flagged target:
 - `correction_count` = total number of qualifying entries for this target (not deduped)
-- `session_count` = `byTarget[target].sessions.size` (deduped)
+- `occurrence_count` = `byTarget[target].occurrences.size` (deduped)
 - `example_entries` = up to 5 most recent qualifying entry `id` values (newest first by timestamp prefix of id)
 - `repo` = most common repo value among the qualifying entries (falls back to `"unknown"`)
 - `target_kind` = most common `target_kind` among the qualifying entries (falls back to `"skill"`)
@@ -184,6 +227,10 @@ For each entry in `existingFlags`:
 - Missing `target` → read `skill` instead
 - Missing `target_path` → read `skill_path` instead
 - Missing `target_kind` → treat as `"skill"`
+- Missing `occurrence_count` → read `session_count` instead. A flags file written
+  before 0.9.6 stores the number under the old name. It counted the same thing
+  those files were counting at the time, so the value carries over unchanged and
+  only the label is wrong. Read it, and Step 5 writes it back under the new name.
 
 Do this in memory only. The file is not rewritten here. Step 5 writes every flag back under the v5 names, which converts the file as a side effect of the next normal run, so no separate migration ever has to be run and none can half-finish.
 
@@ -211,7 +258,7 @@ Create a new flag entry:
   "target_path": "<target_path>",
   "flagged_at": "<ISO-8601 UTC now>",
   "correction_count": <count>,
-  "session_count": <count>,
+  "occurrence_count": <count>,
   "status": "pending-review",
   "diagnosis": "<generated in Step 2d>",
   "example_entries": [<up to 5 ids>],
@@ -224,7 +271,7 @@ Append to the flags array. `status` is always `"pending-review"` on creation —
 **Case B — Existing flag for this target with status NOT `"resolved"`:**
 Update the existing flag entry in place:
 - `correction_count` → new count from Step 2d
-- `session_count` → new count from Step 2d
+- `occurrence_count` → new count from Step 2d
 - `diagnosis` → regenerated string from Step 2d (only regenerate if correction_count has increased since last run; otherwise leave unchanged)
 - `example_entries` → merge new ids into existing list, keep most recent 5 (dedup by id)
 
@@ -252,7 +299,7 @@ The pattern: write to a `.tmp` file, parse-check it, then `mv` to the final path
 
 ```json
 {
-  "$schema_version": 2,
+  "$schema_version": 3,
   "last_updated": "<ISO-8601 UTC now>",
   "flags": [<merged flags array from Step 4>]
 }
@@ -294,8 +341,8 @@ Pattern detection complete.
 - Resolved flags left untouched: <N>
 
 Flagged targets:
-- <target-1> - <session_count> sessions, status: <status>
-- <target-2> - <session_count> sessions, status: <status>
+- <target-1> - <occurrence_count> occasions, status: <status>
+- <target-2> - <occurrence_count> occasions, status: <status>
 ...
 ```
 
@@ -338,7 +385,7 @@ This outputs `YYYY-WW` (e.g. `2026-17`). The summary filename is `{YYYY-WW}.md`.
 ## Pattern Flags
 
 ### New This Week
-- **{target}** ({repo}, {N} corrections across {M} sessions): {diagnosis} [status: pending-review]
+- **{target}** ({repo}, {N} corrections on {M} separate occasions): {diagnosis} [status: pending-review]
 
 ### Previously Flagged: Still Open
 - **{target}** ({repo}, {N} corrections, status: {status}): {diagnosis}
@@ -438,7 +485,7 @@ After appending, print: `hot-cache.md updated.`
 - **PATT-03 gate (non-negotiable):** Never auto-apply structural fixes from pattern flags. Flags are information for the maintainer co-development review. `"pending-review"` status means no automatic action is taken. Status transitions (`pending-review` → `in-review` → `resolved`) are made manually by the maintainer and the user, not by this skill.
 - **Empty queue:** If no .json files exist in `~/.claude/build-loop/queue/`, that's fine — write pattern-flags.json with empty flags array, write the summary with "No fixes applied this week" / "No open items in the queue", and continue through Steps 9-10 normally.
 - **Malformed queue entries:** Skip silently. Count them. Note the count in Step 6 output. Never throw.
-- **Dedup safety:** The `session_id || id` fallback is the only dedup rule. Do not introduce additional dedup (e.g., by what_happened similarity) — the design deliberately counts each /flag-issue entry as its own data point.
+- **Counting safety:** The `source`-driven token in Step 2b is the only dedup rule. Do not introduce additional dedup (e.g., by what_happened similarity). The design deliberately counts each `/flag-issue` entry as its own data point, and anything layered on top takes that away again.
 - **Update in place only:** There must never be two flag entries for the same target. If Step 4 ever tries to append when an entry already exists, that is a bug — fix it and re-run.
 - **Atomic write is non-optional here.** `pattern-flags.json` is not a queue entry, so it uses the `.tmp` plus parse-check plus `mv` pattern. Queue and to-build writes do not: they go through `scripts/queue.js`, which does the read, the check and the write under one lock. `flag-issue` used to be named here as the exception, on the grounds that creating an entry has no existing file to lose. Its header no longer says that, because the dedup check and the write were the part that needed the lock. Never use a direct single-step write to pattern-flags.json.
 - **Slack is never hardcoded:** Channel is asked at post time. The user's DM is the default. Never assume a channel.

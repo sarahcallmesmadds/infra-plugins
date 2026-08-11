@@ -244,7 +244,7 @@ target:         {target}
 target_kind:    {target_kind}
 target_path:    {target_path}
 repo:           {repo}
-session_id:     current Claude Code session ID (fill "" if not available)
+session_id:     the current Claude Code session ID, resolved as below. Fill "" only after that has failed.
 session_cwd:    current working directory of this session (fill "" if not available)
 what_happened:  {what_happened}
 what_expected:  {what_expected}
@@ -255,6 +255,26 @@ dedup_key:      {dedup_key}
 notes:          []
 resolution:     null
 ```
+
+**Resolving `session_id`.** Do not reach for `""` first. The scratchpad directory
+named in your system prompt carries the id in its path, which has the shape
+`.../{project-slug}/{session-id}/scratchpad`, so the segment immediately before
+`scratchpad` is the id. Confirm it rather than trusting the shape:
+
+```bash
+ls ~/.claude/projects/*/{session_id}.jsonl
+```
+
+A hit means the id is right and the transcript is on disk to be read later.
+Record `""` only when there is no scratchpad path to read from, or when nothing
+matches.
+
+This field is the only route from a queue entry back to the conversation that
+produced it. The entry filed on 2026-08-07 against `UserPromptSubmit` carried
+`""`, and working out what had actually failed took a full session of forensics
+four days later, because there was no transcript to open and the surrounding
+sessions had none of the failure in them. The id was sitting in the scratchpad
+path the whole time. Treat this as required, not as a convenience field.
 
 Then:
 
@@ -478,8 +498,43 @@ The primary entry write is never rolled back because a dep-review write failed. 
 ## Failure handling
 
 - If the Write tool fails for any reason, tell the user exactly what failed. Do NOT retry silently. They may want to fix the root cause before retrying.
-- If the user declines to answer a clarifying question, record the missing field as `"(not provided)"` and still write the entry — a partial entry is better than a lost correction. Flag this in the confirmation message:
+- If the user declines to answer a clarifying question, record the missing field as `"(not provided)"` and still write the entry. A partial entry is better than a lost correction. Flag this in the confirmation message:
   > "Logged with missing {field}. You can edit the file later at `{path}`."
+- **`target_path` is the exception, and it is not a partial entry, it is a blocked
+  one.** With no path there is nothing to infer `repo` from, so the entry lands as
+  `repo: "unknown"`, and `/apply-fix` refuses that outright. The correction is
+  recorded and can never be started by anything. Say that before writing, rather
+  than after:
+
+  > "Without a file path this cannot be started. `/apply-fix` refuses an entry
+  > whose repo is unknown, and the repo is worked out from the path, so with no
+  > path there is nothing to work it out from. Log it anyway, or name the file?"
+
+  Answering with a real path is the whole remedy, as long as it sits under a
+  configured root: the `target_path` resolution in Step 1 sets `repo` from the
+  root it matched. A path outside every root still leaves `repo: "unknown"`, so
+  say so at that point rather than letting them believe the question is settled.
+
+  If they choose to log it anyway, the confirmation names what it is, and names
+  the field that actually unblocks it:
+
+  > "Logged as blocked. `/apply-fix` refuses it until `repo` is set at `{path}`.
+  > Filling in `target_path` alone will not clear it, because `repo` is worked
+  > out once, when the entry is written, and nothing recomputes it afterwards."
+
+  **Say `repo`, not `target_path`.** The guard in `/apply-fix` reads `repo` and
+  nothing else, and the Repo Attribution Rule in SCHEMA.md infers `repo` from the
+  path at capture time only. Sending somebody to type a path into an entry that
+  already exists points them at the one field that will not move the guard, and
+  they find out when the fix command refuses them a second time, for the same
+  reason as the first. That is this bullet's own failure happening one level
+  down, and it is how the wrong wording got written: it was corrected to name the
+  blockage and never checked for whether it named the remedy.
+
+  The old wording, "Logged with missing field, you can edit the file later", is
+  what let the 2026-08-07 `UserPromptSubmit` entry read as a minor gap. It sat
+  unworkable for four days because nothing in the confirmation said it could not
+  be worked at all.
 - If `repo` ends up as `"unknown"`, add a note in the `notes` array:
   `{"ts": "{created_at}", "text": "repo unknown: target_path {target_path} is outside both known roots. Resolve before Phase 3 can apply the fix."}`
 - If DEPS.json cannot be read in Step 4b, NEVER block the primary confirmation. The primary entry is the source of truth. Dep-review is best-effort.
