@@ -13,18 +13,29 @@ Five things, and it says which are enforced and which are advice.
 
 **Blocks direct commits to a protected branch.** `main` and `master` by default,
 in every repository, not just the ones you remembered to configure. Says what to
-type instead.
+type instead. This one refuses rather than asks, and so does the commit message
+check, because each of them knows the better command and prints it. There is
+nothing for you to weigh.
 
-**Blocks commands that cannot be undone.** Recursive force-delete outside
+**Asks before commands that cannot be undone.** Recursive force-delete outside
 disposable paths, `git reset --hard`, `git clean -fd`, `git push --force`, and
 `git branch -D`. It deliberately allows `git push --force-with-lease`, which
 refuses to overwrite work you have not seen.
 
-**Blocks going around the commit hooks.** `git commit --no-verify` and its short
-form `-n` skip every pre-commit and commit-msg hook, and the commit that results
-looks exactly like one that passed them, so nothing afterwards records that the
-checks did not run. It deliberately allows a dry run of `git clean` in every
-spelling, `-n`, `-nd`, `-ndx` and `--dry-run`, since a preview removes nothing.
+These prompt rather than refuse, and the difference is who can answer. The guard
+knows what the command does and not whether you want it, so it says what would
+happen and puts the decision to you. Until 0.5.1 the same reasons arrived as a
+refusal, which made "confirm this is intended before running it" impossible to
+act on: a squash-merged branch could not be deleted through the tool at all, and
+the way past was to leave the session and run the command by hand. A guard you
+have to step around to do ordinary work is not adding safety.
+
+**Asks before going around the commit hooks.** `git commit --no-verify` and its
+short form `-n` skip every pre-commit and commit-msg hook, and the commit that
+results looks exactly like one that passed them, so nothing afterwards records
+that the checks did not run. It deliberately allows a dry run of `git clean` in
+every spelling, `-n`, `-nd`, `-ndx` and `--dry-run`, since a preview removes
+nothing.
 
 **Flags prompt injection in content.** Text that arrives from a file or a fetched
 page is data, not instruction. The risk is that instructions buried inside it
@@ -46,7 +57,7 @@ This is a real limitation and worth knowing before you install.
 
 | | Claude Code | Codex |
 |---|---|---|
-| Automatic blocking | Yes, via hooks | No |
+| Automatic prompting and blocking | Yes, via hooks | No |
 | On-demand scanning | Yes | Yes |
 
 Codex plugins cannot register hooks. Its plugin manifest accepts skills, MCP
@@ -92,8 +103,8 @@ key at a time, so setting one option does not reset the others.
 | `protectedBranches` | `["main", "master"]` | Branches that reject a direct commit |
 | `blockCommitToProtectedBranch` | `true` | Turn the branch guard off entirely |
 | `requireConventionalCommits` | `false` | Require `feat:`, `fix:`, `docs:` and friends |
-| `blockDestructiveCommands` | `true` | Turn the delete guard off entirely |
-| `blockCommitHookSkip` | `true` | Turn the `--no-verify` guard off entirely |
+| `blockDestructiveCommands` | `true` | Turn the delete prompt off entirely |
+| `blockCommitHookSkip` | `true` | Turn the `--no-verify` prompt off entirely |
 | `safeDeletePaths` | see `scripts/config.js` | Paths where force-delete needs no prompt |
 | `scanForInjection` | `true` | Turn content scanning off entirely |
 | `injectionExcludePaths` | `[]` | Extra regex patterns to skip when scanning |

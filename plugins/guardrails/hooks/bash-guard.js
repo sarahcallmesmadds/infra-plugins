@@ -1,8 +1,13 @@
 #!/usr/bin/env node
-// PreToolUse hook for Bash. Blocks three classes of command:
-//   1. Recursive force-delete outside known-disposable paths
-//   2. Commits directly to a protected branch
-//   3. Commit messages that miss the Conventional Commits format (opt in)
+// PreToolUse hook for Bash. Stops three classes of command, in two ways:
+//   1. Recursive force-delete outside known-disposable paths     asks
+//   2. Commits directly to a protected branch                    denies
+//   3. Commit messages that miss the Conventional Commits format denies (opt in)
+//
+// Which of the two a rule gets is not a severity ranking. It is whether the
+// guard can name the command you wanted instead. For 2 and 3 it can, so it
+// prints it and refuses. For 1 it cannot: whether a delete is intended is
+// yours to answer, so it says what would happen and asks.
 
 'use strict';
 
@@ -12,7 +17,7 @@ const os = require('os');
 const path = require('path');
 
 const ROOT = path.join(__dirname, '..');
-const { readEvent, block } = require(path.join(ROOT, 'scripts', 'hook-io'));
+const { readEvent, block, confirm } = require(path.join(ROOT, 'scripts', 'hook-io'));
 const { loadConfig } = require(path.join(ROOT, 'scripts', 'config'));
 const { checkCommand, ALL_RULES } = require(path.join(ROOT, 'scripts', 'command'));
 
@@ -162,9 +167,19 @@ readEvent((event) => {
     rule === 'destructive' ? config.blockDestructiveCommands !== false
       : config.blockCommitHookSkip !== false
   ));
+  // A confirm verdict is put to the user, not refused on their behalf. Both of
+  // these rules describe what a command would do and then ask whether that is
+  // intended, and only the person typing it knows. Answering for them made the
+  // reason text a dead end: it said "confirm this is intended before running
+  // it" and there was no way to confirm, so a merged branch could not be
+  // deleted through the tool at any point, however many times it was approved
+  // in conversation.
+  //
+  // The two rules below stay `deny`, and the difference is that each of them
+  // knows the better command and prints it. Nothing is being weighed there.
   const verdict = checkCommand(command, config, { rules });
   if (verdict.verdict === 'confirm') {
-    block(verdict.reason);
+    confirm(verdict.reason);
     return;
   }
 
