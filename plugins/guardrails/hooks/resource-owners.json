@@ -1,24 +1,5 @@
 {
-  "$schema_version": 1,
-  "resources": [
-    {
-      "id": "session-handoffs",
-      "label": "session handoffs",
-      "type": "directory",
-      "path": "~/.planning/handoffs/",
-      "owners": ["session:wrap"]
-    },
-    {
-      "id": "build-loop-bug-queue",
-      "label": "the build-loop bug queue",
-      "type": "directory",
-      "path": "~/.claude/build-loop/queue/",
-      "owners": [
-        "build-loop:flag-issue",
-        "build-loop:apply-fix",
-        "build-loop:verify-fix",
-        "build-loop:revert-fix"
-      ]
-    }
-  ]
+  "$schema_version": 2,
+  "_note": "No resources are governed by default. Add your own in ~/.claude/guardrails.resources.json, which replaces this file rather than merging with it. Until 0.5.0 this shipped two directories from the author's own machine, protected by an `owners` rule that no longer exists; see the plugin README for what replaced it and why.",
+  "resources": []
 }

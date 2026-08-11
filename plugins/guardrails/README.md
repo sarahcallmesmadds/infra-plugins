@@ -34,14 +34,11 @@ a summary cannot tell you whether "delete the old records" came from you or from
 a file that suggested it. Flagging at the moment content arrives is the last
 point where the difference is still visible.
 
-**Blocks direct writes to skill-owned resources.** Session handoffs belong to
-`/session:wrap`; the build-loop bug queue belongs to the skills that create and
-resolve its entries. Invoking an owning skill opens a session-scoped lease for
-30 minutes. A direct Write, Edit, NotebookEdit, or common shell write without
-that lease is denied, so the
-skill's validation and confirmation steps cannot be skipped by accident.
-Lease files live under `~/.claude/guardrails-leases/`, with the directory locked
-to the current user.
+**Blocks writes to a directory whose governing document you have not read.**
+Point a resource at a folder, name the document that governs it, and a Write,
+Edit, NotebookEdit or common shell write into that folder is denied until the
+document has been opened in that session. Nothing is governed by default; you
+add your own.
 
 ## Claude Code gets enforcement, Codex gets advice
 
@@ -101,24 +98,34 @@ key at a time, so setting one option does not reset the others.
 | `scanForInjection` | `true` | Turn content scanning off entirely |
 | `injectionExcludePaths` | `[]` | Extra regex patterns to skip when scanning |
 
-### Protected resources
+### Governed resources
 
-A resource can carry two independent rules, and may set either or both.
+A resource carries one rule, `requiresRead`.
 
-| Field | The question it answers |
-|---|---|
-| `owners` | Who is allowed to write this |
-| `requiresRead` | What has to be in front of you before you write it |
-
-`owners` is a list of canonical skill names. A direct write is refused unless
-one of them is holding a live lease.
-
-`requiresRead` is a list of documents that must have been opened in this session
-before anything under the resource can be written. It exists for the case where
-a decision is written down, known about, and skipped anyway: an approved design
+It is a list of documents that must have been opened in this session before
+anything under the resource can be written. It exists for the case where a
+decision is written down, known about, and skipped anyway: an approved design
 system sat in a planning folder for three days while a page was built against
-nothing and then thrown away on sight. `owners` could not express that, because
-the directory belongs to no skill. It is governed rather than owned.
+nothing and then thrown away on sight.
+
+**There used to be a second rule, `owners`, and it was removed in 0.5.0.** It
+named the skills allowed to write a resource and refused everyone else, proved
+by a lease file written when an owning skill started. If you have `owners` in
+your own registry it is now inert, and nothing else about that resource changes.
+
+It was removed rather than repaired because the case for it never materialised.
+It was added as a backstop rather than after anything went wrong, and across the
+time it ran there is no recorded instance of it stopping a bad write. It twice
+refused the owning skill itself, which was the one caller it existed to admit,
+because a lease was only ever written when a skill was invoked as a tool and not
+when its slash command was typed. The failure people reached for it to prevent,
+a handoff landing somewhere it should not, was never something it could catch:
+it only inspects writes going into the governed directory, and a file written to
+the wrong place is by definition not in that directory.
+
+`requiresRead` is a different rule with a different history and it stays. Note
+what it asks. `owners` asked who you are, which a guard cannot really know.
+`requiresRead` asks whether a document is in front of you, which it can check.
 
 Add `readReason` to say why, in your own words. It is printed with the refusal,
 so the rule arrives with its reason instead of as a wall.
@@ -139,12 +146,8 @@ Two kinds of read do not count, and the refusal says so:
 - **A read narrowed by `offset` or `limit`.** Part of a governing document is
   not the document.
 
-**Both gates apply independently.** A resource that sets `owners` and
-`requiresRead` asks for both: invoking the owning skill satisfies the first and
-does nothing about the second, so the skill's own writes are refused until the
-document has been opened in that session. A skill can satisfy it by using the
-Read tool like anyone else. If you want a lease to be sufficient on its own, put
-the two rules on separate resources rather than on one.
+A skill's own writes are not exempt. If a resource requires a document, the
+skill that writes there has to have opened it in that session like anyone else.
 
 A resource may also list several locations with a `paths` array beside `path`.
 A git worktree puts the same directory in two places while a branch is in
@@ -165,28 +168,35 @@ ordinary commands is one that gets switched off.
 
 ### The default registry
 
-The default registry is `hooks/resource-owners.json`. It protects:
+The default registry is `hooks/resource-owners.json` and **it is empty**. This
+plugin governs nothing until you say so.
 
-- `~/.planning/handoffs/`, owned by `/session:wrap`
-- `~/.claude/build-loop/queue/`, owned by `/build-loop:flag-issue`,
-  `/build-loop:apply-fix`, `/build-loop:verify-fix`, and
-  `/build-loop:revert-fix`
+Until 0.5.0 it shipped two directories from the author's own machine, which is
+a rule about one laptop arriving on every install. Because the user registry
+replaces the shipped list rather than merging with it, nobody could remove them
+locally either without restating the whole policy.
 
-To replace that list, create `~/.claude/guardrails.resources.json` with the same
-shape. Each resource has an `id`, human-readable `label`, `type` (`file` or
-`directory`), and `path`, plus any of `paths`, `owners`, `requiresRead` and
-`readReason`. The user registry replaces the shipped list rather than merging
-with it, so a local policy is visible in one place.
+To add your own, create `~/.claude/guardrails.resources.json`. Each resource has
+an `id`, human-readable `label`, `type` (`file` or `directory`), and `path`,
+plus any of `paths`, `requiresRead` and `readReason`:
 
-Machine-specific entries belong there and not in the shipped registry, which
-ships to everyone. A rule naming a folder that exists on one laptop is noise on
-every other install, and because the user registry replaces the shipped list
-rather than merging, nobody can remove it locally either.
+```json
+{
+  "resources": [
+    {
+      "id": "site",
+      "label": "the marketing site",
+      "type": "directory",
+      "path": "~/Projects/example/site/",
+      "requiresRead": ["~/.planning/DECISION-design-system.md"],
+      "readReason": "The design system was approved on 5 August and governs every route."
+    }
+  ]
+}
+```
 
-Only resources with a real public owner are protected by default. In
-particular, the IP inventory is intentionally absent: its current automated
-writers do not invoke a public registration skill, so guarding it would stop
-legitimate work without offering a usable route through the guard.
+Machine-specific entries belong there rather than in the shipped registry, for
+the reason above.
 
 If you find yourself approving the same deletion repeatedly, add that path to
 `safeDeletePaths` rather than approving it each time. A guard you routinely
@@ -235,6 +245,32 @@ approving something you should not.
 
 Treat it as the seatbelt, not the airbag.
 
+## Upgrading to 0.5.0
+
+**The `owners` rule is gone, and with it the lease files under
+`~/.claude/guardrails-leases/`.** Nothing replaces it. A directory that was
+refused to everyone but its owning skill is now an ordinary directory.
+
+What to do:
+
+- If your `~/.claude/guardrails.resources.json` has resources that carry only
+  `owners`, they no longer do anything. Delete them, or give them a
+  `requiresRead` naming the document that governs the directory.
+- `~/.claude/guardrails-leases/` can be deleted. Nothing reads it.
+- The shipped registry is now empty, so if you were relying on the two
+  directories it used to protect, they are no longer protected by default and
+  were never yours to begin with.
+
+Why it went rather than getting fixed: it was added as a backstop rather than
+after anything went wrong, and it has no recorded instance of stopping a bad
+write. It twice refused the owning skill itself, since a lease was only written
+when a skill was invoked as a tool and not when its slash command was typed. And
+the failure it tended to be reached for, a file landing somewhere it should not,
+was never something it could catch, because it only inspects writes going into
+the governed directory.
+
+`requiresRead` is unaffected.
+
 ## Upgrading to 0.4.0
 
 Resources gain `requiresRead`: a list of documents that must be open in this
@@ -263,11 +299,12 @@ behaviour, but it did work as a blanket deny, and anyone whose own
 `~/.claude/guardrails.resources.json` relies on that will find it has stopped.
 An ownerless entry now means "not owned by any skill", which is what the field
 says and what `requiresRead`-only resources need. If you were using one as a
-hard deny, give it an `owners` list naming the skill that should hold it, or a
-`requiresRead` naming the document that governs it.
+hard deny, give it a `requiresRead` naming the document that governs it. The
+advice here originally offered `owners` as the other option; that field was
+removed in 0.5.0 and no longer does anything.
 
 Shell write detection is unchanged and still matches registered paths literally.
-See the limit noted under Protected resources.
+See the limit noted under Governed resources.
 
 ## Upgrading to 0.2.4
 

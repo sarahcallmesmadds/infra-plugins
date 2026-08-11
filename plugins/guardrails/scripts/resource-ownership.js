@@ -1,11 +1,9 @@
 'use strict';
 
-const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const LEASE_TTL_MS = 30 * 60 * 1000;
 const WRITE_TOOLS = new Set(['Write', 'Edit', 'NotebookEdit']);
 
 function expandHome(value) {
@@ -189,49 +187,6 @@ function matchedResource(event, resources) {
   return matchedResources(event, resources)[0] || null;
 }
 
-function keyPart(value) {
-  return crypto.createHash('sha256').update(String(value || 'unknown')).digest('hex').slice(0, 20);
-}
-
-function leasePath(skill, sessionId, leaseDir = path.join(os.homedir(), '.claude', 'guardrails-leases')) {
-  const safeSkill = String(skill).replace(/[^a-zA-Z0-9_.-]+/g, '-').slice(0, 80);
-  return path.join(leaseDir, `.guardrails-owner-${keyPart(sessionId)}-${safeSkill}.json`);
-}
-
-function atomicWriteLease(file, lease) {
-  const dir = path.dirname(file);
-  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-  fs.chmodSync(dir, 0o700);
-  const temp = `${file}.${process.pid}.${crypto.randomUUID()}.tmp`;
-  try {
-    fs.writeFileSync(temp, JSON.stringify(lease), { mode: 0o600 });
-    fs.renameSync(temp, file);
-  } finally {
-    try { fs.unlinkSync(temp); } catch (_) { /* rename succeeded, or nothing was written */ }
-  }
-}
-
-function writeLease(skill, sessionId, now = Date.now(), leaseDir) {
-  const file = leasePath(skill, sessionId, leaseDir);
-  atomicWriteLease(file, { skill, sessionId: keyPart(sessionId), startedAt: now, touchedAt: now });
-  return file;
-}
-
-function readLease(skill, sessionId, now = Date.now(), leaseDir) {
-  try {
-    const lease = JSON.parse(fs.readFileSync(leasePath(skill, sessionId, leaseDir), 'utf8'));
-    if (lease.sessionId !== keyPart(sessionId)) return null;
-    if (now - lease.touchedAt >= LEASE_TTL_MS) return null;
-    return lease;
-  } catch (_) {
-    return null;
-  }
-}
-
-function activeOwner(resource, sessionId, now = Date.now(), leaseDir) {
-  return (resource.owners || []).find((skill) => readLease(skill, sessionId, now, leaseDir)) || null;
-}
-
 // Which files were opened with the Read tool in this session.
 //
 // Returns null, and not an empty set, when the record cannot be consulted at
@@ -312,19 +267,13 @@ function unreadRequirements(resource, transcriptPath, cwd) {
 }
 
 module.exports = {
-  LEASE_TTL_MS,
   absolutePath,
-  activeOwner,
-  atomicWriteLease,
   bashWritesPath,
   contains,
-  leasePath,
   loadRegistry,
   matchedResource,
   matchedResources,
-  readLease,
   readsInTranscript,
   resourcePaths,
   unreadRequirements,
-  writeLease,
 };

@@ -5,35 +5,34 @@ const path = require('path');
 const ROOT = path.join(__dirname, '..');
 const { readEvent, block } = require(path.join(ROOT, 'scripts', 'hook-io'));
 const {
-  activeOwner, loadRegistry, matchedResources, unreadRequirements,
+  loadRegistry, matchedResources, unreadRequirements,
 } = require(path.join(ROOT, 'scripts', 'resource-ownership'));
 
+// This hook used to run two gates. The `owners` gate asked who was allowed to
+// write a resource and refused anyone but the owning skill; it was removed in
+// 0.5.0 and only `requiresRead` remains. The filename is left alone in that
+// change so the diff stays reviewable, and renaming it is its own small piece
+// of work.
+//
+// Why the owner gate went, recorded here because a removal leaves no code to
+// read: it was added on 2026-08-05 as a backstop rather than in response to
+// anything going wrong, and in the six days it ran there was no case of it
+// stopping a bad write. It twice refused the owning skill itself, which is the
+// one caller it existed to let through. The failure it was reached for, a
+// handoff landing somewhere it should not, is not a thing it could ever have
+// caught: it only inspects writes going into the protected directory, and a
+// handoff written to the wrong place is by definition not in that directory.
+//
+// `requiresRead` is a different gate with a different history and it stays. It
+// exists because an approved design system sat unread in a planning folder for
+// three days while a page was built against nothing and thrown away on sight.
 readEvent((event) => {
   const resources = matchedResources(event, loadRegistry(ROOT));
   if (!resources.length) return;
 
-  // Two independent gates, and a resource may set either or both.
-  //
-  // `owners` asks who is allowed to write this. `requiresRead` asks what has to
-  // be in front of you before you write it. They are different questions: a
-  // resource can belong to a skill, or belong to nobody and still be governed
-  // by a document, which is the case this exists for.
-  //
   // Every matching resource is checked rather than only the first, so a rule on
   // a directory and a rule on something inside it both apply. The first refusal
   // wins, since one blocked write only needs one reason.
-  for (const resource of resources) {
-    const owners = resource.owners || [];
-    if (owners.length && !activeOwner(resource, event.session_id)) {
-      return block(
-        `Direct write blocked: ${resource.label || resource.id} is owned by `
-        + `${owners.map((owner) => `/${owner}`).join(' or ')}.\n\n`
-        + 'Invoke the owning skill so its validation and confirmation steps run. '
-        + 'To customize protected resources, edit ~/.claude/guardrails.resources.json.'
-      );
-    }
-  }
-
   for (const resource of resources) {
     const unread = unreadRequirements(resource, event.transcript_path, event.cwd);
     if (!unread.length) continue;
