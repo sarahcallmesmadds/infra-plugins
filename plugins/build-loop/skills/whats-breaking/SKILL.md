@@ -135,7 +135,7 @@ byTarget = {
 }
 ```
 
-**Say occurrences, not sessions.** They were the same thing until 0.9.7 and are
+**Say occurrences, not sessions.** They were the same thing until 0.9.6 and are
 not any more, and the number is printed to somebody who will act on it. Three
 `/flag-issue` corrections typed in one sitting are three occurrences and one
 sitting. Reporting that as "three sessions" tells the reader a problem recurred
@@ -228,7 +228,7 @@ For each entry in `existingFlags`:
 - Missing `target_path` → read `skill_path` instead
 - Missing `target_kind` → treat as `"skill"`
 - Missing `occurrence_count` → read `session_count` instead. A flags file written
-  before 0.9.7 stores the number under the old name. It counted the same thing
+  before 0.9.6 stores the number under the old name. It counted the same thing
   those files were counting at the time, so the value carries over unchanged and
   only the label is wrong. Read it, and Step 5 writes it back under the new name.
 
@@ -299,7 +299,7 @@ The pattern: write to a `.tmp` file, parse-check it, then `mv` to the final path
 
 ```json
 {
-  "$schema_version": 2,
+  "$schema_version": 3,
   "last_updated": "<ISO-8601 UTC now>",
   "flags": [<merged flags array from Step 4>]
 }

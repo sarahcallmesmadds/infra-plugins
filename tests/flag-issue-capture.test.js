@@ -47,7 +47,7 @@ const SCHEMA_BUILD = read(BUILD_LOOP, 'reference', 'SCHEMA-BUILD.md');
 // Derived and compared, for the reason set out in deps-keys.test.js: counting
 // as they run fixes a stale tally, and comparing still catches a check that
 // quietly disappears.
-const EXPECTED_CHECKS = 13;
+const EXPECTED_CHECKS = 16;
 
 let failed = 0;
 let ran = 0;
@@ -218,10 +218,10 @@ check('the renamed count can still be read from an older flags file', () => {
   assert.ok(
     /Missing `occurrence_count` → read `session_count` instead/.test(WHATS_BREAKING),
     'nothing maps the old session_count key on read, so a flags file written '
-    + 'before 0.9.7 loses its counts'
+    + 'before 0.9.6 loses its counts'
   );
   assert.ok(
-    /`session_count` before 0\.9\.7/.test(SCHEMA),
+    /`session_count` before 0\.9\.6/.test(SCHEMA),
     'the schema does not record the old field name, so the fallback above reads '
     + 'as unexplained'
   );
@@ -279,6 +279,83 @@ check('no reference still documents session_id as optional', () => {
       `${name} requires a session id but never says where to get one`
     );
   }
+});
+
+// --- a version written in prose is still a version -------------------------
+
+check('no prose names a build-loop version this branch does not ship', () => {
+  // Round 2 dated the rename to 0.9.7 while every manifest said 0.9.6. The
+  // number came from a second branch, built between rounds, that legitimately
+  // bumps to 0.9.7. Nothing caught it: plugin-versions.test.js compares the
+  // three manifests to each other and plugin-version-drift.test.js compares
+  // them to main, and neither reads a sentence.
+  //
+  // Derived from the manifest rather than written down here, so this check
+  // cannot itself go stale the way the prose did.
+  const shipped = JSON.parse(
+    read(BUILD_LOOP, '.claude-plugin', 'plugin.json')
+  ).version;
+  const [maj, min] = shipped.split('.');
+  const offenders = [];
+  for (const [name, text] of Object.entries({
+    'whats-breaking/SKILL.md': WHATS_BREAKING,
+    'flag-issue/SKILL.md': FLAG_ISSUE,
+    'to-build/SKILL.md': TO_BUILD,
+    'SCHEMA.md': SCHEMA,
+    'SCHEMA-BUILD.md': SCHEMA_BUILD,
+  })) {
+    text.split('\n').forEach((line, i) => {
+      // Only versions in this plugin's own series. A reference to 0.3.1 or
+      // 0.9.5 is history and is meant to be there; a number ahead of what
+      // ships is the error.
+      for (const m of line.matchAll(/\b(\d+)\.(\d+)\.(\d+)\b/g)) {
+        if (m[1] !== maj || m[2] !== min) continue;
+        if (Number(m[3]) > Number(shipped.split('.')[2])) {
+          offenders.push(`${name}:${i + 1} names ${m[0]}, this branch ships ${shipped}`);
+        }
+      }
+    });
+  }
+  assert.strictEqual(
+    offenders.length, 0,
+    `prose names a version ahead of the one being released:\n        `
+    + offenders.join('\n        ')
+  );
+});
+
+// --- a renamed field moves the version of the file holding it --------------
+
+check('the pattern-flags rename bumped the file it lives in', () => {
+  // SCHEMA.md's own rule: bump when any field is added, renamed, or removed.
+  // The previous rename inside this same file followed it, and the v5 changelog
+  // row records that. Round 2 renamed session_count and left the version at 2,
+  // so a file written with the new name was indistinguishable from one written
+  // with the old.
+  const writer = WHATS_BREAKING.slice(WHATS_BREAKING.indexOf('## Step 5'));
+  assert.ok(
+    /"\$schema_version": 3/.test(writer),
+    'the pattern-flags writer still stamps a version that predates the '
+    + 'occurrence_count rename'
+  );
+  assert.ok(
+    /Version for this file\. Currently 3\./.test(SCHEMA),
+    'the schema still describes the pattern-flags version as the pre-rename one'
+  );
+});
+
+check('the rename is recorded in the changelog', () => {
+  // The v5 row set the precedent by recording a pattern-flags bump. A rename
+  // that moves a version and leaves no row means the next person reading the
+  // history sees a number change with no reason beside it.
+  const changelog = SCHEMA.slice(SCHEMA.indexOf('| v1 |'));
+  assert.ok(
+    /pattern-flags\.json goes to v3/.test(changelog),
+    'no changelog row records the pattern-flags v3 bump'
+  );
+  assert.ok(
+    /occurrence_count/.test(changelog),
+    'the changelog records a bump without naming the rename that caused it'
+  );
 });
 
 if (ran !== EXPECTED_CHECKS) {
