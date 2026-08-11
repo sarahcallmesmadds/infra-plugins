@@ -161,15 +161,28 @@ converts it.
 
 ## Step 3 — Diff the disk scan against the map
 
-Classify everything into one of three buckets:
+Classify everything into one of four buckets:
 
 **MISSING** — on disk but not in `existing`. These need entries added.
 **ORPHANED** — in `existing` but not on disk. These may have been renamed or deleted.
 **EXISTING** — in both. Check whether the file mtime from Step 1 is newer than the entry's `last_updated` field. Parse both as timestamps and compare. If newer, the entry is STALE and may need `depends_on` re-inferred.
+**ONE-SIDED** — a `dependents` row on entry T naming A, where **A has no `depends_on` path to T at all**, neither directly nor through other entries. This one is about the map's internal consistency rather than about disk, so it is computed from `existing` alone and needs no file to have changed.
+
+**A missing direct edge is not the test, and using it as the test is wrong.** SCHEMA-DEPS.md tracks transitive dependencies on purpose: if A depends on B and B depends on C, A appears in C's `dependents`. A's `depends_on` correctly names B and not C, so every transitive back-edge in a healthy map looks unmatched if you only compare direct edges. Counting those inflates the bucket with rows that are already right, and `add-missing` would then write a direct A → C edge the schema does not intend, turning a correct indirect relationship into a fabricated direct one.
+
+So follow the forward edges. Take the entry named in the `dependents` row, walk its `depends_on` transitively, and if T is reachable the row is explained and belongs in no bucket. Only a row with no path at all is one-sided.
+
+Measured against the live map on 2026-08-11: 249 `dependents` rows, 147 matched by a direct edge, 3 explained only transitively, 99 genuinely unexplained. Three is small here, and it is three rows this skill would otherwise have reported as broken and offered to "repair" by inventing an edge.
+
+Work ONE-SIDED out here, not later. Step 6 is where the decision is applied, but it is the last approval gate in the skill and Step 5 is the only one, so a bucket discovered after Step 5 would mean asking the user a second question about a write they already approved. Anything the user has to decide is decided in one place.
+
+A few will resolve themselves: if Step 4 infers a `depends_on` that happens to mirror a one-sided row, the pair is whole and it leaves the bucket. Recheck against the final map in Step 6 and say how many resolved rather than carrying the Step 3 number through.
 
 **Compare against `last_updated`, never `last_auto_checked`.** The second is written by the `deps-watch` hook after an ordinary edit, and it means only that every reference the file mechanically makes was already recorded. It cannot see a semantic edge, one thing reading a file another writes, which is the kind this map exists to catch. Treating it as a review date would empty this bucket of exactly the entries that most need looking at. Carry the field through unchanged on write; it is not yours to set.
 
-If `$ARGUMENTS` is non-empty, filter all three buckets to entries whose name or composite key matches, so `/audit-deps daily-brief` reviews one thing without scanning every change.
+If `$ARGUMENTS` is non-empty, filter **all four buckets** to entries whose name or composite key matches, so `/audit-deps daily-brief` reviews one thing without scanning every change.
+
+ONE-SIDED needs saying explicitly, because it is the one bucket that does not come from the disk scan. It is computed across every entry in the map, so left unfiltered it flows into the draft and the apply regardless of the argument, and a user who scoped the audit to one target is shown, and can approve, removals on entries they never named. Filter it on the entry the row sits on and on the entry it names: a row is in scope if either end matches.
 
 ## Step 4 — For each MISSING entry, infer its depends_on
 
@@ -224,9 +237,20 @@ Stale (K):
   ~ {composite_key} - the file mtime is newer than last_updated
     Current depends_on: [{list}]
     Re-read the file to check for new deps? (y/no)
+    Declining leaves them exactly as they are. Nothing is stamped as reviewed.
+
+One-sided (J of {total} dependents rows, {percent}%):
+  ! {composite_key} <- {dependent}
+    recorded as a dependent, but {dependent} has no depends_on pointing back
+
+  Only half of each relationship is written down. Removing them deletes the
+  only record; adding the missing depends_on keeps it.
+  keep / add-missing / remove?   Default: keep.
 
 Write these changes to DEPS.json? (y / edit / skip)
 ```
+
+Show the percentage whenever One-sided is more than a tenth of all `dependents` rows. A step that removes a large share of the map has to say so, in the place the user is deciding.
 
 On the user's response:
 - `y`, `yes`, `sure`, `go` — proceed to Step 6
@@ -237,7 +261,18 @@ On the user's response:
 
 For orphaned entries specifically, ask explicitly: "Remove {composite_key} from DEPS.json, or leave it?" Default is LEAVE — do not remove unless the user confirms.
 
-For stale entries, only re-infer if the user confirms. Otherwise just bump the entry's `last_updated` without changing `depends_on` — this acknowledges the file was inspected.
+For stale entries, only re-infer if the user confirms. **If they decline, leave `last_updated` alone.**
+
+This used to say to bump it anyway, to acknowledge the file was inspected. Nothing inspected it. SCHEMA-DEPS.md defines `last_updated` as the date the edges were judged correct by a person or by this skill, and v4 added `last_auto_checked` precisely so an unattended check would stop writing into that field. Stamping it after a version bump records a review that did not happen, and since it is also what this skill compares against the file mtime, the entry then never comes up for review again.
+
+It is the same fault v4 was written to fix, reappearing in the skill instead of the hook. On 2026-08-11 following it would have marked 64 entries reviewed because a rename changed a URL string in them.
+
+Say what was skipped instead:
+
+```
+Stale (64): left alone. Re-inferring these means reading 64 files, so say
+which ones you want. Nothing was stamped as reviewed.
+```
 
 ## Step 6 — Recompute dependents across the whole map
 
@@ -249,7 +284,24 @@ After applying the approved additions/removals/changes:
    `A.plugin` is a field on the entry, written in Step 4. It is not derived here and it is not parsed out of A's key. If an older entry has no `plugin` but its key carries one, take the plugin from the key rather than dropping it, because a dependent with no plugin is ambiguous the moment two plugins share a name. Omit the field entirely, never `null`, when A genuinely is not inside a plugin.
 
    Resolve T to its entry using the ordered lookup in SCHEMA-DEPS.md rather than string-matching the key, so an edge written before v3 still finds its target.
-3. Prune `dependents` entries that no longer have a matching `depends_on` edge in the source.
+3. **Collect, do not delete, every `dependents` entry with no matching `depends_on` edge.** Adding a back-edge is safe and needs no permission. Removing one destroys the only copy of a relationship somebody wrote down, so it goes through the user like every other removal in this skill.
+
+   This step used to say "prune" and nothing else. Measured against the live map on 2026-08-11, following it removed **99 of 249** back-edges in one pass, 40 percent, and almost all of them were test coverage links of the shape `guardrails/bash-guard <- bash-guard.test`. Those are the rows that answer "what does this fix put at risk", which is the question the map exists for. Nothing errored. The file came back smaller, `/apply-fix` reported fewer dependents than it should, and everything looked healthy.
+
+   It would also have taken 3 more that are not one-sided at all, being explained by a transitive chain. Those are the rows the definition in Step 3 now excludes.
+
+   A one-sided edge is usually a **missing `depends_on`, not a stale dependent.** `run-all` lists every test as a dependent while its own `depends_on` is empty, and the relationship is real either way. Deleting the only record of it is the one option that loses information.
+
+   **Do not ask here.** The ONE-SIDED bucket was worked out in Step 3 and put to the user in Step 5, along with everything else they approved. Apply the answer they already gave:
+
+   - `keep`, and the default on no answer: leave them exactly as they are.
+   - `add-missing`: write the mirroring `depends_on` onto the source entry so the pair is whole, carrying the reason across.
+   - `remove`: prune, having been told to.
+
+   Recheck the bucket against the final map before acting. A `depends_on` inferred in Step 4 can mirror a one-sided row and make it whole on its own, so a row that resolved that way is no longer anybody's decision. Carry the count that survives, not the Step 3 count, and report both in Step 8.
+
+   **Never prune without an explicit `remove`.** There is no path through this skill where back-edges disappear without the user having read a count and chosen.
+
 4. Alphabetize the top-level `targets` keys so diffs stay clean.
 
 ## Step 7 — Atomic write (prevents corruption)
@@ -277,13 +329,27 @@ This is the critical discipline — if Claude is killed during a Write, DEPS.jso
 
 ## Step 8 — Summary message
 
-Report to the user what changed:
+Report what the run did, and only that. Every clause here is a claim somebody will act on, so a line describing work that did not happen is the same false reassurance this skill exists to remove from the map.
 
-> "DEPS.json updated. Added {N} missing, removed {M} orphans, reviewed {K} stale entries. Total entries: {count}."
+> "DEPS.json updated. Added {N} missing, removed {M} orphans, re-inferred {K} stale entries. Total entries: {count}."
+
+**`{K}` counts entries whose `depends_on` was actually re-read, not entries considered.** The summary used to say "reviewed {K} stale entries" while Step 5 was leaving declined ones untouched, so a run that read nothing still reported K reviews. Where the user declined, say so instead and give the number:
+
+> "{S} stale entries left alone. Nothing was stamped as reviewed."
+
+Report the one-sided bucket too, whichever way it went. Silence there reads as "there were none", which is a different fact:
+
+> "One-sided dependents: {J} kept." / "{J} repaired by adding the missing depends_on." / "{J} removed, as asked."
+
+If any resolved on their own because Step 4 inferred the mirroring edge, say that separately rather than folding it into the kept count:
+
+> "{R} resolved on their own once the new edges were added."
 
 If any low-confidence edges were added in this update, list them:
 
 > "New low-confidence edges for your review: {list}"
+
+Nothing in this summary is optional because the number is zero. "0 removed" and no line at all look identical in a transcript and mean different things.
 
 ## Failure handling
 

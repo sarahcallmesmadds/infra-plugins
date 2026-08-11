@@ -53,7 +53,7 @@ const SKILLS = {
 // should be noticed. So the count is derived AND compared, and this constant
 // has to move when a check is added or removed. Forgetting now fails the suite
 // instead of printing a smaller number nobody reads.
-const EXPECTED_CHECKS = 23;
+const EXPECTED_CHECKS = 29;
 
 let failed = 0;
 let ran = 0;
@@ -364,6 +364,128 @@ check('audit-deps says a plugin row stores the manifest, not the directory', () 
     /`path` for a `kind: plugin` entry is the plugin's\n\s*`\.claude-plugin\/plugin\.json`/.test(SKILLS['audit-deps']),
     'audit-deps never says what path a plugin entry stores, so the directory '
     + 'the glob returns and the manifest already in the map both look correct'
+  );
+});
+
+// --- the two ways this skill used to lose information silently --------------
+
+// Step 6 said "prune dependents with no matching depends_on" and nothing else.
+// Run against the live map on 2026-08-11 that deleted 101 of 242 back-edges,
+// 42 percent, almost all of them test coverage links. No error, no count, the
+// file just came back smaller and every reader kept working.
+check('audit-deps does not prune back-edges without being told to', () => {
+  const step6 = SKILLS['audit-deps'];
+  assert.ok(
+    /Collect, do not delete/.test(step6),
+    'audit-deps still prunes one-sided dependents as a silent step'
+  );
+  assert.ok(
+    /Never prune without an explicit `remove`/.test(step6),
+    'audit-deps never says pruning needs permission, so it reads as automatic'
+  );
+  assert.ok(
+    /keep \/ add-missing \/ remove/.test(step6),
+    'audit-deps offers no way to repair a one-sided edge, so the only options '
+    + 'are keep it broken or delete the evidence'
+  );
+});
+
+// The bucket is found in Step 3 and put to the user in Step 5, with everything
+// else. Asking in Step 6 would be a second approval for a write they already
+// approved, which is the shape Step 5 exists to prevent.
+// The schema tracks transitive dependents on purpose, so A's depends_on names B
+// and not C while A still appears in C's dependents. Testing for a missing
+// DIRECT edge therefore flags every healthy transitive row, and `add-missing`
+// would then invent a direct A -> C edge the schema does not intend.
+check('one-sided means no path at all, not no direct edge', () => {
+  const skill = SKILLS['audit-deps'];
+  assert.ok(
+    /no `depends_on` path to T at all/.test(skill),
+    'audit-deps defines one-sided by a missing direct edge, which flags every '
+    + 'legitimate transitive back-edge as broken'
+  );
+  assert.ok(
+    /walk its `depends_on` transitively/.test(skill),
+    'audit-deps never says to follow the chain, so an implementation compares '
+    + 'direct edges and inflates the bucket'
+  );
+  assert.ok(
+    /SCHEMA-DEPS\.md tracks transitive dependencies on purpose/.test(skill),
+    'the reason the direct-edge test is wrong is not written down, so it reads '
+    + 'as an arbitrary refinement and gets simplified back'
+  );
+});
+
+check('a scoped audit filters the one-sided bucket too', () => {
+  const skill = SKILLS['audit-deps'];
+  assert.ok(
+    !/filter all three buckets/.test(skill),
+    'the $ARGUMENTS filter still names three buckets, so ONE-SIDED escapes it'
+  );
+  assert.ok(
+    /a row is in scope if either end matches/.test(skill),
+    'audit-deps never says how to scope a one-sided row, which sits between two '
+    + 'entries rather than on one'
+  );
+});
+
+check('audit-deps asks about one-sided edges in the one approval gate', () => {
+  const skill = SKILLS['audit-deps'];
+  assert.ok(
+    /four buckets/.test(skill),
+    'ONE-SIDED is not one of the buckets Step 3 produces, so it cannot reach '
+    + "Step 5's draft"
+  );
+  assert.ok(
+    /One-sided \(J of \{total\} dependents rows/.test(skill),
+    "Step 5's draft has no One-sided section, so the user approves a write "
+    + 'without seeing what it removes'
+  );
+  assert.ok(
+    /\*\*Do not ask here\.\*\*/.test(skill),
+    'Step 6 still opens a second approval conversation'
+  );
+});
+
+// Every clause in the closing summary is a claim somebody acts on. It said
+// "reviewed {K} stale entries" while Step 5 was leaving declined ones alone.
+check('the summary does not report work that did not happen', () => {
+  const skill = SKILLS['audit-deps'];
+  // The template line itself, not the prose around it. The paragraph below it
+  // quotes the retired wording on purpose, to say what it used to claim and
+  // why that was wrong, and a test that cannot tell a template from a
+  // description of one forces the history to be deleted to go green.
+  const template = skill.match(/^> "DEPS\.json updated\..*$/m);
+  assert.ok(template, 'the summary template is gone entirely');
+  assert.ok(
+    !/reviewed/.test(template[0]),
+    `the summary template still claims a review: ${template[0]}`
+  );
+  assert.ok(
+    /Nothing was stamped as reviewed/.test(skill),
+    'the summary never says what was left alone, so a declined run reads as a '
+    + 'completed one'
+  );
+  assert.ok(
+    /One-sided dependents: \{J\}/.test(skill),
+    'the summary never reports the one-sided bucket, and silence there reads '
+    + 'as there having been none'
+  );
+});
+
+// `last_updated` means a person or this skill judged the edges correct. v4 added
+// `last_auto_checked` so an unattended check would stop writing into it. Step 5
+// then told this skill to stamp it on entries nobody looked at, which is the
+// same fault in the place the fix did not reach.
+check('audit-deps does not stamp a review that did not happen', () => {
+  const skill = SKILLS['audit-deps'];
+  assert.ok(
+    /If they decline, leave `last_updated` alone/.test(skill),
+    'audit-deps still bumps last_updated on entries it did not re-infer'
+  );
+  assert.ok(
+    !/this acknowledges the file was inspected/.test(skill),
+    'the old instruction to stamp an uninspected entry is still present'
   );
 });
 
