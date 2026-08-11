@@ -5,7 +5,17 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const LEASE_TTL_MS = 30 * 60 * 1000;
+// How long a lease stands before the guard stops believing the owning skill is
+// still running. Nothing refreshes it, on purpose: a lease that renewed itself
+// on ordinary activity would outlive the skill and quietly turn this gate from
+// "the owning skill is running" into "the owning skill ran at some point in
+// this session", which is not the question the guard is asking.
+//
+// So the window has to be long enough to cover a whole run instead. Thirty
+// minutes was not: a wrap that reads for forty minutes and then writes once
+// starts inside its lease and finishes outside it, and the refusal lands in the
+// middle of the very skill the resource belongs to.
+const LEASE_TTL_MS = 2 * 60 * 60 * 1000;
 const WRITE_TOOLS = new Set(['Write', 'Edit', 'NotebookEdit']);
 
 function expandHome(value) {
@@ -189,6 +199,43 @@ function matchedResource(event, resources) {
   return matchedResources(event, resources)[0] || null;
 }
 
+// Every skill that owns anything in the registry.
+function ownerNames(resources) {
+  return new Set((resources || []).flatMap((resource) => resource.owners || []));
+}
+
+// Which owner, if any, a typed or called name refers to.
+//
+// Owners are registered plugin-qualified, `session:wrap`, because that is the
+// canonical name and the only one guaranteed unique. A skill can also be
+// invoked by its bare name when nothing else answers to it, so `/wrap` has to
+// reach the same lease that `/session:wrap` does.
+//
+// The bare form resolves only when exactly one owner ends in it. Two plugins
+// both owning a `wrap` is a real possibility, and picking whichever the
+// registry happens to list first would hand a lease to a resource the caller
+// never named. Ambiguous means no lease, and the guard's refusal then says
+// which names it knows.
+function resolveOwner(name, owners) {
+  if (!name) return null;
+  if (owners.has(name)) return name;
+  if (name.includes(':')) return null;
+  const suffix = `:${name}`;
+  const matches = [...owners].filter((owner) => owner.endsWith(suffix));
+  return matches.length === 1 ? matches[0] : null;
+}
+
+// The skill named by a typed slash command, if it owns something.
+//
+// Anchored to the start of the prompt deliberately. Every ordinary message
+// reaches the hook that calls this, so an unanchored match would hand out a
+// lease for a sentence that merely mentions `/session:wrap` while asking for
+// something else entirely.
+function ownerFromPrompt(prompt, owners) {
+  const typed = /^\s*\/([A-Za-z0-9:._-]+)/.exec(String(prompt || ''));
+  return typed ? resolveOwner(typed[1], owners) : null;
+}
+
 function keyPart(value) {
   return crypto.createHash('sha256').update(String(value || 'unknown')).digest('hex').slice(0, 20);
 }
@@ -322,7 +369,10 @@ module.exports = {
   loadRegistry,
   matchedResource,
   matchedResources,
+  ownerFromPrompt,
+  ownerNames,
   readLease,
+  resolveOwner,
   readsInTranscript,
   resourcePaths,
   unreadRequirements,

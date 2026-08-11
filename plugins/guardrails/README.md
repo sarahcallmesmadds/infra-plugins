@@ -113,6 +113,18 @@ A resource can carry two independent rules, and may set either or both.
 `owners` is a list of canonical skill names. A direct write is refused unless
 one of them is holding a live lease.
 
+A lease opens when you invoke an owning skill, either way of invoking it: typing
+`/session:wrap` and calling it as a tool both work, and so does the bare `/wrap`
+when only one owner answers to that name. Nothing else opens one. A message that
+merely mentions the command does not, so asking what `/session:wrap` does leaves
+the directory as protected as it was.
+
+A lease stands for two hours and nothing refreshes it. That is deliberate: a
+lease that renewed itself whenever the session did anything would outlive the
+skill, and the gate would quietly stop asking whether the owning skill is
+running and start asking whether it ever ran. The window is sized to cover a
+whole run instead, which is why it is hours rather than minutes.
+
 `requiresRead` is a list of documents that must have been opened in this session
 before anything under the resource can be written. It exists for the case where
 a decision is written down, known about, and skipped anyway: an approved design

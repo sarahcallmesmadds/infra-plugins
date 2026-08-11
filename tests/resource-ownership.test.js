@@ -105,13 +105,24 @@ check('default leases live under a private per-user directory', () => {
   assert.strictEqual(path.dirname(file), path.join(os.homedir(), '.claude', 'guardrails-leases'));
 });
 
-check('a lease expires after 30 minutes even when the session stays active', () => {
+check('a lease expires on its own clock even when the session stays active', () => {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'owner-expiry-'));
   try {
     writeLease('session:wrap', 'session-a', 1000, temp);
     assert.ok(readLease('session:wrap', 'session-a', 1000 + LEASE_TTL_MS - 1, temp));
     assert.strictEqual(readLease('session:wrap', 'session-a', 1000 + LEASE_TTL_MS, temp), null);
   } finally { fs.rmSync(temp, { recursive: true, force: true }); }
+});
+
+// The number is asserted rather than left to the constant, because the two
+// things this window has to be are in tension and both are easy to lose.
+//
+// Long enough that a whole run of the owning skill fits inside it: at thirty
+// minutes a wrap that read for forty and then wrote once was refused halfway
+// through itself. Short enough that a lease still means the skill is running,
+// which is what stops it from becoming a session-wide permit.
+check('the lease window is two hours', () => {
+  assert.strictEqual(LEASE_TTL_MS, 2 * 60 * 60 * 1000);
 });
 
 check('lease replacement never truncates the live record', () => {
@@ -160,6 +171,111 @@ check('the wired hooks deny a bypass and allow the owning skill', () => {
     assert.strictEqual(run.status, 0);
     assert.strictEqual(run.stdout, '');
   } finally { fs.rmSync(testHome, { recursive: true, force: true }); }
+});
+
+// A write into the guarded handoffs directory, and the two hooks that decide it.
+// Driven as subprocesses on purpose: the bug this covers was in the wiring and
+// in which event was read, neither of which a direct function call can see.
+function ownerHookCase(fn) {
+  const session_id = `resource-owner-prompt-${process.pid}-${Date.now()}-${Math.random()}`;
+  const testHome = fs.mkdtempSync(path.join(os.tmpdir(), 'owner-prompt-home-'));
+  const env = { ...process.env, HOME: testHome };
+  const guard = path.join(ROOT, 'plugins', 'guardrails', 'hooks', 'resource-owner-guard.js');
+  const lease = path.join(ROOT, 'plugins', 'guardrails', 'hooks', 'resource-owner-lease-prompt.js');
+  const write = () => spawnSync(guard, {
+    env,
+    input: JSON.stringify({
+      hook_event_name: 'PreToolUse', session_id, cwd: '/tmp', tool_name: 'Write',
+      tool_input: { file_path: path.join(testHome, '.planning', 'handoffs', 'x.md'), content: 'x' },
+    }),
+    encoding: 'utf8',
+  });
+  const prompt = (text) => spawnSync(lease, {
+    env,
+    input: JSON.stringify({
+      hook_event_name: 'UserPromptSubmit', session_id, cwd: '/tmp', prompt: text,
+    }),
+    encoding: 'utf8',
+  });
+
+  try { fn({ write, prompt }); } finally { fs.rmSync(testHome, { recursive: true, force: true }); }
+}
+
+// The bug itself. A slash command produces no Skill tool call, so before this
+// the lease was never written and the guard refused the skill that owns the
+// directory.
+check('a typed slash command opens the lease its skill needs', () => {
+  ownerHookCase(({ write, prompt }) => {
+    assert.strictEqual(JSON.parse(write().stdout).hookSpecificOutput.permissionDecision, 'deny');
+    assert.strictEqual(prompt('/session:wrap').status, 0);
+    assert.strictEqual(write().stdout, '', 'the owning skill was still refused after typing it');
+  });
+});
+
+check('the bare skill name works when only one owner answers to it', () => {
+  ownerHookCase(({ write, prompt }) => {
+    prompt('/wrap');
+    assert.strictEqual(write().stdout, '', '/wrap did not reach the session:wrap lease');
+  });
+});
+
+// An ordinary message reaches this hook too, so the match has to be anchored.
+// Unanchored, asking a question about wrap would quietly grant the lease that
+// lets anything write handoffs directly for the next two hours.
+check('a prompt that only mentions the command opens nothing', () => {
+  for (const text of [
+    'do not run /session:wrap yet',
+    'what does /session:wrap do',
+    'read the SKILL.md behind /session:wrap',
+  ]) {
+    ownerHookCase(({ write, prompt }) => {
+      prompt(text);
+      assert.strictEqual(
+        JSON.parse(write().stdout).hookSpecificOutput.permissionDecision, 'deny',
+        `a lease was granted by: ${text}`
+      );
+    });
+  }
+});
+
+check('an unrelated slash command opens nothing', () => {
+  ownerHookCase(({ write, prompt }) => {
+    prompt('/session:pickup some-slug');
+    assert.strictEqual(
+      JSON.parse(write().stdout).hookSpecificOutput.permissionDecision, 'deny',
+      'a non-owning skill was handed a lease'
+    );
+  });
+});
+
+// The hook can be perfectly correct and still do nothing if it is wired to an
+// event that never carries the case it handles. That is exactly how the
+// original bug survived a passing suite, so the wiring is asserted here rather
+// than assumed.
+check('a lease hook is wired to both ways a skill can be invoked', () => {
+  const manifest = JSON.parse(fs.readFileSync(path.join(
+    ROOT, 'plugins', 'guardrails', 'hooks', 'hooks.json'
+  ), 'utf8'));
+  const onSkillTool = JSON.stringify(manifest.hooks.PostToolUse);
+  const onPrompt = JSON.stringify(manifest.hooks.UserPromptSubmit || null);
+  assert.ok(onSkillTool.includes('resource-owner-lease.js'), 'not wired to the Skill tool');
+  assert.ok(onPrompt.includes('resource-owner-lease-prompt.js'), 'not wired to UserPromptSubmit');
+});
+
+// Both hooks are named directly in hooks.json, so the shell runs them and a
+// missing executable bit is "Permission denied", which Claude Code discards
+// without a word. The index is what matters, since that is what other people
+// clone, and a test that spawns the file as `node <path>` is the one way of
+// running it that never consults the bit.
+check('both lease hooks are executable in the index', () => {
+  const listing = spawnSync('git', [
+    '-C', ROOT, 'ls-files', '-s', 'plugins/guardrails/hooks/',
+  ], { encoding: 'utf8' }).stdout || '';
+  for (const name of ['resource-owner-lease.js', 'resource-owner-lease-prompt.js']) {
+    const row = listing.split('\n').find((line) => line.endsWith(name));
+    assert.ok(row, `${name} is not tracked`);
+    assert.ok(row.startsWith('100755'), `${name} is ${row.slice(0, 6)} in the index, not 100755`);
+  }
 });
 
 // ------------------------------------------------- the requiresRead gate ----
