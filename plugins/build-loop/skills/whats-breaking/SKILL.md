@@ -68,13 +68,14 @@ For each file returned, use the Read tool to load its JSON contents. If a file f
 Collect parsed entries into a working list. Each entry should have these fields (from the SCHEMA.md v5 queue entry schema):
 
 ```
-id: string (unique entry id, used as fallback dedup key when session_id is empty)
+id: string (unique entry id, and the counting token for a deliberate correction)
 target: string (the name of the thing corrected — grouping key)
 target_kind: "skill" | "hook" | "command" | "plugin" | "script" | "other"
 repo: string (name of the root it lives in, or "unknown")
 type: "primary" | "dep-review" (missing field defaults to "primary")
 status: "Resolved" | "fix applied, watching" | "Open" | "In Progress" | "fix attempted / unresolved" (retired in 0.3.1, still readable on older entries)
-session_id: string (may be empty string "" — fall back to entry.id for dedup)
+session_id: string (the session that filed it, may be empty on entries written before 0.9.6)
+source: string (which entry point wrote it, and what decides how it is counted)
 what_happened: string (free text — read for diagnosis generation in Step 2d)
 target_path: string (absolute path to the file a fix would edit — copied into flag entries)
 ```
@@ -85,6 +86,9 @@ Missing fields should be treated as follows:
 - Missing `target_kind` → treat as `"skill"`
 - Missing `target_path` → read `skill_path` instead, and if that is absent too, leave as empty string in flag output
 - Missing `session_id` → treat as empty string `""`
+- Missing `source` → treat as `"stop-hook"`. That is the conservative reading:
+  it dedups by session, which is what every entry did before the field was
+  consulted, so an old entry counts exactly as it always has.
 - Missing `repo` → treat as `"unknown"`
 
 ---
@@ -114,7 +118,10 @@ This filter is strict. Only closed primary corrections feed pattern detection.
 
 For each qualifying entry:
 - Grouping key = `entry.target`
-- Dedup token = `entry.session_id` if it is a non-empty string, else `entry.id`
+- Counting token, decided by `entry.source`:
+  - `"slash-capture"` or `"manual"` → `entry.id`
+  - anything else, including a missing `source` → `entry.session_id` if it is a
+    non-empty string, else `entry.id`
 
 Build this map:
 
@@ -128,7 +135,23 @@ byTarget = {
 }
 ```
 
-**Dedup rule:** Each unique `session_id` counts as one data point. Entries with empty `session_id` (typically from `/flag-issue` slash-capture source) fall back to the entry `id` — since entry ids are unique, each `/flag-issue` entry counts as a separate data point. This prevents undercounting captures without session context and prevents overcounting stop-hook bursts in a single session.
+**Counting rule:** the rule has always had two jobs. A stop-hook can fire many
+times in one sitting, and counting each firing would let a single bad afternoon
+look like a standing pattern, so those dedup by session. A correction someone
+typed is a deliberate act, and three of them about the same target in one sitting
+is a pattern rather than a burst, so those count one each.
+
+**Read that from `source`, never from an empty `session_id`.** Until 0.9.6
+`/flag-issue` left `session_id` blank, so slash-capture entries fell through to
+`entry.id` and got the per-entry counting by accident. The rule looked like it
+was about missing session context and was actually about who filed the entry.
+When 0.9.6 started resolving the id, three corrections filed in one sitting
+collapsed to one data point and dropped below the threshold, silently. Devin
+caught it on PR #96 before it shipped. `source` says what the entry is, and it
+cannot be quietly changed by an unrelated fix somewhere else.
+
+Entries of type `dep-review` never reach this step. Step 2a discards them, so a
+dep-review copying its parent's `session_id` cannot affect any count.
 
 ### Step 2c — Apply threshold
 
@@ -438,7 +461,7 @@ After appending, print: `hot-cache.md updated.`
 - **PATT-03 gate (non-negotiable):** Never auto-apply structural fixes from pattern flags. Flags are information for the maintainer co-development review. `"pending-review"` status means no automatic action is taken. Status transitions (`pending-review` → `in-review` → `resolved`) are made manually by the maintainer and the user, not by this skill.
 - **Empty queue:** If no .json files exist in `~/.claude/build-loop/queue/`, that's fine — write pattern-flags.json with empty flags array, write the summary with "No fixes applied this week" / "No open items in the queue", and continue through Steps 9-10 normally.
 - **Malformed queue entries:** Skip silently. Count them. Note the count in Step 6 output. Never throw.
-- **Dedup safety:** The `session_id || id` fallback is the only dedup rule. Do not introduce additional dedup (e.g., by what_happened similarity) — the design deliberately counts each /flag-issue entry as its own data point.
+- **Counting safety:** The `source`-driven token in Step 2b is the only dedup rule. Do not introduce additional dedup (e.g., by what_happened similarity). The design deliberately counts each `/flag-issue` entry as its own data point, and anything layered on top takes that away again.
 - **Update in place only:** There must never be two flag entries for the same target. If Step 4 ever tries to append when an entry already exists, that is a bug — fix it and re-run.
 - **Atomic write is non-optional here.** `pattern-flags.json` is not a queue entry, so it uses the `.tmp` plus parse-check plus `mv` pattern. Queue and to-build writes do not: they go through `scripts/queue.js`, which does the read, the check and the write under one lock. `flag-issue` used to be named here as the exception, on the grounds that creating an entry has no existing file to lose. Its header no longer says that, because the dedup check and the write were the part that needed the lock. Never use a direct single-step write to pattern-flags.json.
 - **Slack is never hardcoded:** Channel is asked at post time. The user's DM is the default. Never assume a channel.

@@ -155,8 +155,8 @@ One JSON file per queue entry, stored at:
   "target_kind": "hook",
   "target_path": "~/.claude/hooks/style-lint.js",
   "repo": "hooks",
-  "session_id": "",
-  "session_cwd": "",
+  "session_id": "b41e07c2-5d38-4a91-9f6e-2c7a0d5813be",
+  "session_cwd": "/Users/example/Projects/infra-plugins",
   "what_happened": "The style hook counted the dashes inside a Markdown table separator as em dashes and blocked the response.",
   "what_expected": "Table row separators should not count as prose punctuation.",
   "correct_example": "A table whose separator row is three dashes passes with no finding.",
@@ -213,7 +213,7 @@ One JSON file per queue entry, stored at:
 | `target_kind` | string | yes | What sort of thing the target is. | `skill`, `hook`, `command`, `plugin`, `script`, `other`. A reader that finds no `target_kind` treats it as `"skill"`. |
 | `target_path` | string | yes | Absolute path to the file a fix would edit. Used to route the commit to the right repository. | Example: `~/.claude/hooks/style-lint.js`. Called `skill_path` before v5. |
 | `repo` | string | yes | Which root owns this target. Inferred from `target_path`, see Repo Attribution Rule below. | A root `name`, or `"unknown"` |
-| `session_id` | string | yes | Claude Code session ID. Used to reproduce the failure context. | Fill `""` if not available. |
+| `session_id` | string | yes | Claude Code session ID. The only route from an entry back to the conversation that produced it. | Resolve it from the scratchpad directory path, `.../{project-slug}/{session-id}/scratchpad`, and confirm it against `~/.claude/projects/*/{session_id}.jsonl`. Fill `""` only when that fails. |
 | `session_cwd` | string | yes | Working directory when the correction was captured. | Fill `""` if not available. |
 | `what_happened` | string | yes | Plain-language description of the wrong behaviour. | Write as: "It did X." |
 | `what_expected` | string | yes | Plain-language description of the correct behaviour. | Write as: "It should do Y." |
@@ -570,7 +570,9 @@ The file is not rewritten on read. `/whats-breaking` writes every flag back unde
 
 ### Detection rule
 
-Group by `target`. Three or more closed primary corrections for the same target, across three or more unique sessions. A correction is "closed primary" if `type == "primary"` (or the field is missing) AND `status` is `Resolved` or `fix applied, watching`. Dedup by `session_id || id` when counting unique sessions.
+Group by `target`. Three or more closed primary corrections for the same target, across three or more unique data points. A correction is "closed primary" if `type == "primary"` (or the field is missing) AND `status` is `Resolved` or `fix applied, watching`.
+
+The counting token comes from `source`. A `slash-capture` or `manual` entry counts by `id`, one data point each, because somebody typed it deliberately. Anything else, including a missing `source`, counts by `session_id || id`, so a stop-hook firing repeatedly in one sitting counts once. Do not read this off an empty `session_id`: that coupling is what broke on PR #96 the moment `/flag-issue` started filling the field in.
 
 ### Write rule
 

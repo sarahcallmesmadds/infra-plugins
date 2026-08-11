@@ -39,11 +39,15 @@ const read = (...p) => fs.readFileSync(path.join(...p), 'utf8');
 
 const FLAG_ISSUE = read(BUILD_LOOP, 'skills', 'flag-issue', 'SKILL.md');
 const APPLY_FIX = read(BUILD_LOOP, 'skills', 'apply-fix', 'SKILL.md');
+const WHATS_BREAKING = read(BUILD_LOOP, 'skills', 'whats-breaking', 'SKILL.md');
+const TO_BUILD = read(BUILD_LOOP, 'skills', 'to-build', 'SKILL.md');
+const SCHEMA = read(BUILD_LOOP, 'reference', 'SCHEMA.md');
+const SCHEMA_BUILD = read(BUILD_LOOP, 'reference', 'SCHEMA-BUILD.md');
 
 // Derived and compared, for the reason set out in deps-keys.test.js: counting
 // as they run fixes a stale tally, and comparing still catches a check that
 // quietly disappears.
-const EXPECTED_CHECKS = 6;
+const EXPECTED_CHECKS = 10;
 
 let failed = 0;
 let ran = 0;
@@ -129,6 +133,89 @@ check('apply-fix really does refuse repo unknown', () => {
     'apply-fix no longer guards on repo unknown, so the warning flag-issue '
     + 'prints before writing a pathless entry is now false'
   );
+});
+
+// --- nothing else may depend on session_id being empty ---------------------
+//
+// Devin caught this on PR #96, before it shipped. Filling in session_id is only
+// safe if nothing downstream was reading its emptiness as a signal. One thing
+// was: whats-breaking counted unique sessions, and slash-capture entries each
+// counted separately purely because the field happened to be blank. Resolving
+// the id would have collapsed three corrections filed in one sitting into one
+// data point, dropped them below the threshold of three, and reported no
+// recurring problem. Nothing would have failed. The report would just have
+// quietly stopped naming things.
+
+check('whats-breaking counts from source, not from an empty session_id', () => {
+  assert.ok(
+    !/Dedup token = `entry\.session_id` if it is a non-empty string, else `entry\.id`/
+      .test(WHATS_BREAKING),
+    'the counting token still keys off session_id being empty, so filling the '
+    + 'field in silently stops recurring problems being reported'
+  );
+  assert.ok(
+    /entry\.source/.test(WHATS_BREAKING),
+    'whats-breaking never reads source, which is the only field that says '
+    + 'whether an entry was typed by a person or fired by a hook'
+  );
+  assert.ok(
+    /"slash-capture"/.test(WHATS_BREAKING) && /"manual"/.test(WHATS_BREAKING),
+    'the counting rule does not name the deliberate sources it counts per entry'
+  );
+});
+
+check('whats-breaking loads the field its counting rule reads', () => {
+  // Step 2b reads `source`. Step 1 lists the fields to collect off each entry.
+  // A rule reading a field the loader never mentions is the shape that makes a
+  // skill work in testing and quietly misbehave against a real queue.
+  const step1 = WHATS_BREAKING.slice(0, WHATS_BREAKING.indexOf('## Step 2'));
+  assert.ok(
+    /^source: string/m.test(step1),
+    'Step 2b counts by `source` but Step 1 never loads it'
+  );
+  assert.ok(
+    /Missing `source`/.test(step1),
+    'no default is given for a missing `source`, so entries written before the '
+    + 'field existed have undefined counting behaviour'
+  );
+});
+
+check('the schema restates the counting rule the same way', () => {
+  // SCHEMA.md carries its own copy of the detection rule. It said
+  // `session_id || id` and was the second place the old coupling lived.
+  assert.ok(
+    !/Dedup by `session_id \|\| id` when counting unique sessions/.test(SCHEMA),
+    'SCHEMA.md still documents the old session-based dedup, so the schema and '
+    + 'the skill disagree about how a pattern is counted'
+  );
+  assert.ok(
+    /`source`/.test(SCHEMA.slice(SCHEMA.indexOf('### Detection rule'))),
+    'the schema detection rule never mentions source'
+  );
+});
+
+// --- one contract, described once ------------------------------------------
+
+check('no reference still documents session_id as optional', () => {
+  for (const [name, text] of Object.entries({
+    'SCHEMA.md': SCHEMA,
+    'SCHEMA-BUILD.md': SCHEMA_BUILD,
+    'to-build/SKILL.md': TO_BUILD,
+  })) {
+    assert.ok(
+      !/\| `session_id` \| string \| yes \|[^|]*\| Fill `""` if not available\. \|/.test(text),
+      `${name} still tells the writer to fill "" when it is not available, `
+      + 'which contradicts flag-issue'
+    );
+    assert.ok(
+      !/session_id:\s+current session ID, or ""/.test(text),
+      `${name} still offers "" as an equal option`
+    );
+    assert.ok(
+      /scratchpad/.test(text),
+      `${name} requires a session id but never says where to get one`
+    );
+  }
 });
 
 if (ran !== EXPECTED_CHECKS) {

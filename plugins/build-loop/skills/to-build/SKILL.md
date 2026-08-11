@@ -211,12 +211,26 @@ why:             {why, or ""}
 where:           {where, or ""}
 source:          {source, or ""}
 blocked_by:      {blocked_by, or ""}
-session_id:      current session ID, or ""
+session_id:      the current session ID, resolved as below. "" only after that has failed.
 session_cwd:     current working directory, or ""
 dedup_key:       {dedup_key}
 notes:           []
 built:           null
 ```
+
+**Resolving `session_id`.** The scratchpad directory named in your system prompt
+carries it, in a path of the shape `.../{project-slug}/{session-id}/scratchpad`,
+so the segment immediately before `scratchpad` is the id. Confirm it rather than
+trusting the shape:
+
+```bash
+ls ~/.claude/projects/*/{session_id}.jsonl
+```
+
+Record `""` only when there is no scratchpad path to read, or nothing matches.
+An item on this list is a decision made in a conversation, and the reasoning for
+it stays in that conversation. Without the id there is no way back to it, which
+is what `/flag-issue` lost for four days before 0.9.6.
 
 Then:
 
