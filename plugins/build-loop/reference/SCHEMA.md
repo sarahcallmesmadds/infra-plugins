@@ -540,7 +540,7 @@ Unlike primary dedup, this is NOT time-limited. The same `parent_id` plus depend
 | `target_path` | string | yes | Absolute path to the file. Called `skill_path` before v5. |
 | `flagged_at` | string | yes | ISO-8601 timestamp when this first crossed the threshold. Never updated after creation. |
 | `correction_count` | int | yes | Total closed primary corrections. Updated each run. |
-| `session_count` | int | yes | Unique sessions in which corrections were captured. Updated each run. |
+| `occurrence_count` | int | yes | How many separate occasions the target was corrected on, by the counting rule in `/whats-breaking` Step 2b. Not a count of sessions: a typed correction counts on its own, so several filed in one sitting are several occurrences and one session. Updated each run. Called `session_count` before 0.9.7, and read under the old name when a flags file still carries it. |
 | `status` | string | yes | See Flag Status Enum below. |
 | `diagnosis` | string | yes | Plain-language description of the recurring issue. 500 characters max, three to five sentences. Names the problem and a structural cause hypothesis. NOT a fix prescription. |
 | `example_entries` | array | yes | Up to 5 queue entry IDs evidencing the pattern. |
@@ -570,9 +570,11 @@ The file is not rewritten on read. `/whats-breaking` writes every flag back unde
 
 ### Detection rule
 
-Group by `target`. Three or more closed primary corrections for the same target, across three or more unique data points. A correction is "closed primary" if `type == "primary"` (or the field is missing) AND `status` is `Resolved` or `fix applied, watching`.
+Group by `target`. Three or more closed primary corrections for the same target, on three or more separate occasions. A correction is "closed primary" if `type == "primary"` (or the field is missing) AND `status` is `Resolved` or `fix applied, watching`.
 
-The counting token comes from `source`. A `slash-capture` or `manual` entry counts by `id`, one data point each, because somebody typed it deliberately. Anything else, including a missing `source`, counts by `session_id || id`, so a stop-hook firing repeatedly in one sitting counts once. Do not read this off an empty `session_id`: that coupling is what broke on PR #96 the moment `/flag-issue` started filling the field in.
+The counting token comes from `source`. A `slash-capture` entry counts by `id`, one occurrence each, because somebody typed it. Anything else, including `manual` and a missing `source`, counts by `session_id || id`, so a stop-hook firing repeatedly in one sitting counts once. Do not read this off an empty `session_id`: that coupling is what broke on PR #96 the moment `/flag-issue` started filling the field in.
+
+**Occurrences are not sessions, and the report must not call them sessions.** Several `slash-capture` corrections typed in one sitting are several occurrences and one session, so naming them sessions tells the reader a problem recurred across occasions it did not. `/whats-breaking` records the number as `occurrence_count` for that reason.
 
 ### Write rule
 

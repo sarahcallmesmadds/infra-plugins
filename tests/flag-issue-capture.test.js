@@ -47,7 +47,7 @@ const SCHEMA_BUILD = read(BUILD_LOOP, 'reference', 'SCHEMA-BUILD.md');
 // Derived and compared, for the reason set out in deps-keys.test.js: counting
 // as they run fixes a stale tally, and comparing still catches a check that
 // quietly disappears.
-const EXPECTED_CHECKS = 10;
+const EXPECTED_CHECKS = 13;
 
 let failed = 0;
 let ran = 0;
@@ -159,8 +159,71 @@ check('whats-breaking counts from source, not from an empty session_id', () => {
     + 'whether an entry was typed by a person or fired by a hook'
   );
   assert.ok(
-    /"slash-capture"/.test(WHATS_BREAKING) && /"manual"/.test(WHATS_BREAKING),
-    'the counting rule does not name the deliberate sources it counts per entry'
+    /"slash-capture"/.test(WHATS_BREAKING),
+    'the counting rule does not name slash-capture, the one source whose '
+    + 'behaviour the session_id fix changed'
+  );
+});
+
+check('only slash-capture counts per entry', () => {
+  // Round 1 gave `manual` the same treatment on the argument that a
+  // hand-written entry is also deliberate. Devin asked what fault motivated
+  // that, and the answer was none: only slash-capture was affected by filling
+  // in session_id. The effect would have been to let a few hand-written entries
+  // cross the threshold on their own. A behaviour here changes on a fault.
+  const rule = WHATS_BREAKING.slice(
+    WHATS_BREAKING.indexOf('Counting token, decided by'),
+    WHATS_BREAKING.indexOf('Build this map')
+  );
+  assert.ok(rule.length > 0, 'the counting rule block moved and this check no longer reads it');
+  const perEntry = rule.slice(0, rule.indexOf('anything else'));
+  assert.ok(
+    !/"manual"/.test(perEntry),
+    'manual is back in the per-entry branch, which is a behaviour change with '
+    + 'no fault behind it'
+  );
+});
+
+// --- the number and the word beside it --------------------------------------
+
+check('the report does not call occurrences sessions', () => {
+  // The failure stated-counts.test.js exists for, in its other form: round 1
+  // changed what the number counted and left every sentence printing it still
+  // saying "sessions". Three corrections typed in one sitting would have been
+  // reported as three sittings, which is the overcounting the dedup half of the
+  // rule exists to prevent, arriving through the label instead of the maths.
+  assert.ok(
+    !/\{N\} corrections across \{M\} sessions/.test(WHATS_BREAKING),
+    'the summary template still says the corrections span {M} sessions'
+  );
+  assert.ok(
+    !/has been corrected \{N\} times across \{M\} sessions/.test(WHATS_BREAKING),
+    'the diagnosis template still says the corrections span {M} sessions'
+  );
+  assert.ok(
+    !/Threshold is exactly 3 unique sessions/.test(WHATS_BREAKING),
+    'the threshold is still stated in sessions'
+  );
+  assert.ok(
+    /occurrence_count/.test(WHATS_BREAKING),
+    'the count has no name of its own, so it will be described as whatever the '
+    + 'nearest sentence happens to say'
+  );
+});
+
+check('the renamed count can still be read from an older flags file', () => {
+  // pattern-flags.json persists between runs and holds the old key. The file is
+  // the only history of what has been flagged, so a rename that cannot read it
+  // silently restarts every counter at zero.
+  assert.ok(
+    /Missing `occurrence_count` → read `session_count` instead/.test(WHATS_BREAKING),
+    'nothing maps the old session_count key on read, so a flags file written '
+    + 'before 0.9.7 loses its counts'
+  );
+  assert.ok(
+    /`session_count` before 0\.9\.7/.test(SCHEMA),
+    'the schema does not record the old field name, so the fallback above reads '
+    + 'as unexplained'
   );
 });
 
