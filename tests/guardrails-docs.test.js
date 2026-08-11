@@ -28,6 +28,16 @@ const { DEFAULTS } = require('../plugins/guardrails/scripts/config');
 
 const PLUGIN = path.join(__dirname, '..', 'plugins', 'guardrails');
 const README = fs.readFileSync(path.join(PLUGIN, 'README.md'), 'utf8');
+const GUARD = fs.readFileSync(path.join(PLUGIN, 'hooks', 'resource-owner-guard.js'), 'utf8');
+
+// The one-line descriptions a person reads before installing. Three of them,
+// in three files, which is three chances to update two.
+const DESCRIPTIONS = {
+  'the Claude manifest': require('../plugins/guardrails/.claude-plugin/plugin.json').description,
+  'the Codex manifest': require('../plugins/guardrails/.codex-plugin/plugin.json').description,
+  'the marketplace entry': require('../.claude-plugin/marketplace.json')
+    .plugins.find((entry) => entry.name === 'guardrails').description,
+};
 const UNDO = fs.readFileSync(
   path.join(PLUGIN, 'skills', 'undo-possible', 'SKILL.md'),
   'utf8'
@@ -172,6 +182,37 @@ check('the commands the guard blocks are listed in both docs', () => {
     throw new Error(
       `${gaps.join(', ')}. A blocked command absent from the docs is one that `
         + 'surprises somebody at the moment it fires.'
+    );
+  }
+});
+
+// A capability named in a description that the code does not implement.
+//
+// This is the shape that got through twice in one release. The owner gate was
+// removed, the marketplace entry and the README were rewritten, and the Claude
+// manifest kept promising it blocks "direct writes to skill-owned resources".
+// The text a person reads before installing was the last copy left, which is
+// the worst one to miss.
+//
+// It reads the guard rather than hard-coding the verdict, so re-adding the gate
+// relaxes this check instead of leaving a test that lies in the other
+// direction. The Codex manifest is held to the same rule and not to the same
+// words: Codex plugins cannot carry hooks, so it describes the skills only, and
+// syncing the three descriptions would put a claim there that is false for that
+// runtime.
+check('no description advertises a gate the code does not have', () => {
+  const ownerGateExists = /activeOwner|readLease/.test(GUARD);
+  if (ownerGateExists) return;
+
+  const retired = /skill-owned|owning skill|owned by|\blease\b/i;
+  const stale = Object.entries(DESCRIPTIONS)
+    .filter(([, text]) => retired.test(String(text || '')))
+    .map(([where, text]) => `${where}: "${text}"`);
+
+  if (stale.length) {
+    throw new Error(
+      `${stale.join(' | ')}. The owner gate was removed, so a description `
+        + 'promising it describes behaviour the plugin no longer has.'
     );
   }
 });
