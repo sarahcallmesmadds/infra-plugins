@@ -7,15 +7,32 @@ const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
 const {
-  LEASE_TTL_MS, activeOwner, atomicWriteLease, contains, loadRegistry, matchedResource,
-  leasePath, readLease, writeLease,
+  contains, loadRegistry, matchedResource,
 } = require('../plugins/guardrails/scripts/resource-ownership');
 
 const ROOT = path.join(__dirname, '..');
-const registry = JSON.parse(fs.readFileSync(path.join(
+const shipped = JSON.parse(fs.readFileSync(path.join(
   ROOT, 'plugins', 'guardrails', 'hooks', 'resource-owners.json'
 ), 'utf8')).resources;
-const handoffs = registry.find((resource) => resource.id === 'session-handoffs');
+
+// Path matching is tested against a fixture rather than against the shipped
+// registry. It used to read the shipped `session-handoffs` entry, which worked
+// only while this plugin shipped a rule pointing at the author's own home
+// directory. It no longer ships one, and a test that needs it back is a test
+// that depends on the plugin governing somebody else's machine by default.
+const handoffs = {
+  id: 'session-handoffs',
+  label: 'session handoffs',
+  type: 'directory',
+  path: '~/.planning/handoffs/',
+};
+const queue = {
+  id: 'build-loop-bug-queue',
+  label: 'the build-loop bug queue',
+  type: 'directory',
+  path: '~/.claude/build-loop/queue/',
+};
+const registry = [handoffs, queue];
 
 let failed = 0;
 let ran = 0;
@@ -25,11 +42,103 @@ function check(name, fn) {
   catch (error) { failed += 1; console.log(`  FAIL  ${name}\n        ${error.message}`); }
 }
 
-check('the shipped registry protects handoffs and the bug queue', () => {
-  assert.deepStrictEqual(registry.map((resource) => resource.id), [
-    'session-handoffs', 'build-loop-bug-queue',
-  ]);
-  assert.deepStrictEqual(handoffs.owners, ['session:wrap']);
+// The removal is asserted rather than left to be noticed. Shipping a governed
+// directory by default is what put one machine's `~/.planning/handoffs` into
+// every install of a public plugin.
+check('the plugin governs nothing by default', () => {
+  assert.deepStrictEqual(shipped, [], 'the shipped registry is no longer empty');
+});
+
+check('no part of the owner gate survives in the module surface', () => {
+  const api = require('../plugins/guardrails/scripts/resource-ownership');
+  for (const gone of [
+    'activeOwner', 'readLease', 'writeLease', 'leasePath', 'atomicWriteLease', 'LEASE_TTL_MS',
+  ]) {
+    assert.strictEqual(api[gone], undefined, `${gone} is still exported`);
+  }
+});
+
+check('the lease hook is gone and nothing is wired to it', () => {
+  const hooks = path.join(ROOT, 'plugins', 'guardrails', 'hooks');
+  assert.ok(!fs.existsSync(path.join(hooks, 'resource-owner-lease.js')), 'the lease hook still exists');
+  const manifest = fs.readFileSync(path.join(hooks, 'hooks.json'), 'utf8');
+  assert.ok(!manifest.includes('resource-owner-lease'), 'hooks.json still wires the lease hook');
+  assert.ok(!manifest.includes('"Skill"'), 'hooks.json still matches the Skill tool');
+});
+
+// Run the real guard against a registry we control.
+//
+// The subprocess loads its own registry off disk and cannot see a resource
+// object built in this process, so a spawn test that does not write one is
+// asserting nothing. It also has to be given a HOME, or it reads whatever
+// policy the person running the suite happens to have in
+// ~/.claude/guardrails.resources.json and the result depends on their machine.
+//
+// Both of those were wrong in the first version of these two tests. They passed
+// because nothing matched, which is the same output a working gate produces,
+// so they would have passed with the gate still live.
+const GUARD_HOOK = path.join(ROOT, 'plugins', 'guardrails', 'hooks', 'resource-owner-guard.js');
+
+// A real but empty transcript is part of the setup, not a detail. With no
+// `transcript_path` the requiresRead gate cannot consult the record and fails
+// open by design, so a control that omits it never denies and proves nothing.
+// An empty transcript is the honest input: the record is readable and shows
+// nothing was read.
+function withGuardHome(fn) {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'guard-home-'));
+  fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+  const transcript = path.join(home, 'transcript.jsonl');
+  fs.writeFileSync(transcript, '');
+
+  const runGuard = (resources, filePath, extra = {}) => {
+    fs.writeFileSync(
+      path.join(home, '.claude', 'guardrails.resources.json'),
+      JSON.stringify({ resources })
+    );
+    return spawnSync(GUARD_HOOK, {
+      env: { ...process.env, HOME: home },
+      input: JSON.stringify({
+        hook_event_name: 'PreToolUse', session_id: 'no-lease-anywhere', cwd: '/tmp',
+        transcript_path: transcript,
+        tool_name: 'Write', tool_input: { file_path: filePath, content: 'x' }, ...extra,
+      }),
+      encoding: 'utf8',
+    });
+  };
+
+  try { fn(home, runGuard); } finally { fs.rmSync(home, { recursive: true, force: true }); }
+}
+
+// The whole point of the removal, stated as a test: a write the gate would have
+// refused now goes through, with no lease anywhere on the machine.
+//
+// The requiresRead case is a control rather than decoration. Without it, an
+// empty output proves only that nothing matched, and "the resource was never
+// seen" and "the resource was seen and allowed" are the same result. Making the
+// same resource at the same path refuse for the other reason is what proves the
+// guard is actually reaching it.
+check('a write into a formerly owned directory is allowed', () => {
+  withGuardHome((home, runGuard) => {
+    const target = path.join(home, '.planning', 'handoffs', 'x.md');
+    const owned = {
+      id: 'session-handoffs', label: 'session handoffs', type: 'directory',
+      path: path.join(home, '.planning', 'handoffs'), owners: ['session:wrap'],
+    };
+
+    const allowed = runGuard([owned], target);
+    assert.strictEqual(allowed.status, 0);
+    assert.strictEqual(allowed.stdout, '', 'an owned directory still refused a write');
+
+    const control = runGuard(
+      [{ ...owned, requiresRead: [path.join(home, 'DECISION.md')] }],
+      target
+    );
+    assert.match(
+      JSON.parse(control.stdout).hookSpecificOutput.permissionDecisionReason,
+      /governed by a document/,
+      'the guard never matched this resource, so the check above proved nothing'
+    );
+  });
 });
 
 check('directory matching respects path boundaries', () => {
@@ -89,77 +198,6 @@ check('common Bash writes are caught but reads and stderr redirects are not', ()
   assert.strictEqual(event("sed -i 's|old|new|' ~/.planning/handoffs/x.md").id, 'session-handoffs');
   assert.strictEqual(event('cat ~/.planning/handoffs/x.md'), null);
   assert.strictEqual(event('ls ~/.planning/handoffs/ 2>/dev/null'), null);
-});
-
-check('an owning skill opens a session-scoped lease', () => {
-  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'owner-lease-'));
-  try {
-    writeLease('session:wrap', 'session-a', 1000, temp);
-    assert.strictEqual(activeOwner(handoffs, 'session-a', 1001, temp), 'session:wrap');
-    assert.strictEqual(activeOwner(handoffs, 'session-b', 1001, temp), null);
-  } finally { fs.rmSync(temp, { recursive: true, force: true }); }
-});
-
-check('default leases live under a private per-user directory', () => {
-  const file = leasePath('session:wrap', 'session-a');
-  assert.strictEqual(path.dirname(file), path.join(os.homedir(), '.claude', 'guardrails-leases'));
-});
-
-check('a lease expires after 30 minutes even when the session stays active', () => {
-  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'owner-expiry-'));
-  try {
-    writeLease('session:wrap', 'session-a', 1000, temp);
-    assert.ok(readLease('session:wrap', 'session-a', 1000 + LEASE_TTL_MS - 1, temp));
-    assert.strictEqual(readLease('session:wrap', 'session-a', 1000 + LEASE_TTL_MS, temp), null);
-  } finally { fs.rmSync(temp, { recursive: true, force: true }); }
-});
-
-check('lease replacement never truncates the live record', () => {
-  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'owner-atomic-'));
-  try {
-    const live = path.join(temp, 'lease.json');
-    fs.writeFileSync(live, JSON.stringify({ touchedAt: 1 }));
-    const originalWrite = fs.writeFileSync;
-    const written = [];
-    fs.writeFileSync = (file, ...args) => {
-      written.push(file);
-      return originalWrite(file, ...args);
-    };
-    try { atomicWriteLease(live, { touchedAt: 2 }); }
-    finally { fs.writeFileSync = originalWrite; }
-    assert.ok(written.length === 1 && written[0] !== live, 'the live lease was opened for writing');
-    assert.deepStrictEqual(JSON.parse(fs.readFileSync(live, 'utf8')), { touchedAt: 2 });
-    assert.deepStrictEqual(fs.readdirSync(temp), ['lease.json']);
-    assert.strictEqual(fs.statSync(temp).mode & 0o777, 0o700);
-  } finally { fs.rmSync(temp, { recursive: true, force: true }); }
-});
-
-check('the wired hooks deny a bypass and allow the owning skill', () => {
-  const session_id = `resource-owner-test-${process.pid}-${Date.now()}`;
-  const testHome = fs.mkdtempSync(path.join(os.tmpdir(), 'owner-hook-home-'));
-  const env = { ...process.env, HOME: testHome };
-  const guard = path.join(ROOT, 'plugins', 'guardrails', 'hooks', 'resource-owner-guard.js');
-  const lease = path.join(ROOT, 'plugins', 'guardrails', 'hooks', 'resource-owner-lease.js');
-  const writeEvent = {
-    hook_event_name: 'PreToolUse', session_id, cwd: '/tmp', tool_name: 'Write',
-    tool_input: { file_path: path.join(testHome, '.planning', 'handoffs', 'x.md'), content: 'x' },
-  };
-
-  try {
-    let run = spawnSync(guard, { env, input: JSON.stringify(writeEvent), encoding: 'utf8' });
-    assert.strictEqual(run.status, 0);
-    assert.strictEqual(JSON.parse(run.stdout).hookSpecificOutput.permissionDecision, 'deny');
-
-    run = spawnSync(lease, { input: JSON.stringify({
-      hook_event_name: 'PostToolUse', session_id, cwd: '/tmp', tool_name: 'Skill',
-      tool_input: { skill: 'session:wrap' }, tool_response: {},
-    }), env, encoding: 'utf8' });
-    assert.strictEqual(run.status, 0);
-
-    run = spawnSync(guard, { env, input: JSON.stringify(writeEvent), encoding: 'utf8' });
-    assert.strictEqual(run.status, 0);
-    assert.strictEqual(run.stdout, '');
-  } finally { fs.rmSync(testHome, { recursive: true, force: true }); }
 });
 
 // ------------------------------------------------- the requiresRead gate ----
@@ -300,19 +338,42 @@ check('the refusal explains why a read might not have counted', () => {
 // An ownerless entry used to block everything, with a refusal reading "is owned
 // by" and nothing after it. That was a degenerate message rather than a design,
 // but it worked as a blanket deny, so the change is called out in the README.
-check('a resource with no owners does not block on the ownership gate', () => {
-  withTemp((dir) => {
-    const site = path.join(dir, 'site');
+// A registry someone wrote before 0.5.0 still has `owners` arrays in it. They
+// are now inert, and the thing that must not happen is a leftover field quietly
+// changing what a resource does. It matches on path as it always did, and any
+// `requiresRead` beside it still applies.
+check('a leftover owners field is inert rather than blocking', () => {
+  withGuardHome((home, runGuard) => {
+    const site = path.join(home, 'site');
     fs.mkdirSync(site);
-    const resource = { id: 'r', label: 'r', type: 'directory', path: site, owners: [] };
-    const event = {
-      tool_name: 'Write', cwd: dir, tool_input: { file_path: path.join(site, 'x.html') },
-    };
-    assert.deepStrictEqual(matchedResources(event, [resource]).map((r) => r.id), ['r'],
-      'it still matches, so a requiresRead on it would still apply');
-    const readme = fs.readFileSync(path.join(ROOT, 'plugins', 'guardrails', 'README.md'), 'utf8');
-    assert.ok(/no `owners` no longer blocks/.test(readme),
-      'a silent relaxation of someone else policy has to be written down');
+    const target = path.join(site, 'x.html');
+
+    for (const owners of [[], ['session:wrap'], undefined]) {
+      const resource = { id: 'r', label: 'r', type: 'directory', path: site, owners };
+      const label = `owners: ${JSON.stringify(owners)}`;
+
+      assert.deepStrictEqual(
+        matchedResources({ tool_name: 'Write', cwd: home, tool_input: { file_path: target } },
+          [resource]).map((r) => r.id),
+        ['r'], `${label} stopped matching on path`
+      );
+
+      const allowed = runGuard([resource], target);
+      assert.strictEqual(allowed.stdout, '', `${label} still refused a write`);
+
+      // Same resource, same path, one reason to refuse added. If this does not
+      // deny, the guard is not seeing the resource at all and the line above is
+      // measuring nothing.
+      const control = runGuard(
+        [{ ...resource, requiresRead: [path.join(home, 'DECISION.md')] }],
+        target
+      );
+      assert.match(
+        JSON.parse(control.stdout).hookSpecificOutput.permissionDecisionReason,
+        /governed by a document/,
+        `${label}: the guard never matched this resource`
+      );
+    }
   });
 });
 
