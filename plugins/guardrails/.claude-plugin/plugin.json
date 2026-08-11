@@ -1,13 +1,13 @@
 {
   "name": "guardrails",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Safety rails for people building with AI who aren't systems engineers. Blocks unsafe commands and direct writes to skill-owned resources, and flags prompt injection.",
   "author": {
     "name": "Sarah Madden",
     "url": "https://github.com/sarahcallmesmadds"
   },
-  "homepage": "https://github.com/sarahcallmesmadds/plugins/tree/main/plugins/guardrails",
-  "repository": "https://github.com/sarahcallmesmadds/plugins",
+  "homepage": "https://github.com/sarahcallmesmadds/infra-plugins/tree/main/plugins/guardrails",
+  "repository": "https://github.com/sarahcallmesmadds/infra-plugins",
   "license": "MIT",
   "keywords": [
     "safety",

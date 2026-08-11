@@ -1,13 +1,13 @@
 {
   "name": "session",
-  "version": "0.8.4",
+  "version": "0.8.5",
   "description": "Make sessions continuous. Wrap one up into a handoff the next one loads, start with today's date and a compact build-loop brief, warn when another session is already working here, and put cost, context and connected tool health in the status line.",
   "author": {
     "name": "Sarah Madden",
     "url": "https://github.com/sarahcallmesmadds"
   },
-  "homepage": "https://github.com/sarahcallmesmadds/plugins/tree/main/plugins/session",
-  "repository": "https://github.com/sarahcallmesmadds/plugins",
+  "homepage": "https://github.com/sarahcallmesmadds/infra-plugins/tree/main/plugins/session",
+  "repository": "https://github.com/sarahcallmesmadds/infra-plugins",
   "license": "MIT",
   "keywords": [
     "session",

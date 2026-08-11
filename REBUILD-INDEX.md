@@ -3,7 +3,7 @@
 Source: `fermat-claude-agents-skills-2026-07-28 (1).zip`, exported 14:53 on 2026-07-28. 88 files:
 3 agents, 6 hooks, 66 skill files across 17 skills, 9 personas, 4 team files. The zip lists 112
 entries; the other 24 are directories.
-Compared against: `sarahcallmesmadds/plugins` (6 shipped), `skills` (canonical), `rebuild-specs`, `gtm-plugins-archive`.
+Compared against: `sarahcallmesmadds/infra-plugins` (6 shipped), `skills` (canonical), `rebuild-specs`, `gtm-plugins-archive`.
 
 Dependency calls below are from grepping each skill for the systems it names, then checking
 whether that system is reachable from this machine.

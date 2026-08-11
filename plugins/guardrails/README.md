@@ -63,7 +63,7 @@ so a verdict reads identically wherever it came from. Only the trigger differs.
 ## Install
 
 ```
-/plugin marketplace add sarahcallmesmadds/plugins
+/plugin marketplace add sarahcallmesmadds/infra-plugins
 /plugin install guardrails@smadds
 ```
 

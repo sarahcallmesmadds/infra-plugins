@@ -74,7 +74,7 @@ something breaks. The map is where that gets written down.
 ## Install
 
 ```
-/plugin marketplace add sarahcallmesmadds/plugins
+/plugin marketplace add sarahcallmesmadds/infra-plugins
 /plugin install build-loop@smadds
 ```
 

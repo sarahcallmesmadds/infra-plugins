@@ -17,7 +17,7 @@ Add the `smadds` marketplace, then install `spend-guardrails` from it. In Claude
 Code:
 
 ```text
-/plugin marketplace add sarahcallmesmadds/plugins
+/plugin marketplace add sarahcallmesmadds/infra-plugins
 /plugin install spend-guardrails@smadds
 ```
 
