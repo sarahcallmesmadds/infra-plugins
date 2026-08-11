@@ -501,19 +501,35 @@ The primary entry write is never rolled back because a dep-review write failed. 
 - If the user declines to answer a clarifying question, record the missing field as `"(not provided)"` and still write the entry. A partial entry is better than a lost correction. Flag this in the confirmation message:
   > "Logged with missing {field}. You can edit the file later at `{path}`."
 - **`target_path` is the exception, and it is not a partial entry, it is a blocked
-  one.** With no path the entry resolves to `repo: "unknown"`, and `/apply-fix`
-  refuses that outright, so the correction is recorded and can never be started by
-  anything. Say that before writing, rather than after:
+  one.** With no path there is nothing to infer `repo` from, so the entry lands as
+  `repo: "unknown"`, and `/apply-fix` refuses that outright. The correction is
+  recorded and can never be started by anything. Say that before writing, rather
+  than after:
 
   > "Without a file path this cannot be started. `/apply-fix` refuses an entry
-  > with no repo, so it will sit in the queue unworked until someone fills the
-  > path in by hand. Log it anyway, or name the file?"
+  > whose repo is unknown, and the repo is worked out from the path, so with no
+  > path there is nothing to work it out from. Log it anyway, or name the file?"
 
-  If they choose to log it anyway, the confirmation names what it is instead of
-  reporting a clean write:
+  Answering with a real path is the whole remedy, as long as it sits under a
+  configured root: Step 3 sets `repo` from the root it matched. A path outside
+  every root still leaves `repo: "unknown"`, so say so at that point rather than
+  letting them believe the question is settled.
 
-  > "Logged as blocked. `/apply-fix` cannot start it until `target_path` is
-  > filled in at `{path}`."
+  If they choose to log it anyway, the confirmation names what it is, and names
+  the field that actually unblocks it:
+
+  > "Logged as blocked. `/apply-fix` refuses it until `repo` is set at `{path}`.
+  > Filling in `target_path` alone will not clear it, because `repo` is worked
+  > out once, when the entry is written, and nothing recomputes it afterwards."
+
+  **Say `repo`, not `target_path`.** The guard in `/apply-fix` reads `repo` and
+  nothing else, and the Repo Attribution Rule in SCHEMA.md infers `repo` from the
+  path at capture time only. Sending somebody to type a path into an entry that
+  already exists points them at the one field that will not move the guard, and
+  they find out when the fix command refuses them a second time, for the same
+  reason as the first. That is this bullet's own failure happening one level
+  down, and it is how the wrong wording got written: it was corrected to name the
+  blockage and never checked for whether it named the remedy.
 
   The old wording, "Logged with missing field, you can edit the file later", is
   what let the 2026-08-07 `UserPromptSubmit` entry read as a minor gap. It sat

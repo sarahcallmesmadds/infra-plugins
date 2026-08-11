@@ -47,7 +47,7 @@ const SCHEMA_BUILD = read(BUILD_LOOP, 'reference', 'SCHEMA-BUILD.md');
 // Derived and compared, for the reason set out in deps-keys.test.js: counting
 // as they run fixes a stale tally, and comparing still catches a check that
 // quietly disappears.
-const EXPECTED_CHECKS = 16;
+const EXPECTED_CHECKS = 18;
 
 let failed = 0;
 let ran = 0;
@@ -132,6 +132,50 @@ check('apply-fix really does refuse repo unknown', () => {
     || /repo == "unknown"/.test(APPLY_FIX),
     'apply-fix no longer guards on repo unknown, so the warning flag-issue '
     + 'prints before writing a pathless entry is now false'
+  );
+});
+
+check('the blocked message names the field that actually unblocks it', () => {
+  // Round 1 said the entry could be worked "once someone fills the path in by
+  // hand". /apply-fix guards on `repo`, and the Repo Attribution Rule infers
+  // repo from the path at capture time and never again, so following that
+  // advice leaves the entry refused for the same reason it was refused before.
+  //
+  // The two checks above pass against the wrong remedy: they pin that the entry
+  // is called blocked, and never pin what unblocks it. Naming the blockage and
+  // naming the cure are separate assertions, and round 4 exists because only
+  // the first was made.
+  const bullet = FLAG_ISSUE.slice(
+    FLAG_ISSUE.indexOf('is not a partial entry, it is a blocked'),
+    FLAG_ISSUE.indexOf('If DEPS.json cannot be read')
+  );
+  assert.ok(bullet.length > 0, 'the blocked-entry bullet moved and this check no longer reads it');
+  assert.ok(
+    !/until someone fills the\s+path in by hand/.test(bullet)
+    && !/until `target_path` is\s+filled in/.test(bullet),
+    'the remedy still points at target_path, which does not move the guard'
+  );
+  assert.ok(
+    /until `repo` is set/.test(bullet),
+    'the confirmation does not name `repo`, which is the only field /apply-fix '
+    + 'reads before refusing'
+  );
+  assert.ok(
+    /nothing recomputes it afterwards/.test(bullet),
+    'nothing tells the reader that editing the path later has no effect, which '
+    + 'is the part they would otherwise have to discover by being refused twice'
+  );
+});
+
+check('flag-issue and apply-fix agree on which field to fix', () => {
+  // Agreeing that a guard exists is not the same as agreeing on how to satisfy
+  // it. apply-fix's own remedy says to update the repo field; flag-issue's has
+  // to send the user to the same place, or the two skills hand out different
+  // instructions for one problem.
+  assert.ok(
+    /update the queue entry's repo field/.test(APPLY_FIX),
+    'apply-fix no longer tells the user to set repo, so the two messages have '
+    + 'drifted and one of them is now wrong'
   );
 });
 
