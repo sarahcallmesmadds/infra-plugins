@@ -36,14 +36,14 @@ anything from the second list to the first.
 You get something like this:
 
 ```
-sarahcallmesmadds/always-allow: 3 branches besides the default one.
+you/web-app: 3 branches besides the default one.
 
 Safe to delete (1) — the default branch already has this work:
-  deploy/vercel-site  (105 days old, merged in #51)
+  deploy/staging-config  (105 days old, merged in #51)
 
 Keep (2) — deleting these would lose work:
-  shop-redirect  (103 days old) — it has an open pull request, 1 commit not in the default branch
-  private-workshop-page  (99 days old) — 3 commits not in the default branch
+  fix/checkout-redirect  (103 days old) — it has an open pull request, 1 commit not in the default branch
+  spike/pricing-page  (99 days old) — 3 commits not in the default branch
 
 Delete the 1 safe one? (all / a list of names / none)
 ```
