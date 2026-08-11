@@ -137,9 +137,9 @@ check('wrap checks the handoff exists after writing it', () => {
   );
 });
 
-// Added 2026-08-09. The AlwaysAllow design system was approved on 08-05, named
-// in that day's handoff with its full path, and mentioned zero times by the
-// 08-08 handoff that superseded it. Every pickup after that began without it,
+// Added 2026-08-09. A design system was approved, named in that day's handoff
+// with its full path, and mentioned zero times by the handoff three days later
+// that superseded it. Every pickup after that began without it,
 // and a homepage was built and rejected as a result. Nothing was broken: wrap
 // recorded state, next actions and traps exactly as instructed, and constraints
 // were simply not a category it carried.

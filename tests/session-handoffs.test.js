@@ -839,7 +839,7 @@ check('constraints stop at the next heading, including a nested one', () => {
 });
 
 check('a worktree shares a scope with its main checkout', () => {
-  // The mismatch that hid the AlwaysAllow design system: one handoff recorded
+  // The mismatch that hid an approved design system: one handoff recorded
   // the repository, the next recorded a worktree of it, and a path compare said
   // they were unrelated projects.
   //

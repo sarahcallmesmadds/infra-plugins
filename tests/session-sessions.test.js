@@ -35,8 +35,8 @@ const REAL_PS = [
   ' 2936 Fri Jul 24 22:28:53 2026 /Applications/Claude.app/Contents/MacOS/Claude',
   ' 2940 Fri Jul 24 22:28:56 2026 /Applications/Claude.app/Contents/Frameworks/Claude Helper.app/Contents/MacOS/Claude Helper --type=gpu-process',
   '66995 Mon Jul 27 20:19:01 2026 /Applications/cmux.app/Contents/Resources/bin/cmux hooks feed --source claude',
-  '66141 Mon Jul 27 20:14:57 2026 /Users/sarahmadden/.local/bin/claude --session-id 3667d77f-7558-4f65-b19e-0483620f95bf --settings {"hooks":{}}',
-  '69501 Mon Jul 27 20:31:12 2026 /Users/sarahmadden/.local/bin/claude --session-id 78F0713B-0EB4-4B77-BCCD-5441DA44A5D5',
+  '66141 Mon Jul 27 20:14:57 2026 /Users/example/.local/bin/claude --session-id 3667d77f-7558-4f65-b19e-0483620f95bf --settings {"hooks":{}}',
+  '69501 Mon Jul 27 20:31:12 2026 /Users/example/.local/bin/claude --session-id 78F0713B-0EB4-4B77-BCCD-5441DA44A5D5',
 ].join('\n');
 
 const NOW = Date.parse('Mon Jul 27 20:34:57 2026');

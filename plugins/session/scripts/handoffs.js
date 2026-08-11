@@ -482,10 +482,10 @@ function recentHandoffs({ home = os.homedir(), limit = 5 } = {}) {
 // The repository a directory belongs to, following a worktree back to its main
 // checkout. Two handoffs for the same project can record different directories,
 // because work moves into a worktree, and a plain string compare on those paths
-// says they are unrelated. That is exactly how the AlwaysAllow design system was
-// lost on 2026-08-08: the handoff carrying it recorded
-// `~/Projects/always-allow`, the one that superseded it recorded
-// `/private/tmp/alwaysallow-homepage-atf`, and nothing connected them.
+// says they are unrelated. That is exactly how a design system was lost between
+// two handoffs: the one carrying it recorded the canonical checkout, the one
+// that superseded it recorded a worktree under /private/tmp, and nothing
+// connected them.
 //
 // Returns null for a directory that is not in a repository, in which case the
 // caller falls back to the realpath of the directory itself.

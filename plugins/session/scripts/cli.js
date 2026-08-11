@@ -266,8 +266,8 @@ const COMMANDS = {
   // Wrap calls this before writing, so a constraint recorded once keeps being
   // recorded until something retires it on purpose. Without it a constraint
   // survives exactly as long as nobody starts a new thread of work: the
-  // AlwaysAllow design system was named in the 2026-08-05 handoff, the
-  // 2026-08-08 handoff for the same repository never mentioned it, and every
+  // an approved design system was named in one day's handoff, the handoff
+  // three days later for the same repository never mentioned it, and every
   // pickup after that began with the governing document invisible.
   //
   // Scope is the repository rather than the directory, so a worktree inherits
