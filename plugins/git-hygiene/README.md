@@ -72,6 +72,15 @@ recoverable.
 fails for any reason, the branch is kept and the reason is shown. Not knowing is
 never rounded down to zero.
 
+**It gives the same answer about a repository whichever way you ask it.** A
+local checkout and `--repo owner/name` both read merged pull requests, so a
+branch cleared as "merged in #96" one way is cleared the same way the other. It
+was not always so: until 0.3.6 the local run had only a tree comparison, which
+cannot clear a branch squash-merged before the default branch moved on, and the
+same repository would keep seven branches that `--repo` cleared by number. When
+the merged pull requests cannot be read at all, the run says so rather than
+presenting the shorter answer as the whole one.
+
 **It will not touch** the default branch, a protected branch, the branch you
 have checked out, or a branch with an open pull request, whatever their merge
 state.

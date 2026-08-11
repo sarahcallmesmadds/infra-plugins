@@ -12,7 +12,9 @@ Everything here rests on positive evidence that the work is already in the defau
 
 The first is a count: how many commits a branch has that are not already in the default branch. Zero means the work is safely there and the branch is just a label. One or more means those commits exist in exactly one place, and deleting the branch destroys them.
 
-The second exists because that count cannot see a squash merge, which rewrites a branch into one new commit and leaves the originals unreachable. In a repository that squash-merges every pull request the count never reaches zero, so a merged pull request into the default branch counts too, and on a local checkout so does a comparison showing the branch adds nothing the default branch does not already have.
+The second exists because that count cannot see a squash merge, which rewrites a branch into one new commit and leaves the originals unreachable. In a repository that squash-merges every pull request the count never reaches zero, so a merged pull request into the default branch counts too, and so does a comparison showing the branch adds nothing the default branch does not already have.
+
+Both of those are available on a local checkout and on a GitHub repository, so the same branch gets the same answer either way. That was not true before git-hygiene 0.3.6: the merged pull request was reachable only through `--repo`, and the comparison alone cannot clear a branch that was squash-merged before the default branch moved on. One repository had seven branches cleared by number and kept as work in progress in the same afternoon, and a listing once cleared a branch that the check before the delete then refused. Neither answer was dangerous. Having two was, because nothing on screen says which to believe.
 
 A branch with neither kind of evidence is kept, whatever its age.
 
@@ -57,10 +59,11 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/cli.js" --repo {owner/name}
 
 Add `--json` when sweeping several repositories, so you can total them up, and render the summary yourself. For a single repository the text output is already in the right shape, so show it as it comes rather than rewriting it.
 
-**When you render the summary yourself, carry the caveats with it.** The JSON has two boolean keys beside `safe` and `keep`, and both mean the answer below them is less certain than it looks:
+**When you render the summary yourself, carry the caveats with it.** The JSON has three boolean keys beside `safe` and `keep`, and each means the answer below it is less certain than it looks:
 
 - `remoteStale` — the comparison ran against a ref the remote has moved past, named in `remoteStaleRef`. Anything merged since then is sitting in "Keep" with a commit count, which is exactly what unmerged work looks like. Say so, and say to run `git fetch` and try again.
 - `mergeCheckUnavailable` — this git is too old to spot a squash merge, so every squash-merged branch is in "Keep".
+- `mergedPRCheckUnavailable` — the origin is on GitHub and its merged pull requests could not be read, so a branch squash-merged before the default branch moved on is in "Keep". Say to check `gh auth status`.
 
 Printing the counts without these turns a hedged answer into a confident one, which is the one thing this command must never do. The text output prints both as notes on its own; it is only the sweep, where you do the rendering, that can lose them.
 

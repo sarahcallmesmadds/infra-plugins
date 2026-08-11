@@ -130,6 +130,19 @@ function render(result, where, lookup) {
     lines.push('`--repo owner/name` uses merged pull requests instead and does not need it.');
   }
 
+  // The origin is on GitHub and its merged pull requests could not be read, so
+  // the run is missing the one piece of evidence that survives a squash merge
+  // into a default branch that has since moved on. Said plainly, because the
+  // alternative is a Keep list that looks settled and is not: this is the exact
+  // shape of the answer that disagreed with `--repo` for the same repository.
+  if (lookup && lookup.mergedPRCheckUnavailable) {
+    lines.push('');
+    lines.push('Note: the merged pull requests for this repository could not be read, so a');
+    lines.push('branch squash-merged before the default branch moved on may be listed under');
+    lines.push('Keep. Check `gh auth status`, then try again. `--repo owner/name` asks GitHub');
+    lines.push('directly and will say so if it cannot reach it.');
+  }
+
   if (keep.length) {
     lines.push(`Keep (${keep.length}) — deleting these would lose work:`);
     for (const b of keep) lines.push(`  ${b.name}  (${age(b)}) — ${reasonText(b)}`);
@@ -248,15 +261,16 @@ function main() {
     // distrust it stripped off. `--json --cwd .` against a checkout that has not
     // fetched is exactly the case this release exists to stop being silent.
     //
-    // Both are always present, never omitted when false. A key that appears only
-    // when something is wrong cannot be told apart from an older version that
-    // never had it, and a consumer reading `undefined` as "fine" is the failure
-    // being fixed rather than a new one.
+    // All of them are always present, never omitted when false. A key that
+    // appears only when something is wrong cannot be told apart from an older
+    // version that never had it, and a consumer reading `undefined` as "fine"
+    // is the failure being fixed rather than a new one.
     process.stdout.write(JSON.stringify({
       where,
       remoteStale: !!(lookup && lookup.remoteStale),
       remoteStaleRef: (lookup && lookup.remoteStaleRef) || null,
       mergeCheckUnavailable: !!(lookup && lookup.mergeCheckUnavailable),
+      mergedPRCheckUnavailable: !!(lookup && lookup.mergedPRCheckUnavailable),
       safe: result.safe,
       keep: result.keep,
     }, null, 2) + '\n');

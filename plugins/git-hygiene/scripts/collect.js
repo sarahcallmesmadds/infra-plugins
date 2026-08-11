@@ -5,9 +5,16 @@
 // every path that cannot determine either one says so rather than guessing:
 // `aheadBy` becomes null, `merged` stays false.
 //
-// `merged` exists because `aheadBy` cannot see a squash merge. The two paths
-// answer it differently, since only one of them can reach GitHub. Locally it is
-// a tree comparison; remotely it is the merged pull request list.
+// `merged` exists because `aheadBy` cannot see a squash merge.
+//
+// Both paths answer it with the merged pull request list, and the local path
+// additionally tries a tree comparison first, which is free and needs no
+// network. Locally that comparison used to be the whole answer, and it is not
+// sufficient: it asks whether merging the branch would change the default
+// branch, which a squash merge can leave answered "yes" once the default branch
+// has moved on. So the same repository gave two answers depending on which way
+// you asked it, and a branch cleared by name in one run was refused as unmerged
+// in the next.
 
 'use strict';
 
@@ -226,7 +233,10 @@ function localBranches(cwd, opts) {
   // the per-branch cost as before. Probed by asking, the same way the
   // `merge-tree` support above is, because a version number read off `git
   // --version` is a different question from whether this git accepts the form.
-  const FIELDS = '%(refname:short)%09%(committerdate:iso-strict)';
+  // `%(objectname)` rides along on the listing that was already being asked for,
+  // so the tip of every branch costs nothing extra. It is what the merged pull
+  // request lookup below is keyed on.
+  const FIELDS = '%(refname:short)%09%(committerdate:iso-strict)%09%(objectname)';
   let listed = tryRun('git', ['-C', cwd, 'for-each-ref', `--format=${FIELDS}%09%(ahead-behind:${def})`, 'refs/heads/']);
   const listedHasAhead = listed !== null;
   if (!listedHasAhead) {
@@ -310,8 +320,44 @@ function localBranches(cwd, opts) {
     ? remoteMoved(cwd, def, staleSha)
     : false;
 
+  // The merged pull request list, asked here as well as in the remote path.
+  //
+  // The tree comparison above is real evidence and it is not enough on its own.
+  // It answers "does merging this branch change the default branch", which a
+  // squash merge can leave answered "yes" long after the work landed: the
+  // default branch moves on, a later commit touches the same lines, and the
+  // three-way merge of a branch whose content is already there stops producing
+  // an identical tree. On 2026-08-09 that kept 7 branches on one repository
+  // that `--repo` cleared by number, and on 2026-08-11 it refused a branch this
+  // same tool had cleared as "merged in #96" minutes earlier, from the same
+  // machine, against the same repository.
+  //
+  // Two answers for one question is the defect, not the strictness of either.
+  // Someone watching a listing clear a branch and the pre-delete check refuse
+  // it has no way to tell which one is wrong, and the honest reading, that the
+  // branch gained work in between, is the one thing that had not happened.
+  //
+  // Keyed on the branch tip, so a branch reused after its pull request merged
+  // gains nothing: its tip is no longer the commit that merged. That is the
+  // same rule the remote path follows, and here it is checked against a sha
+  // read from the local ref rather than from the API.
+  //
+  // Skipped under a deadline, which means the caller is the session hook
+  // printing one line against a budget. Skipped is recorded rather than assumed
+  // clean, so the caveat below can say the answer is partial.
+  const origin = originRepo(cwd);
+  const isGitHub = origin ? /(^|\.)github\.com$/i.test(origin.host) : false;
+  let mergedBySha = null;
+  if (isGitHub && deadline === null) {
+    mergedBySha = mergedPRsBySha(origin.repo, def, { cwd });
+  }
+  // Only a gap when there were pull requests to find. A repository with no
+  // GitHub origin has none, so the tree comparison is the whole of the evidence
+  // and nothing is missing.
+  const mergedPRCheckUnavailable = isGitHub && mergedBySha === null;
+
   const branches = rows.map((line) => {
-    const [name, date, aheadBehind] = line.split('\t');
+    const [name, date, tipSha, aheadBehind] = line.split('\t');
     let aheadBy = null;
     let merged = false;
     let mergedVia = null;
@@ -358,6 +404,22 @@ function localBranches(cwd, opts) {
           }
         }
       }
+
+      // A merged pull request whose head is still this branch's tip. Asked
+      // after the tree comparison and only when it came back empty, so the
+      // cheaper local answer wins where it has one and the wording stays the
+      // one people already recognise.
+      //
+      // `mergedVia` reads "merged in #96", the same string the remote path
+      // produces for the same branch, because the two answers agreeing is the
+      // point and identical wording is how somebody can see that they do.
+      if (!merged && mergedBySha && tipSha) {
+        const num = mergedBySha.get(tipSha);
+        if (num !== undefined) {
+          merged = true;
+          mergedVia = `merged in #${num}`;
+        }
+      }
     }
     return {
       name,
@@ -382,6 +444,7 @@ function localBranches(cwd, opts) {
     remoteStale,
     remoteStaleRef: remoteStale ? staleRef : null,
     mergeCheckUnavailable: versionOk === false,
+    mergedPRCheckUnavailable,
   };
 }
 
@@ -436,6 +499,71 @@ function ghStatus(args) {
   }
 }
 
+// Merged pull requests, keyed on the commit each one merged. Returns null when
+// the list could not be read at all, which is not the same as an empty one:
+// with no list, no branch gains this evidence and every one falls back to
+// ancestry. That keeps too much rather than deleting too much, the direction
+// this plugin errs in everywhere.
+//
+// Two filters, and neither is optional:
+//
+// `base=<def>` because `merged_at` only says the pull request merged, not where
+// it merged TO. Stacked work merging `feature-b` into `feature-a` sets
+// `merged_at` on a pull request that never put anything in the default branch,
+// and counting it would offer `feature-b` for deletion while its commits exist
+// nowhere else.
+//
+// Keyed on `head.sha` rather than `head.ref` because a branch name outlives the
+// commit that merged under it. Someone who reuses a branch after its pull
+// request merged has a ref whose name matches a merged pull request and whose
+// tip is new unmerged work. Matching the name alone would offer that branch for
+// deletion. The evidence has to be about the commit the branch points at now.
+//
+// Shared by both paths deliberately. It was written once inside the remote path
+// and the local path had no equivalent, which is the whole defect this function
+// exists to close: the same repository answered differently depending on which
+// way you asked, and the two answers were produced by code that had no reason
+// to agree. One implementation cannot drift from itself.
+function mergedPRsBySha(repo, def, opts) {
+  const lines = ghLines(['api',
+    `repos/${repo}/pulls?state=closed&base=${encodeURIComponent(def)}&per_page=100`, '--paginate',
+    '--jq', '.[] | select(.merged_at != null) | "\\(.head.sha)\\t\\(.number)"'],
+  Object.assign({ timeout: MERGED_PR_TIMEOUT_MS }, opts));
+  if (lines === null) return null;
+
+  // Lowest number wins where a commit merged more than once, which happens when
+  // a pull request is reopened against the same head or the same commit is
+  // taken by two pull requests. Any of them establishes the same fact; the
+  // first is the one a reader can find.
+  const bySha = new Map();
+  for (const line of lines) {
+    const [sha, num] = line.split('\t');
+    if (!sha || !num) continue;
+    const existing = bySha.get(sha);
+    if (existing === undefined || parseInt(num, 10) < parseInt(existing, 10)) bySha.set(sha, num);
+  }
+  return bySha;
+}
+
+// The `owner/name` this checkout pushes to, read from the remote URL rather
+// than asked of `gh`. It is a string operation on something already on disk, so
+// it costs nothing and works with no network and no token, which matters
+// because the answer decides whether a failure further down is worth reporting.
+//
+// `host` comes back too. A repository whose origin is not GitHub has no pull
+// requests to miss, so a merged-PR lookup that does not happen there is not a
+// gap and must not be reported as one.
+function originRepo(cwd) {
+  const url = tryRun('git', ['-C', cwd, 'remote', 'get-url', 'origin']);
+  if (!url) return null;
+  // scp form (git@host:owner/name.git) and URL form (https://host/owner/name).
+  const scp = url.match(/^[^@/]+@([^:]+):([^/]+\/[^/]+?)(?:\.git)?$/);
+  if (scp) return { host: scp[1], repo: scp[2] };
+  const full = url.match(/^[a-z+]+:\/\/(?:[^@/]+@)?([^/:]+)(?::\d+)?\/([^/]+\/[^/]+?)(?:\.git)?\/?$/i);
+  if (full) return { host: full[1], repo: full[2] };
+  return null;
+}
+
 function remoteBranches(repo) {
   const meta = ghJSON(['api', `repos/${repo}`]);
   if (!meta || !meta.default_branch) return { defaultBranch: null, branches: [], error: `cannot read repos/${repo}` };
@@ -474,50 +602,12 @@ function remoteBranches(repo) {
   const prsUnknown = prs === null;
   const openPR = new Set(prs || []);
 
-  // Merged pull requests, this path's answer to the question the local path
-  // settles with a tree comparison. A squash merge closes the pull request as
-  // merged while leaving the branch's own commits unreachable, so this is the
-  // only signal here that survives it. The number comes back too, because
-  // "merged in #51" is checkable and a bare "merged" is not.
-  //
-  // Two filters, and neither is optional:
-  //
-  // `base=<def>` because `merged_at` only says the pull request merged, not
-  // where it merged TO. Stacked work merging `feature-b` into `feature-a` sets
-  // `merged_at` on a pull request that never put anything in the default
-  // branch, and counting it would offer `feature-b` for deletion while its
-  // commits exist nowhere else.
-  //
-  // Keyed on `head.sha` rather than `head.ref` because a branch name outlives
-  // the commit that merged under it. Someone who reuses a branch after its
-  // pull request merged has a ref whose name matches a merged pull request and
-  // whose tip is new unmerged work. Matching the name alone would offer that
-  // branch for deletion, and remote deletion has no second opinion the way the
-  // local `-d` does. The evidence has to be about the commit the branch points
-  // at now, which is what the local path gets for free by computing its
-  // comparison live.
-  //
-  // Unreadable is not empty here either, but it fails the other way round from
-  // the open-PR list above: with no merged list, no branch gains the second
-  // signal and every one falls back to ancestry. That keeps too much rather
-  // than deleting too much, which is the direction this plugin errs in
-  // everywhere.
-  const mergedLines = ghLines(['api',
-    `repos/${repo}/pulls?state=closed&base=${encodeURIComponent(def)}&per_page=100`, '--paginate',
-    '--jq', '.[] | select(.merged_at != null) | "\\(.head.sha)\\t\\(.number)"'],
-  { timeout: MERGED_PR_TIMEOUT_MS });
-
-  // Lowest number wins where a commit merged more than once, which happens when
-  // a pull request is reopened against the same head or the same commit is
-  // taken by two pull requests. Any of them establishes the same fact; the
-  // first is the one a reader can find.
-  const mergedBySha = new Map();
-  for (const line of mergedLines || []) {
-    const [sha, num] = line.split('\t');
-    if (!sha || !num) continue;
-    const existing = mergedBySha.get(sha);
-    if (existing === undefined || parseInt(num, 10) < parseInt(existing, 10)) mergedBySha.set(sha, num);
-  }
+  // A squash merge closes the pull request as merged while leaving the branch's
+  // own commits unreachable, so this is the only signal here that survives it.
+  // The number comes back too, because "merged in #51" is checkable and a bare
+  // "merged" is not. Unreadable degrades to an empty map, so every branch falls
+  // back to ancestry rather than gaining evidence nobody could read.
+  const mergedBySha = mergedPRsBySha(repo, def) || new Map();
 
   const branches = names.map((name) => {
     let aheadBy = null;
@@ -663,4 +753,8 @@ function remoteBranch(repo, name) {
   };
 }
 
-module.exports = { isGitRepo, localBranches, remoteBranches, remoteBranch, tryRun, ghJSON, ghLines, toLines };
+module.exports = {
+  isGitRepo, localBranches, remoteBranches, remoteBranch,
+  tryRun, ghJSON, ghLines, toLines,
+  originRepo, mergedPRsBySha,
+};
