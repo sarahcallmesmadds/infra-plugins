@@ -162,5 +162,135 @@ check('the wired hooks deny a bypass and allow the owning skill', () => {
   } finally { fs.rmSync(testHome, { recursive: true, force: true }); }
 });
 
+// ------------------------------------------------- the requiresRead gate ----
+
+const {
+  bashWritesPath, matchedResources, readsInTranscript, resourcePaths, unreadRequirements,
+} = require('../plugins/guardrails/scripts/resource-ownership');
+
+// A transcript line in the shape the gate reads: a Read tool_use with a path.
+function transcriptWith(files) {
+  return files.map((file) => JSON.stringify({
+    message: { content: [{ type: 'tool_use', name: 'Read', input: { file_path: file } }] },
+  })).join('\n') + '\n';
+}
+
+function withTemp(fn) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'requires-read-'));
+  try { return fn(dir); } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+}
+
+check('a resource with no requiresRead is unaffected', () => {
+  assert.deepStrictEqual(unreadRequirements(handoffs, null, '/tmp'), []);
+  assert.deepStrictEqual(unreadRequirements({ ...handoffs, requiresRead: [] }, null, '/tmp'), []);
+});
+
+check('a required document blocks until it is read, then stops blocking', () => {
+  withTemp((dir) => {
+    const doc = path.join(dir, 'DECISION.md');
+    fs.writeFileSync(doc, '# decision\n');
+    const resource = { id: 'r', type: 'directory', path: path.join(dir, 'site'), requiresRead: [doc] };
+
+    const nothingRead = path.join(dir, 'a.jsonl');
+    fs.writeFileSync(nothingRead, transcriptWith([path.join(dir, 'unrelated.md')]));
+    assert.deepStrictEqual(unreadRequirements(resource, nothingRead, dir), [doc],
+      'the document has not been read, so it must be reported');
+
+    const wasRead = path.join(dir, 'b.jsonl');
+    fs.writeFileSync(wasRead, transcriptWith([doc]));
+    assert.deepStrictEqual(unreadRequirements(resource, wasRead, dir), [],
+      'and reading it must lift the gate');
+  });
+});
+
+// The one gate that could refuse a write with no way through. Every hook in
+// this plugin fails open, and an unreadable record looks exactly like a session
+// where nothing was read, so a block would tell someone to open a document they
+// may already have open and would never lift.
+check('an unavailable session record fails open rather than blocking forever', () => {
+  withTemp((dir) => {
+    const doc = path.join(dir, 'DECISION.md');
+    fs.writeFileSync(doc, '# decision\n');
+    const resource = { id: 'r', type: 'directory', path: path.join(dir, 'site'), requiresRead: [doc] };
+
+    assert.strictEqual(readsInTranscript(null, dir), null, 'no path is not an empty set');
+    assert.strictEqual(readsInTranscript(path.join(dir, 'missing.jsonl'), dir), null,
+      'and neither is a path that cannot be read');
+    assert.deepStrictEqual(unreadRequirements(resource, null, dir), [],
+      'no record, no block');
+    assert.deepStrictEqual(unreadRequirements(resource, path.join(dir, 'missing.jsonl'), dir), [],
+      'unreadable record, no block');
+  });
+});
+
+check('a resource is guarded at every registered location, not only the first', () => {
+  withTemp((dir) => {
+    const canonical = path.join(dir, 'canonical');
+    const worktree = path.join(dir, 'worktree');
+    fs.mkdirSync(canonical); fs.mkdirSync(worktree);
+    const resource = { id: 'r', type: 'directory', path: canonical, paths: [worktree] };
+    assert.deepStrictEqual(resourcePaths(resource), [canonical, worktree]);
+    assert.ok(contains(resource, path.join(canonical, 'index.html'), dir));
+    assert.ok(contains(resource, path.join(worktree, 'index.html'), dir),
+      'a worktree is where the work happens while a branch is in flight');
+    assert.ok(!contains(resource, path.join(dir, 'elsewhere', 'index.html'), dir));
+  });
+});
+
+// Registry order decided which rules applied when only the first match was
+// returned, so a broad entry with owners listed before a nested one with
+// requiresRead switched the second gate off entirely.
+check('every resource a write touches is evaluated, whatever the registry order', () => {
+  withTemp((dir) => {
+    const outer = path.join(dir, 'project');
+    const inner = path.join(outer, 'site');
+    fs.mkdirSync(inner, { recursive: true });
+    const broad = { id: 'broad', type: 'directory', path: outer, owners: ['some:skill'] };
+    const narrow = { id: 'narrow', type: 'directory', path: inner, requiresRead: [path.join(dir, 'D.md')] };
+    const event = {
+      tool_name: 'Write', cwd: dir, tool_input: { file_path: path.join(inner, 'index.html') },
+    };
+    for (const order of [[broad, narrow], [narrow, broad]]) {
+      const ids = matchedResources(event, order).map((r) => r.id).sort();
+      assert.deepStrictEqual(ids, ['broad', 'narrow'],
+        'both rules cover this path, so both must come back regardless of order');
+    }
+  });
+});
+
+// The detection here is literal on purpose, and these two lists are the reason.
+// A version that resolved every bare argument against the cwd caught more real
+// writes and also refused `grep "a>b"` inside a guarded directory. A guard that
+// blocks ordinary commands gets switched off, and then it guards nothing.
+check('shell detection catches spelled-out writes and leaves ordinary commands alone', () => {
+  withTemp((dir) => {
+    const site = path.join(dir, 'site');
+    fs.mkdirSync(site);
+    const resource = { id: 'r', type: 'directory', path: site };
+
+    for (const command of [
+      `rm ${site}/f.txt`,
+      `tee ${site}/out.txt`,
+      `echo hi > ${site}/index.html`,
+      `mv a.txt ${site}/b.txt`,
+      `cp a.txt ${site}/b.txt`,
+      `xargs -0 rm ${site}/f.txt`,
+      `sudo -u me rm ${site}/f.txt`,
+    ]) {
+      assert.ok(bashWritesPath(command, resource, dir), `must catch: ${command}`);
+    }
+
+    for (const command of [
+      `grep "a>b" ${site}/file`,
+      `awk '$3 > 100' ${site}/data.txt`,
+      `cat ${site}/file`,
+      `ls ${site}`,
+      'npm install',
+    ]) {
+      assert.ok(!bashWritesPath(command, resource, dir), `must not fire on: ${command}`);
+    }
+  });
+});
+
 console.log(`\n${ran} checks, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);
