@@ -101,7 +101,69 @@ key at a time, so setting one option does not reset the others.
 | `scanForInjection` | `true` | Turn content scanning off entirely |
 | `injectionExcludePaths` | `[]` | Extra regex patterns to skip when scanning |
 
-### Skill-owned resources
+### Protected resources
+
+A resource can carry two independent rules, and may set either or both.
+
+| Field | The question it answers |
+|---|---|
+| `owners` | Who is allowed to write this |
+| `requiresRead` | What has to be in front of you before you write it |
+
+`owners` is a list of canonical skill names. A direct write is refused unless
+one of them is holding a live lease.
+
+`requiresRead` is a list of documents that must have been opened in this session
+before anything under the resource can be written. It exists for the case where
+a decision is written down, known about, and skipped anyway: an approved design
+system sat in a planning folder for three days while a page was built against
+nothing and then thrown away on sight. `owners` could not express that, because
+the directory belongs to no skill. It is governed rather than owned.
+
+Add `readReason` to say why, in your own words. It is printed with the refusal,
+so the rule arrives with its reason instead of as a wall.
+
+The check reads the session record, so opening the file with the Read tool
+satisfies it and `cat` in a shell does not. That is deliberate: the point is
+that the document is loaded where the work can see it, not that it scrolled
+past. If the record cannot be read at all, the gate opens rather than closing,
+in line with every other hook here. An unreadable record looks exactly like a
+session where nothing was read, and a block on that basis could never be lifted.
+
+Two kinds of read do not count, and the refusal says so:
+
+- **A read that failed.** A Read that hit a missing file or a refused
+  permission still leaves a record that it was asked for. Only the result
+  decides. A read whose result is simply not in the record yet still counts, so
+  an incomplete record cannot hold the gate shut.
+- **A read narrowed by `offset` or `limit`.** Part of a governing document is
+  not the document.
+
+**Both gates apply independently.** A resource that sets `owners` and
+`requiresRead` asks for both: invoking the owning skill satisfies the first and
+does nothing about the second, so the skill's own writes are refused until the
+document has been opened in that session. A skill can satisfy it by using the
+Read tool like anyone else. If you want a lease to be sufficient on its own, put
+the two rules on separate resources rather than on one.
+
+A resource may also list several locations with a `paths` array beside `path`.
+A git worktree puts the same directory in two places while a branch is in
+flight, and a guard that knows only the canonical checkout is off at exactly the
+moment the work is happening.
+
+Every resource covering a write is evaluated, not just the first one that
+matches, so a rule on a directory and a rule on something inside it both apply
+whatever order they appear in.
+
+**One limit worth knowing.** Shell commands are matched against the registered
+path spellings literally. A `Write` or `Edit` resolves symlinks and relative
+names properly, but `rm f.txt` typed inside a guarded directory, or a write
+through `/tmp` when the resource is registered under `/private/tmp`, is not
+caught. Widening that is its own piece of work: the version that tried also
+began refusing `grep "a>b"` inside a guarded directory, and a guard that blocks
+ordinary commands is one that gets switched off.
+
+### The default registry
 
 The default registry is `hooks/resource-owners.json`. It protects:
 
@@ -112,9 +174,14 @@ The default registry is `hooks/resource-owners.json`. It protects:
 
 To replace that list, create `~/.claude/guardrails.resources.json` with the same
 shape. Each resource has an `id`, human-readable `label`, `type` (`file` or
-`directory`), `path`, and an `owners` array containing canonical skill names.
-The user registry replaces the shipped list rather than merging with it, so a
-local policy is visible in one place.
+`directory`), and `path`, plus any of `paths`, `owners`, `requiresRead` and
+`readReason`. The user registry replaces the shipped list rather than merging
+with it, so a local policy is visible in one place.
+
+Machine-specific entries belong there and not in the shipped registry, which
+ships to everyone. A rule naming a folder that exists on one laptop is noise on
+every other install, and because the user registry replaces the shipped list
+rather than merging, nobody can remove it locally either.
 
 Only resources with a real public owner are protected by default. In
 particular, the IP inventory is intentionally absent: its current automated
@@ -167,6 +234,40 @@ compiled code, it does not sandbox execution, and it does not stop you from
 approving something you should not.
 
 Treat it as the seatbelt, not the airbag.
+
+## Upgrading to 0.4.0
+
+Resources gain `requiresRead`: a list of documents that must be open in this
+session before anything under the resource can be written.
+
+It sits beside `owners` rather than replacing it, because the two answer
+different questions. `owners` is who may write. `requiresRead` is what has to be
+in front of you first. A resource may set either or both, so a directory that
+belongs to no skill can still be governed by a document. `readReason` is
+optional prose printed with the refusal.
+
+Also in this release:
+
+- Resources may list several locations with a `paths` array, so a directory
+  checked out both canonically and in a git worktree is guarded in both.
+- Every resource covering a write is now evaluated rather than only the first
+  match, so registry order no longer decides which rules apply.
+
+Nothing to do on upgrade, with one exception worth checking.
+
+**A resource with no `owners` no longer blocks on the ownership gate.** It used
+to, because any matched resource without a live lease was refused, and an entry
+with an empty or missing `owners` array produced a refusal reading "is owned by"
+with nothing after it. That was a degenerate message rather than a designed
+behaviour, but it did work as a blanket deny, and anyone whose own
+`~/.claude/guardrails.resources.json` relies on that will find it has stopped.
+An ownerless entry now means "not owned by any skill", which is what the field
+says and what `requiresRead`-only resources need. If you were using one as a
+hard deny, give it an `owners` list naming the skill that should hold it, or a
+`requiresRead` naming the document that governs it.
+
+Shell write detection is unchanged and still matches registered paths literally.
+See the limit noted under Protected resources.
 
 ## Upgrading to 0.2.4
 
