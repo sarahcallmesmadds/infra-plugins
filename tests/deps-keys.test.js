@@ -53,7 +53,7 @@ const SKILLS = {
 // should be noticed. So the count is derived AND compared, and this constant
 // has to move when a check is added or removed. Forgetting now fails the suite
 // instead of printing a smaller number nobody reads.
-const EXPECTED_CHECKS = 25;
+const EXPECTED_CHECKS = 27;
 
 let failed = 0;
 let ran = 0;
@@ -387,6 +387,53 @@ check('audit-deps does not prune back-edges without being told to', () => {
     /keep \/ add-missing \/ remove/.test(step6),
     'audit-deps offers no way to repair a one-sided edge, so the only options '
     + 'are keep it broken or delete the evidence'
+  );
+});
+
+// The bucket is found in Step 3 and put to the user in Step 5, with everything
+// else. Asking in Step 6 would be a second approval for a write they already
+// approved, which is the shape Step 5 exists to prevent.
+check('audit-deps asks about one-sided edges in the one approval gate', () => {
+  const skill = SKILLS['audit-deps'];
+  assert.ok(
+    /four buckets/.test(skill),
+    'ONE-SIDED is not one of the buckets Step 3 produces, so it cannot reach '
+    + "Step 5's draft"
+  );
+  assert.ok(
+    /One-sided \(J of \{total\} dependents rows/.test(skill),
+    "Step 5's draft has no One-sided section, so the user approves a write "
+    + 'without seeing what it removes'
+  );
+  assert.ok(
+    /\*\*Do not ask here\.\*\*/.test(skill),
+    'Step 6 still opens a second approval conversation'
+  );
+});
+
+// Every clause in the closing summary is a claim somebody acts on. It said
+// "reviewed {K} stale entries" while Step 5 was leaving declined ones alone.
+check('the summary does not report work that did not happen', () => {
+  const skill = SKILLS['audit-deps'];
+  // The template line itself, not the prose around it. The paragraph below it
+  // quotes the retired wording on purpose, to say what it used to claim and
+  // why that was wrong, and a test that cannot tell a template from a
+  // description of one forces the history to be deleted to go green.
+  const template = skill.match(/^> "DEPS\.json updated\..*$/m);
+  assert.ok(template, 'the summary template is gone entirely');
+  assert.ok(
+    !/reviewed/.test(template[0]),
+    `the summary template still claims a review: ${template[0]}`
+  );
+  assert.ok(
+    /Nothing was stamped as reviewed/.test(skill),
+    'the summary never says what was left alone, so a declined run reads as a '
+    + 'completed one'
+  );
+  assert.ok(
+    /One-sided dependents: \{J\}/.test(skill),
+    'the summary never reports the one-sided bucket, and silence there reads '
+    + 'as there having been none'
   );
 });
 
