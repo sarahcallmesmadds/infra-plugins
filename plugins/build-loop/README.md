@@ -90,14 +90,31 @@ not part of this plugin, and nothing here ever deletes it.
 
 ```
 ~/.claude/build-loop/
-  queue/          one JSON file per correction
-  to-build/       one JSON file per thing you plan to build
-  DEPS.json       the dependency map
-  summaries/      weekly rollups
+  queue/              one JSON file per correction
+  to-build/           one JSON file per thing you plan to build
+  DEPS.json           the dependency map
+  summaries/          weekly rollups
+  hook-health.log     written only when a hook's interpreter goes missing
 ```
 
 The formats are documented in `reference/SCHEMA.md`, `reference/SCHEMA-BUILD.md`
 and `reference/SCHEMA-DEPS.md`, which ship with the plugin.
+
+**`hook-health.log` is the one file written without you asking, and on most
+machines it never appears at all.** The `hook-health-probe` hook runs on every
+prompt, checks that the commands the other hooks need can still be found, and
+writes nothing while they can. A hook that fails with exit code 127 leaves no
+record anywhere in Claude Code, so this exists to name the missing command at
+the moment it goes missing rather than a week later.
+
+It writes one line when something breaks, nothing more while it stays broken,
+and one line when it comes back. A failure line carries the `PATH` that was
+searched, because "not found" is a question about where the search looked, with
+your home directory reduced to `~` so the line describes the search rather than
+the machine. It is still a diagnostic, so read it before pasting it somewhere
+public, the same as you would any other. The probe prints nothing to the
+conversation and never blocks a prompt. Deleting the file is safe: nothing
+reads it but you.
 
 ## Configuration
 
@@ -537,7 +554,7 @@ One line saying the log returned nothing is the only thing that separates
 **The eleven commands are identical on both runtimes.** Everything you invoke by
 name behaves the same way, reads the same queue, and writes the same files.
 
-**The four hooks are Claude Code only**, because Codex plugins cannot register
+**The five hooks are Claude Code only**, because Codex plugins cannot register
 hooks. This section previously said the plugin used none, which stopped being
 true at 0.3.0 and is worth stating plainly rather than leaving as a claim that
 quietly aged.
@@ -548,6 +565,7 @@ quietly aged.
 | `notice-correction` | Invoke `/flag-issue` directly when something misbehaves. It is the same skill; the hook only suggests it. |
 | `capture-event` | Nothing is lost. It records hook payload shapes, which only exist where hooks run. |
 | `deps-watch` | Run `/audit-deps`. See below, because the trade is smaller than it looks. |
+| `hook-health-probe` | Nothing is lost. It reports which interpreter a hook could not find, and where no hooks run there is no such failure to name. |
 
 **`deps-watch` costs a Codex user nothing, and here is why.** The drift warning
 it exists to quiet is printed by the session brief, which is itself a
