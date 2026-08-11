@@ -35,13 +35,15 @@
 # Consume the event. A hook that leaves stdin unread can take SIGPIPE when the
 # writer closes, which turns a diagnostic into a second fault.
 #
-# Every utility called in this file is silenced, here and below, for the reason
-# the file exists: it runs when commands cannot be found, so the ones it calls
-# itself are as able to go missing as the ones it reports on. A PATH broken
-# badly enough to lose `cat` made the probe print three "No such file or
-# directory" lines of its own, which is the failure it was built to describe
-# arriving as noise instead.
-event=$(cat 2>/dev/null)
+# Read with the shell itself. The event carries the session id that separates
+# one conversation's state from another, so losing it when PATH cannot resolve
+# `cat` collapses every broken conversation into the shared `unknown` lane and
+# lets them trade duplicate lines. Newlines are immaterial to the field lookup,
+# but the loop consumes the whole event so the writer can close cleanly.
+event=""
+while IFS= read -r event_line || [ -n "${event_line}" ]; do
+    event="${event}${event_line}"
+done
 
 log_dir="${HOME}/.claude/build-loop"
 log="${log_dir}/hook-health.log"
@@ -134,11 +136,16 @@ esac
 # defect rather than the file size.
 last=""
 if [ -f "${log}" ]; then
-    while IFS= read -r line || [ -n "${line}" ]; do
+    # Silence the redirection itself, not only commands inside the loop. If the
+    # file exists but cannot be read, there is no trustworthy previous state to
+    # compare with, so leave without speaking or attempting another write.
+    if ! while IFS= read -r line || [ -n "${line}" ]; do
         case "${line}" in
             *"session=${sid} "*) last="${line}" ;;
         esac
-    done < "${log}"
+    done 2>/dev/null < "${log}"; then
+        exit 0
+    fi
 fi
 
 # Only on a change.
@@ -207,9 +214,11 @@ else
     # case pattern in quotes is matched literally, so nothing here reads as a
     # pattern and no fallback is needed.
     logged_path=""
-    saved_ifs="${IFS}"
-    IFS=":"
-    for dir in ${PATH}; do
+    first_path_entry=1
+    remaining_path="${PATH}:"
+    while [ -n "${remaining_path}" ]; do
+        dir="${remaining_path%%:*}"
+        remaining_path="${remaining_path#*:}"
         case "${HOME}" in
             ""|/) ;;
             *)
@@ -219,9 +228,13 @@ else
                 esac
                 ;;
         esac
-        logged_path="${logged_path}${logged_path:+:}${dir}"
+        if [ -n "${first_path_entry}" ]; then
+            logged_path="${dir}"
+            first_path_entry=""
+        else
+            logged_path="${logged_path}:${dir}"
+        fi
     done
-    IFS="${saved_ifs}"
 
     printf '%s MISSING session=%s %s path=%s\n' \
         "${stamp}" "${sid}" "${state}" "${logged_path}" 2>/dev/null >> "${log}"

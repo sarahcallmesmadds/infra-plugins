@@ -39,7 +39,7 @@ const { execFileSync, spawnSync } = require('child_process');
 const ROOT = path.join(__dirname, '..');
 const PROBE = path.join(ROOT, 'plugins', 'build-loop', 'hooks', 'hook-health-probe.sh');
 
-const EXPECTED_CHECKS = 17;
+const EXPECTED_CHECKS = 20;
 
 // The probe calls these and nothing else. `sh` is not among them: the kernel
 // reads the shebang and runs /bin/sh by absolute path, so PATH never decides
@@ -50,7 +50,7 @@ const EXPECTED_CHECKS = 17;
 // probe that asks external commands whether it has already reported a problem
 // stops deduplicating on the machines where those commands are missing, which
 // are the machines it exists for.
-const PROBE_NEEDS = ['cat', 'date', 'mkdir'];
+const PROBE_NEEDS = ['date', 'mkdir'];
 
 // First match for `name` on this process's PATH, or null. A plain search rather
 // than `which`, so the lookup does not itself depend on a utility being found.
@@ -402,6 +402,72 @@ check('a log it cannot write to is not something it complains about', () => {
     + `already having a bad day: ${JSON.stringify(r.stderr)}`
   );
   assert.strictEqual(r.stdout, '', `the probe wrote to stdout: ${JSON.stringify(r.stdout)}`);
+});
+
+check('a log it cannot read is not something it complains about or rewrites', () => {
+  const home = sandbox();
+  const dir = path.dirname(logPath(home));
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(logPath(home), 'existing state\n', { mode: 0o600 });
+
+  let r;
+  if (typeof process.getuid === 'function' && process.getuid() === 0) {
+    // Root ignores ordinary read bits. Run only this child as the conventional
+    // nobody uid so the case still proves the redirection behavior in CI.
+    fs.chmodSync(home, 0o755);
+    fs.chmodSync(path.join(home, '.claude'), 0o755);
+    fs.chmodSync(dir, 0o777);
+    r = spawnSync('env', ['-i', `HOME=${home}`, `PATH=${BIN}`, PROBE], {
+      input: eventFor(SESSION), encoding: 'utf8', uid: 65534, gid: 65534,
+    });
+  } else {
+    fs.chmodSync(logPath(home), 0o000);
+    r = runProbe(home, { withNode: false });
+  }
+  assert.strictEqual(r.status, 0, `the probe exited ${r.status}`);
+  assert.strictEqual(r.stderr, '', `the unreadable log made the probe speak: ${JSON.stringify(r.stderr)}`);
+  assert.strictEqual(r.stdout, '', `the probe wrote to stdout: ${JSON.stringify(r.stdout)}`);
+  fs.chmodSync(logPath(home), 0o600);
+  assert.strictEqual(
+    readLog(home), 'existing state\n',
+    'the probe could not read the previous state but appended another one anyway'
+  );
+});
+
+check('PATH entries containing wildcards and empty entries are recorded literally', () => {
+  const home = sandbox();
+  const wildcard = path.join(home, 'opt', 'a*');
+  fs.mkdirSync(path.join(home, 'opt', 'aa'), { recursive: true });
+  fs.mkdirSync(path.join(home, 'opt', 'ab'), { recursive: true });
+  fs.mkdirSync(path.dirname(logPath(home)), { recursive: true });
+
+  const suppliedPath = `:${wildcard}::${BIN}:`;
+  const r = spawnSync('env', ['-i', `HOME=${home}`, `PATH=${suppliedPath}`, PROBE],
+    { input: eventFor(SESSION), encoding: 'utf8' });
+  assert.strictEqual(r.status, 0, `the probe exited ${r.status}`);
+  const line = readLog(home).trim();
+  assert.ok(
+    line.includes(`path=:~/opt/a*::${BIN}:`),
+    `PATH was expanded or empty entries were dropped:\n        ${line}`
+  );
+  assert.ok(!line.includes('~/opt/aa') && !line.includes('~/opt/ab'), `wildcard entry expanded:\n        ${line}`);
+});
+
+check('an empty PATH keeps session ids separate without cat', () => {
+  const home = sandbox();
+  fs.mkdirSync(path.dirname(logPath(home)), { recursive: true });
+
+  for (const session of [SESSION, OTHER_SESSION, SESSION, OTHER_SESSION]) {
+    const r = spawnSync('env', ['-i', `HOME=${home}`, 'PATH=', PROBE],
+      { input: eventFor(session), encoding: 'utf8' });
+    assert.strictEqual(r.status, 0, `session ${session} exited ${r.status}`);
+    assert.strictEqual(r.stderr, '', `session ${session} spoke: ${JSON.stringify(r.stderr)}`);
+  }
+
+  const lines = readLog(home).trim().split('\n').filter(Boolean);
+  assert.strictEqual(lines.length, 2, `two broken sessions produced ${lines.length} lines:\n        ${lines.join('\n        ')}`);
+  assert.ok(lines.some((line) => line.includes(`session=${SESSION} `)), 'the first session id was lost');
+  assert.ok(lines.some((line) => line.includes(`session=${OTHER_SESSION} `)), 'the second session id was lost');
 });
 
 check('an empty PATH still produces a line, and still produces no noise', () => {
