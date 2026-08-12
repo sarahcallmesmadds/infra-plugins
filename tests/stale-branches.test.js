@@ -770,8 +770,8 @@ check('a remote re-check asks about one commit rather than paginating every clos
   assert.ok(/opts\.verify\s*\?\s*collect\.remoteBranch/.test(src),
     '--verify must use the single-branch collector, not filter the full listing afterwards');
   const collectSrc = fs.readFileSync(path.join(ROOT, 'scripts', 'collect.js'), 'utf8');
-  assert.ok(/commits\/\$\{head\.sha\}\/pulls/.test(collectSrc),
-    'merge evidence for one branch comes from the pull requests on its head commit');
+  assert.ok(/mergedPRForCommit\(repo, def, head\.sha\)/.test(collectSrc),
+    'merge evidence for one branch comes through the shared commit lookup');
 });
 
 // `merge-tree --write-tree` needs git 2.38. On older git it exits non-zero,
@@ -1360,6 +1360,16 @@ check('the merged-PR lookups run under the same timeout, on both paths', () => {
         + 'default and can time out where its counterpart succeeds'
     );
   }
+
+  for (const fn of ['remoteBranches', 'remoteBranch']) {
+    const at = src.indexOf(`function ${fn}(`);
+    assert.notStrictEqual(at, -1, `${fn} is gone, so this check is watching nothing`);
+    const body = src.slice(at, src.indexOf('\n}', at));
+    assert.ok(body.includes('openPRHeadRefs('),
+      `${fn} bypasses the shared open-PR lookup and can drift onto another timeout`);
+    assert.ok(!body.includes('pulls?state=open'),
+      `${fn} still carries a private open-PR query beside the shared helper`);
+  }
 });
 
 // The isolation above has to actually isolate. Without this, a later change to
@@ -1474,6 +1484,36 @@ check('the pre-delete check clears a branch its listing cleared', () => {
           'a merged pull request whose head is this tip is evidence the re-check has to see');
         assert.strictEqual(feature.mergedVia, 'merged in #96',
           'and it reads the same as the remote path, so the two can be seen to agree');
+      } finally {
+        delete process.env.MERGED_SHA;
+      }
+    }
+  );
+});
+
+// A normal merge is already proved by ancestry. A matching merged pull request
+// may improve provenance, but setting `merged` here changes the local delete
+// protocol: the CLI says `git branch -d` will refuse and asks for `-D`, even
+// though `-d` succeeds. PR evidence is only the fallback for ahead branches.
+check('an ancestry-clean branch is not relabelled as needing force', () => {
+  withStubbedGh(
+    GH_MERGED,
+    ({ repo, g }) => {
+      g('branch', 'already-in', 'main');
+      process.env.MERGED_SHA = g('rev-parse', 'already-in').trim();
+      try {
+        const branch = collect.localBranches(repo, { only: 'already-in' })
+          .branches.find((b) => b.name === 'already-in');
+        assert.strictEqual(branch.aheadBy, 0, 'the fixture must be ancestry-clean');
+        assert.strictEqual(branch.merged, false,
+          'PR evidence must not turn an ordinary merge into the force-delete path');
+
+        const out = execFileSync('node', [CLI, '--cwd', repo, '--verify', 'already-in'],
+          { encoding: 'utf8' });
+        assert.ok(!/needs-force:/.test(out),
+          `an ordinary -d deletion must not request force approval: ${out}`);
+        assert.ok(/git branch -d already-in/.test(out),
+          `the normal deletion command must still be printed: ${out}`);
       } finally {
         delete process.env.MERGED_SHA;
       }
@@ -1709,13 +1749,17 @@ check('a repository that is genuinely not on GitHub stays not on GitHub', () => 
   g('remote', 'add', 'origin', 'git@gitlab.com:owner/name.git');
   const bin = path.join(dir, 'bin');
   fs.mkdirSync(bin);
-  // gh present and unable to identify it, which is what gh does off GitHub.
-  fs.writeFileSync(path.join(bin, 'gh'), '#!/bin/sh\nexit 1\n');
+  // A conclusive non-GitHub origin must not invoke gh at all. Recording before
+  // failure distinguishes that promise from a call that happened to fail.
+  const calls = path.join(dir, 'gh-called');
+  fs.writeFileSync(path.join(bin, 'gh'), `#!/bin/sh\ntouch "${calls}"\nexit 1\n`);
   fs.chmodSync(path.join(bin, 'gh'), 0o755);
   const prevPath = process.env.PATH;
   process.env.PATH = `${bin}${path.delimiter}${prevPath}`;
   try {
     assert.strictEqual(collect.githubRepo(dir), null, 'gitlab is not github');
+    assert.ok(!fs.existsSync(calls),
+      'a parsed non-GitHub origin must not contact gh or resolve another remote');
   } finally {
     process.env.PATH = prevPath;
     fs.rmSync(dir, { recursive: true, force: true });
@@ -1789,6 +1833,7 @@ check('the direct pre-delete check says nobody could look, rather than inventing
     // The branch resolves; its pull requests do not. Order matters in a case:
     // the first pattern that matches wins, so the specific paths come first.
     '  *commits/*/pulls*) exit 1 ;;',
+    '  *state=open*) exit 1 ;;',
     '  *repos/*/branches/*) echo \'{"sha":"deadbeef","d":"2026-07-01T00:00:00Z"}\' ;;',
     '  *repos/*/compare/*) echo \'{"a":2}\' ;;',
     '  *repos/*) echo \'{"default_branch":"main"}\' ;;',

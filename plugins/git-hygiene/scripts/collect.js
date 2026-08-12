@@ -454,7 +454,7 @@ function localBranches(cwd, opts) {
       // point and identical wording is how somebody can see that they do.
       const num = mergedBySha && tipSha ? mergedBySha.get(tipSha)
         : (singleMerged ? singleMerged.merged : undefined);
-      if (!merged && num !== undefined) {
+      if (aheadBy !== null && aheadBy > 0 && !merged && num !== undefined) {
         merged = true;
         mergedVia = `merged in #${num}`;
       }
@@ -731,6 +731,15 @@ function githubRepo(cwd) {
   const effective = originRepo(cwd);
   if (effective && IS_GITHUB_HOST.test(effective.host)) return effective.repo;
 
+  // A host that parsed cleanly and is not GitHub is conclusive. `gh repo view`
+  // is only for an unparseable ssh alias whose destination is absent from the
+  // repository; asking it here can select a different GitHub remote and attach
+  // that repository's pull requests to this checkout.
+  const conclusiveNonGitHub = (parsed) => parsed
+    && parsed.host.includes('.')
+    && !IS_GITHUB_HOST.test(parsed.host);
+  if (conclusiveNonGitHub(configured) || conclusiveNonGitHub(effective)) return null;
+
   // No origin at all is a local-only repository. It has no pull requests to
   // miss, so asking gh about it would be a network call to learn nothing.
   if (!configured && !effective) return null;
@@ -770,13 +779,13 @@ function remoteBranches(repo) {
   // One list call rather than one lookup per branch. A branch with an open PR
   // is kept whatever its merge state, and asking per branch would be dozens of
   // API calls for a fact one call already answers.
-  const prs = ghLines(['api', `repos/${repo}/pulls?state=open&per_page=100`, '--paginate', '--jq', '.[].head.ref']);
+  const prs = openPRHeadRefs(repo);
 
   // An unreadable PR list is also not an empty one. Treating it as empty drops
   // the open-PR protection, so a merged branch with review still on it would be
   // offered as safe. Fail into "assume every branch might have one" instead.
   const prsUnknown = prs === null;
-  const openPR = new Set(prs || []);
+  const openPR = prs || new Set();
 
   // A squash merge closes the pull request as merged while leaving the branch's
   // own commits unreachable, so this is the only signal here that survives it.
@@ -870,7 +879,7 @@ function remoteBranches(repo) {
 // scans and twenty paginations. The listing needs the whole picture; this does
 // not.
 //
-// Four calls, fixed, whatever the size of the repository. The merge evidence
+// Five calls, fixed, whatever the size of the repository. The merge evidence
 // comes from `commits/{sha}/pulls`, which asks the question directly: which
 // pull requests have this exact commit as their head. That is the same pair of
 // conditions the listing applies, merged and into the default branch, asked of
@@ -900,9 +909,9 @@ function remoteBranch(repo, name) {
     if (cmp && typeof cmp.a === 'number') aheadBy = cmp.a;
   }
 
-  // Every pull request whose head is this exact commit. Unreadable stays
-  // unreadable: no evidence either way, so hasOpenPR fails safe into true and
-  // merged fails safe into false, the same directions the listing uses.
+  // Merge evidence is keyed on this exact commit; open-review evidence is
+  // keyed on the branch name. Keeping those questions in their shared helpers
+  // makes the listing and re-check use the same semantics and timeout budgets.
   //
   // GitHub documents this endpoint as returning "the merged pull request that
   // introduced the commit", and, "if the commit is not present in the default
@@ -929,20 +938,10 @@ function remoteBranch(repo, name) {
   // the exact failure `--verify` exists to remove. Paginated for the same
   // reason: an unpaginated page cap would truncate evidence and produce a
   // different answer from the listing rather than the same one.
-  const pulls = ghLines(['api', `repos/${repo}/commits/${head.sha}/pulls`, '--paginate',
-    '--jq', '.[] | "\\(.number)\\t\\(.base.ref)\\t\\(.head.sha)\\t\\(.state)\\t\\(.merged_at != null)"']);
-
-  let hasOpenPR = true;
-  let mergedNum;
-  if (pulls !== null) {
-    const rows = pulls.map((l) => l.split('\t')).filter((r) => r.length === 5);
-    hasOpenPR = rows.some((r) => r[3] === 'open' && r[2] === head.sha);
-    const mergedIntoDefault = rows
-      .filter((r) => r[4] === 'true' && r[1] === def && r[2] === head.sha)
-      .map((r) => parseInt(r[0], 10))
-      .filter((n) => !Number.isNaN(n));
-    if (mergedIntoDefault.length) mergedNum = Math.min(...mergedIntoDefault);
-  }
+  const mergedPR = mergedPRForCommit(repo, def, head.sha);
+  const openPRs = openPRHeadRefs(repo);
+  const mergedNum = mergedPR === null ? undefined : mergedPR.merged;
+  const hasOpenPR = openPRs === null ? true : openPRs.has(name);
 
   return {
     defaultBranch: def,
@@ -962,7 +961,7 @@ function remoteBranch(repo, name) {
       // keep reason exists to prevent. Added on the listing paths in the round
       // before this one and missed here, so the fix and the hole it left
       // shipped in the same commit.
-      openPRUnknown: pulls === null,
+      openPRUnknown: openPRs === null,
       remote: true,
     },
   };
@@ -971,5 +970,5 @@ function remoteBranch(repo, name) {
 module.exports = {
   isGitRepo, localBranches, remoteBranches, remoteBranch,
   tryRun, ghJSON, ghLines, toLines,
-  originRepo, githubRepo, mergedPRsBySha,
+  originRepo, githubRepo, mergedPRsBySha, mergedPRForCommit, openPRHeadRefs,
 };
