@@ -143,6 +143,17 @@ function render(result, where, lookup) {
     lines.push('Keep. Check `gh auth status`, then try again.');
   }
 
+  // Reported here rather than against each branch, which is the whole point of
+  // the change that added it. Attaching it per branch made every branch carry a
+  // keep reason and nothing could be deleted at all.
+  if (lookup && lookup.openPRCheckUnavailable) {
+    lines.push('');
+    lines.push('Note: the open pull requests could not be read, so nothing below accounts for');
+    lines.push('a review still in progress. Everything else is unaffected, and a branch is');
+    lines.push('still only offered on evidence its work is in the default branch. Check');
+    lines.push('`gh auth status` if you want that checked too.');
+  }
+
   if (keep.length) {
     lines.push(`Keep (${keep.length}) — deleting these would lose work:`);
     for (const b of keep) lines.push(`  ${b.name}  (${age(b)}) — ${reasonText(b)}`);
@@ -271,6 +282,7 @@ function main() {
       remoteStaleRef: (lookup && lookup.remoteStaleRef) || null,
       mergeCheckUnavailable: !!(lookup && lookup.mergeCheckUnavailable),
       mergedPRCheckUnavailable: !!(lookup && lookup.mergedPRCheckUnavailable),
+      openPRCheckUnavailable: !!(lookup && lookup.openPRCheckUnavailable),
       safe: result.safe,
       keep: result.keep,
     }, null, 2) + '\n');

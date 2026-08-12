@@ -359,15 +359,34 @@ function localBranches(cwd, opts) {
   const isGitHub = origin ? /(^|\.)github\.com$/i.test(origin.host) : false;
   const askGitHub = isGitHub && deadline === null;
 
-  let mergedBySha = null;      // listing only
-  let singleMerged;            // re-check only: undefined = not asked
-  let openPRs;                 // undefined = not asked
-  if (askGitHub && only === null) {
-    mergedBySha = mergedPRsBySha(origin.repo, def, { cwd });
+  let mergedBySha = null;   // listing: tip sha -> pull request number
+  let singleMerged;         // re-check: undefined = not asked, null = could not look
+  let openPRs;              // both: undefined = not asked, null = could not look
+  if (askGitHub) {
+    // Open pull requests are asked for the same way on both paths, and matched
+    // on the branch name in both.
+    //
+    // The re-check used to take this from the single-commit query, which keys
+    // on the tip, and that made the two paths disagree about the same branch: a
+    // branch with unpushed commits has a tip the pull request does not, so the
+    // listing saw a review and the re-check did not. This list is bounded by
+    // the number of pull requests currently open, not by the repository's
+    // history, so asking for it per delete costs little.
     openPRs = openPRHeadRefs(origin.repo, { cwd });
-  } else if (askGitHub) {
-    const sha = tryRun('git', ['-C', cwd, 'rev-parse', only]);
-    singleMerged = sha ? mergedPRForCommit(origin.repo, def, sha, { cwd }) : null;
+
+    if (only === null) {
+      mergedBySha = mergedPRsBySha(origin.repo, def, { cwd });
+    } else {
+      // `--end-of-options` so a branch named like a flag is read as a ref.
+      // Everything downstream trusts this value: it is interpolated into a
+      // GitHub API path, and both delete-command builders in classify.js
+      // already refuse a name starting with `-`. This was the one call site
+      // without that guard.
+      const sha = /^-/.test(only)
+        ? null
+        : tryRun('git', ['-C', cwd, 'rev-parse', '--verify', '--end-of-options', only]);
+      singleMerged = sha ? mergedPRForCommit(origin.repo, def, sha, { cwd }) : null;
+    }
   }
 
   // Only a gap when there were pull requests to find. A repository with no
@@ -375,6 +394,7 @@ function localBranches(cwd, opts) {
   // and nothing is missing.
   const mergedPRCheckUnavailable = askGitHub
     && (only === null ? mergedBySha === null : singleMerged === null);
+  const openPRCheckUnavailable = askGitHub && openPRs === null;
 
   const branches = rows.map((line) => {
     const [name, date, tipSha, aheadBehind] = line.split('\t');
@@ -458,16 +478,28 @@ function localBranches(cwd, opts) {
       // remote path fails in. Not asked at all, on a repository that is not on
       // GitHub or under a deadline, means there are none to find, which is why
       // this reads `=== null` rather than anything looser.
-      hasOpenPR: (() => {
-        if (only === null) return openPRs === null ? true : (openPRs ? openPRs.has(name) : false);
-        if (singleMerged === null) return true;
-        return singleMerged ? singleMerged.hasOpenPR : false;
-      })(),
-      // Kept, but on the basis that nobody could look rather than that a review
-      // is running. Not asking at all, which is what a non-GitHub origin or a
-      // deadline means, is not the same as asking and failing: there are no
-      // pull requests to miss, so nothing is unknown.
-      openPRUnknown: only === null ? openPRs === null : singleMerged === null,
+      // An unreadable list is reported, not turned into a blanket refusal.
+      //
+      // Round 1 of the review on #99 made this fail safe to `true`, matching the
+      // remote path. On the remote path that is right: the GitHub API deletes
+      // whatever ref you name with no second opinion, so an unknown has to
+      // block. Here it was wrong, and badly. With `gh` missing or logged out,
+      // every branch in a GitHub-hosted checkout became unclearable, including
+      // ones the tree comparison had cleared on its own with no network at all,
+      // and the README added in the same change promised exactly the opposite.
+      // A protection against a review that might not exist was bought by
+      // removing the plugin's entire function offline.
+      //
+      // So the local path degrades to what it did before 0.3.6, which is to
+      // carry no open-pull-request evidence, and says so. Nothing is lost that
+      // was there before, the tree comparison still needs no network, and the
+      // caveat names what could not be checked instead of a keep reason
+      // attaching to every branch at once.
+      hasOpenPR: openPRs ? openPRs.has(name) : false,
+      // Reserved for a list that was read and genuinely says a review is open.
+      // False here always: an unreadable list no longer keeps anything, so
+      // there is no keep reason left needing this explanation.
+      openPRUnknown: false,
       remote: false,
     };
   });
@@ -483,6 +515,7 @@ function localBranches(cwd, opts) {
     remoteStaleRef: remoteStale ? staleRef : null,
     mergeCheckUnavailable: versionOk === false,
     mergedPRCheckUnavailable,
+    openPRCheckUnavailable,
   };
 }
 
@@ -598,24 +631,24 @@ function mergedPRsBySha(repo, def, opts) {
 // into the default branch did reach the default branch, but it would clear
 // branches the listing kept, and the two paths agreeing is the whole point.
 //
-// Returns undefined for "no such evidence" and null for "could not look", which
-// the caller has to keep apart: one is an answer and the other is the absence
-// of one.
+// Returns null for "could not look", and otherwise `{ merged }` where `merged`
+// is undefined for "no such evidence". The caller has to keep those apart: one
+// is an answer and the other is the absence of one.
+//
+// Merged evidence only. Open pull requests come from `openPRHeadRefs` on both
+// paths, matched on the branch name, because keying them on the tip here made
+// the two paths disagree about a branch with unpushed commits.
 function mergedPRForCommit(repo, def, sha, opts) {
   const pulls = ghLines(['api', `repos/${repo}/commits/${sha}/pulls`, '--paginate',
-    '--jq', '.[] | "\\(.number)\\t\\(.base.ref)\\t\\(.head.sha)\\t\\(.state)\\t\\(.merged_at != null)"'],
+    '--jq', '.[] | "\\(.number)\\t\\(.base.ref)\\t\\(.head.sha)\\t\\(.merged_at != null)"'],
   opts);
   if (pulls === null) return null;
 
-  const rows = pulls.map((l) => l.split('\t')).filter((r) => r.length === 5);
-  const numbers = rows
-    .filter((r) => r[4] === 'true' && r[1] === def && r[2] === sha)
+  const numbers = pulls.map((l) => l.split('\t')).filter((r) => r.length === 4)
+    .filter((r) => r[3] === 'true' && r[1] === def && r[2] === sha)
     .map((r) => parseInt(r[0], 10))
     .filter((n) => !Number.isNaN(n));
-  return {
-    merged: numbers.length ? Math.min(...numbers) : undefined,
-    hasOpenPR: rows.some((r) => r[3] === 'open' && r[2] === sha),
-  };
+  return { merged: numbers.length ? Math.min(...numbers) : undefined };
 }
 
 // Branch names with an open pull request. Null when the list could not be read,
@@ -846,6 +879,14 @@ function remoteBranch(repo, name) {
       isDefault: name === def,
       isCurrent: false,
       hasOpenPR,
+      // Kept because nobody could look, not because a review is open. This
+      // path fails safe into `hasOpenPR: true` above, and without this the
+      // reason printed reads "it has an open pull request" for a branch whose
+      // pull requests could not be read, which is the exact wording the new
+      // keep reason exists to prevent. Added on the listing paths in the round
+      // before this one and missed here, so the fix and the hole it left
+      // shipped in the same commit.
+      openPRUnknown: pulls === null,
       remote: true,
     },
   };

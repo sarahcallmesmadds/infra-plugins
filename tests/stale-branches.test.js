@@ -1316,11 +1316,11 @@ check('an origin URL is read for its host and repository, in every form git writ
 // on some shells, and the fields here are tab separated.
 const GH_MERGED = [
   // The re-check: pull requests containing one commit.
-  // number, base ref, head sha, state, merged.
-  '  *commits/*/pulls*) printf \'96\\tmain\\t%s\\tclosed\\ttrue\\n\' "$MERGED_SHA" ;;',
+  // number, base ref, head sha, merged.
+  '  *commits/*/pulls*) printf \'96\\tmain\\t%s\\ttrue\\n\' "$MERGED_SHA" ;;',
   // The listing: every closed pull request against the default branch.
   '  *state=closed*) printf \'%s\\t96\\n\' "$MERGED_SHA" ;;',
-  // Open pull requests. None, unless a test says otherwise.
+  // Open pull requests, asked on both paths now. None, unless a test says so.
   '  *state=open*) : ;;',
   '  *) exit 1 ;;',
 ].join('\n');
@@ -1456,7 +1456,7 @@ checkWriteTree('the pre-delete check asks about one commit, not the whole histor
     // Records what was asked, and refuses the paginated form outright so that
     // using it fails loudly here rather than merely being slower in the field.
     [
-      '  *commits/*/pulls*) printf \'96\\tmain\\t%s\\tclosed\\ttrue\\n\' "$MERGED_SHA" ;;',
+      '  *commits/*/pulls*) printf \'96\\tmain\\t%s\\ttrue\\n\' "$MERGED_SHA" ;;',
       '  *state=closed*) echo "PAGINATED" >> "$GH_CALLS"; exit 1 ;;',
       '  *state=open*) : ;;',
       '  *) exit 1 ;;',
@@ -1516,17 +1516,41 @@ checkWriteTree('a branch with an open pull request is not offered locally either
 // looking for a review that may not exist. Found by running the degraded path
 // rather than reported, and it is a defect this round introduced, because the
 // local path had no open-PR evidence to fail at until this change gave it some.
-checkWriteTree('a branch kept because nobody could look says so, and does not invent a review', () => {
-  withStubbedGh('  *) exit 1 ;;', ({ repo }) => {
-    const b = collect.localBranches(repo).branches.find((x) => x.name === 'feature');
-    assert.strictEqual(b.hasOpenPR, true, 'it still has to be kept');
-    assert.strictEqual(b.openPRUnknown, true, 'and the reason has to say why');
+// An unreachable GitHub costs a caveat, not the whole plugin.
+//
+// This asserts the opposite of what it asserted one round ago, and the reversal
+// is the finding. Failing safe into "every branch might have a review" matched
+// the remote path, where it is right because the API deletes whatever ref you
+// name. Here it meant that with `gh` missing or logged out, no branch in a
+// GitHub-hosted checkout could be deleted at all, including ones the tree
+// comparison had cleared with no network. The README shipped in the same change
+// promised offline still worked. A protection against a review that might not
+// exist was bought by removing the function entirely.
+checkWriteTree('an unreachable GitHub costs the open-PR check, not every deletion', () => {
+  withStubbedGh('  *) exit 1 ;;', ({ repo, g }) => {
+    // A label on a commit main already has, so ancestry alone clears it with no
+    // network at all. This is the branch that stopped being offered, and it is
+    // the whole point: nothing about it needs GitHub, and GitHub being
+    // unreachable was keeping it anyway.
+    g('branch', 'already-in', 'main');
+
+    const r = collect.localBranches(repo);
+    const settled = r.branches.find((x) => x.name === 'already-in');
+    assert.strictEqual(settled.aheadBy, 0, 'the fixture has to be what this claims');
+    assert.strictEqual(settled.hasOpenPR, false,
+      'an unreadable list carries no evidence, and no evidence keeps nothing');
+    assert.strictEqual(settled.openPRUnknown, false,
+      'and there is no keep reason left that needs explaining');
+    assert.strictEqual(r.openPRCheckUnavailable, true,
+      'the gap is reported once, against the run');
 
     const out = execFileSync('node', [CLI, '--cwd', repo], { encoding: 'utf8' });
-    assert.ok(/pull requests could not be read/.test(out),
-      'the printed reason has to name the uncertainty');
+    assert.ok(/open pull requests could not be read/.test(out),
+      'the run has to say what it could not check');
     assert.ok(!/it has an open pull request/.test(out),
-      'and must not assert a review that was never confirmed');
+      'and must not assert a review nobody confirmed');
+    assert.ok(/Safe to delete \(1\)/.test(out),
+      'and the branch needing no network is still offered');
   });
 });
 
@@ -1555,6 +1579,74 @@ checkWriteTree('a branch with a pull request genuinely open still says exactly t
 // Unreadable is not empty, on the path that reports it to a reader who asked by
 // name. The local path carried this from the start and the remote one did not,
 // which made the note the local path prints wrong at the moment it mattered.
+// A name beginning with `-` is read by git as an option rather than a ref, and
+// whatever comes back is then interpolated into a GitHub API path. Both delete
+// builders in classify.js refuse such a name for exactly this reason, and this
+// call site was added without that guard.
+//
+// The stub records every call, so the assertion is about what left the machine
+// rather than only about the return value.
+checkWriteTree('a branch name that looks like a flag never reaches the API', () => {
+  withStubbedGh(
+    [
+      '  *commits/*/pulls*) echo "$*" >> "$GH_CALLS"; exit 1 ;;',
+      '  *state=open*) : ;;',
+      '  *) exit 1 ;;',
+    ].join('\n'),
+    ({ repo, dir }) => {
+      const calls = path.join(dir, 'flagname.log');
+      process.env.GH_CALLS = calls;
+      try {
+        for (const name of ['--upload-pack=touch /tmp/pwned', '-n', '--all']) {
+          const r = collect.localBranches(repo, { only: name });
+          assert.ok(r, `${name}: the run has to survive the name, not crash on it`);
+        }
+        assert.ok(!fs.existsSync(calls),
+          'a name git would read as an option must not reach a URL');
+      } finally {
+        delete process.env.GH_CALLS;
+      }
+    }
+  );
+});
+
+// The same distinction on the one path that was missed when it was introduced.
+// `remoteBranch` backs `--repo owner/name --verify <branch>`, fails safe into
+// `hasOpenPR: true`, and carried no marker saying why, so the pre-delete check
+// told people a review was open on a branch whose pull requests it could not
+// read. The fix and the hole it left shipped in the same commit.
+check('the direct pre-delete check says nobody could look, rather than inventing a review', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stale-remote-verify-'));
+  const bin = path.join(dir, 'bin');
+  fs.mkdirSync(bin);
+  fs.writeFileSync(path.join(bin, 'gh'), [
+    '#!/bin/sh',
+    'case "$*" in',
+    // The branch resolves; its pull requests do not. Order matters in a case:
+    // the first pattern that matches wins, so the specific paths come first.
+    '  *commits/*/pulls*) exit 1 ;;',
+    '  *repos/*/branches/*) echo \'{"sha":"deadbeef","d":"2026-07-01T00:00:00Z"}\' ;;',
+    '  *repos/*/compare/*) echo \'{"a":2}\' ;;',
+    '  *repos/*) echo \'{"default_branch":"main"}\' ;;',
+    '  *) exit 1 ;;',
+    'esac',
+  ].join('\n'));
+  fs.chmodSync(path.join(bin, 'gh'), 0o755);
+
+  const prevPath = process.env.PATH;
+  process.env.PATH = `${bin}${path.delimiter}${prevPath}`;
+  try {
+    const r = collect.remoteBranch('example/repo', 'feature');
+    assert.ok(r.branch, 'the branch itself has to resolve for this to test anything');
+    assert.strictEqual(r.branch.hasOpenPR, true, 'it still fails safe and keeps the branch');
+    assert.strictEqual(r.branch.openPRUnknown, true,
+      'and has to say the list was unreadable rather than that a review is open');
+  } finally {
+    process.env.PATH = prevPath;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 check('a direct repository check reports an unreadable merged list', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stale-remote-caveat-'));
   const bin = path.join(dir, 'bin');

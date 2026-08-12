@@ -82,6 +82,12 @@ and the same repository would keep seven branches that `--repo` cleared by
 number. When the pull requests cannot be read at all, either way round, the run
 says so rather than presenting the shorter answer as the whole one.
 
+They part company on one point, deliberately. An unreadable open-pull-request
+list holds every remote branch back and holds no local branch back. The reason
+is the section below: `git branch -d` is a second opinion that the GitHub API
+has no equivalent of, so on the remote side an unknown has to block, and on the
+local side blocking everything would cost more than it protects.
+
 **It will not touch** the default branch, a protected branch, the branch you
 have checked out, or a branch with an open pull request, whatever their merge
 state.
@@ -139,12 +145,23 @@ Checking a repository on GitHub needs the `gh` CLI, logged in.
 
 Checking a local checkout uses it too, from 0.3.6, when the checkout pushes to
 GitHub. It reads merged and open pull requests, which is the evidence that
-survives a squash merge into a default branch that has since moved on. Without
-it the run still works: everything falls back to the tree comparison, which
-needs no network, and the run says which evidence it was missing rather than
-presenting the shorter answer as the whole one. A checkout whose origin is not
-on GitHub, or which has no origin at all, contacts nothing and is told nothing
-is missing, because for that repository nothing is.
+survives a squash merge into a default branch that has since moved on.
+
+**Without it the run still works, and that is a promise about what it does
+rather than a hope.** Both lookups fail into having no evidence, never into
+holding everything back. The tree comparison and the commit count need no
+network and still decide what is safe, so a branch whose work is plainly in the
+default branch is still offered. What you lose is named at the top of the
+output: a squash merge the comparison cannot see may be listed under Keep, and
+nothing accounts for a review still in progress.
+
+The one thing that changes is the open-pull-request protection, which the local
+path never had before 0.3.6 anyway. If that matters to you, `gh auth status`
+gets it back.
+
+A checkout whose origin is not on GitHub, or which has no origin at all,
+contacts nothing and is told nothing is missing, because for that repository
+nothing is.
 
 ## Configuration
 
