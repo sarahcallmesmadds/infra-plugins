@@ -30,8 +30,9 @@ const CONVENTIONAL = /^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|re
 // a third-party harness with a different permission contract must fail closed
 // for an irreversible command rather than inherit an optimistic assumption.
 // `acceptEdits` still has a person present; its automatic scope does not settle
-// a PreToolUse `ask`. `auto`, `dontAsk`, and `bypassPermissions` are designed to
-// run without an approval at each tool call, so confirm verdicts refuse there.
+// a PreToolUse `ask`. Every other value refuses. Keeping policy in the allowlist
+// means a newly added or renamed upstream mode fails closed until its
+// interaction contract is reviewed here.
 const INTERACTIVE = new Set(['default', 'plan', 'acceptEdits']);
 
 const RULE_SETTINGS = {

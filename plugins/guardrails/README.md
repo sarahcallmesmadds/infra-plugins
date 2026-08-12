@@ -92,8 +92,8 @@ prompt there has the form of a check and none of the effect.
 
 So from 0.5.2 the hook reads `permission_mode`, which arrives on every Claude
 Code event, and picks accordingly. It asks only in `default`, `plan`, and
-`acceptEdits`. In `auto`, `bypassPermissions`, and `dontAsk` it refuses. A
-missing or unfamiliar mode refuses too, so a harness cannot gain an approval
+`acceptEdits`; every other, missing, or unfamiliar value refuses, so a harness
+cannot gain an approval
 path merely by omitting the field. The refusal says which mode caused it and
 how to get asked instead, rather than telling you to confirm something that in
 that mode you cannot.
@@ -101,8 +101,8 @@ that mode you cannot.
 One boundary is not exposed to hooks: `claude -p` can report `default`, the
 same value as an interactive session, and PreToolUse input has no print-mode or
 TTY field. The hook therefore cannot distinguish those two runs. For unattended
-use, pass `--permission-mode dontAsk` (or another non-interactive mode) rather
-than relying on the default mode to communicate that nobody is present.
+use, pass an explicit non-interactive `--permission-mode` rather than relying
+on the default mode to communicate that nobody is present.
 
 `acceptEdits` still asks. Claude Code evaluates a PreToolUse `ask`
 before its permission-mode and allow-rule decisions, so the hook's prompt is
@@ -112,10 +112,11 @@ not pre-empted by that mode or by an existing allow rule such as
 and [hooks](https://code.claude.com/docs/en/hooks#common-input-fields)
 references for the runtime precedence and emitted mode names.
 
-`auto` can run tools through background safety checks, `dontAsk` denies instead
-of prompting, and `bypassPermissions` runs without permission prompts. The hook
-emits an explicit refusal in all three so its explanation names the rule and
-its off switch instead of leaving the outcome to the surrounding mode.
+Every mode outside the interactive allowlist gets an explicit refusal. That is
+also how new or renamed upstream modes behave until their interaction contract
+is reviewed and deliberately added; version drift costs convenience, never the
+guard. The refusal names the rule and its off switch instead of leaving the
+outcome to the surrounding mode.
 
 That is the trade, taken deliberately. Refusing gave a strictness nobody could
 lift: every one of those reasons ends by asking you to confirm that the command
