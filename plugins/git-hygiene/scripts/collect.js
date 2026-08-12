@@ -697,6 +697,14 @@ function originRepo(cwd) {
 
 const IS_GITHUB_HOST = /(^|\.)github\.com$/i;
 
+function validGitHubRepo(repo) {
+  if (typeof repo !== 'string') return false;
+  const parts = repo.split('/');
+  return parts.length === 2 && parts.every((part) => (
+    /^[\w.-]+$/.test(part) && part !== '.' && part !== '..'
+  ));
+}
+
 // Whether this checkout is on GitHub, and under what name.
 //
 // The URL text alone is not the authority, which is what the first version of
@@ -726,10 +734,14 @@ const IS_GITHUB_HOST = /(^|\.)github\.com$/i;
 // saying so.
 function githubRepo(cwd) {
   const configured = parseOriginUrl(tryRun('git', ['-C', cwd, 'config', '--get', 'remote.origin.url']));
-  if (configured && IS_GITHUB_HOST.test(configured.host)) return configured.repo;
+  if (configured && IS_GITHUB_HOST.test(configured.host)) {
+    return validGitHubRepo(configured.repo) ? configured.repo : null;
+  }
 
   const effective = originRepo(cwd);
-  if (effective && IS_GITHUB_HOST.test(effective.host)) return effective.repo;
+  if (effective && IS_GITHUB_HOST.test(effective.host)) {
+    return validGitHubRepo(effective.repo) ? effective.repo : null;
+  }
 
   // A host that parsed cleanly and is not GitHub is conclusive. `gh repo view`
   // is only for an unparseable ssh alias whose destination is absent from the
@@ -746,7 +758,7 @@ function githubRepo(cwd) {
 
   const slug = tryRun('gh', ['repo', 'view', '--json', 'nameWithOwner', '--jq', '.nameWithOwner'],
     { cwd, timeout: REMOTE_PROBE_TIMEOUT_MS });
-  return slug && /^[\w.-]+\/[\w.-]+$/.test(slug) ? slug : null;
+  return validGitHubRepo(slug) ? slug : null;
 }
 
 function remoteBranches(repo) {
@@ -970,5 +982,6 @@ function remoteBranch(repo, name) {
 module.exports = {
   isGitRepo, localBranches, remoteBranches, remoteBranch,
   tryRun, ghJSON, ghLines, toLines,
-  originRepo, githubRepo, mergedPRsBySha, mergedPRForCommit, openPRHeadRefs,
+  originRepo, githubRepo, validGitHubRepo,
+  mergedPRsBySha, mergedPRForCommit, openPRHeadRefs,
 };

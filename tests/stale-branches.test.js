@@ -1334,6 +1334,24 @@ check('an origin URL is read for its host and repository, in every form git writ
   fs.rmSync(dir, { recursive: true, force: true });
 }));
 
+check('a parsed GitHub repository slug cannot change the API path', () => {
+  for (const slug of ['owner/name', 'owner/repo.js', 'some-org/a_repo']) {
+    assert.strictEqual(collect.validGitHubRepo(slug), true, `${slug}: ordinary slug rejected`);
+  }
+  for (const slug of ['../someother', 'owner/..', './repo', 'owner/.', 'owner/name/extra',
+    'owner/name?state=open', 'owner/%2e%2e']) {
+    assert.strictEqual(collect.validGitHubRepo(slug), false, `${slug}: unsafe slug accepted`);
+  }
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stale-malformed-origin-'));
+  const g = (...a) => execFileSync('git', ['-C', dir, ...a], { encoding: 'utf8', stdio: 'pipe' });
+  execFileSync('git', ['init', '-q', '-b', 'main', dir], { stdio: 'pipe' });
+  g('remote', 'add', 'origin', 'https://github.com/../someother');
+  assert.strictEqual(collect.githubRepo(dir), null,
+    'a GitHub-hosted URL with path traversal must produce no API repository');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 // The two lookups that answer one question get one budget.
 //
 // Asserted by reading the source, which is unusual here and is the point: a

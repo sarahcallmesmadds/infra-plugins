@@ -159,9 +159,12 @@ The one thing that changes is the open-pull-request protection, which the local
 path never had before 0.3.6 anyway. If that matters to you, `gh auth status`
 gets it back.
 
-A checkout whose origin is not on GitHub, or which has no origin at all,
-contacts nothing and is told nothing is missing, because for that repository
-nothing is.
+A checkout whose origin has a fully qualified non-GitHub host, or which has no
+origin at all, contacts nothing and is told nothing is missing, because for
+that repository nothing is. A dotless SSH host such as `github-work` is
+ambiguous: it may be an alias for GitHub, so the tool asks `gh` to resolve it.
+If it is an intranet host instead, use a fully qualified hostname to make the
+local-only intent conclusive.
 
 ## Configuration
 
