@@ -976,6 +976,9 @@ function remoteBranch(repo, name) {
       openPRUnknown: openPRs === null,
       remote: true,
     },
+    remote: true,
+    openPRCheckUnavailable: openPRs === null,
+    mergedPRCheckUnavailable: mergedPR === null,
   };
 }
 

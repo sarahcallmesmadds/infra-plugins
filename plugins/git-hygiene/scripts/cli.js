@@ -204,6 +204,15 @@ function verifyOne(result, name, repo, lookup) {
     return 3;
   }
   if (!b.safeToDelete) {
+    const gaps = [];
+    if (lookup && lookup.mergedPRCheckUnavailable) gaps.push('merged pull requests');
+    if (lookup && lookup.openPRCheckUnavailable) gaps.push('open pull requests');
+    if (gaps.length) {
+      process.stderr.write(`Could not verify ${name}, so it was not deleted: the ${gaps.join(' and ')} `
+        + `could not be read. Nothing established that the branch gained work; check `
+        + '`gh auth status`, then try again.\n');
+      return 3;
+    }
     process.stderr.write(`${name} is no longer safe to delete: ${reasonText(b)}. Nothing deleted.\n`);
     return 3;
   }
@@ -295,6 +304,7 @@ function main() {
       mergeCheckUnavailable: !!(lookup && lookup.mergeCheckUnavailable),
       mergedPRCheckUnavailable: !!(lookup && lookup.mergedPRCheckUnavailable),
       openPRCheckUnavailable: !!(lookup && lookup.openPRCheckUnavailable),
+      remote: !!(lookup && lookup.remote),
       safe: result.safe,
       keep: result.keep,
     }, null, 2) + '\n');

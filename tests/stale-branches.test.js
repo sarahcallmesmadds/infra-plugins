@@ -840,6 +840,16 @@ check('the force path re-checks each branch immediately before deleting it', () 
     'and one branch at a time, so a change part way through cannot reach a branch already cleared');
 });
 
+check('sweep guidance distinguishes local and GitHub open-PR failures', () => {
+  const skill = fs.readFileSync(path.join(ROOT, 'skills', 'stale-branches', 'SKILL.md'), 'utf8');
+  const line = skill.split('\n').find((x) => x.includes('`openPRCheckUnavailable`')) || '';
+  assert.ok(line.includes('`remote`'), 'the caveat must tell a JSON consumer which path decides its meaning');
+  assert.ok(/local checkout/.test(line) && /GitHub repository/.test(line),
+    'the sweep must describe both consequences, not silently apply local semantics to --repo');
+  assert.ok(/every branch is held/.test(line),
+    'the remote consequence must say the Keep list expands to every branch');
+});
+
 // The number of explanation lines varies: a branch cleared by merge evidence
 // gets a needs-force line, one cleared by ancestry does not. A caller counting
 // from the top runs prose as a shell command.
@@ -1584,6 +1594,17 @@ check('an unreadable merged pull request list is reported, not assumed empty', (
     assert.strictEqual(feature.merged, false, 'no list means no evidence, never a clearance');
     assert.strictEqual(r.mergedPRCheckUnavailable, true,
       'and the caller has to be told the answer is partial');
+
+    let message = '';
+    try {
+      execFileSync('node', [CLI, '--cwd', repo, '--verify', 'feature'], { encoding: 'utf8' });
+    } catch (error) {
+      message = `${error.stdout || ''}${error.stderr || ''}`;
+    }
+    assert.ok(/Could not verify feature/.test(message),
+      `the re-check must report missing evidence, not changed work: ${message}`);
+    assert.ok(!/no longer safe|commit not in|commits not in/.test(message),
+      `a lookup failure must not claim the branch gained work: ${message}`);
   });
 });
 
@@ -1868,6 +1889,22 @@ check('the direct pre-delete check says nobody could look, rather than inventing
     assert.strictEqual(r.branch.hasOpenPR, true, 'it still fails safe and keeps the branch');
     assert.strictEqual(r.branch.openPRUnknown, true,
       'and has to say the list was unreadable rather than that a review is open');
+    assert.strictEqual(r.openPRCheckUnavailable, true,
+      'the caveat has to reach the remote verify caller');
+    assert.strictEqual(r.mergedPRCheckUnavailable, true,
+      'the failed merge lookup has to reach the remote verify caller too');
+
+    let message = '';
+    try {
+      execFileSync('node', [CLI, '--repo', 'example/repo', '--verify', 'feature'],
+        { encoding: 'utf8' });
+    } catch (error) {
+      message = `${error.stdout || ''}${error.stderr || ''}`;
+    }
+    assert.ok(/Could not verify feature/.test(message),
+      `the remote re-check must name the lookup failure: ${message}`);
+    assert.ok(!/no longer safe/.test(message),
+      `an unreadable API must not be reported as new branch work: ${message}`);
   } finally {
     process.env.PATH = prevPath;
     fs.rmSync(dir, { recursive: true, force: true });
@@ -1906,8 +1943,11 @@ check('a direct repository check reports an unreadable open list, in the JSON to
       'the remote path has to report an open list it could not read');
 
     const out = execFileSync('node', [CLI, '--repo', 'example/repo', '--json'], { encoding: 'utf8' });
-    assert.strictEqual(JSON.parse(out).openPRCheckUnavailable, true,
+    const json = JSON.parse(out);
+    assert.strictEqual(json.openPRCheckUnavailable, true,
       'and it has to survive into the JSON, which is what a sweep reads');
+    assert.strictEqual(json.remote, true,
+      'the sweep needs the path to interpret the caveat correctly');
 
     // The note has to match this path. Locally an unreadable list costs the
     // check and nothing else; here it holds every branch back, so the local

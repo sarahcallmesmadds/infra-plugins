@@ -64,7 +64,7 @@ Add `--json` when sweeping several repositories, so you can total them up, and r
 - `remoteStale` — the comparison ran against a ref the remote has moved past, named in `remoteStaleRef`. Anything merged since then is sitting in "Keep" with a commit count, which is exactly what unmerged work looks like. Say so, and say to run `git fetch` and try again.
 - `mergeCheckUnavailable` — this git is too old to spot a squash merge, so every squash-merged branch is in "Keep".
 - `mergedPRCheckUnavailable` — the origin is on GitHub and its merged pull requests could not be read, so a branch squash-merged before the default branch moved on is in "Keep". Say to check `gh auth status`.
-- `openPRCheckUnavailable` — the open pull requests could not be read, so nothing in the answer accounts for a review still in progress. This one does not make the list longer, it makes it less protected, so say it even though everything looks normal.
+- `openPRCheckUnavailable` — read `remote` with it. For a local checkout (`remote: false`), nothing in the answer accounts for a review still in progress; the lists are otherwise unchanged. For a GitHub repository (`remote: true`), every branch is held in "Keep" because the API has no safe-delete second opinion. Say which consequence occurred and recommend `gh auth status`; never present either result as a normal complete listing.
 
 Printing the counts without these turns a hedged answer into a confident one, which is the one thing this command must never do. The text output prints them as notes on its own; it is only the sweep, where you do the rendering, that can lose them.
 
