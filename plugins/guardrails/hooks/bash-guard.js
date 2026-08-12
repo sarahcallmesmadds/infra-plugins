@@ -175,45 +175,61 @@ readEvent((event) => {
   // deleted through the tool at any point, however many times it was approved
   // in conversation.
   //
-  // The two rules below stay `deny`, and the difference is that each of them
-  // knows the better command and prints it. Nothing is being weighed there.
+  // Assessed here and emitted at the bottom, after the two rules that refuse.
+  //
+  // A hook emits one decision, so whichever rule speaks first is the entire
+  // answer and the others never run. While every verdict was a `deny` the order
+  // did not matter: the command was stopped whichever one got there. It matters
+  // now, because an `ask` reaching the wire first replaces a `deny` that would
+  // otherwise have followed, and `git commit --no-verify -m "wip"` on main is
+  // both at once. Emitting the ask where the assessment happens turned the
+  // strongest rule in the plugin into a prompt that one approval walks through.
+  //
+  // So: refusals are decided first, and the question is only asked once nothing
+  // has refused. Strongest decision wins, regardless of which rule noticed
+  // first.
   const verdict = checkCommand(command, config, { rules });
-  if (verdict.verdict === 'confirm') {
-    confirm(verdict.reason);
-    return;
-  }
 
+  // 2 and 3, the two rules that refuse. Each knows the command you wanted
+  // instead and prints it, so there is nothing to weigh and nothing to ask.
+  //
   // `git commit`, but also `git -C <path> commit`, `git --no-pager commit`, and
   // any other option between the two words. Matching only the adjacent form is
   // what let `git -C <path> commit` past the branch guard entirely.
-  if (!IS_GIT_COMMIT.test(command)) return;
+  if (IS_GIT_COMMIT.test(command)) {
+    // 2. Protected branches.
+    if (config.blockCommitToProtectedBranch) {
+      const branch = currentBranch(command, event.cwd);
+      if (branch && config.protectedBranches.includes(branch)) {
+        block(
+          `You are on "${branch}", which is a protected branch.\n\n` +
+          `Branch first, then commit:\n` +
+          `  git checkout -b <short-description-of-the-change>\n\n` +
+          `To change which branches are protected, edit protectedBranches in ` +
+          `~/.claude/guardrails.config.json.`
+        );
+        return;
+      }
+    }
 
-  // 2. Protected branches.
-  if (config.blockCommitToProtectedBranch) {
-    const branch = currentBranch(command, event.cwd);
-    if (branch && config.protectedBranches.includes(branch)) {
-      block(
-        `You are on "${branch}", which is a protected branch.\n\n` +
-        `Branch first, then commit:\n` +
-        `  git checkout -b <short-description-of-the-change>\n\n` +
-        `To change which branches are protected, edit protectedBranches in ` +
-        `~/.claude/guardrails.config.json.`
-      );
-      return;
+    // 3. Commit message format.
+    if (config.requireConventionalCommits) {
+      const message = commitMessageFrom(command);
+      if (message && !CONVENTIONAL.test(message)) {
+        block(
+          `Commit message does not match Conventional Commits:\n  "${message}"\n\n` +
+          `Expected "<type>: <description>", where type is one of feat, fix, docs, ` +
+          `style, refactor, perf, test, build, ci, chore, revert.\n\n` +
+          `To turn this check off, set requireConventionalCommits to false in ` +
+          `~/.claude/guardrails.config.json.`
+        );
+        return;
+      }
     }
   }
 
-  // 3. Commit message format.
-  if (config.requireConventionalCommits) {
-    const message = commitMessageFrom(command);
-    if (message && !CONVENTIONAL.test(message)) {
-      block(
-        `Commit message does not match Conventional Commits:\n  "${message}"\n\n` +
-        `Expected "<type>: <description>", where type is one of feat, fix, docs, ` +
-        `style, refactor, perf, test, build, ci, chore, revert.\n\n` +
-        `To turn this check off, set requireConventionalCommits to false in ` +
-        `~/.claude/guardrails.config.json.`
-      );
-    }
+  // 1. Nothing refused, so the question stands on its own.
+  if (verdict.verdict === 'confirm') {
+    confirm(verdict.reason);
   }
 });

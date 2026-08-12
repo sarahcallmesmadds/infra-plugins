@@ -184,6 +184,57 @@ check('a rule that names the better command still denies', () => {
   fs.rmSync(repo, { recursive: true, force: true });
 });
 
+// --- one command, two rules, one decision --------------------------------
+//
+// A hook emits a single decision, so whichever rule speaks first is the whole
+// answer. While every verdict was a `deny` that was invisible: the command was
+// stopped whichever rule got there first. Introducing `ask` made the order
+// load-bearing, and the first version of it asked at the point of assessment,
+// before the protected-branch rule ran at all.
+//
+// The effect was that adding `--no-verify` to a commit on main downgraded the
+// strongest rule in the plugin to a prompt, and one approval put a commit
+// straight on the protected branch. The same held for any line combining a
+// delete with a commit. Caught in review on #98 rather than by these tests,
+// which had no case where two rules fired on one command.
+check('a refusal is not downgraded by a question on the same command', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrails-repo-'));
+  initRepo(repo, 'main');
+
+  // Each of these trips a rule that asks and a rule that refuses. The refusal
+  // has to win every time, whichever one the code happens to assess first.
+  for (const command of [
+    `git -C ${repo} commit --no-verify -m "wip"`,
+    `git -C ${repo} commit -n -m "wip"`,
+    `rm -rf ~/live && git -C ${repo} commit -m "wip"`,
+  ]) {
+    const reason = assertDenies(runHook(command), command);
+    assert.ok(
+      reason.includes('protected branch'),
+      `the deny has to be the branch rule, not something weaker: ${reason}`
+    );
+  }
+
+  fs.rmSync(repo, { recursive: true, force: true });
+});
+
+check('the same commands still ask once nothing refuses them', () => {
+  // The control. Off the protected branch there is no refusal to lose, so these
+  // are questions again. Without this the test above passes just as well
+  // against a hook that denies everything, which is what this replaced.
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrails-repo-'));
+  initRepo(repo, 'some-feature');
+
+  for (const command of [
+    `git -C ${repo} commit --no-verify -m "wip"`,
+    `git -C ${repo} commit -n -m "wip"`,
+  ]) {
+    assertAsks(runHook(command), command);
+  }
+
+  fs.rmSync(repo, { recursive: true, force: true });
+});
+
 // --- and the half that matters just as much ------------------------------
 
 check('an ordinary command is left alone', () => {
