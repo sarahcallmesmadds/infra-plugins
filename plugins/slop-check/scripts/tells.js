@@ -87,11 +87,37 @@ function countPhrases(haystack, needles) {
 
 // "Not X, but Y" and "It's not about X. It's about Y." Very common in machine
 // prose, and rare at this density in a human draft.
+//
+// Corrected 2026-08-11. Every pattern here used to lead with "not", so the
+// detector only saw the negation-first order. The author's own rule is written
+// the other way round, "no X, not Y antithesis", and that shape reaches the
+// same construction from the opposite end. Nine drafts of a LinkedIn post ran
+// through this clean, two of which carried a textbook example, because
+// "groups them by what they actually are, not what the campaign is called"
+// puts the negation last and nothing here was looking there.
 function antithesis(prose) {
   const patterns = [
     /\bnot (just |merely |only )?[^.,;]{3,40}, but\b/gi,
-    /\bit'?s not (about )?[^.]{3,50}\. it'?s\b/gi,
     /\bless [^.,;]{3,30} and more\b/gi,
+    // The reversed order: an affirmative clause, then a comma, then the foil.
+    // Bounded to 40 characters and stopped at sentence punctuation so it reads
+    // one clause rather than swallowing a paragraph.
+    /,\s*not (just |merely |only )?[^.,;!?]{3,40}(?=[.,;!?]|$)/gi,
+  ];
+  let count = 0;
+  for (const re of patterns) count += (prose.match(re) || []).length;
+  return count;
+}
+
+// The copular form, "it isn't X, it's Y", kept apart from the counting
+// detector above because it is unmistakable. Nobody writes this by accident
+// the way they write an incidental ", not Y", so one is worth reporting where
+// the graded version needs two.
+function copularAntithesis(prose) {
+  const patterns = [
+    /\bit'?s not (about )?[^.]{3,50}\. it'?s\b/gi,
+    /\b(is|are|was|were)n'?t (just |merely |only )?[^.,;]{3,50}, (it|they|that|this)'?(s| is| are)\b/gi,
+    /\b(is|are) not (just |merely |only )?[^.,;]{3,50}, (it|they|that|this) (is|are)\b/gi,
   ];
   let count = 0;
   for (const re of patterns) count += (prose.match(re) || []).length;
@@ -145,6 +171,25 @@ function checkHard(text, config = {}) {
     });
   }
 
+  // Standing instructions about her own writing, not machine tells. One hit is
+  // the whole threshold, because a phrase she has ruled out does not become a
+  // violation on the second use. `bannedPhrases` in the config adds to the
+  // built-in list rather than replacing it, so adding one later cannot silently
+  // drop the others.
+  if (config.houseRules !== false) {
+    const extra = Array.isArray(config.bannedPhrases) ? config.bannedPhrases : [];
+    const banned = [...P.HOUSE_RULES, ...extra].map((p) => String(p).toLowerCase());
+    const lower = String(text || '').toLowerCase();
+    const hits = banned.filter((p) => p && lower.includes(p));
+    if (hits.length) {
+      violations.push({
+        name: 'house-rule',
+        count: hits.length,
+        what: `phrases ruled out for this author (${hits.join(', ')})`,
+      });
+    }
+  }
+
   return { ok: violations.length === 0, violations };
 }
 
@@ -171,6 +216,9 @@ function checkAll(text, config = {}) {
 
   const anti = antithesis(prose);
   if (anti >= 2) soft.push({ name: 'antithesis', count: anti });
+
+  const copular = copularAntithesis(prose);
+  if (copular >= 1) soft.push({ name: 'antithesis-copular', count: copular });
 
   const three = ruleOfThree(prose);
   if (three >= 3) soft.push({ name: 'rule-of-three', count: three });

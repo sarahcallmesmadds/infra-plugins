@@ -272,5 +272,38 @@ console.log('\nconfig loading');
   fs.rmSync(sandbox, { recursive: true, force: true });
 }
 
+console.log('\nhouse rules are hard, one hit is enough');
+check('a banned steal phrase blocks',
+  checkHard('This one is worth stealing.').ok, false);
+check('go steal it blocks',
+  checkHard('go steal it!!').ok, false);
+check('the finding names the phrase it caught',
+  checkHard('This one is worth stealing.').violations.some((v) => v.what.includes('worth stealing')), true);
+check('an ordinary sentence about theft is not caught',
+  checkHard('The report covers retail theft in the northeast.').ok, true);
+check('houseRules false turns the check off',
+  checkHard('This one is worth stealing.', { houseRules: false }).ok, true);
+check('a configured phrase is added to the built-in list',
+  checkHard('we should circle back on this', { bannedPhrases: ['circle back'] }).ok, false);
+check('configuring one phrase does not drop the built-in ones',
+  checkHard('This one is worth stealing.', { bannedPhrases: ['circle back'] }).ok, false);
+check('a non-array bannedPhrases is ignored rather than crashing',
+  checkHard('a clean sentence with nothing wrong in it', { bannedPhrases: 'circle back' }).ok, true);
+
+console.log('\nantithesis is caught in both word orders');
+const softNames = (t) => checkAll(t).soft.map((s) => s.name);
+check('negation-first order still counts',
+  checkAll('It is not merely a report, but a plan. This is not just talk, but action.').soft
+    .some((s) => s.name === 'antithesis'), true);
+check('the reversed order is counted too',
+  checkAll('It groups them by what they are, not what the campaign is called. It ranks by spend, not by recency.').soft
+    .some((s) => s.name === 'antithesis'), true);
+check('the copular form reports on a single hit',
+  softNames("The output isn't a report, it's a build list.").includes('antithesis-copular'), true);
+check('a plain contrast with a comma is not antithesis',
+  softNames('She reviewed the draft on Tuesday, then sent it on Wednesday.').includes('antithesis'), false);
+check('a bare negative clause is not antithesis',
+  softNames('The skill does not touch the warehouse.').includes('antithesis'), false);
+
 console.log(`\n${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

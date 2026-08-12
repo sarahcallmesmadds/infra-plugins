@@ -28,9 +28,14 @@ which is why one command handles a LinkedIn draft and a pull request equally.
 
 ## What it looks for
 
-**Prose.** Hard rules first: em dashes, runs of very short sentences, and
+**Prose.** Hard rules first: em dashes, runs of very short sentences,
 generation artefacts left in the text (`oaicite`, `[cite: 1]`, "As of my last
-update"). Artefacts are proof rather than taste, so one is enough. Then the
+update"), and house rules, which are phrases the author has ruled out for her
+own writing and which she can extend with `bannedPhrases` in the config.
+Artefacts and house rules are proof rather than taste, so one is enough. A
+house-rule hit is reported as a standing instruction that was broken, never as
+a stylistic suggestion, and the fix is to say the thing plainly rather than to
+soften the banned phrase. Then the
 softer habits: filler, machine vocabulary, avoiding plain "is" and "has",
 participles bolted onto sentence ends, claims sourced to nobody, hedging with
 no position, antithesis, lists of three, forced enthusiasm, melodrama, and

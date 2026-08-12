@@ -34,6 +34,13 @@ function remedyFor(violations) {
   if (names.has('tool-artefact')) {
     parts.push('Delete the leftover generation artefacts. They are not prose and should never have been in the output.');
   }
+  if (names.has('house-rule')) {
+    const listed = violations.find((v) => v.name === 'house-rule');
+    parts.push(
+      `Remove the phrase this author has ruled out (${listed ? listed.what : 'see the finding'}). `
+      + 'Say the thing plainly instead. This is a standing instruction rather than a style preference, so rephrasing around it is the fix, not softening it.'
+    );
+  }
   return parts.join(' ');
 }
 

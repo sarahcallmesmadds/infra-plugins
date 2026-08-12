@@ -1,6 +1,6 @@
 {
   "name": "slop-check",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "Check any draft, document, pull request, chart or spec for the habits that mean nobody edited or reviewed it before it shipped, and name the specific lines.",
   "author": {
     "name": "Sarah Madden",

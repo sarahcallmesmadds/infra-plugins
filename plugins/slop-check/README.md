@@ -41,9 +41,14 @@ or send back to whoever produced it.
 ### Prose
 
 Hard, and worth fixing every time: em dashes, runs of sentences under four
-words, and generation artefacts left in the text (`oaicite`, `[cite: 1]`, "As
-of my last update"). Artefacts are proof rather than taste. Nobody types
-`oaicite` by hand.
+words, generation artefacts left in the text (`oaicite`, `[cite: 1]`, "As
+of my last update"), and house rules. Artefacts are proof rather than taste.
+Nobody types `oaicite` by hand.
+
+House rules are phrases the author has ruled out for her own writing, and one
+hit is the whole threshold. A phrase you have decided never to use does not
+become a violation on the second use, which is what separates these from the
+graded signals below. Add your own with `bannedPhrases` in the config.
 
 Softer, and only meaningful together: filler, machine vocabulary, avoiding
 plain "is" and "has" in favour of "serves as", participles bolted onto sentence
@@ -153,12 +158,20 @@ a time, so setting one does not reset the others.
 {
   "allowEmDash": false,
   "choppyRunLimit": 3,
-  "enforce": true
+  "enforce": true,
+  "houseRules": true,
+  "bannedPhrases": []
 }
 ```
 
 Set `enforce` to false to keep the skill and turn the hook off, for when you
 are deliberately drafting something that needs the forbidden shapes.
+
+`bannedPhrases` is added to the built-in house rules rather than replacing
+them, so adding one phrase later cannot quietly drop the rest. Matching is on
+lowercased text by substring, so keep each entry to the shortest distinctive
+form. Set `houseRules` to false to turn that check off on its own and leave the
+other hard rules running.
 
 ## What this is not
 

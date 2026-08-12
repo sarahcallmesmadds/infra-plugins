@@ -32,6 +32,35 @@ const VOCABULARY = [
   'actionable insights', 'unlock',
 ];
 
+// Phrases the author has ruled out for her own writing. These are not machine
+// tells and they are not a matter of taste, they are a standing instruction, so
+// they are HARD and one hit is enough. Everything else in this file is graded
+// on aggregate; this list is not.
+//
+// Matching is by substring on lowercased text, same as the soft lists, so keep
+// each entry to the shortest distinctive form.
+//
+// Added 2026-08-11 after four consecutive drafts of a LinkedIn post shipped
+// with "worth stealing" in them and the tool reported all four clean. Her
+// ruling was "absolutely not okay to say to me or to say as me ever", which is
+// a different class of thing from "delve" and is why it does not live in
+// VOCABULARY.
+const HOUSE_RULES = [
+  // Steal framing, rule 12. Any form of it.
+  'worth stealing',
+  'go steal',
+  'steal this',
+  'steal it',
+  'stealable',
+  // Telling the reader what they already have or already know, rule 13. These
+  // are the specific shapes she cut, kept narrow on purpose: the complaint was
+  // about being told about your own business, not about the word "your".
+  'you already know',
+  'your ad account already',
+  'already knows which',
+  "here's the thing",
+];
+
 // Replacing plain "is" and "has" with something that sounds weightier. One of
 // the most reliable tells, and one almost nobody edits out.
 const COPULA_AVOIDANCE = [
@@ -113,4 +142,5 @@ module.exports = {
   FAKE_ENTHUSIASM,
   MELODRAMA,
   TOOL_ARTEFACTS,
+  HOUSE_RULES,
 };
