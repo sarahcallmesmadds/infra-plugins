@@ -84,6 +84,29 @@ dependencies to install, but `node` has to be on your `PATH`. If it is not,
 the hooks fail silently rather than breaking your session, which means you get
 no protection and no error. Check with `node --version` before relying on it.
 
+**On permissive permission modes, the delete prompt is advisory.** From 0.5.1
+the destructive and commit-hook rules ask rather than refuse, and asking hands
+the command back to the normal permission flow. So an existing allow rule such
+as `Bash(rm:*)`, a session started with `--permission-mode bypassPermissions`,
+or an unattended run that approves automatically will carry the command out
+where the older behaviour stopped it dead.
+
+That is the trade, taken deliberately. Refusing gave a strictness nobody could
+lift: every one of those reasons ends by asking you to confirm that the command
+is intended, and there was no way to confirm, so the only route past a guard
+that had done its job was to leave the session and run the command by hand. A
+guard people step around to do ordinary work protects nobody, and it teaches the
+habit of stepping around it.
+
+The two rules that refuse are unaffected, because they never asked anything:
+a commit to a protected branch and a commit message that misses the format are
+still stopped whatever mode you are in, and they are stopped even when the same
+command also trips a rule that would otherwise prompt.
+
+If you run on a permissive mode and want the old behaviour for deletes, there is
+no setting for it short of `blockDestructiveCommands: false`, which turns the
+rule off rather than hardening it. Worth knowing before you rely on it.
+
 ## Configuration
 
 Everything works out of the box. To change something, create
