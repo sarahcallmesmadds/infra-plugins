@@ -84,12 +84,21 @@ dependencies to install, but `node` has to be on your `PATH`. If it is not,
 the hooks fail silently rather than breaking your session, which means you get
 no protection and no error. Check with `node --version` before relying on it.
 
-**On permissive permission modes, the delete prompt is advisory.** From 0.5.1
-the destructive and commit-hook rules ask rather than refuse, and asking hands
-the command back to the normal permission flow. So an existing allow rule such
-as `Bash(rm:*)`, a session started with `--permission-mode bypassPermissions`,
-or an unattended run that approves automatically will carry the command out
-where the older behaviour stopped it dead.
+**Where prompts are answered automatically, the delete prompt is advisory.**
+From 0.5.1 the destructive and commit-hook rules ask rather than refuse, and an
+ask is settled by whatever answers permission prompts in your setup. In an
+interactive session that is you. In a session started with
+`--permission-mode bypassPermissions`, or an unattended run that approves
+whatever it is asked, it is not, and the command goes through where the older
+behaviour stopped it dead.
+
+One thing here is deliberately not claimed. Whether an existing allow rule for
+the same command, `Bash(rm:*)` say, settles the prompt before you see it is a
+question about Claude Code's permission precedence rather than about this
+plugin, and it is not something this repository can establish. An earlier draft
+of this section asserted that it does. That was a guess presented as a fact, so
+it is withdrawn rather than restated more carefully. If you lean on allow rules,
+check the behaviour on your own setup before relying on either answer.
 
 That is the trade, taken deliberately. Refusing gave a strictness nobody could
 lift: every one of those reasons ends by asking you to confirm that the command

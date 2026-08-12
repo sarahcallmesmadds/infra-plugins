@@ -29,14 +29,30 @@ const { DEFAULTS } = require('../plugins/guardrails/scripts/config');
 const PLUGIN = path.join(__dirname, '..', 'plugins', 'guardrails');
 const README = fs.readFileSync(path.join(PLUGIN, 'README.md'), 'utf8');
 const GUARD = fs.readFileSync(path.join(PLUGIN, 'hooks', 'resource-owner-guard.js'), 'utf8');
+const BASH_GUARD = fs.readFileSync(path.join(PLUGIN, 'hooks', 'bash-guard.js'), 'utf8');
+const HOOK_IO = fs.readFileSync(path.join(PLUGIN, 'scripts', 'hook-io.js'), 'utf8');
 
 // The one-line descriptions a person reads before installing. Three of them,
 // in three files, which is three chances to update two.
+// Every place a one-line summary of this plugin is written down.
+//
+// The root README row is here because it is the fourth copy and the one that
+// got missed: 0.5.1 reworded the two manifests and the marketplace entry and
+// left it saying deletes were blocked. Four copies of one sentence is the
+// arrangement, so the test has to know about all four or it is checking the
+// three that happened to be remembered.
+const README_ROW = (() => {
+  const text = fs.readFileSync(path.join(__dirname, '..', 'README.md'), 'utf8');
+  const row = text.split('\n').find((l) => /^\|\s*\[`guardrails`\]/.test(l));
+  return row ? row.split('|')[2].trim() : null;
+})();
+
 const DESCRIPTIONS = {
   'the Claude manifest': require('../plugins/guardrails/.claude-plugin/plugin.json').description,
   'the Codex manifest': require('../plugins/guardrails/.codex-plugin/plugin.json').description,
   'the marketplace entry': require('../.claude-plugin/marketplace.json')
     .plugins.find((entry) => entry.name === 'guardrails').description,
+  'the root README table': README_ROW,
 };
 const UNDO = fs.readFileSync(
   path.join(PLUGIN, 'skills', 'undo-possible', 'SKILL.md'),
@@ -213,6 +229,42 @@ check('no description advertises a gate the code does not have', () => {
     throw new Error(
       `${stale.join(' | ')}. The owner gate was removed, so a description `
         + 'promising it describes behaviour the plugin no longer has.'
+    );
+  }
+});
+
+check('the root README row is actually found, so the check above is checking something', () => {
+  // A selector that silently matches nothing is a test that passes forever. The
+  // row is located by a pattern, so the pattern gets its own assertion.
+  if (!README_ROW) throw new Error('no guardrails row found in the root README table');
+});
+
+check('no description says it blocks what the hook only asks about', () => {
+  // Read from the code rather than assumed. If a later change makes the
+  // destructive rules refuse again, the descriptions saying "blocks" become
+  // correct and this check has to stop firing on its own.
+  const asks = /permissionDecision:\s*'ask'/.test(HOOK_IO)
+    && /\bconfirm\(verdict\.reason\)/.test(BASH_GUARD);
+  if (!asks) return;
+
+  // Clause by clause. "Blocks commits to protected branches, asks before
+  // irreversible deletes" is two claims in one sentence and both are true, so
+  // the whole string cannot be the unit of judgement.
+  const DESTRUCTIVE = /\b(unsafe|destructive|irreversible|dangerous|delete|deletes|undone)\b/i;
+  const wrong = [];
+  for (const [where, text] of Object.entries(DESCRIPTIONS)) {
+    for (const clause of String(text || '').split(/[,.;]/)) {
+      if (/\bblocks?\b/i.test(clause) && DESTRUCTIVE.test(clause)) {
+        wrong.push(`${where}: "${clause.trim()}"`);
+      }
+    }
+  }
+
+  if (wrong.length) {
+    throw new Error(
+      `${wrong.join(' | ')}. The destructive and commit-hook rules ask rather `
+        + 'than refuse, so a description promising they are blocked overstates '
+        + 'the protection somebody gets before they install it.'
     );
   }
 });
