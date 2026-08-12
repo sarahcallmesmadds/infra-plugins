@@ -44,10 +44,12 @@ const RULE_SETTINGS = {
 // interaction instruction and keep the command-specific risk and safer
 // alternative intact.
 function refusalReason(reason) {
-  return reason.replace(
-    /\n\nConfirm this is intended before running it\.\s*/i,
-    '\n\n'
-  );
+  return reason
+    .replace(/\n\nConfirm this is intended before running it\.\s*/i, '\n\n')
+    .replace(
+      /\n\nBefore running it, say what is being deleted, why it is safe to delete, and how it could be recovered if the answer turns out to be wrong\.\s*/i,
+      '\n\n'
+    );
 }
 
 // The repository a git command actually targets is not necessarily the hook's

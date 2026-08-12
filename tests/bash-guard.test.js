@@ -264,8 +264,8 @@ check('every unattended refusal is actionable and names its own switch', () => {
       );
       assert.ok(reason.includes(mode), `the refusal has to name the mode: ${reason}`);
       assert.ok(
-        !/confirm this is intended/i.test(reason),
-        `a refusal must not ask for a confirmation nobody can give: ${reason}`
+        !/(confirm this is intended|before running it, say)/i.test(reason),
+        `a refusal must not request interaction nobody can provide: ${reason}`
       );
       assert.ok(
         reason.includes(`${setting} to false`),

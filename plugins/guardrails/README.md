@@ -98,6 +98,12 @@ path merely by omitting the field. The refusal says which mode caused it and
 how to get asked instead, rather than telling you to confirm something that in
 that mode you cannot.
 
+One boundary is not exposed to hooks: `claude -p` can report `default`, the
+same value as an interactive session, and PreToolUse input has no print-mode or
+TTY field. The hook therefore cannot distinguish those two runs. For unattended
+use, pass `--permission-mode dontAsk` (or another non-interactive mode) rather
+than relying on the default mode to communicate that nobody is present.
+
 `acceptEdits` still asks. Claude Code evaluates a PreToolUse `ask`
 before its permission-mode and allow-rule decisions, so the hook's prompt is
 not pre-empted by that mode or by an existing allow rule such as
