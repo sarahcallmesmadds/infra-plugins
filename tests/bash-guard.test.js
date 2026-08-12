@@ -36,11 +36,14 @@ const NOWHERE = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrails-nowhere-'));
 // will run. `processCwd` is where the hook process itself is spawned. Keeping
 // them separate is the whole point: they are frequently different, and the
 // guard used to read only the second one.
-function runHook(command, { eventCwd, processCwd } = {}) {
+function runHook(command, { eventCwd, processCwd, permissionMode } = {}) {
   const event = JSON.stringify({
     tool_name: 'Bash',
     tool_input: { command },
     ...(eventCwd ? { cwd: eventCwd } : {}),
+    // Omitted unless a test asks for it, so every existing case still describes
+    // an event without the field and pins the fallback.
+    ...(permissionMode ? { permission_mode: permissionMode } : {}),
   });
   const stdout = execFileSync(process.execPath, [HOOK], {
     input: event,
@@ -233,6 +236,62 @@ check('the same commands still ask once nothing refuses them', () => {
   }
 
   fs.rmSync(repo, { recursive: true, force: true });
+});
+
+// --- asking needs somebody to ask ----------------------------------------
+//
+// `ask` is settled by whatever answers permission prompts, and in an
+// unattended run that is not a person. A guard that prompts there has the form
+// of a check and none of the effect, which is worse than either real answer,
+// because the transcript still reads as though something was considered.
+//
+// So the decision follows who is listening. This was raised in review as
+// documented-but-unsettled, and documenting it was not enough: the event says
+// which mode it is in, so the hook can stop guessing.
+check('an unattended run is refused rather than asked', () => {
+  for (const mode of ['bypassPermissions', 'dontAsk']) {
+    const out = runHook('rm -rf ~/live', { permissionMode: mode });
+    const reason = assertDenies(out, `rm -rf in ${mode}`);
+    assert.ok(reason.includes(mode), `the refusal has to name the mode: ${reason}`);
+
+    // Not the confirm wording. Telling somebody to confirm something, on a
+    // refusal that by definition cannot be confirmed, is the exact dead end
+    // this release was opened to remove. Getting it right in one direction and
+    // wrong in the other would be no better than where it started.
+    assert.ok(
+      !/confirm this is intended/i.test(reason),
+      `a refusal must not ask for a confirmation nobody can give: ${reason}`
+    );
+  }
+});
+
+check('a mode where somebody is watching still asks', () => {
+  // The control, and the more important half. Denying in a mode that would
+  // have prompted refuses a command somebody was standing there to approve,
+  // which is the fault this whole release exists to fix.
+  //
+  // `auto` and `acceptEdits` are in this list on purpose. Whether they answer a
+  // Bash prompt without a person is not something this repository can
+  // establish, and being wrong toward asking costs a prompt, while being wrong
+  // toward refusing costs somebody the command.
+  for (const mode of ['default', 'plan', 'acceptEdits', 'auto']) {
+    assertAsks(runHook('rm -rf ~/live', { permissionMode: mode }), `rm -rf in ${mode}`);
+  }
+});
+
+check('an event with no permission mode asks, as it did before the field was read', () => {
+  // A harness that does not send the field, or sends an unfamiliar mode, has to
+  // land on the old behaviour rather than on a refusal nobody can lift.
+  assertAsks(runHook('rm -rf ~/live'), 'no permission_mode');
+  assertAsks(runHook('rm -rf ~/live', { permissionMode: 'somethingNewer' }), 'unknown mode');
+});
+
+check('an unattended run does not turn ordinary commands into refusals', () => {
+  assert.strictEqual(
+    runHook('ls -la', { permissionMode: 'bypassPermissions' }),
+    null,
+    'the mode changes which answer a flagged command gets, not what counts as flagged'
+  );
 });
 
 // --- and the half that matters just as much ------------------------------

@@ -12,7 +12,7 @@
       "name": "guardrails",
       "source": "./plugins/guardrails",
       "description": "Blocks commits to protected branches, asks before irreversible deletes, flags prompt injection in content the model reads or writes, and can require a governing document be read before a directory is written.",
-      "version": "0.5.1",
+      "version": "0.5.2",
       "author": {
         "name": "Sarah Madden"
       },

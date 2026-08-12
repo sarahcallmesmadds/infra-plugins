@@ -25,6 +25,17 @@ const IS_GIT_COMMIT = /\bgit\s+(?:-[^\s]+(?:\s+[^\s-][^\s]*)?\s+)*commit\b/;
 
 const CONVENTIONAL = /^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([^)]+\))?!?: .+/;
 
+// The permission modes where a prompt is not seen by anyone.
+//
+// Only the two whose meaning is unambiguous. `bypassPermissions` is the whole
+// point of the mode, and `dontAsk` says so in its name. `auto` and
+// `acceptEdits` are left out on purpose: they may or may not answer a Bash
+// prompt without a person, and guessing wrong here refuses a command somebody
+// was standing right there to approve, which is the fault this release exists
+// to fix. Being wrong in that direction is worse than the gap, so the gap is
+// documented in the README instead of covered by a guess.
+const UNATTENDED = new Set(['bypassPermissions', 'dontAsk']);
+
 // The repository a git command actually targets is not necessarily the hook's
 // own working directory. `git -C <path> commit` and `cd <path> && git commit`
 // both act somewhere else, and checking the wrong repo means checking the wrong
@@ -229,7 +240,38 @@ readEvent((event) => {
   }
 
   // 1. Nothing refused, so the question stands on its own.
+  //
+  // Unless there is nobody to ask, in which case asking is not a weaker answer,
+  // it is no answer. `ask` is settled by whatever answers permission prompts,
+  // and in these two modes that is not a person: the run approves what it is
+  // asked. A guard that prompts there has the form of a check and none of the
+  // effect, which is worse than either real answer because the output still
+  // reads as though something was considered.
+  //
+  // So the decision follows who is listening. Someone there, ask them. Nobody
+  // there, refuse, which is what these runs got before 0.5.1 and is therefore
+  // not a change for them.
+  //
+  // `permission_mode` is a documented field on every PreToolUse event. An event
+  // without it falls through to asking, which is the behaviour on the line
+  // above, so a harness that does not send it loses nothing.
   if (verdict.verdict === 'confirm') {
+    if (UNATTENDED.has(event.permission_mode)) {
+      // Deliberately not the confirm wording. "Confirm this is intended before
+      // running it" is exactly the dead end this release was opened to remove,
+      // and printing it on a refusal that cannot be confirmed would reintroduce
+      // it in the one place where confirming is genuinely impossible.
+      block(
+        `${verdict.reason}\n\n` +
+        `Refused rather than asked, because this session runs with ` +
+        `permission_mode "${event.permission_mode}", where a prompt is answered ` +
+        `without a person seeing it.\n\n` +
+        `Run it in an interactive session to be asked instead, or set ` +
+        `blockDestructiveCommands to false in ~/.claude/guardrails.config.json ` +
+        `if you want this rule off here.`
+      );
+      return;
+    }
     confirm(verdict.reason);
   }
 });
