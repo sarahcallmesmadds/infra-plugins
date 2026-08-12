@@ -638,9 +638,18 @@ function mergedPRsBySha(repo, def, opts) {
 // paths, matched on the branch name, because keying them on the tip here made
 // the two paths disagree about a branch with unpushed commits.
 function mergedPRForCommit(repo, def, sha, opts) {
+  // The same budget the listing's lookup gets, deliberately.
+  //
+  // These two answer one question by different routes, and the whole release is
+  // about them agreeing. Left on the 5 second default while the listing had 20,
+  // a commit with many containing pull requests could answer the listing and
+  // time out the re-check, so a branch just cleared would be refused seconds
+  // later. That is the disagreement this release exists to remove, arriving as
+  // a clock rather than as a missing query, and it would have been the harder
+  // one to diagnose because both code paths are correct.
   const pulls = ghLines(['api', `repos/${repo}/commits/${sha}/pulls`, '--paginate',
     '--jq', '.[] | "\\(.number)\\t\\(.base.ref)\\t\\(.head.sha)\\t\\(.merged_at != null)"'],
-  opts);
+  Object.assign({ timeout: MERGED_PR_TIMEOUT_MS }, opts));
   if (pulls === null) return null;
 
   const numbers = pulls.map((l) => l.split('\t')).filter((r) => r.length === 4)
@@ -654,9 +663,13 @@ function mergedPRForCommit(repo, def, sha, opts) {
 // which the caller treats as "every branch might have one" rather than "none
 // do": a branch whose review is still running must not be offered for deletion
 // because the list behind that protection failed to load.
+// Called from both paths with the same budget, for the same reason as above.
+// Open pull requests are few compared with closed ones, so this rarely needs
+// it, but "rarely" is what makes a timeout here a bug somebody hits once and
+// cannot reproduce.
 function openPRHeadRefs(repo, opts) {
   const lines = ghLines(['api', `repos/${repo}/pulls?state=open&per_page=100`, '--paginate',
-    '--jq', '.[].head.ref'], opts);
+    '--jq', '.[].head.ref'], Object.assign({ timeout: MERGED_PR_TIMEOUT_MS }, opts));
   return lines === null ? null : new Set(lines);
 }
 

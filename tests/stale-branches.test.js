@@ -1266,9 +1266,39 @@ check('no remote means no note', () => {
 // used, not whether GitHub is reachable, and a test that needs the network to
 // pass fails for reasons that have nothing to do with the code.
 
+// Runs `fn` with the developer's own git configuration out of the picture.
+//
+// Anything asserting on what `git remote get-url` returns has to, because
+// `url.<base>.insteadOf` is a global rewrite and it is applied to that output.
+// A contributor whose machine has one, which a corporate proxy configures as a
+// matter of course, gets a URL back with a different host and an extra path
+// segment, and a test written against the plain form fails on their machine and
+// nowhere else. It happened: this suite failed in review for exactly that
+// reason while passing here.
+//
+// The production code is not affected, because `githubRepo` reads the raw
+// configured value first. That is what the rewrite test below pins. This is
+// only about the fixture describing the machine it runs on.
+function withIsolatedGitConfig(fn) {
+  const prev = {
+    global: process.env.GIT_CONFIG_GLOBAL,
+    system: process.env.GIT_CONFIG_SYSTEM,
+  };
+  process.env.GIT_CONFIG_GLOBAL = '/dev/null';
+  process.env.GIT_CONFIG_SYSTEM = '/dev/null';
+  try {
+    return fn();
+  } finally {
+    if (prev.global === undefined) delete process.env.GIT_CONFIG_GLOBAL;
+    else process.env.GIT_CONFIG_GLOBAL = prev.global;
+    if (prev.system === undefined) delete process.env.GIT_CONFIG_SYSTEM;
+    else process.env.GIT_CONFIG_SYSTEM = prev.system;
+  }
+}
+
 // The URL forms git actually writes, and what each one means for whether a
 // missing merged-PR list is worth reporting.
-check('an origin URL is read for its host and repository, in every form git writes', () => {
+check('an origin URL is read for its host and repository, in every form git writes', () => withIsolatedGitConfig(() => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stale-origin-url-'));
   const g = (...a) => execFileSync('git', ['-C', dir, ...a], { encoding: 'utf8', stdio: 'pipe' });
   execFileSync('git', ['init', '-q', '-b', 'main', dir], { stdio: 'pipe' });
@@ -1302,6 +1332,64 @@ check('an origin URL is read for its host and repository, in every form git writ
     'a filesystem path must not be read as a GitHub repository');
 
   fs.rmSync(dir, { recursive: true, force: true });
+}));
+
+// The two lookups that answer one question get one budget.
+//
+// Asserted by reading the source, which is unusual here and is the point: a
+// timeout difference has no observable behaviour until a slow repository makes
+// it observable, and then it looks like the listing and the re-check disagreeing
+// rather than like a clock. There is nothing to feed a stub that would catch it.
+//
+// The re-check inherited the 5 second default while the listing had 20, so a
+// commit with many containing pull requests could answer one and time out the
+// other, refusing a branch cleared seconds earlier. Both code paths correct,
+// which is what would have made it hard to find.
+check('the merged-PR lookups run under the same timeout, on both paths', () => {
+  const src = fs.readFileSync(
+    path.join(__dirname, '..', 'plugins', 'git-hygiene', 'scripts', 'collect.js'),
+    'utf8'
+  );
+  for (const fn of ['mergedPRsBySha', 'mergedPRForCommit', 'openPRHeadRefs']) {
+    const at = src.indexOf(`function ${fn}(`);
+    assert.notStrictEqual(at, -1, `${fn} is gone, so this check is watching nothing`);
+    const body = src.slice(at, src.indexOf('\n}', at));
+    assert.ok(
+      body.includes('MERGED_PR_TIMEOUT_MS'),
+      `${fn} does not set MERGED_PR_TIMEOUT_MS, so it falls back to the 5 second `
+        + 'default and can time out where its counterpart succeeds'
+    );
+  }
+});
+
+// The isolation above has to actually isolate. Without this, a later change to
+// `withIsolatedGitConfig` that quietly stops working would leave the test above
+// passing here and failing on a contributor's machine again, which is the exact
+// failure it was written to remove.
+check('the isolation neutralises a rewrite that would otherwise break the test above', () => {
+  const cfg = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'stale-rewrite-cfg-')), 'gitconfig');
+  fs.writeFileSync(cfg, '[url "https://proxy.example.com/proxy/github.com/"]\n\tinsteadOf = git@github.com:\n');
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stale-isolation-'));
+  const withCfg = (env) => execFileSync(
+    'git', ['-C', dir, 'remote', 'get-url', 'origin'],
+    { encoding: 'utf8', stdio: 'pipe', env: { ...process.env, ...env } }
+  ).trim();
+  execFileSync('git', ['init', '-q', '-b', 'main', dir], { stdio: 'pipe' });
+  execFileSync('git', ['-C', dir, 'remote', 'add', 'origin', 'git@github.com:owner/name.git'], { stdio: 'pipe' });
+
+  assert.ok(
+    /proxy\.example\.com/.test(withCfg({ GIT_CONFIG_GLOBAL: cfg })),
+    'the fixture has to reproduce the rewrite, or this proves nothing'
+  );
+  assert.strictEqual(
+    withCfg({ GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' }),
+    'git@github.com:owner/name.git',
+    'and the isolation has to remove it'
+  );
+
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(path.dirname(cfg), { recursive: true, force: true });
 });
 
 // The three shapes of gh call the code makes, answered the way GitHub would.
