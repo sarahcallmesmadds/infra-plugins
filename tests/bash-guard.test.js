@@ -36,14 +36,14 @@ const NOWHERE = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrails-nowhere-'));
 // will run. `processCwd` is where the hook process itself is spawned. Keeping
 // them separate is the whole point: they are frequently different, and the
 // guard used to read only the second one.
-function runHook(command, { eventCwd, processCwd, permissionMode } = {}) {
+function runHook(command, { eventCwd, processCwd, permissionMode = 'default' } = {}) {
   const event = JSON.stringify({
     tool_name: 'Bash',
     tool_input: { command },
     ...(eventCwd ? { cwd: eventCwd } : {}),
-    // Omitted unless a test asks for it, so every existing case still describes
-    // an event without the field and pins the fallback.
-    ...(permissionMode ? { permission_mode: permissionMode } : {}),
+    // Real Claude Code events carry the field, so ordinary tests use `default`.
+    // Passing null is the explicit degraded-harness case that omits it.
+    ...(permissionMode !== null ? { permission_mode: permissionMode } : {}),
   });
   const stdout = execFileSync(process.execPath, [HOOK], {
     input: event,
@@ -249,7 +249,7 @@ check('the same commands still ask once nothing refuses them', () => {
 // documented-but-unsettled, and documenting it was not enough: the event says
 // which mode it is in, so the hook can stop guessing.
 check('every unattended refusal is actionable and names its own switch', () => {
-  for (const mode of ['bypassPermissions', 'dontAsk']) {
+  for (const mode of ['bypassPermissions', 'dontAsk', 'auto', 'somethingNewer']) {
     for (const [command, setting] of [
       ['rm -rf ~/live', 'blockDestructiveCommands'],
       ['git clean -fd', 'blockDestructiveCommands'],
@@ -280,20 +280,17 @@ check('a mode where somebody is watching still asks', () => {
   // have prompted refuses a command somebody was standing there to approve,
   // which is the fault this whole release exists to fix.
   //
-  // `auto` and `acceptEdits` are in this list on purpose. Whether they answer a
-  // Bash prompt without a person is not something this repository can
-  // establish, and being wrong toward asking costs a prompt, while being wrong
-  // toward refusing costs somebody the command.
-  for (const mode of ['default', 'plan', 'acceptEdits', 'auto']) {
+  for (const mode of ['default', 'plan', 'acceptEdits']) {
     assertAsks(runHook('rm -rf ~/live', { permissionMode: mode }), `rm -rf in ${mode}`);
   }
 });
 
-check('an event with no permission mode asks, as it did before the field was read', () => {
-  // A harness that does not send the field, or sends an unfamiliar mode, has to
-  // land on the old behaviour rather than on a refusal nobody can lift.
-  assertAsks(runHook('rm -rf ~/live'), 'no permission_mode');
-  assertAsks(runHook('rm -rf ~/live', { permissionMode: 'somethingNewer' }), 'unknown mode');
+check('an event with no permission mode fails closed', () => {
+  const reason = assertDenies(
+    runHook('rm -rf ~/live', { permissionMode: null }),
+    'no permission_mode'
+  );
+  assert.ok(reason.includes('(missing)'), `the refusal has to name the missing mode: ${reason}`);
 });
 
 check('an unattended run does not turn ordinary commands into refusals', () => {
@@ -429,7 +426,11 @@ function hookWithConfig(settings, command) {
     JSON.stringify(settings)
   );
   const stdout = execFileSync(process.execPath, [HOOK], {
-    input: JSON.stringify({ tool_name: 'Bash', tool_input: { command } }),
+    input: JSON.stringify({
+      tool_name: 'Bash',
+      tool_input: { command },
+      permission_mode: 'default',
+    }),
     encoding: 'utf8',
     cwd: NOWHERE,
     env: { ...process.env, HOME: home },

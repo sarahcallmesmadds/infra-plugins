@@ -25,16 +25,14 @@ const IS_GIT_COMMIT = /\bgit\s+(?:-[^\s]+(?:\s+[^\s-][^\s]*)?\s+)*commit\b/;
 
 const CONVENTIONAL = /^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([^)]+\))?!?: .+/;
 
-// The permission modes where a prompt is not seen by anyone.
-//
-// Only the two whose meaning is unambiguous. `bypassPermissions` is the whole
-// point of the mode, and `dontAsk` says so in its name. `auto` and
-// `acceptEdits` are left out on purpose: they may or may not answer a Bash
-// prompt without a person, and guessing wrong here refuses a command somebody
-// was standing right there to approve, which is the fault this release exists
-// to fix. Being wrong in that direction is worse than the gap, so the gap is
-// documented in the README instead of covered by a guess.
-const UNATTENDED = new Set(['bypassPermissions', 'dontAsk']);
+// Ask only in documented modes whose ordinary contract includes interactive
+// approval. This is deliberately an allowlist: a missing field, a new mode, or
+// a third-party harness with a different permission contract must fail closed
+// for an irreversible command rather than inherit an optimistic assumption.
+// `acceptEdits` still has a person present; its automatic scope does not settle
+// a PreToolUse `ask`. `auto`, `dontAsk`, and `bypassPermissions` are designed to
+// run without an approval at each tool call, so confirm verdicts refuse there.
+const INTERACTIVE = new Set(['default', 'plan', 'acceptEdits']);
 
 const RULE_SETTINGS = {
   destructive: 'blockDestructiveCommands',
@@ -257,10 +255,11 @@ readEvent((event) => {
 
   // 1. Nothing refused, so the question stands on its own.
   //
-  // Unless there is nobody to ask, in which case asking is not a weaker answer,
+  // Unless the mode establishes that there is somebody to ask, in which case
+  // asking is not a weaker answer,
   // it is no answer. `ask` is settled by whatever answers permission prompts,
-  // and in these two modes that is not a person: the run approves what it is
-  // asked. A guard that prompts there has the form of a check and none of the
+  // and outside the interactive allowlist that may not be a person. A guard
+  // that prompts there has the form of a check and none of the
   // effect, which is worse than either real answer because the output still
   // reads as though something was considered.
   //
@@ -268,21 +267,22 @@ readEvent((event) => {
   // there, refuse, which is what these runs got before 0.5.1 and is therefore
   // not a change for them.
   //
-  // `permission_mode` is a documented field on every PreToolUse event. An event
-  // without it falls through to asking, which is the behaviour on the line
-  // above, so a harness that does not send it loses nothing.
+  // `permission_mode` is a documented field on every Claude Code PreToolUse
+  // event. A harness that omits it has not established an interactive approval
+  // path, so it refuses like an unknown or non-interactive mode.
   if (verdict.verdict === 'confirm') {
-    if (UNATTENDED.has(event.permission_mode)) {
+    if (!INTERACTIVE.has(event.permission_mode)) {
       // Deliberately not the confirm wording. "Confirm this is intended before
       // running it" is exactly the dead end this release was opened to remove,
       // and printing it on a refusal that cannot be confirmed would reintroduce
       // it in the one place where confirming is genuinely impossible.
       const setting = RULE_SETTINGS[verdict.rule];
+      const mode = event.permission_mode || '(missing)';
       block(
         `${refusalReason(verdict.reason)}\n\n` +
         `Refused rather than asked, because this session runs with ` +
-        `permission_mode "${event.permission_mode}", where no interactive ` +
-        `approval is available.\n\n` +
+        `permission_mode "${mode}", which does not establish an interactive ` +
+        `approval path.\n\n` +
         `Run it in an interactive session to be asked instead, or set ` +
         `${setting} to false in ~/.claude/guardrails.config.json ` +
         `if you want this rule off here.`

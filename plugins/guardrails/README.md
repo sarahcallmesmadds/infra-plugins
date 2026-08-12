@@ -90,24 +90,26 @@ ask is settled by whatever answers permission prompts. In an interactive session
 that is you. In a run that approves whatever it is asked, it is not, and a
 prompt there has the form of a check and none of the effect.
 
-So from 0.5.2 the hook reads `permission_mode`, which arrives on every event,
-and picks accordingly. In `bypassPermissions` and `dontAsk` it refuses, which is
-what those runs got before 0.5.1, so nothing regressed for them. Everywhere else
-it asks. The refusal says which mode caused it and how to get asked instead, rather
-than telling you to confirm something that in that mode you cannot.
+So from 0.5.2 the hook reads `permission_mode`, which arrives on every Claude
+Code event, and picks accordingly. It asks only in `default`, `plan`, and
+`acceptEdits`. In `auto`, `bypassPermissions`, and `dontAsk` it refuses. A
+missing or unfamiliar mode refuses too, so a harness cannot gain an approval
+path merely by omitting the field. The refusal says which mode caused it and
+how to get asked instead, rather than telling you to confirm something that in
+that mode you cannot.
 
-`auto` and `acceptEdits` still ask. Claude Code evaluates a PreToolUse `ask`
+`acceptEdits` still asks. Claude Code evaluates a PreToolUse `ask`
 before its permission-mode and allow-rule decisions, so the hook's prompt is
-not pre-empted by either mode or by an existing allow rule such as
+not pre-empted by that mode or by an existing allow rule such as
 `Bash(rm:*)`. A deny rule still wins, as it should. See Claude Code's
 [permissions](https://code.claude.com/docs/en/permissions#extend-permissions-with-hooks)
 and [hooks](https://code.claude.com/docs/en/hooks#common-input-fields)
 references for the runtime precedence and emitted mode names.
 
-`dontAsk` is the non-interactive mode that denies anything not pre-approved
-instead of prompting, and `bypassPermissions` runs without permission prompts.
-The hook emits an explicit refusal in both so its explanation names the rule
-and its off switch instead of leaving the outcome to the surrounding mode.
+`auto` can run tools through background safety checks, `dontAsk` denies instead
+of prompting, and `bypassPermissions` runs without permission prompts. The hook
+emits an explicit refusal in all three so its explanation names the rule and
+its off switch instead of leaving the outcome to the surrounding mode.
 
 That is the trade, taken deliberately. Refusing gave a strictness nobody could
 lift: every one of those reasons ends by asking you to confirm that the command
