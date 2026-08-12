@@ -45,20 +45,23 @@ const VOCABULARY = [
 // ruling was "absolutely not okay to say to me or to say as me ever", which is
 // a different class of thing from "delve" and is why it does not live in
 // VOCABULARY.
+// Only the steal framing, rule 12, and only the phrasings that are always an
+// invitation. Everything here has to survive being read by somebody discussing
+// the topic rather than using the phrase, because one hit blocks a whole reply
+// and there is no aggregation to absorb a false positive.
+//
+// Rule 13, telling the reader about their own business, was tried here and
+// removed. "you already know" matched this repository's own README, in
+// "assumes you already know the failure modes", which is a sentence nobody
+// would object to. A bare "steal it" went the same way, since "somebody could
+// steal it" discusses theft rather than inviting it. The general shape needs
+// tone, and tone is not a substring, so rule 13 stays uncovered rather than
+// half covered by something that blocks ordinary sentences.
 const HOUSE_RULES = [
-  // Steal framing, rule 12. Any form of it.
   'worth stealing',
   'go steal',
   'steal this',
-  'steal it',
   'stealable',
-  // Telling the reader what they already have or already know, rule 13. These
-  // are the specific shapes she cut, kept narrow on purpose: the complaint was
-  // about being told about your own business, not about the word "your".
-  'you already know',
-  'your ad account already',
-  'already knows which',
-  "here's the thing",
 ];
 
 // Replacing plain "is" and "has" with something that sounds weightier. One of
@@ -104,6 +107,7 @@ const FILLER = [
   'in today’s world', "in today's world", 'in the world of', 'when it comes to',
   'at the end of the day', 'the key is', 'navigate the complexities',
   'in the realm of', 'in an era where', 'more than ever',
+  "here's the thing", 'here’s the thing',
 ];
 
 // Forced energy, usually at the top or bottom of a piece.

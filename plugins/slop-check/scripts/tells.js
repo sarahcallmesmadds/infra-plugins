@@ -42,6 +42,15 @@ function wordsIn(sentence) {
   return sentence.split(/\s+/).filter((w) => /\w/.test(w));
 }
 
+// Lowercase, and fold the typographic apostrophes and quote marks onto their
+// straight equivalents, so "here’s" and "here's" compare equal.
+function flattenQuotes(text) {
+  return String(text || '')
+    .toLowerCase()
+    .replace(/[‘’‛]/g, "'")
+    .replace(/[“”]/g, '"');
+}
+
 // --- hard tells ------------------------------------------------------------
 
 function emDashes(text) {
@@ -178,8 +187,14 @@ function checkHard(text, config = {}) {
   // drop the others.
   if (config.houseRules !== false) {
     const extra = Array.isArray(config.bannedPhrases) ? config.bannedPhrases : [];
-    const banned = [...P.HOUSE_RULES, ...extra].map((p) => String(p).toLowerCase());
-    const lower = String(text || '').toLowerCase();
+    // Both sides are flattened to a straight apostrophe before comparing, so a
+    // phrase typed with a smart quote cannot walk past a list that spells it
+    // straight, or the reverse. The soft lists solve this by carrying both
+    // spellings of each entry, which works because nobody adds to them at
+    // runtime. `bannedPhrases` is configured by hand, and asking somebody to
+    // remember to write their phrase twice is a rule that fails quietly.
+    const banned = [...P.HOUSE_RULES, ...extra].map((p) => flattenQuotes(String(p)));
+    const lower = flattenQuotes(String(text || ''));
     const hits = banned.filter((p) => p && lower.includes(p));
     if (hits.length) {
       violations.push({

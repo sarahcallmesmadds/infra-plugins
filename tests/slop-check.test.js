@@ -281,6 +281,38 @@ check('the finding names the phrase it caught',
   checkHard('This one is worth stealing.').violations.some((v) => v.what.includes('worth stealing')), true);
 check('an ordinary sentence about theft is not caught',
   checkHard('The report covers retail theft in the northeast.').ok, true);
+check('discussing theft rather than inviting it is not caught',
+  checkHard('Somebody could steal it from the shared folder.').ok, true);
+check('being told what you already know is not a hard rule',
+  checkHard('This assumes you already know the failure modes.').ok, true);
+
+// Found by review rather than by use: the first version of this list matched
+// two of the repository's own shipped documents. A hard rule blocks a whole
+// reply on one hit, so anything that fires on ordinary writing is a bug, and
+// the repository is the nearest supply of ordinary writing.
+{
+  const docs = [
+    path.join(__dirname, '..', 'README.md'),
+    path.join(__dirname, '..', 'plugins', 'slop-check', 'README.md'),
+    path.join(__dirname, '..', 'plugins', 'guardrails', 'skills', 'undo-possible', 'SKILL.md'),
+  ];
+  const fsMod = require('fs');
+  const offenders = docs
+    .filter((f) => fsMod.existsSync(f))
+    .filter((f) => checkHard(fsMod.readFileSync(f, 'utf8')).violations
+      .some((v) => v.name === 'house-rule'))
+    .map((f) => path.basename(path.dirname(f)) + '/' + path.basename(f));
+  check(`no shipped document trips a house rule${offenders.length ? ` (${offenders.join(', ')})` : ''}`,
+    offenders.length, 0);
+}
+
+console.log('\na banned phrase cannot hide behind a smart quote');
+check('the straight apostrophe form is caught',
+  checkHard("here's the thing, it works", { bannedPhrases: ["here's the thing"] }).ok, false);
+check('the curly apostrophe form is caught by a straight-quoted rule',
+  checkHard('here’s the thing, it works', { bannedPhrases: ["here's the thing"] }).ok, false);
+check('and a curly-quoted rule catches the straight form',
+  checkHard("here's the thing, it works", { bannedPhrases: ['here’s the thing'] }).ok, false);
 check('houseRules false turns the check off',
   checkHard('This one is worth stealing.', { houseRules: false }).ok, true);
 check('a configured phrase is added to the built-in list',
