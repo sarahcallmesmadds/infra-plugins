@@ -355,9 +355,8 @@ function localBranches(cwd, opts) {
   // walk that exceeds its limit returns null, which would refuse a branch the
   // listing had just cleared. Reintroducing that contradiction as a timeout is
   // the one outcome this release cannot have.
-  const origin = originRepo(cwd);
-  const isGitHub = origin ? /(^|\.)github\.com$/i.test(origin.host) : false;
-  const askGitHub = isGitHub && deadline === null;
+  const ghRepo = deadline === null ? githubRepo(cwd) : null;
+  const askGitHub = ghRepo !== null;
 
   let mergedBySha = null;   // listing: tip sha -> pull request number
   let singleMerged;         // re-check: undefined = not asked, null = could not look
@@ -372,10 +371,10 @@ function localBranches(cwd, opts) {
     // listing saw a review and the re-check did not. This list is bounded by
     // the number of pull requests currently open, not by the repository's
     // history, so asking for it per delete costs little.
-    openPRs = openPRHeadRefs(origin.repo, { cwd });
+    openPRs = openPRHeadRefs(ghRepo, { cwd });
 
     if (only === null) {
-      mergedBySha = mergedPRsBySha(origin.repo, def, { cwd });
+      mergedBySha = mergedPRsBySha(ghRepo, def, { cwd });
     } else {
       // `--end-of-options` so a branch named like a flag is read as a ref.
       // Everything downstream trusts this value: it is interpolated into a
@@ -385,7 +384,7 @@ function localBranches(cwd, opts) {
       const sha = /^-/.test(only)
         ? null
         : tryRun('git', ['-C', cwd, 'rev-parse', '--verify', '--end-of-options', only]);
-      singleMerged = sha ? mergedPRForCommit(origin.repo, def, sha, { cwd }) : null;
+      singleMerged = sha ? mergedPRForCommit(ghRepo, def, sha, { cwd }) : null;
     }
   }
 
@@ -669,8 +668,7 @@ function openPRHeadRefs(repo, opts) {
 // `host` comes back too. A repository whose origin is not GitHub has no pull
 // requests to miss, so a merged-PR lookup that does not happen there is not a
 // gap and must not be reported as one.
-function originRepo(cwd) {
-  const url = tryRun('git', ['-C', cwd, 'remote', 'get-url', 'origin']);
+function parseOriginUrl(url) {
   if (!url) return null;
   // scp form (git@host:owner/name.git) and URL form (https://host/owner/name).
   const scp = url.match(/^[^@/]+@([^:]+):([^/]+\/[^/]+?)(?:\.git)?$/);
@@ -678,6 +676,55 @@ function originRepo(cwd) {
   const full = url.match(/^[a-z+]+:\/\/(?:[^@/]+@)?([^/:]+)(?::\d+)?\/([^/]+\/[^/]+?)(?:\.git)?\/?$/i);
   if (full) return { host: full[1], repo: full[2] };
   return null;
+}
+
+function originRepo(cwd) {
+  return parseOriginUrl(tryRun('git', ['-C', cwd, 'remote', 'get-url', 'origin']));
+}
+
+const IS_GITHUB_HOST = /(^|\.)github\.com$/i;
+
+// Whether this checkout is on GitHub, and under what name.
+//
+// The URL text alone is not the authority, which is what the first version of
+// this assumed. Two ordinary setups make it lie, and both were reported:
+//
+//   url.<base>.insteadOf     `git remote get-url` applies the rewrite, so a
+//                            corporate proxy turns github.com into something
+//                            else before this ever sees it
+//   an ssh host alias        `git@github-work:owner/name` in ~/.ssh/config
+//                            resolves to GitHub and says nothing about it
+//
+// Three sources, cheapest first, and none of them is trusted alone.
+//
+// `git config --get remote.origin.url` is the raw configured value, before any
+// insteadOf rewriting, so it settles the proxy case with no network and no gh.
+// `git remote get-url` is the rewritten value, which settles the ordinary case
+// and is what a checkout without rewrites reports either way.
+//
+// An alias survives both, because nothing in the repository records where the
+// alias points. `gh` resolves the remote the same way it would for any of its
+// own commands, so it is asked last and only when the text was inconclusive.
+//
+// Residual, stated rather than papered over: an aliased origin on a machine
+// where `gh` does not work is reported as not-GitHub, so no caveat is printed.
+// Nothing is misclassified as merged by it, and the evidence it would have
+// fetched is unobtainable on that machine anyway, so the only loss is the note
+// saying so.
+function githubRepo(cwd) {
+  const configured = parseOriginUrl(tryRun('git', ['-C', cwd, 'config', '--get', 'remote.origin.url']));
+  if (configured && IS_GITHUB_HOST.test(configured.host)) return configured.repo;
+
+  const effective = originRepo(cwd);
+  if (effective && IS_GITHUB_HOST.test(effective.host)) return effective.repo;
+
+  // No origin at all is a local-only repository. It has no pull requests to
+  // miss, so asking gh about it would be a network call to learn nothing.
+  if (!configured && !effective) return null;
+
+  const slug = tryRun('gh', ['repo', 'view', '--json', 'nameWithOwner', '--jq', '.nameWithOwner'],
+    { cwd, timeout: REMOTE_PROBE_TIMEOUT_MS });
+  return slug && /^[\w.-]+\/[\w.-]+$/.test(slug) ? slug : null;
 }
 
 function remoteBranches(repo) {
@@ -782,6 +829,22 @@ function remoteBranches(repo) {
     defaultBranch: def,
     branches,
     prsUnknown,
+    // Which path produced this. The caveats below mean different things
+    // depending on it, and deriving it from the branch list does not work: a
+    // repository with nothing but its default branch produces an empty list
+    // that looks identical either way.
+    remote: true,
+    // The same key the local path returns, so a caller totalling several
+    // repositories reads one field rather than knowing which path produced the
+    // answer. It was returned by one of the two, which made it unconditionally
+    // false for every `--repo` run and told a sweep that the review check had
+    // happened when nobody could check it.
+    //
+    // What it means differs by path, and the note printed for it says so: an
+    // unreadable list holds every branch back here, and holds none back
+    // locally, because `git branch -d` is a second opinion the API has no
+    // equivalent of.
+    openPRCheckUnavailable: prsUnknown,
     mergedPRCheckUnavailable: mergedPRs === null,
   };
 }
@@ -895,5 +958,5 @@ function remoteBranch(repo, name) {
 module.exports = {
   isGitRepo, localBranches, remoteBranches, remoteBranch,
   tryRun, ghJSON, ghLines, toLines,
-  originRepo, mergedPRsBySha,
+  originRepo, githubRepo, mergedPRsBySha,
 };

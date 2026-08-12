@@ -146,12 +146,24 @@ function render(result, where, lookup) {
   // Reported here rather than against each branch, which is the whole point of
   // the change that added it. Attaching it per branch made every branch carry a
   // keep reason and nothing could be deleted at all.
+  //
+  // The wording differs by path because the consequence does. Locally an
+  // unreadable list costs the open-pull-request check and nothing else, since
+  // `git branch -d` still refuses unmerged work. On GitHub the API deletes
+  // whatever ref it is given, so an unknown holds every branch back, and the
+  // same sentence would be wrong in both directions at once.
   if (lookup && lookup.openPRCheckUnavailable) {
     lines.push('');
-    lines.push('Note: the open pull requests could not be read, so nothing below accounts for');
-    lines.push('a review still in progress. Everything else is unaffected, and a branch is');
-    lines.push('still only offered on evidence its work is in the default branch. Check');
-    lines.push('`gh auth status` if you want that checked too.');
+    if (lookup.remote) {
+      lines.push('Note: the open pull requests could not be read, so every branch is being held');
+      lines.push('back in case a review is still running on it. Nothing here is wrong, but the');
+      lines.push('Keep list is longer than the evidence requires. Check `gh auth status`.');
+    } else {
+      lines.push('Note: the open pull requests could not be read, so nothing below accounts for');
+      lines.push('a review still in progress. Everything else is unaffected, and a branch is');
+      lines.push('still only offered on evidence its work is in the default branch. Check');
+      lines.push('`gh auth status` if you want that checked too.');
+    }
   }
 
   if (keep.length) {

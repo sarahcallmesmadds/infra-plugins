@@ -1373,7 +1373,7 @@ function withStubbedGh(stub, fn) {
 // `only` is the pre-delete re-check, and it is the path that refused a branch
 // the listing had just cleared. Both paths ask now, which is what makes the two
 // answers the same answer.
-checkWriteTree('the pre-delete check clears a branch its listing cleared', () => {
+check('the pre-delete check clears a branch its listing cleared', () => {
   withStubbedGh(
     GH_MERGED,
     ({ repo, tip }) => {
@@ -1396,7 +1396,7 @@ checkWriteTree('the pre-delete check clears a branch its listing cleared', () =>
 // The safety property that keying on the tip buys. A branch reused after its
 // pull request merged has a name matching a merged pull request and a tip that
 // is new work, and clearing it on the name would delete that work.
-checkWriteTree('a branch reused after its pull request merged is not cleared', () => {
+check('a branch reused after its pull request merged is not cleared', () => {
   withStubbedGh(
     GH_MERGED,
     ({ repo, tip, g }) => {
@@ -1431,7 +1431,7 @@ checkWriteTree('a branch reused after its pull request merged is not cleared', (
 
 // Unreadable is not empty. Nothing gains evidence, and the run says so rather
 // than presenting a Keep list that looks settled.
-checkWriteTree('an unreadable merged pull request list is reported, not assumed empty', () => {
+check('an unreadable merged pull request list is reported, not assumed empty', () => {
   withStubbedGh('  *) exit 1 ;;', ({ repo }) => {
     const r = collect.localBranches(repo, { only: 'feature' });
     const feature = r.branches.find((b) => b.name === 'feature');
@@ -1451,7 +1451,7 @@ checkWriteTree('an unreadable merged pull request list is reported, not assumed 
 // branches would repeat it twenty times, and a walk that exceeds its limit
 // returns null, so a branch the listing just cleared gets refused. That is the
 // contradiction this release removes, arriving as a timeout instead.
-checkWriteTree('the pre-delete check asks about one commit, not the whole history', () => {
+check('the pre-delete check asks about one commit, not the whole history', () => {
   withStubbedGh(
     // Records what was asked, and refuses the paginated form outright so that
     // using it fails loudly here rather than merely being slower in the field.
@@ -1486,7 +1486,7 @@ checkWriteTree('the pre-delete check asks about one commit, not the whole histor
 // it clears branches on GitHub evidence and calls the two paths one answer, a
 // branch whose review is still running would be kept by `--repo` and offered
 // locally, which is the same drift in a new place.
-checkWriteTree('a branch with an open pull request is not offered locally either', () => {
+check('a branch with an open pull request is not offered locally either', () => {
   withStubbedGh(
     [
       '  *state=open*) echo "feature" ;;',
@@ -1526,7 +1526,7 @@ checkWriteTree('a branch with an open pull request is not offered locally either
 // comparison had cleared with no network. The README shipped in the same change
 // promised offline still worked. A protection against a review that might not
 // exist was bought by removing the function entirely.
-checkWriteTree('an unreachable GitHub costs the open-PR check, not every deletion', () => {
+check('an unreachable GitHub costs the open-PR check, not every deletion', () => {
   withStubbedGh('  *) exit 1 ;;', ({ repo, g }) => {
     // A label on a commit main already has, so ancestry alone clears it with no
     // network at all. This is the branch that stopped being offered, and it is
@@ -1556,7 +1556,7 @@ checkWriteTree('an unreachable GitHub costs the open-PR check, not every deletio
 
 // The mirror. A real open pull request still reads as one, so the test above
 // cannot be satisfied by a run that has stopped detecting them at all.
-checkWriteTree('a branch with a pull request genuinely open still says exactly that', () => {
+check('a branch with a pull request genuinely open still says exactly that', () => {
   withStubbedGh(
     [
       '  *state=open*) echo "feature" ;;',
@@ -1579,6 +1579,82 @@ checkWriteTree('a branch with a pull request genuinely open still says exactly t
 // Unreadable is not empty, on the path that reports it to a reader who asked by
 // name. The local path carried this from the start and the remote one did not,
 // which made the note the local path prints wrong at the moment it mattered.
+// The origin URL text is not the authority on whether a checkout is on GitHub.
+//
+// Two ordinary setups make it lie, and the run that gets it wrong is silent
+// about it: no pull request evidence is fetched and no caveat is printed, so
+// the local answer disagrees with `--repo` for the same repository and looks
+// complete. The second case below is not hypothetical, it is the environment
+// the review ran in.
+check('a rewritten origin is still recognised as GitHub', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stale-rewrite-'));
+  const g = (...a) => execFileSync('git', ['-C', dir, ...a], { encoding: 'utf8', stdio: 'pipe' });
+  execFileSync('git', ['init', '-q', '-b', 'main', dir], { stdio: 'pipe' });
+  g('remote', 'add', 'origin', 'git@github.com:owner/name.git');
+
+  // url.<base>.insteadOf, as a corporate proxy configures it. `git remote
+  // get-url` applies the rewrite, so the URL comes back pointing somewhere that
+  // is not GitHub and carrying an extra path segment.
+  g('config', 'url.https://proxy.example.com/proxy/github.com/.insteadOf', 'git@github.com:');
+
+  const rewritten = g('remote', 'get-url', 'origin').trim();
+  assert.ok(!/^git@github\.com:/.test(rewritten),
+    `the fixture has to actually rewrite, and got: ${rewritten}`);
+
+  assert.strictEqual(collect.githubRepo(dir), 'owner/name',
+    'the configured URL settles this with no network, and it was not consulted');
+
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+check('a repository that is genuinely not on GitHub stays not on GitHub', () => {
+  // The control. A resolver that answered "owner/name" to everything would
+  // satisfy the check above, and would then print a GitHub caveat at people
+  // whose code is nowhere near GitHub.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stale-not-github-'));
+  const g = (...a) => execFileSync('git', ['-C', dir, ...a], { encoding: 'utf8', stdio: 'pipe' });
+  execFileSync('git', ['init', '-q', '-b', 'main', dir], { stdio: 'pipe' });
+
+  // No origin at all, which must not cost a `gh` call to work out.
+  assert.strictEqual(collect.githubRepo(dir), null, 'a repository with no origin has no pull requests');
+
+  g('remote', 'add', 'origin', 'git@gitlab.com:owner/name.git');
+  const bin = path.join(dir, 'bin');
+  fs.mkdirSync(bin);
+  // gh present and unable to identify it, which is what gh does off GitHub.
+  fs.writeFileSync(path.join(bin, 'gh'), '#!/bin/sh\nexit 1\n');
+  fs.chmodSync(path.join(bin, 'gh'), 0o755);
+  const prevPath = process.env.PATH;
+  process.env.PATH = `${bin}${path.delimiter}${prevPath}`;
+  try {
+    assert.strictEqual(collect.githubRepo(dir), null, 'gitlab is not github');
+  } finally {
+    process.env.PATH = prevPath;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+check('an ssh host alias is resolved by asking gh, since nothing in the repo records it', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stale-alias-'));
+  const g = (...a) => execFileSync('git', ['-C', dir, ...a], { encoding: 'utf8', stdio: 'pipe' });
+  execFileSync('git', ['init', '-q', '-b', 'main', dir], { stdio: 'pipe' });
+  g('remote', 'add', 'origin', 'git@github-work:owner/name.git');
+
+  const bin = path.join(dir, 'bin');
+  fs.mkdirSync(bin);
+  fs.writeFileSync(path.join(bin, 'gh'), '#!/bin/sh\necho owner/name\n');
+  fs.chmodSync(path.join(bin, 'gh'), 0o755);
+  const prevPath = process.env.PATH;
+  process.env.PATH = `${bin}${path.delimiter}${prevPath}`;
+  try {
+    assert.strictEqual(collect.githubRepo(dir), 'owner/name',
+      'an alias points at GitHub and says so nowhere, so gh is the only thing that knows');
+  } finally {
+    process.env.PATH = prevPath;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 // A name beginning with `-` is read by git as an option rather than a ref, and
 // whatever comes back is then interpolated into a GitHub API path. Both delete
 // builders in classify.js refuse such a name for exactly this reason, and this
@@ -1586,7 +1662,7 @@ checkWriteTree('a branch with a pull request genuinely open still says exactly t
 //
 // The stub records every call, so the assertion is about what left the machine
 // rather than only about the return value.
-checkWriteTree('a branch name that looks like a flag never reaches the API', () => {
+check('a branch name that looks like a flag never reaches the API', () => {
   withStubbedGh(
     [
       '  *commits/*/pulls*) echo "$*" >> "$GH_CALLS"; exit 1 ;;',
@@ -1641,6 +1717,55 @@ check('the direct pre-delete check says nobody could look, rather than inventing
     assert.strictEqual(r.branch.hasOpenPR, true, 'it still fails safe and keeps the branch');
     assert.strictEqual(r.branch.openPRUnknown, true,
       'and has to say the list was unreadable rather than that a review is open');
+  } finally {
+    process.env.PATH = prevPath;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// The machine-readable output is the one a sweep across many repositories
+// reads, and `--repo` returned this key never set. So a sweep reported a
+// confident answer for a repository where the review check had silently failed,
+// while SKILL.md told the model that key means the open pull requests could not
+// be read. The local path carried it from the start; this one did not.
+check('a direct repository check reports an unreadable open list, in the JSON too', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stale-remote-openpr-'));
+  const bin = path.join(dir, 'bin');
+  fs.mkdirSync(bin);
+  fs.writeFileSync(path.join(bin, 'gh'), [
+    '#!/bin/sh',
+    'case "$*" in',
+    // Merged list readable, open list not, so this isolates the one key.
+    '  *state=open*) exit 1 ;;',
+    '  *state=closed*) : ;;',
+    '  *repos/*/branches*) printf \'feature\\tdeadbeef\\n\' ;;',
+    '  *repos/*/commits/*) echo \'{"d":"2026-07-01T00:00:00Z"}\' ;;',
+    '  *repos/*/compare/*) echo \'{"a":3}\' ;;',
+    '  *repos/*) echo \'{"default_branch":"main"}\' ;;',
+    '  *) exit 1 ;;',
+    'esac',
+  ].join('\n'));
+  fs.chmodSync(path.join(bin, 'gh'), 0o755);
+
+  const prevPath = process.env.PATH;
+  process.env.PATH = `${bin}${path.delimiter}${prevPath}`;
+  try {
+    const r = collect.remoteBranches('example/repo');
+    assert.strictEqual(r.openPRCheckUnavailable, true,
+      'the remote path has to report an open list it could not read');
+
+    const out = execFileSync('node', [CLI, '--repo', 'example/repo', '--json'], { encoding: 'utf8' });
+    assert.strictEqual(JSON.parse(out).openPRCheckUnavailable, true,
+      'and it has to survive into the JSON, which is what a sweep reads');
+
+    // The note has to match this path. Locally an unreadable list costs the
+    // check and nothing else; here it holds every branch back, so the local
+    // sentence would be wrong in both directions at once.
+    const text = execFileSync('node', [CLI, '--repo', 'example/repo'], { encoding: 'utf8' });
+    assert.ok(/every branch is being held\s+back/.test(text.replace(/\n/g, ' ')),
+      `the remote wording has to say what an unknown costs here: ${text}`);
+    assert.ok(!/Everything else is unaffected/.test(text),
+      'and must not print the local wording, which is false on this path');
   } finally {
     process.env.PATH = prevPath;
     fs.rmSync(dir, { recursive: true, force: true });
