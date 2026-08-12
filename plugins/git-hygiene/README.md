@@ -74,12 +74,13 @@ never rounded down to zero.
 
 **It gives the same answer about a repository whichever way you ask it.** A
 local checkout and `--repo owner/name` both read merged pull requests, so a
-branch cleared as "merged in #96" one way is cleared the same way the other. It
-was not always so: until 0.3.6 the local run had only a tree comparison, which
-cannot clear a branch squash-merged before the default branch moved on, and the
-same repository would keep seven branches that `--repo` cleared by number. When
-the merged pull requests cannot be read at all, the run says so rather than
-presenting the shorter answer as the whole one.
+branch cleared as "merged in #96" one way is cleared the same way the other, and
+both read open ones, so a branch whose review is still running is kept either
+way. It was not always so: until 0.3.6 the local run had only a tree comparison,
+which cannot clear a branch squash-merged before the default branch moved on,
+and the same repository would keep seven branches that `--repo` cleared by
+number. When the pull requests cannot be read at all, either way round, the run
+says so rather than presenting the shorter answer as the whole one.
 
 **It will not touch** the default branch, a protected branch, the branch you
 have checked out, or a branch with an open pull request, whatever their merge
@@ -134,8 +135,16 @@ Add the marketplace **by repository**, as above. Pasting a direct URL to
 `marketplace.json` downloads only that one file, the plugin folders never
 arrive, and the install fails.
 
-Checking a repository on GitHub needs the `gh` CLI, logged in. Checking a local
-checkout does not.
+Checking a repository on GitHub needs the `gh` CLI, logged in.
+
+Checking a local checkout uses it too, from 0.3.6, when the checkout pushes to
+GitHub. It reads merged and open pull requests, which is the evidence that
+survives a squash merge into a default branch that has since moved on. Without
+it the run still works: everything falls back to the tree comparison, which
+needs no network, and the run says which evidence it was missing rather than
+presenting the shorter answer as the whole one. A checkout whose origin is not
+on GitHub, or which has no origin at all, contacts nothing and is told nothing
+is missing, because for that repository nothing is.
 
 ## Configuration
 

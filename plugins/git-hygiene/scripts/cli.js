@@ -56,6 +56,7 @@ const KEEP_TEXT = {
   [KEEP.PROTECTED]: 'protected branch',
   [KEEP.CURRENT]: 'you have it checked out',
   [KEEP.OPEN_PR]: 'it has an open pull request',
+  [KEEP.OPEN_PR_UNKNOWN]: 'its pull requests could not be read, so it may have one open',
   [KEEP.UNMERGED]: null, // filled in per branch, it needs the count
   [KEEP.UNKNOWN]: 'could not work out whether it is merged, so treating it as unmerged',
 };
@@ -139,8 +140,7 @@ function render(result, where, lookup) {
     lines.push('');
     lines.push('Note: the merged pull requests for this repository could not be read, so a');
     lines.push('branch squash-merged before the default branch moved on may be listed under');
-    lines.push('Keep. Check `gh auth status`, then try again. `--repo owner/name` asks GitHub');
-    lines.push('directly and will say so if it cannot reach it.');
+    lines.push('Keep. Check `gh auth status`, then try again.');
   }
 
   if (keep.length) {

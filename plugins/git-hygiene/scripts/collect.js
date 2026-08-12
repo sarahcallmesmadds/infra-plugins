@@ -345,16 +345,36 @@ function localBranches(cwd, opts) {
   // Skipped under a deadline, which means the caller is the session hook
   // printing one line against a budget. Skipped is recorded rather than assumed
   // clean, so the caveat below can say the answer is partial.
+  //
+  // Two shapes of the same question, chosen by what the caller is doing.
+  //
+  // A listing asks once and answers for every branch, so it pays for the walk
+  // over closed pull requests and reuses it. The pre-delete re-check asks about
+  // one branch and runs once per delete, so it uses the single-commit query
+  // instead: the walk repeated per branch is slow on a busy repository, and a
+  // walk that exceeds its limit returns null, which would refuse a branch the
+  // listing had just cleared. Reintroducing that contradiction as a timeout is
+  // the one outcome this release cannot have.
   const origin = originRepo(cwd);
   const isGitHub = origin ? /(^|\.)github\.com$/i.test(origin.host) : false;
-  let mergedBySha = null;
-  if (isGitHub && deadline === null) {
+  const askGitHub = isGitHub && deadline === null;
+
+  let mergedBySha = null;      // listing only
+  let singleMerged;            // re-check only: undefined = not asked
+  let openPRs;                 // undefined = not asked
+  if (askGitHub && only === null) {
     mergedBySha = mergedPRsBySha(origin.repo, def, { cwd });
+    openPRs = openPRHeadRefs(origin.repo, { cwd });
+  } else if (askGitHub) {
+    const sha = tryRun('git', ['-C', cwd, 'rev-parse', only]);
+    singleMerged = sha ? mergedPRForCommit(origin.repo, def, sha, { cwd }) : null;
   }
+
   // Only a gap when there were pull requests to find. A repository with no
   // GitHub origin has none, so the tree comparison is the whole of the evidence
   // and nothing is missing.
-  const mergedPRCheckUnavailable = isGitHub && mergedBySha === null;
+  const mergedPRCheckUnavailable = askGitHub
+    && (only === null ? mergedBySha === null : singleMerged === null);
 
   const branches = rows.map((line) => {
     const [name, date, tipSha, aheadBehind] = line.split('\t');
@@ -413,12 +433,11 @@ function localBranches(cwd, opts) {
       // `mergedVia` reads "merged in #96", the same string the remote path
       // produces for the same branch, because the two answers agreeing is the
       // point and identical wording is how somebody can see that they do.
-      if (!merged && mergedBySha && tipSha) {
-        const num = mergedBySha.get(tipSha);
-        if (num !== undefined) {
-          merged = true;
-          mergedVia = `merged in #${num}`;
-        }
+      const num = mergedBySha && tipSha ? mergedBySha.get(tipSha)
+        : (singleMerged ? singleMerged.merged : undefined);
+      if (!merged && num !== undefined) {
+        merged = true;
+        mergedVia = `merged in #${num}`;
       }
     }
     return {
@@ -429,7 +448,26 @@ function localBranches(cwd, opts) {
       mergedVia,
       isDefault: name === def,
       isCurrent: name === current,
-      hasOpenPR: false,
+      // Open pull requests, which this path used to hardcode to false because
+      // it had no way to ask. It does now, and leaving it false while claiming
+      // the two paths give one answer would be the same drift in a new place:
+      // a branch with a review still running is kept by `--repo` and offered
+      // locally.
+      //
+      // Unreadable means every branch might have one, the same direction the
+      // remote path fails in. Not asked at all, on a repository that is not on
+      // GitHub or under a deadline, means there are none to find, which is why
+      // this reads `=== null` rather than anything looser.
+      hasOpenPR: (() => {
+        if (only === null) return openPRs === null ? true : (openPRs ? openPRs.has(name) : false);
+        if (singleMerged === null) return true;
+        return singleMerged ? singleMerged.hasOpenPR : false;
+      })(),
+      // Kept, but on the basis that nobody could look rather than that a review
+      // is running. Not asking at all, which is what a non-GitHub origin or a
+      // deadline means, is not the same as asking and failing: there are no
+      // pull requests to miss, so nothing is unknown.
+      openPRUnknown: only === null ? openPRs === null : singleMerged === null,
       remote: false,
     };
   });
@@ -545,6 +583,51 @@ function mergedPRsBySha(repo, def, opts) {
   return bySha;
 }
 
+// The same question as `mergedPRsBySha` for exactly one commit, and the reason
+// both exist. The paginated form walks pull requests in proportion to the
+// repository's history, which is the right trade for a listing that asks once
+// and answers for every branch. It is the wrong one for the check that runs
+// immediately before each delete: twenty branches would repeat that walk twenty
+// times, and a walk that exceeds its limit returns null, so a branch the
+// listing cleared gets refused. That is the disagreement this release exists to
+// remove, reappearing as a timeout.
+//
+// `commits/{sha}/pulls` returns pull requests that CONTAIN the commit, not only
+// those whose head it is, so `sha` is compared explicitly. The looser reading
+// would be safe on its own, since a commit contained in a pull request merged
+// into the default branch did reach the default branch, but it would clear
+// branches the listing kept, and the two paths agreeing is the whole point.
+//
+// Returns undefined for "no such evidence" and null for "could not look", which
+// the caller has to keep apart: one is an answer and the other is the absence
+// of one.
+function mergedPRForCommit(repo, def, sha, opts) {
+  const pulls = ghLines(['api', `repos/${repo}/commits/${sha}/pulls`, '--paginate',
+    '--jq', '.[] | "\\(.number)\\t\\(.base.ref)\\t\\(.head.sha)\\t\\(.state)\\t\\(.merged_at != null)"'],
+  opts);
+  if (pulls === null) return null;
+
+  const rows = pulls.map((l) => l.split('\t')).filter((r) => r.length === 5);
+  const numbers = rows
+    .filter((r) => r[4] === 'true' && r[1] === def && r[2] === sha)
+    .map((r) => parseInt(r[0], 10))
+    .filter((n) => !Number.isNaN(n));
+  return {
+    merged: numbers.length ? Math.min(...numbers) : undefined,
+    hasOpenPR: rows.some((r) => r[3] === 'open' && r[2] === sha),
+  };
+}
+
+// Branch names with an open pull request. Null when the list could not be read,
+// which the caller treats as "every branch might have one" rather than "none
+// do": a branch whose review is still running must not be offered for deletion
+// because the list behind that protection failed to load.
+function openPRHeadRefs(repo, opts) {
+  const lines = ghLines(['api', `repos/${repo}/pulls?state=open&per_page=100`, '--paginate',
+    '--jq', '.[].head.ref'], opts);
+  return lines === null ? null : new Set(lines);
+}
+
 // The `owner/name` this checkout pushes to, read from the remote URL rather
 // than asked of `gh`. It is a string operation on something already on disk, so
 // it costs nothing and works with no network and no token, which matters
@@ -607,7 +690,15 @@ function remoteBranches(repo) {
   // The number comes back too, because "merged in #51" is checkable and a bare
   // "merged" is not. Unreadable degrades to an empty map, so every branch falls
   // back to ancestry rather than gaining evidence nobody could read.
-  const mergedBySha = mergedPRsBySha(repo, def) || new Map();
+  // Unreadable is not empty here either. It degrades to an empty map so every
+  // branch falls back to ancestry, and the fact that it failed rides out to the
+  // caller, because a Keep list missing this evidence looks exactly like one
+  // that never needed it. The local path reported that from the start and this
+  // one did not, which made the note it prints ("`--repo owner/name` asks
+  // GitHub directly and will say so if it cannot reach it") untrue at the
+  // moment somebody acted on it.
+  const mergedPRs = mergedPRsBySha(repo, def);
+  const mergedBySha = mergedPRs || new Map();
 
   const branches = names.map((name) => {
     let aheadBy = null;
@@ -646,13 +737,20 @@ function remoteBranches(repo) {
       isCurrent: false,
       // When the PR list could not be read, every branch is treated as though
       // it might have one open. That keeps everything rather than offering a
-      // branch whose review is still running.
+      // branch whose review is still running, and `openPRUnknown` is what stops
+      // the reason then claiming a review that nobody confirmed.
       hasOpenPR: prsUnknown ? true : openPR.has(name),
+      openPRUnknown: prsUnknown,
       remote: true,
     };
   });
 
-  return { defaultBranch: def, branches, prsUnknown };
+  return {
+    defaultBranch: def,
+    branches,
+    prsUnknown,
+    mergedPRCheckUnavailable: mergedPRs === null,
+  };
 }
 
 // One branch, for the re-check immediately before a delete.

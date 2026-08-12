@@ -45,6 +45,13 @@ const KEEP = {
   UNMERGED: 'unmerged',
   UNKNOWN: 'merge-state-unknown',
   OPEN_PR: 'open-pr',
+  // Kept for the same reason and on a different basis. "It has an open pull
+  // request" is a fact; "the pull requests could not be read" is the absence of
+  // one, and both keep the branch. Saying the first when the second is true
+  // sends someone looking for a review that may not exist, and it is the
+  // failure this plugin is built around wearing a different hat: an answer
+  // nobody could obtain, presented as an answer.
+  OPEN_PR_UNKNOWN: 'open-pr-unknown',
   CURRENT: 'checked-out',
 };
 
@@ -84,7 +91,11 @@ function classifyBranch(branch, config, now) {
   if (branch.isDefault) out.keepReasons.push(KEEP.DEFAULT_BRANCH);
   if (cfg.protectedBranches.includes(branch.name)) out.keepReasons.push(KEEP.PROTECTED);
   if (branch.isCurrent) out.keepReasons.push(KEEP.CURRENT);
-  if (branch.hasOpenPR) out.keepReasons.push(KEEP.OPEN_PR);
+  // Unknown first, because a branch whose pull requests could not be read has
+  // `hasOpenPR` set true to keep it, and reporting that as a review in progress
+  // would be stating something nobody checked.
+  if (branch.openPRUnknown) out.keepReasons.push(KEEP.OPEN_PR_UNKNOWN);
+  else if (branch.hasOpenPR) out.keepReasons.push(KEEP.OPEN_PR);
 
   // The order matters. `null` means we could not work out the merge state,
   // which is not the same as zero and must never be treated as zero. A missing

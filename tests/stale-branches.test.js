@@ -1304,6 +1304,27 @@ check('an origin URL is read for its host and repository, in every form git writ
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+// The three shapes of gh call the code makes, answered the way GitHub would.
+//
+// Written out per query rather than as one catch-all, because the listing and
+// the pre-delete re-check deliberately ask different questions and a stub that
+// answers both identically cannot tell them apart. The first version of these
+// tests did exactly that, and it went on passing when the re-check moved to the
+// single-commit query, which is the one thing they existed to notice.
+//
+// `printf` rather than `echo`, because `echo "\t"` prints a backslash and a t
+// on some shells, and the fields here are tab separated.
+const GH_MERGED = [
+  // The re-check: pull requests containing one commit.
+  // number, base ref, head sha, state, merged.
+  '  *commits/*/pulls*) printf \'96\\tmain\\t%s\\tclosed\\ttrue\\n\' "$MERGED_SHA" ;;',
+  // The listing: every closed pull request against the default branch.
+  '  *state=closed*) printf \'%s\\t96\\n\' "$MERGED_SHA" ;;',
+  // Open pull requests. None, unless a test says otherwise.
+  '  *state=open*) : ;;',
+  '  *) exit 1 ;;',
+].join('\n');
+
 // Builds a checkout whose branch tip is a known sha, with `origin` pointing at
 // github.com so the merged-PR path is reachable, and a stubbed `gh` on PATH.
 // `stub` receives the arguments as one string and returns what gh should print,
@@ -1354,7 +1375,7 @@ function withStubbedGh(stub, fn) {
 // answers the same answer.
 checkWriteTree('the pre-delete check clears a branch its listing cleared', () => {
   withStubbedGh(
-    '  *pulls*) echo "$MERGED_SHA\t96" ;;\n  *) exit 1 ;;',
+    GH_MERGED,
     ({ repo, tip }) => {
       process.env.MERGED_SHA = tip;
       try {
@@ -1377,7 +1398,7 @@ checkWriteTree('the pre-delete check clears a branch its listing cleared', () =>
 // is new work, and clearing it on the name would delete that work.
 checkWriteTree('a branch reused after its pull request merged is not cleared', () => {
   withStubbedGh(
-    '  *pulls*) echo "$MERGED_SHA\t96" ;;\n  *) exit 1 ;;',
+    GH_MERGED,
     ({ repo, tip, g }) => {
       // The pull request merged at this tip, so both halves below run against
       // one unchanging piece of evidence and only the branch moves.
@@ -1423,6 +1444,148 @@ checkWriteTree('an unreadable merged pull request list is reported, not assumed 
 // The mirror of it, and the reason the flag is conditioned on the host. A
 // repository that pushes nowhere near GitHub has no pull requests to miss, so
 // reporting a gap would be inventing one.
+// The re-check asks about one commit, not about every closed pull request.
+//
+// The paginated walk is right for a listing, which asks once and answers for
+// every branch, and wrong for the check that runs once per delete: twenty
+// branches would repeat it twenty times, and a walk that exceeds its limit
+// returns null, so a branch the listing just cleared gets refused. That is the
+// contradiction this release removes, arriving as a timeout instead.
+checkWriteTree('the pre-delete check asks about one commit, not the whole history', () => {
+  withStubbedGh(
+    // Records what was asked, and refuses the paginated form outright so that
+    // using it fails loudly here rather than merely being slower in the field.
+    [
+      '  *commits/*/pulls*) printf \'96\\tmain\\t%s\\tclosed\\ttrue\\n\' "$MERGED_SHA" ;;',
+      '  *state=closed*) echo "PAGINATED" >> "$GH_CALLS"; exit 1 ;;',
+      '  *state=open*) : ;;',
+      '  *) exit 1 ;;',
+    ].join('\n'),
+    ({ repo, tip, dir }) => {
+      const calls = path.join(dir, 'calls.log');
+      process.env.MERGED_SHA = tip;
+      process.env.GH_CALLS = calls;
+      try {
+        const r = collect.localBranches(repo, { only: 'feature' });
+        const feature = r.branches.find((b) => b.name === 'feature');
+        assert.strictEqual(feature.merged, true,
+          'the single-commit query has to be enough on its own');
+        assert.strictEqual(feature.mergedVia, 'merged in #96');
+        assert.ok(!fs.existsSync(calls),
+          'the re-check must not walk every closed pull request');
+      } finally {
+        delete process.env.MERGED_SHA;
+        delete process.env.GH_CALLS;
+      }
+    }
+  );
+});
+
+// Parity on the other protection. This path hardcoded `false` because it had no
+// way to ask, which was defensible while it asked GitHub nothing at all. Once
+// it clears branches on GitHub evidence and calls the two paths one answer, a
+// branch whose review is still running would be kept by `--repo` and offered
+// locally, which is the same drift in a new place.
+checkWriteTree('a branch with an open pull request is not offered locally either', () => {
+  withStubbedGh(
+    [
+      '  *state=open*) echo "feature" ;;',
+      '  *state=closed*) printf \'%s\\t96\\n\' "$MERGED_SHA" ;;',
+      '  *commits/*/pulls*) printf \'96\\tmain\\t%s\\topen\\tfalse\\n\' "$MERGED_SHA" ;;',
+      '  *) exit 1 ;;',
+    ].join('\n'),
+    ({ repo, tip }) => {
+      process.env.MERGED_SHA = tip;
+      try {
+        const listed = collect.localBranches(repo)
+          .branches.find((b) => b.name === 'feature');
+        assert.strictEqual(listed.hasOpenPR, true,
+          'an open pull request has to reach the classifier from a local run too');
+      } finally {
+        delete process.env.MERGED_SHA;
+      }
+    }
+  );
+});
+
+// Kept for the right reason, not merely kept.
+//
+// A branch whose pull requests could not be read carries `hasOpenPR: true` so
+// that it stays, which is correct. Printing that as "it has an open pull
+// request" is not: it states a fact nobody established, and it sends someone
+// looking for a review that may not exist. Found by running the degraded path
+// rather than reported, and it is a defect this round introduced, because the
+// local path had no open-PR evidence to fail at until this change gave it some.
+checkWriteTree('a branch kept because nobody could look says so, and does not invent a review', () => {
+  withStubbedGh('  *) exit 1 ;;', ({ repo }) => {
+    const b = collect.localBranches(repo).branches.find((x) => x.name === 'feature');
+    assert.strictEqual(b.hasOpenPR, true, 'it still has to be kept');
+    assert.strictEqual(b.openPRUnknown, true, 'and the reason has to say why');
+
+    const out = execFileSync('node', [CLI, '--cwd', repo], { encoding: 'utf8' });
+    assert.ok(/pull requests could not be read/.test(out),
+      'the printed reason has to name the uncertainty');
+    assert.ok(!/it has an open pull request/.test(out),
+      'and must not assert a review that was never confirmed');
+  });
+});
+
+// The mirror. A real open pull request still reads as one, so the test above
+// cannot be satisfied by a run that has stopped detecting them at all.
+checkWriteTree('a branch with a pull request genuinely open still says exactly that', () => {
+  withStubbedGh(
+    [
+      '  *state=open*) echo "feature" ;;',
+      '  *state=closed*) : ;;',
+      '  *commits/*/pulls*) : ;;',
+      '  *) exit 1 ;;',
+    ].join('\n'),
+    ({ repo }) => {
+      const b = collect.localBranches(repo).branches.find((x) => x.name === 'feature');
+      assert.strictEqual(b.hasOpenPR, true);
+      assert.strictEqual(b.openPRUnknown, false, 'this one was actually checked');
+
+      const out = execFileSync('node', [CLI, '--cwd', repo], { encoding: 'utf8' });
+      assert.ok(/it has an open pull request/.test(out));
+      assert.ok(!/pull requests could not be read/.test(out));
+    }
+  );
+});
+
+// Unreadable is not empty, on the path that reports it to a reader who asked by
+// name. The local path carried this from the start and the remote one did not,
+// which made the note the local path prints wrong at the moment it mattered.
+check('a direct repository check reports an unreadable merged list', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stale-remote-caveat-'));
+  const bin = path.join(dir, 'bin');
+  fs.mkdirSync(bin);
+  // Answers the repository and branch queries, refuses the merged list. That is
+  // the shape of an expired token against a repository that is still readable.
+  fs.writeFileSync(path.join(bin, 'gh'), [
+    '#!/bin/sh',
+    'case "$*" in',
+    '  *pulls*) exit 1 ;;',
+    '  *repos/*/branches*) printf \'feature\\tdeadbeef\\n\' ;;',
+    '  *repos/*/commits/*) echo \'{"d":"2026-07-01T00:00:00Z"}\' ;;',
+    '  *repos/*/compare/*) echo \'{"a":3}\' ;;',
+    '  *repos/*) echo \'{"default_branch":"main"}\' ;;',
+    '  *) exit 1 ;;',
+    'esac',
+  ].join('\n'));
+  fs.chmodSync(path.join(bin, 'gh'), 0o755);
+
+  const prevPath = process.env.PATH;
+  process.env.PATH = `${bin}${path.delimiter}${prevPath}`;
+  try {
+    const r = collect.remoteBranches('example/repo');
+    assert.strictEqual(r.mergedPRCheckUnavailable, true,
+      'the remote path has to report a merged list it could not read');
+  } finally {
+    process.env.PATH = prevPath;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 check('a repository with no GitHub origin reports no gap', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stale-no-origin-'));
   const g = (...a) => execFileSync('git', ['-C', dir, ...a], { encoding: 'utf8', stdio: 'pipe' });
