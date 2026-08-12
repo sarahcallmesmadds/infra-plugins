@@ -334,6 +334,21 @@ check('the copular form reports on a single hit',
   softNames("The output isn't a report, it's a build list.").includes('antithesis-copular'), true);
 check('a plain contrast with a comma is not antithesis',
   softNames('She reviewed the draft on Tuesday, then sent it on Wednesday.').includes('antithesis'), false);
+
+// Found by review. Every soft detector spells the apostrophe as `'?`, which
+// matches a straight quote or nothing and never a curly one, so the same
+// sentence pasted out of a post scored clean. Text arriving with smart quotes
+// is the normal case for this tool, not the edge.
+check('the copular form is caught with curly apostrophes too',
+  softNames('The output isn’t a report, it’s a build list.').includes('antithesis-copular'), true);
+check('and reads identically to the straight-quoted sentence',
+  JSON.stringify(softNames("The output isn't a report, it's a build list.")),
+  JSON.stringify(softNames('The output isn’t a report, it’s a build list.')));
+check('a curly-quoted filler phrase is caught by the straight-quoted entry',
+  softNames("It’s important to note that this is in today’s world of work.").includes('filler'), true);
+check('folding the prose does not blind the smart-quote signal',
+  softNames('One ‘a’ two ‘b’ three “c” four “d” five ‘e’ six ‘f’ in a sentence of prose.')
+    .includes('typographic-quotes-throughout'), true);
 check('a bare negative clause is not antithesis',
   softNames('The skill does not touch the warehouse.').includes('antithesis'), false);
 

@@ -85,10 +85,17 @@ function choppyRun(text, limit) {
 const P = require('./patterns.js');
 
 function countPhrases(haystack, needles) {
-  const lower = haystack.toLowerCase();
+  // Both sides folded, so a list entry spelled with one apostrophe still finds
+  // the other. Entries that carry both spellings, as FILLER does, collapse onto
+  // each other here and are counted once rather than twice.
+  const lower = flattenQuotes(haystack);
   const found = [];
+  const seen = new Set();
   for (const needle of needles) {
-    const parts = lower.split(needle);
+    const flat = flattenQuotes(needle);
+    if (seen.has(flat)) continue;
+    seen.add(flat);
+    const parts = lower.split(flat);
     if (parts.length > 1) found.push({ phrase: needle, count: parts.length - 1 });
   }
   return found;
@@ -211,7 +218,15 @@ function checkHard(text, config = {}) {
 // Everything, hard and soft. This is what the skill reports.
 function checkAll(text, config = {}) {
   const hard = checkHard(text, config);
-  const prose = proseOf(text);
+  // Folded once, here, rather than inside each detector. Every soft check below
+  // reads this string, and the regex ones spell the apostrophe as `'?`, which
+  // matches a straight quote or nothing and never a curly one. Text pasted out
+  // of a post or a word processor is the normal case for this tool, so a
+  // detector that only sees straight quotes sees roughly nothing.
+  //
+  // The typographic-quotes signal further down deliberately reads the raw text
+  // instead, since folding is exactly what would hide it from itself.
+  const prose = flattenQuotes(proseOf(text));
 
   const soft = [];
   const band = (name, list, threshold) => {
