@@ -36,6 +36,22 @@ const CONVENTIONAL = /^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|re
 // documented in the README instead of covered by a guess.
 const UNATTENDED = new Set(['bypassPermissions', 'dontAsk']);
 
+const RULE_SETTINGS = {
+  destructive: 'blockDestructiveCommands',
+  'commit-hook-skip': 'blockCommitHookSkip',
+};
+
+// A reason shown beside an `ask` may tell the person how to answer that ask.
+// The same sentence is a dead end beside a refusal, so remove only that
+// interaction instruction and keep the command-specific risk and safer
+// alternative intact.
+function refusalReason(reason) {
+  return reason.replace(
+    /\n\nConfirm this is intended before running it\.\s*/i,
+    '\n\n'
+  );
+}
+
 // The repository a git command actually targets is not necessarily the hook's
 // own working directory. `git -C <path> commit` and `cd <path> && git commit`
 // both act somewhere else, and checking the wrong repo means checking the wrong
@@ -261,13 +277,14 @@ readEvent((event) => {
       // running it" is exactly the dead end this release was opened to remove,
       // and printing it on a refusal that cannot be confirmed would reintroduce
       // it in the one place where confirming is genuinely impossible.
+      const setting = RULE_SETTINGS[verdict.rule];
       block(
-        `${verdict.reason}\n\n` +
+        `${refusalReason(verdict.reason)}\n\n` +
         `Refused rather than asked, because this session runs with ` +
-        `permission_mode "${event.permission_mode}", where a prompt is answered ` +
-        `without a person seeing it.\n\n` +
+        `permission_mode "${event.permission_mode}", where no interactive ` +
+        `approval is available.\n\n` +
         `Run it in an interactive session to be asked instead, or set ` +
-        `blockDestructiveCommands to false in ~/.claude/guardrails.config.json ` +
+        `${setting} to false in ~/.claude/guardrails.config.json ` +
         `if you want this rule off here.`
       );
       return;

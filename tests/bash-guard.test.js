@@ -248,20 +248,30 @@ check('the same commands still ask once nothing refuses them', () => {
 // So the decision follows who is listening. This was raised in review as
 // documented-but-unsettled, and documenting it was not enough: the event says
 // which mode it is in, so the hook can stop guessing.
-check('an unattended run is refused rather than asked', () => {
+check('every unattended refusal is actionable and names its own switch', () => {
   for (const mode of ['bypassPermissions', 'dontAsk']) {
-    const out = runHook('rm -rf ~/live', { permissionMode: mode });
-    const reason = assertDenies(out, `rm -rf in ${mode}`);
-    assert.ok(reason.includes(mode), `the refusal has to name the mode: ${reason}`);
-
-    // Not the confirm wording. Telling somebody to confirm something, on a
-    // refusal that by definition cannot be confirmed, is the exact dead end
-    // this release was opened to remove. Getting it right in one direction and
-    // wrong in the other would be no better than where it started.
-    assert.ok(
-      !/confirm this is intended/i.test(reason),
-      `a refusal must not ask for a confirmation nobody can give: ${reason}`
-    );
+    for (const [command, setting] of [
+      ['rm -rf ~/live', 'blockDestructiveCommands'],
+      ['git clean -fd', 'blockDestructiveCommands'],
+      ['git push --force origin feature', 'blockDestructiveCommands'],
+      ['git branch -D unmerged', 'blockDestructiveCommands'],
+      ['git reset --hard HEAD~1', 'blockDestructiveCommands'],
+      ['git commit --no-verify -m "x"', 'blockCommitHookSkip'],
+    ]) {
+      const reason = assertDenies(
+        runHook(command, { permissionMode: mode }),
+        `${command} in ${mode}`
+      );
+      assert.ok(reason.includes(mode), `the refusal has to name the mode: ${reason}`);
+      assert.ok(
+        !/confirm this is intended/i.test(reason),
+        `a refusal must not ask for a confirmation nobody can give: ${reason}`
+      );
+      assert.ok(
+        reason.includes(`${setting} to false`),
+        `the refusal must name the switch for the rule that fired: ${reason}`
+      );
+    }
   }
 });
 

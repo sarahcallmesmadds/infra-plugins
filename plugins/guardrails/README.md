@@ -96,20 +96,18 @@ what those runs got before 0.5.1, so nothing regressed for them. Everywhere else
 it asks. The refusal says which mode caused it and how to get asked instead, rather
 than telling you to confirm something that in that mode you cannot.
 
-Two limits, stated rather than guessed at.
+`auto` and `acceptEdits` still ask. Claude Code evaluates a PreToolUse `ask`
+before its permission-mode and allow-rule decisions, so the hook's prompt is
+not pre-empted by either mode or by an existing allow rule such as
+`Bash(rm:*)`. A deny rule still wins, as it should. See Claude Code's
+[permissions](https://code.claude.com/docs/en/permissions#extend-permissions-with-hooks)
+and [hooks](https://code.claude.com/docs/en/hooks#common-input-fields)
+references for the runtime precedence and emitted mode names.
 
-`auto` and `acceptEdits` still ask. Whether either answers a shell prompt
-without a person is not something this repository can establish, and being
-wrong toward asking costs a prompt while being wrong toward refusing costs you
-a command you were standing there to approve.
-
-Whether an existing allow rule for the same command, `Bash(rm:*)` say, settles
-the prompt before you see it is a question about Claude Code's permission
-precedence rather than about this plugin, and the documentation does not answer
-it. If it does pre-empt the prompt, this rule is advisory for you. An earlier
-draft of this section asserted that it does, which was a guess written as a
-fact; it is withdrawn rather than restated more carefully. If you lean on broad
-allow rules, check it on your own setup.
+`dontAsk` is the non-interactive mode that denies anything not pre-approved
+instead of prompting, and `bypassPermissions` runs without permission prompts.
+The hook emits an explicit refusal in both so its explanation names the rule
+and its off switch instead of leaving the outcome to the surrounding mode.
 
 That is the trade, taken deliberately. Refusing gave a strictness nobody could
 lift: every one of those reasons ends by asking you to confirm that the command
@@ -123,9 +121,9 @@ a commit to a protected branch and a commit message that misses the format are
 still stopped whatever mode you are in, and they are stopped even when the same
 command also trips a rule that would otherwise prompt.
 
-If you run on a permissive mode and want the old behaviour for deletes, there is
-no setting for it short of `blockDestructiveCommands: false`, which turns the
-rule off rather than hardening it. Worth knowing before you rely on it.
+There is no configuration switch that turns interactive asks back into blanket
+refusals. The two rule switches turn their respective checks off; they do not
+change an ask into a deny.
 
 ## Configuration
 
