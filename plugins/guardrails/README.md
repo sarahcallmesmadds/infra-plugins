@@ -13,18 +13,29 @@ Five things, and it says which are enforced and which are advice.
 
 **Blocks direct commits to a protected branch.** `main` and `master` by default,
 in every repository, not just the ones you remembered to configure. Says what to
-type instead.
+type instead. This one refuses rather than asks, and so does the commit message
+check, because each of them knows the better command and prints it. There is
+nothing for you to weigh.
 
-**Blocks commands that cannot be undone.** Recursive force-delete outside
+**Asks before commands that cannot be undone.** Recursive force-delete outside
 disposable paths, `git reset --hard`, `git clean -fd`, `git push --force`, and
 `git branch -D`. It deliberately allows `git push --force-with-lease`, which
 refuses to overwrite work you have not seen.
 
-**Blocks going around the commit hooks.** `git commit --no-verify` and its short
-form `-n` skip every pre-commit and commit-msg hook, and the commit that results
-looks exactly like one that passed them, so nothing afterwards records that the
-checks did not run. It deliberately allows a dry run of `git clean` in every
-spelling, `-n`, `-nd`, `-ndx` and `--dry-run`, since a preview removes nothing.
+These prompt rather than refuse, and the difference is who can answer. The guard
+knows what the command does and not whether you want it, so it says what would
+happen and puts the decision to you. Until 0.5.1 the same reasons arrived as a
+refusal, which made "confirm this is intended before running it" impossible to
+act on: a squash-merged branch could not be deleted through the tool at all, and
+the way past was to leave the session and run the command by hand. A guard you
+have to step around to do ordinary work is not adding safety.
+
+**Asks before going around the commit hooks.** `git commit --no-verify` and its
+short form `-n` skip every pre-commit and commit-msg hook, and the commit that
+results looks exactly like one that passed them, so nothing afterwards records
+that the checks did not run. It deliberately allows a dry run of `git clean` in
+every spelling, `-n`, `-nd`, `-ndx` and `--dry-run`, since a preview removes
+nothing.
 
 **Flags prompt injection in content.** Text that arrives from a file or a fetched
 page is data, not instruction. The risk is that instructions buried inside it
@@ -46,7 +57,7 @@ This is a real limitation and worth knowing before you install.
 
 | | Claude Code | Codex |
 |---|---|---|
-| Automatic blocking | Yes, via hooks | No |
+| Automatic prompting and blocking | Yes, via hooks | No |
 | On-demand scanning | Yes | Yes |
 
 Codex plugins cannot register hooks. Its plugin manifest accepts skills, MCP
@@ -73,6 +84,56 @@ dependencies to install, but `node` has to be on your `PATH`. If it is not,
 the hooks fail silently rather than breaking your session, which means you get
 no protection and no error. Check with `node --version` before relying on it.
 
+**The delete rule asks when somebody is there and refuses when nobody is.**
+From 0.5.1 the destructive and commit-hook rules ask rather than refuse, and an
+ask is settled by whatever answers permission prompts. In an interactive session
+that is you. In a run that approves whatever it is asked, it is not, and a
+prompt there has the form of a check and none of the effect.
+
+So from 0.5.2 the hook reads `permission_mode`, which arrives on every Claude
+Code event, and picks accordingly. It asks only in `default`, `plan`, and
+`acceptEdits`; every other, missing, or unfamiliar value refuses, so a harness
+cannot gain an approval
+path merely by omitting the field. The refusal says which mode caused it and
+how to get asked instead, rather than telling you to confirm something that in
+that mode you cannot.
+
+One boundary is not exposed to hooks: `claude -p` can report `default`, the
+same value as an interactive session, and PreToolUse input has no print-mode or
+TTY field. The hook therefore cannot distinguish those two runs. For unattended
+use, pass an explicit non-interactive `--permission-mode` rather than relying
+on the default mode to communicate that nobody is present.
+
+`acceptEdits` still asks. Claude Code evaluates a PreToolUse `ask`
+before its permission-mode and allow-rule decisions, so the hook's prompt is
+not pre-empted by that mode or by an existing allow rule such as
+`Bash(rm:*)`. A deny rule still wins, as it should. See Claude Code's
+[permissions](https://code.claude.com/docs/en/permissions#extend-permissions-with-hooks)
+and [hooks](https://code.claude.com/docs/en/hooks#common-input-fields)
+references for the runtime precedence and emitted mode names.
+
+Every mode outside the interactive allowlist gets an explicit refusal. That is
+also how new or renamed upstream modes behave until their interaction contract
+is reviewed and deliberately added; version drift costs convenience, never the
+guard. The refusal names the rule and its off switch instead of leaving the
+outcome to the surrounding mode.
+
+That is the trade, taken deliberately. Refusing gave a strictness nobody could
+lift: every one of those reasons ends by asking you to confirm that the command
+is intended, and there was no way to confirm, so the only route past a guard
+that had done its job was to leave the session and run the command by hand. A
+guard people step around to do ordinary work protects nobody, and it teaches the
+habit of stepping around it.
+
+The two rules that refuse are unaffected, because they never asked anything:
+a commit to a protected branch and a commit message that misses the format are
+still stopped whatever mode you are in, and they are stopped even when the same
+command also trips a rule that would otherwise prompt.
+
+There is no configuration switch that turns interactive asks back into blanket
+refusals. The two rule switches turn their respective checks off; they do not
+change an ask into a deny.
+
 ## Configuration
 
 Everything works out of the box. To change something, create
@@ -92,8 +153,8 @@ key at a time, so setting one option does not reset the others.
 | `protectedBranches` | `["main", "master"]` | Branches that reject a direct commit |
 | `blockCommitToProtectedBranch` | `true` | Turn the branch guard off entirely |
 | `requireConventionalCommits` | `false` | Require `feat:`, `fix:`, `docs:` and friends |
-| `blockDestructiveCommands` | `true` | Turn the delete guard off entirely |
-| `blockCommitHookSkip` | `true` | Turn the `--no-verify` guard off entirely |
+| `blockDestructiveCommands` | `true` | Turn the delete prompt off entirely |
+| `blockCommitHookSkip` | `true` | Turn the `--no-verify` prompt off entirely |
 | `safeDeletePaths` | see `scripts/config.js` | Paths where force-delete needs no prompt |
 | `scanForInjection` | `true` | Turn content scanning off entirely |
 | `injectionExcludePaths` | `[]` | Extra regex patterns to skip when scanning |

@@ -36,11 +36,14 @@ const NOWHERE = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrails-nowhere-'));
 // will run. `processCwd` is where the hook process itself is spawned. Keeping
 // them separate is the whole point: they are frequently different, and the
 // guard used to read only the second one.
-function runHook(command, { eventCwd, processCwd } = {}) {
+function runHook(command, { eventCwd, processCwd, permissionMode = 'default' } = {}) {
   const event = JSON.stringify({
     tool_name: 'Bash',
     tool_input: { command },
     ...(eventCwd ? { cwd: eventCwd } : {}),
+    // Real Claude Code events carry the field, so ordinary tests use `default`.
+    // Passing null is the explicit degraded-harness case that omits it.
+    ...(permissionMode !== null ? { permission_mode: permissionMode } : {}),
   });
   const stdout = execFileSync(process.execPath, [HOOK], {
     input: event,
@@ -51,10 +54,15 @@ function runHook(command, { eventCwd, processCwd } = {}) {
   return stdout ? JSON.parse(stdout) : null;
 }
 
-// A deny has to arrive in the one shape PreToolUse reads. Asserting the whole
-// envelope rather than a substring is deliberate: the bug this pins was a
+// A decision has to arrive in the one shape PreToolUse reads. Asserting the
+// whole envelope rather than a substring is deliberate: the bug this pins was a
 // well-formed JSON object with correct content under the wrong field names.
-function assertDenies(out, what) {
+//
+// Which decision it is matters as much as its shape, so the two have separate
+// helpers below rather than one taking a flag. A rule that prompts and a rule
+// that refuses are different promises to the user, and a test that accepts
+// either cannot tell you which one a change just turned the other into.
+function assertDecides(out, what, decision) {
   assert.ok(out, `${what}: hook wrote nothing, so the command would run`);
   assert.ok(
     !('decision' in out),
@@ -63,13 +71,32 @@ function assertDenies(out, what) {
   const specific = out.hookSpecificOutput;
   assert.ok(specific, `${what}: no hookSpecificOutput`);
   assert.strictEqual(specific.hookEventName, 'PreToolUse', `${what}: wrong hookEventName`);
-  assert.strictEqual(specific.permissionDecision, 'deny', `${what}: did not deny`);
+  assert.strictEqual(
+    specific.permissionDecision,
+    decision,
+    `${what}: expected ${decision}, got ${specific.permissionDecision}`
+  );
   assert.ok(
     typeof specific.permissionDecisionReason === 'string'
       && specific.permissionDecisionReason.length > 0,
-    `${what}: denied without saying why`
+    `${what}: decided without saying why`
   );
   return specific.permissionDecisionReason;
+}
+
+// The guard knows a better command and names it, so there is nothing to weigh.
+// Protected branches and commit message format are the only two.
+function assertDenies(out, what) {
+  return assertDecides(out, what, 'deny');
+}
+
+// The guard knows what the command does and not whether it is wanted, so the
+// user is asked. Every destructive rule and the commit-hook-skip rule land
+// here. These arrived as `deny` until 0.5.1, which made a reason ending in
+// "confirm this is intended before running it" impossible to confirm, and left
+// running the command by hand outside the session as the only way through.
+function assertAsks(out, what) {
+  return assertDecides(out, what, 'ask');
 }
 
 let failed = 0;
@@ -100,13 +127,13 @@ function initRepo(dir, branch) {
 
 // --- the three things the guard exists to stop ---------------------------
 
-check('recursive force-delete is denied, in the shape PreToolUse reads', () => {
-  const reason = assertDenies(runHook('rm -rf ~/live'), 'rm -rf ~/live');
+check('recursive force-delete is put to the user, in the shape PreToolUse reads', () => {
+  const reason = assertAsks(runHook('rm -rf ~/live'), 'rm -rf ~/live');
   assert.ok(reason.includes('~/live'), `reason did not name the path: ${reason}`);
 });
 
-check('a delete inside a quoted bash -c is denied', () => {
-  assertDenies(runHook('bash -c "rm -rf ~/live"'), 'bash -c "rm -rf ~/live"');
+check('a delete inside a quoted bash -c is put to the user', () => {
+  assertAsks(runHook('bash -c "rm -rf ~/live"'), 'bash -c "rm -rf ~/live"');
 });
 
 check('committing on a protected branch is denied', () => {
@@ -118,6 +145,160 @@ check('committing on a protected branch is denied', () => {
   );
   assert.ok(reason.includes('main'), `reason did not name the branch: ${reason}`);
   fs.rmSync(repo, { recursive: true, force: true });
+});
+
+// --- the reason text has to be answerable --------------------------------
+//
+// `git branch -D` had no coverage at this layer, and it is the command that
+// exposed the defect. On 2026-08-11 a branch already confirmed merged could not
+// be deleted through the tool at all: the guard said "confirm this is intended
+// before running it", arrived as a `deny`, and the only way past it was to
+// leave the session and run it by hand. Approving it twice in conversation
+// changed nothing, because a deny has nowhere to put an approval.
+//
+// So this asserts the pairing rather than the decision alone. A reason that
+// asks for confirmation and a decision that cannot accept one is the bug, and
+// either half on its own looks correct.
+check('a command whose reason asks for confirmation is answerable', () => {
+  const reason = assertAsks(
+    runHook('git branch -D some-merged-branch'),
+    'git branch -D'
+  );
+  assert.ok(
+    /confirm this is intended/i.test(reason),
+    `reason no longer asks for confirmation, so this test is pinning the wrong thing: ${reason}`
+  );
+});
+
+// The mirror of it. These two know the better command and print it, so there is
+// nothing for the user to weigh and a prompt would be noise. If a later change
+// makes every verdict a prompt, this is what fails.
+check('a rule that names the better command still denies', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrails-repo-'));
+  initRepo(repo, 'main');
+  const reason = assertDenies(
+    runHook(`git -C ${repo} commit -m "wip"`),
+    'commit on main'
+  );
+  assert.ok(
+    reason.includes('git checkout -b'),
+    `a deny has to name the way forward: ${reason}`
+  );
+  fs.rmSync(repo, { recursive: true, force: true });
+});
+
+// --- one command, two rules, one decision --------------------------------
+//
+// A hook emits a single decision, so whichever rule speaks first is the whole
+// answer. While every verdict was a `deny` that was invisible: the command was
+// stopped whichever rule got there first. Introducing `ask` made the order
+// load-bearing, and the first version of it asked at the point of assessment,
+// before the protected-branch rule ran at all.
+//
+// The effect was that adding `--no-verify` to a commit on main downgraded the
+// strongest rule in the plugin to a prompt, and one approval put a commit
+// straight on the protected branch. The same held for any line combining a
+// delete with a commit. Caught in review on #98 rather than by these tests,
+// which had no case where two rules fired on one command.
+check('a refusal is not downgraded by a question on the same command', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrails-repo-'));
+  initRepo(repo, 'main');
+
+  // Each of these trips a rule that asks and a rule that refuses. The refusal
+  // has to win every time, whichever one the code happens to assess first.
+  for (const command of [
+    `git -C ${repo} commit --no-verify -m "wip"`,
+    `git -C ${repo} commit -n -m "wip"`,
+    `rm -rf ~/live && git -C ${repo} commit -m "wip"`,
+  ]) {
+    const reason = assertDenies(runHook(command), command);
+    assert.ok(
+      reason.includes('protected branch'),
+      `the deny has to be the branch rule, not something weaker: ${reason}`
+    );
+  }
+
+  fs.rmSync(repo, { recursive: true, force: true });
+});
+
+check('the same commands still ask once nothing refuses them', () => {
+  // The control. Off the protected branch there is no refusal to lose, so these
+  // are questions again. Without this the test above passes just as well
+  // against a hook that denies everything, which is what this replaced.
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrails-repo-'));
+  initRepo(repo, 'some-feature');
+
+  for (const command of [
+    `git -C ${repo} commit --no-verify -m "wip"`,
+    `git -C ${repo} commit -n -m "wip"`,
+  ]) {
+    assertAsks(runHook(command), command);
+  }
+
+  fs.rmSync(repo, { recursive: true, force: true });
+});
+
+// --- asking needs somebody to ask ----------------------------------------
+//
+// `ask` is settled by whatever answers permission prompts, and in an
+// unattended run that is not a person. A guard that prompts there has the form
+// of a check and none of the effect, which is worse than either real answer,
+// because the transcript still reads as though something was considered.
+//
+// So the decision follows who is listening. This was raised in review as
+// documented-but-unsettled, and documenting it was not enough: the event says
+// which mode it is in, so the hook can stop guessing.
+check('every unattended refusal is actionable and names its own switch', () => {
+  for (const mode of ['bypassPermissions', 'dontAsk', 'auto', 'somethingNewer']) {
+    for (const [command, setting] of [
+      ['rm -rf ~/live', 'blockDestructiveCommands'],
+      ['git clean -fd', 'blockDestructiveCommands'],
+      ['git push --force origin feature', 'blockDestructiveCommands'],
+      ['git branch -D unmerged', 'blockDestructiveCommands'],
+      ['git reset --hard HEAD~1', 'blockDestructiveCommands'],
+      ['git commit --no-verify -m "x"', 'blockCommitHookSkip'],
+    ]) {
+      const reason = assertDenies(
+        runHook(command, { permissionMode: mode }),
+        `${command} in ${mode}`
+      );
+      assert.ok(reason.includes(mode), `the refusal has to name the mode: ${reason}`);
+      assert.ok(
+        !/(confirm this is intended|before running it, say)/i.test(reason),
+        `a refusal must not request interaction nobody can provide: ${reason}`
+      );
+      assert.ok(
+        reason.includes(`${setting} to false`),
+        `the refusal must name the switch for the rule that fired: ${reason}`
+      );
+    }
+  }
+});
+
+check('a mode where somebody is watching still asks', () => {
+  // The control, and the more important half. Denying in a mode that would
+  // have prompted refuses a command somebody was standing there to approve,
+  // which is the fault this whole release exists to fix.
+  //
+  for (const mode of ['default', 'plan', 'acceptEdits']) {
+    assertAsks(runHook('rm -rf ~/live', { permissionMode: mode }), `rm -rf in ${mode}`);
+  }
+});
+
+check('an event with no permission mode fails closed', () => {
+  const reason = assertDenies(
+    runHook('rm -rf ~/live', { permissionMode: null }),
+    'no permission_mode'
+  );
+  assert.ok(reason.includes('(missing)'), `the refusal has to name the missing mode: ${reason}`);
+});
+
+check('an unattended run does not turn ordinary commands into refusals', () => {
+  assert.strictEqual(
+    runHook('ls -la', { permissionMode: 'bypassPermissions' }),
+    null,
+    'the mode changes which answer a flagged command gets, not what counts as flagged'
+  );
 });
 
 // --- and the half that matters just as much ------------------------------
@@ -187,10 +368,10 @@ check('the first commit of a brand new repository is still denied', () => {
 
 // --- skipping the commit hooks --------------------------------------------
 
-check('committing with --no-verify is denied', () => {
+check('committing with --no-verify is put to the user', () => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrails-repo-'));
   initRepo(repo, 'some-feature');
-  const reason = assertDenies(
+  const reason = assertAsks(
     runHook(`git -C ${repo} commit --no-verify -m "wip"`),
     'commit --no-verify'
   );
@@ -203,10 +384,10 @@ check('committing with --no-verify is denied', () => {
   fs.rmSync(repo, { recursive: true, force: true });
 });
 
-check('the short form -n is denied too', () => {
+check('the short form -n is put to the user too', () => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrails-repo-'));
   initRepo(repo, 'some-feature');
-  const reason = assertDenies(
+  const reason = assertAsks(
     runHook(`git -C ${repo} commit -n -m "wip"`),
     'commit -n'
   );
@@ -225,8 +406,8 @@ for (const command of ['git clean -n', 'git clean -nd', 'git clean -ndx', 'git c
   });
 }
 
-check('git clean -fd, which really does delete, is still denied', () => {
-  assertDenies(runHook('git clean -fd'), 'git clean -fd');
+check('git clean -fd, which really does delete, still prompts', () => {
+  assertAsks(runHook('git clean -fd'), 'git clean -fd');
 });
 
 // --- the switches, at the layer that owns them ----------------------------
@@ -245,7 +426,11 @@ function hookWithConfig(settings, command) {
     JSON.stringify(settings)
   );
   const stdout = execFileSync(process.execPath, [HOOK], {
-    input: JSON.stringify({ tool_name: 'Bash', tool_input: { command } }),
+    input: JSON.stringify({
+      tool_name: 'Bash',
+      tool_input: { command },
+      permission_mode: 'default',
+    }),
     encoding: 'utf8',
     cwd: NOWHERE,
     env: { ...process.env, HOME: home },
@@ -257,7 +442,7 @@ function hookWithConfig(settings, command) {
 check('turning off delete prompts leaves the commit-hook rule running', () => {
   const off = { blockDestructiveCommands: false };
   assert.strictEqual(hookWithConfig(off, 'rm -rf ~/live'), null, 'the delete was still blocked');
-  assertDenies(
+  assertAsks(
     hookWithConfig(off, 'git commit --no-verify -m "x"'),
     'no-verify with deletes off'
   );
@@ -270,7 +455,7 @@ check('turning off the commit-hook rule leaves delete prompts running', () => {
     null,
     'the commit was still blocked'
   );
-  assertDenies(hookWithConfig(off, 'rm -rf ~/live'), 'delete with the commit rule off');
+  assertAsks(hookWithConfig(off, 'rm -rf ~/live'), 'delete with the commit rule off');
 });
 
 check('the on-demand check answers honestly with the prompts turned off', () => {
@@ -633,9 +818,9 @@ check('/private/tmp is as disposable as /tmp, being the same directory', () => {
   );
 });
 
-check('a real path outside the disposable list is still denied', () => {
+check('a real path outside the disposable list still prompts', () => {
   // The pair above widens one directory. It must not have widened the prefix.
-  assertDenies(runHook('rm -rf /private/etc/something'), '/private/etc/something');
+  assertAsks(runHook('rm -rf /private/etc/something'), '/private/etc/something');
 });
 
 check('build output is allowed, in any project and however it is spelled', () => {
@@ -654,27 +839,27 @@ check('build output is allowed, in any project and however it is spelled', () =>
   }
 });
 
-check('a path that merely starts with a disposable name is denied', () => {
+check('a path that merely starts with a disposable name prompts', () => {
   // isDisposable used to allow any target beginning with an anchored entry,
   // with nothing checking that it ended at a segment boundary. The
   // /private/etc/something case above does not catch that: it diverges at a
   // slash and was denied under the broken code too. These do not.
-  assertDenies(runHook('rm -rf /tmpfoo'), '/tmpfoo');
-  assertDenies(runHook('rm -rf /private/tmp-backup'), '/private/tmp-backup');
-  assertDenies(runHook('rm -rf /distributed-system'), '/distributed-system');
+  assertAsks(runHook('rm -rf /tmpfoo'), '/tmpfoo');
+  assertAsks(runHook('rm -rf /private/tmp-backup'), '/private/tmp-backup');
+  assertAsks(runHook('rm -rf /distributed-system'), '/distributed-system');
 });
 
-check('a disposable name that climbs back out is denied', () => {
+check('a disposable name that climbs back out prompts', () => {
   // Matching is on the path as typed, because the target of a delete often
   // does not exist yet, so there is nothing to resolve. That means a `..`
   // segment used to carry the verdict somewhere the text no longer described:
   // every one of these was allowed, and the last two are the whole filesystem
   // talking its way past the prompt on the strength of its first segment.
-  assertDenies(runHook('rm -rf dist/../../important'), 'dist/../../important');
-  assertDenies(runHook('rm -rf node_modules/../../important'), 'node_modules/../..');
-  assertDenies(runHook('rm -rf ~/app/dist/../src'), '~/app/dist/../src');
-  assertDenies(runHook('rm -rf /tmp/../etc'), '/tmp/../etc');
-  assertDenies(runHook('rm -rf /private/tmp/../../Users'), '/private/tmp/../../Users');
+  assertAsks(runHook('rm -rf dist/../../important'), 'dist/../../important');
+  assertAsks(runHook('rm -rf node_modules/../../important'), 'node_modules/../..');
+  assertAsks(runHook('rm -rf ~/app/dist/../src'), '~/app/dist/../src');
+  assertAsks(runHook('rm -rf /tmp/../etc'), '/tmp/../etc');
+  assertAsks(runHook('rm -rf /private/tmp/../../Users'), '/private/tmp/../../Users');
 });
 
 check('a disposable name reached from a subdirectory is still allowed', () => {
@@ -692,22 +877,22 @@ check('a disposable name reached from a subdirectory is still allowed', () => {
   }
 });
 
-check('an alternative spelling of a root directory is denied too', () => {
+check('an alternative spelling of a root directory prompts too', () => {
   // The root-level guard compares text, so it has to compare tidied text.
   // `//build` and `/./build` name the same directory as `/build`.
-  assertDenies(runHook('rm -rf //build'), '//build');
-  assertDenies(runHook('rm -rf /./build'), '/./build');
-  assertDenies(runHook('rm -rf /.//dist'), '/.//dist');
+  assertAsks(runHook('rm -rf //build'), '//build');
+  assertAsks(runHook('rm -rf /./build'), '/./build');
+  assertAsks(runHook('rm -rf /.//dist'), '/.//dist');
 });
 
-check('a disposable name at the filesystem root is denied', () => {
+check('a disposable name at the filesystem root prompts', () => {
   // Unanchoring the build directories means they match at any depth, and the
   // root is a depth. `/build` is not a project's build output, so deleting the
   // whole of it goes to the user rather than through.
-  assertDenies(runHook('rm -rf /build'), '/build');
-  assertDenies(runHook('rm -rf /dist'), '/dist');
-  assertDenies(runHook('rm -rf /coverage'), '/coverage');
-  assertDenies(runHook('rm -rf /node_modules'), '/node_modules');
+  assertAsks(runHook('rm -rf /build'), '/build');
+  assertAsks(runHook('rm -rf /dist'), '/dist');
+  assertAsks(runHook('rm -rf /coverage'), '/coverage');
+  assertAsks(runHook('rm -rf /node_modules'), '/node_modules');
   // But only the directory itself. A confirm verdict arrives at the user as an
   // outright deny, so withholding the subtree as well would deny real deletes
   // on a machine that does keep a checkout up there.
