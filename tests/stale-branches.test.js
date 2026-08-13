@@ -1588,7 +1588,7 @@ check('a branch reused after its pull request merged is not cleared', () => {
 // Unreadable is not empty. Nothing gains evidence, and the run says so rather
 // than presenting a Keep list that looks settled.
 check('an unreadable merged pull request list is reported, not assumed empty', () => {
-  withStubbedGh('  *) exit 1 ;;', ({ repo }) => {
+  withStubbedGh('  *) exit 1 ;;', ({ repo, g }) => {
     const r = collect.localBranches(repo, { only: 'feature' });
     const feature = r.branches.find((b) => b.name === 'feature');
     assert.strictEqual(feature.merged, false, 'no list means no evidence, never a clearance');
@@ -1601,10 +1601,19 @@ check('an unreadable merged pull request list is reported, not assumed empty', (
     } catch (error) {
       message = `${error.stdout || ''}${error.stderr || ''}`;
     }
-    assert.ok(/Could not verify feature/.test(message),
-      `the re-check must report missing evidence, not changed work: ${message}`);
-    assert.ok(!/no longer safe|commit not in|commits not in/.test(message),
-      `a lookup failure must not claim the branch gained work: ${message}`);
+    assert.ok(/no longer safe.*commit.*not in the default branch/i.test(message),
+      `the re-check must preserve the branch's actual keep reason: ${message}`);
+    assert.ok(/Could not complete the pull-request checks/.test(message),
+      `the re-check must also report the missing evidence: ${message}`);
+
+    g('checkout', '-q', 'feature');
+    try {
+      execFileSync('node', [CLI, '--cwd', repo, '--verify', 'feature'], { encoding: 'utf8' });
+    } catch (error) {
+      message = `${error.stdout || ''}${error.stderr || ''}`;
+    }
+    assert.ok(/checked out/.test(message),
+      `a PR lookup failure must not hide an unconditional keep reason: ${message}`);
   });
 });
 
@@ -1901,10 +1910,10 @@ check('the direct pre-delete check says nobody could look, rather than inventing
     } catch (error) {
       message = `${error.stdout || ''}${error.stderr || ''}`;
     }
-    assert.ok(/Could not verify feature/.test(message),
-      `the remote re-check must name the lookup failure: ${message}`);
-    assert.ok(!/no longer safe/.test(message),
-      `an unreadable API must not be reported as new branch work: ${message}`);
+    assert.ok(/no longer safe/.test(message),
+      `the remote re-check must preserve the actual keep reason: ${message}`);
+    assert.ok(/Could not complete the pull-request checks/.test(message),
+      `the remote re-check must also name the lookup failure: ${message}`);
   } finally {
     process.env.PATH = prevPath;
     fs.rmSync(dir, { recursive: true, force: true });

@@ -204,16 +204,17 @@ function verifyOne(result, name, repo, lookup) {
     return 3;
   }
   if (!b.safeToDelete) {
+    const actual = `${name} is no longer safe to delete: ${reasonText(b)}. Nothing deleted.`;
     const gaps = [];
     if (lookup && lookup.mergedPRCheckUnavailable) gaps.push('merged pull requests');
     if (lookup && lookup.openPRCheckUnavailable) gaps.push('open pull requests');
     if (gaps.length) {
-      process.stderr.write(`Could not verify ${name}, so it was not deleted: the ${gaps.join(' and ')} `
-        + `could not be read. Nothing established that the branch gained work; check `
-        + '`gh auth status`, then try again.\n');
+      process.stderr.write(`${actual}\nCould not complete the pull-request checks: the ${gaps.join(' and ')} `
+        + 'could not be read. Check `gh auth status`, then try again if that evidence could '
+        + 'change the result.\n');
       return 3;
     }
-    process.stderr.write(`${name} is no longer safe to delete: ${reasonText(b)}. Nothing deleted.\n`);
+    process.stderr.write(`${actual}\n`);
     return 3;
   }
 
