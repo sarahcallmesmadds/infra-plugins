@@ -9,7 +9,10 @@
 'use strict';
 
 const assert = require('assert');
+const fs = require('fs');
+const os = require('os');
 const path = require('path');
+const { execFileSync } = require('child_process');
 
 const base = path.join(__dirname, '..', 'plugins', 'slop-check', 'scripts');
 const { checkHard, checkAll } = require(path.join(base, 'tells.js'));
@@ -401,6 +404,52 @@ check('but the contracted "that\'s" is kept',
 check('and "is not X, it is Y" still reports, which this repository writes',
   softNames('It is not context that might be useful, it is the thing the work has to comply with.')
     .includes('antithesis-copular'), true);
+
+// --- the message the Stop hook actually sends back ---------------------------
+//
+// Found by review. remedyFor interpolated the house-rule violation's `what`
+// into its own parenthetical, and `what` is already a whole sentence that the
+// opening line prints. The writer was handed "phrases ruled out for this
+// author (worth stealing)" twice in one message, the second time nested inside
+// brackets. Asserted against the bytes the hook writes rather than against
+// remedyFor, because the doubling was only visible once both halves were
+// joined, which is the same reason bash-guard.test.js spawns its hook.
+
+console.log('\nthe rewrite instruction the Stop hook sends back');
+
+const STYLE_HOOK = path.join(__dirname, '..', 'plugins', 'slop-check', 'hooks', 'style-lint.js');
+
+// A transcript holding one assistant turn, which is what the hook walks back to.
+function runStyleHook(assistantText) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'slop-style-'));
+  const transcript = path.join(dir, 'transcript.jsonl');
+  fs.writeFileSync(transcript, JSON.stringify({
+    type: 'assistant',
+    message: { content: [{ type: 'text', text: assistantText }] },
+  }) + '\n');
+  const stdout = execFileSync(process.execPath, [STYLE_HOOK], {
+    input: JSON.stringify({ transcript_path: transcript, stop_hook_active: false }),
+    encoding: 'utf8',
+    env: { ...process.env, HOME: dir },
+  });
+  return stdout.trim() ? JSON.parse(stdout).reason : '';
+}
+
+const houseRuleMessage = runStyleHook('This one is worth stealing.');
+
+check('a banned phrase is blocked at all',
+  houseRuleMessage.includes('phrases ruled out for this author'), true);
+check('and the phrase itself is named once, not twice',
+  houseRuleMessage.split('worth stealing').length - 1, 1);
+check('the remedy carries no nested parenthetical',
+  /ruled out \(phrases ruled out/.test(houseRuleMessage), false);
+check('and still says what to do about it',
+  houseRuleMessage.includes('Say the thing plainly instead'), true);
+
+// The other remedies never restated `what`, which is the shape this now matches.
+const emDashMessage = runStyleHook(`a sentence ${EM} with a dash in it`);
+check('the em dash remedy names the fault once',
+  emDashMessage.split('em dash').length - 1 <= 2, true);
 
 console.log(`\n${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);
