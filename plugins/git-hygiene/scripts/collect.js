@@ -5,16 +5,9 @@
 // every path that cannot determine either one says so rather than guessing:
 // `aheadBy` becomes null, `merged` stays false.
 //
-// `merged` exists because `aheadBy` cannot see a squash merge.
-//
-// Both paths answer it with the merged pull request list, and the local path
-// additionally tries a tree comparison first, which is free and needs no
-// network. Locally that comparison used to be the whole answer, and it is not
-// sufficient: it asks whether merging the branch would change the default
-// branch, which a squash merge can leave answered "yes" once the default branch
-// has moved on. So the same repository gave two answers depending on which way
-// you asked it, and a branch cleared by name in one run was refused as unmerged
-// in the next.
+// `merged` exists because `aheadBy` cannot see a squash merge. Locally it comes
+// from a tree comparison and never needs the network. Remotely it comes from
+// GitHub's merged pull requests, because no local trees exist there.
 
 'use strict';
 
@@ -237,14 +230,11 @@ function localBranches(cwd, opts) {
   // the per-branch cost as before. Probed by asking, the same way the
   // `merge-tree` support above is, because a version number read off `git
   // --version` is a different question from whether this git accepts the form.
-  // `%(objectname)` rides along on the listing that was already being asked for,
-  // so the tip of every branch costs nothing extra. It is what the merged pull
-  // request lookup below is keyed on.
   // The query is already restricted to refs/heads, so strip that fixed prefix
   // directly. `refname:short` tries to disambiguate and changes `feature` to
   // `heads/feature` when a tag named `feature` exists, which makes an `only`
   // check fail to find the branch at all.
-  const FIELDS = '%(refname:lstrip=2)%09%(committerdate:iso-strict)%09%(objectname)';
+  const FIELDS = '%(refname:lstrip=2)%09%(committerdate:iso-strict)';
   let listed = tryRun('git', ['-C', cwd, 'for-each-ref', `--format=${FIELDS}%09%(ahead-behind:${defRef})`, 'refs/heads/']);
   const listedHasAhead = listed !== null;
   if (!listedHasAhead) {
@@ -329,98 +319,8 @@ function localBranches(cwd, opts) {
     ? remoteMoved(cwd, def, staleSha)
     : false;
 
-  // The merged pull request list, asked here as well as in the remote path.
-  //
-  // The tree comparison above is real evidence and it is not enough on its own.
-  // It answers "does merging this branch change the default branch", which a
-  // squash merge can leave answered "yes" long after the work landed: the
-  // default branch moves on, a later commit touches the same lines, and the
-  // three-way merge of a branch whose content is already there stops producing
-  // an identical tree. On 2026-08-09 that kept 7 branches on one repository
-  // that `--repo` cleared by number, and on 2026-08-11 it refused a branch this
-  // same tool had cleared as "merged in #96" minutes earlier, from the same
-  // machine, against the same repository.
-  //
-  // Two answers for one question is the defect, not the strictness of either.
-  // Someone watching a listing clear a branch and the pre-delete check refuse
-  // it has no way to tell which one is wrong, and the honest reading, that the
-  // branch gained work in between, is the one thing that had not happened.
-  //
-  // Keyed on the branch tip, so a branch reused after its pull request merged
-  // gains nothing: its tip is no longer the commit that merged. That is the
-  // same rule the remote path follows, and here it is checked against a sha
-  // read from the local ref rather than from the API.
-  //
-  // Skipped under a deadline, which means the caller is the session hook
-  // printing one line against a budget. Skipped is recorded rather than assumed
-  // clean, so the caveat below can say the answer is partial.
-  //
-  // Two shapes of the same question, chosen by what the caller is doing.
-  //
-  // A listing asks once and answers for every branch, so it pays for the walk
-  // over closed pull requests and reuses it. The pre-delete re-check asks about
-  // one branch and runs once per delete, so it uses the single-commit query
-  // instead: the walk repeated per branch is slow on a busy repository, and a
-  // walk that exceeds its limit returns null, which would refuse a branch the
-  // listing had just cleared. Reintroducing that contradiction as a timeout is
-  // the one outcome this release cannot have.
-  const ghRepo = deadline === null ? githubRepo(cwd) : null;
-  const askGitHub = ghRepo !== null;
-  // A deadline deliberately forbids the network work below, but skipping a
-  // check is not the same as completing it. Determine from repository text
-  // alone whether GitHub evidence may exist so the returned contract stays
-  // honest without spending the caller's time budget on `gh`.
-  const skippedGitHub = deadline !== null && originMayBeGitHub(cwd);
-  // `origin/HEAD` is only a cached local record. A normal fetch does not update
-  // it after GitHub renames the default branch, so using it as an API filter can
-  // return a perfectly readable empty list for the wrong base. GitHub is the
-  // authority for GitHub pull requests; failure to read that answer is a gap,
-  // never permission to fall back to a guessed or stale name.
-  const githubDef = askGitHub ? githubDefaultBranch(ghRepo, { cwd }) : null;
-
-  let mergedBySha = null;   // listing: tip sha -> pull request number
-  let singleMerged;         // re-check: undefined = not asked, null = could not look
-  let openPRs;              // both: undefined = not asked, null = could not look
-  if (askGitHub) {
-    // Open pull requests are asked for the same way on both paths, and matched
-    // on the branch name in both.
-    //
-    // The re-check used to take this from the single-commit query, which keys
-    // on the tip, and that made the two paths disagree about the same branch: a
-    // branch with unpushed commits has a tip the pull request does not, so the
-    // listing saw a review and the re-check did not. This list is bounded by
-    // the number of pull requests currently open, not by the repository's
-    // history, so asking for it per delete costs little.
-    openPRs = openPRHeadRefs(ghRepo, { cwd });
-
-    if (only === null) {
-      mergedBySha = githubDef
-        ? mergedPRsBySha(ghRepo, githubDef, { cwd })
-        : null;
-    } else {
-      // The row came from refs/heads and already carries the exact branch tip.
-      // Resolving the bare name again lets a same-named tag win Git's ref
-      // precedence and makes the safety check inspect the wrong commit.
-      const row = rows[0] ? rows[0].split('\t') : null;
-      const sha = row && row[0] === only ? row[2] : null;
-      if (sha) {
-        singleMerged = githubDef
-          ? mergedPRForCommit(ghRepo, githubDef, sha, { cwd })
-          : null;
-      }
-    }
-  }
-
-  // Only a gap when there were pull requests to find. A repository with no
-  // GitHub origin has none, so the tree comparison is the whole of the evidence
-  // and nothing is missing.
-  const mergedPRCheckUnavailable = askGitHub
-    ? (only === null ? mergedBySha === null : singleMerged === null)
-    : skippedGitHub;
-  const openPRCheckUnavailable = askGitHub ? openPRs === null : skippedGitHub;
-
   const branches = rows.map((line) => {
-    const [name, date, tipSha, aheadBehind] = line.split('\t');
+    const [name, date, aheadBehind] = line.split('\t');
     let aheadBy = null;
     let merged = false;
     let mergedVia = null;
@@ -470,22 +370,6 @@ function localBranches(cwd, opts) {
         }
       }
 
-      // A merged pull request whose head is still this branch's tip. Asked
-      // after the tree comparison and only when it came back empty, so the
-      // cheaper local answer wins where it has one and the wording stays the
-      // one people already recognise.
-      //
-      // `mergedVia` reads "merged in #96", the same string the remote path
-      // produces for the same branch, because the two answers agreeing is the
-      // point and identical wording is how somebody can see that they do.
-      const num = mergedBySha && tipSha ? mergedBySha.get(tipSha)
-        : (singleMerged ? singleMerged.merged : undefined);
-      if (aheadBy !== null && aheadBy > 0 && !merged && num !== undefined) {
-        merged = true;
-        mergedVia = githubDef && githubDef !== def
-          ? `merged in #${num} to ${githubDef}`
-          : `merged in #${num}`;
-      }
     }
     return {
       name,
@@ -493,43 +377,12 @@ function localBranches(cwd, opts) {
       aheadBy,
       merged,
       mergedVia,
-      // A stale origin/HEAD can disagree with GitHub after a default-branch
-      // rename. Protect both names: one is the checkout's comparison target,
-      // and the other is the repository's current default and must never enter
-      // a deletion flow merely because the local symbolic ref is old.
-      isDefault: name === def || (!!githubDef && name === githubDef),
+      isDefault: name === def,
       isCurrent: name === current,
-      // Open pull requests, which this path used to hardcode to false because
-      // it had no way to ask. It does now, and leaving it false while claiming
-      // the two paths give one answer would be the same drift in a new place:
-      // a branch with a review still running is kept by `--repo` and offered
-      // locally.
-      //
-      // Unreadable means every branch might have one, the same direction the
-      // remote path fails in. Not asked at all, on a repository that is not on
-      // GitHub or under a deadline, means there are none to find, which is why
-      // this reads `=== null` rather than anything looser.
-      // An unreadable list is reported, not turned into a blanket refusal.
-      //
-      // Round 1 of the review on #99 made this fail safe to `true`, matching the
-      // remote path. On the remote path that is right: the GitHub API deletes
-      // whatever ref you name with no second opinion, so an unknown has to
-      // block. Here it was wrong, and badly. With `gh` missing or logged out,
-      // every branch in a GitHub-hosted checkout became unclearable, including
-      // ones the tree comparison had cleared on its own with no network at all,
-      // and the README added in the same change promised exactly the opposite.
-      // A protection against a review that might not exist was bought by
-      // removing the plugin's entire function offline.
-      //
-      // So the local path degrades to what it did before 0.3.6, which is to
-      // carry no open-pull-request evidence, and says so. Nothing is lost that
-      // was there before, the tree comparison still needs no network, and the
-      // caveat names what could not be checked instead of a keep reason
-      // attaching to every branch at once.
-      hasOpenPR: openPRs ? openPRs.has(name) : false,
-      // Reserved for a list that was read and genuinely says a review is open.
-      // False here always: an unreadable list no longer keeps anything, so
-      // there is no keep reason left needing this explanation.
+      // Local cleanup is intentionally offline. Open pull requests are a
+      // GitHub-side policy signal, not evidence that deleting a local ref loses
+      // work; `git branch -d` and the checks above remain the local safeguards.
+      hasOpenPR: false,
       openPRUnknown: false,
       remote: false,
     };
@@ -545,8 +398,6 @@ function localBranches(cwd, opts) {
     remoteStale,
     remoteStaleRef: remoteStale ? staleRef : null,
     mergeCheckUnavailable: versionOk === false,
-    mergedPRCheckUnavailable,
-    openPRCheckUnavailable,
   };
 }
 
@@ -621,11 +472,8 @@ function ghStatus(args, opts) {
 // tip is new unmerged work. Matching the name alone would offer that branch for
 // deletion. The evidence has to be about the commit the branch points at now.
 //
-// Shared by both paths deliberately. It was written once inside the remote path
-// and the local path had no equivalent, which is the whole defect this function
-// exists to close: the same repository answered differently depending on which
-// way you asked, and the two answers were produced by code that had no reason
-// to agree. One implementation cannot drift from itself.
+// Shared by the remote listing and its one-branch pre-delete check so those two
+// GitHub paths cannot drift from one another.
 function mergedPRsBySha(repo, def, opts) {
   const lines = ghLines(['api',
     `repos/${repo}/pulls?state=closed&base=${encodeURIComponent(def)}&per_page=100`, '--paginate',
@@ -653,27 +501,25 @@ function mergedPRsBySha(repo, def, opts) {
 // and answers for every branch. It is the wrong one for the check that runs
 // immediately before each delete: twenty branches would repeat that walk twenty
 // times, and a walk that exceeds its limit returns null, so a branch the
-// listing cleared gets refused. That is the disagreement this release exists to
-// remove, reappearing as a timeout.
+// listing cleared gets refused.
 //
 // `commits/{sha}/pulls` returns pull requests that CONTAIN the commit, not only
 // those whose head it is, so `sha` is compared explicitly. The looser reading
 // would be safe on its own, since a commit contained in a pull request merged
 // into the default branch did reach the default branch, but it would clear
-// branches the listing kept, and the two paths agreeing is the whole point.
+// branches the remote listing kept.
 //
 // Returns null for "could not look", and otherwise `{ merged }` where `merged`
 // is undefined for "no such evidence". The caller has to keep those apart: one
 // is an answer and the other is the absence of one.
 //
-// Merged evidence only. Open pull requests come from `openPRHeadRefs` on both
-// paths, matched on the branch name, because keying them on the tip here made
-// the two paths disagree about a branch with unpushed commits.
+// Merged evidence only. Open pull requests come from `openPRHeadRefs`, matched
+// on the branch name.
 function mergedPRForCommit(repo, def, sha, opts) {
   // The same budget the listing's lookup gets, deliberately.
   //
-  // These two answer one question by different routes, and the whole release is
-  // about them agreeing. Left on the 5 second default while the listing had 20,
+  // The remote listing and re-check answer one question by different routes.
+  // Left on the 5 second default while the listing had 20,
   // a commit with many containing pull requests could answer the listing and
   // time out the re-check, so a branch just cleared would be refused seconds
   // later. That is the disagreement this release exists to remove, arriving as
@@ -684,8 +530,8 @@ function mergedPRForCommit(repo, def, sha, opts) {
   const callOpts = Object.assign({ timeout: MERGED_PR_TIMEOUT_MS }, opts);
   const pulls = ghLines(args, callOpts);
   if (pulls === null) {
-    // A local-only tip is a complete negative answer, not an authentication
-    // failure. GitHub answers 404 or 422 when the commit object is unknown.
+    // An unknown commit is a complete negative answer, not an authentication
+    // failure. GitHub answers 404 or 422 when it has no such object.
     const status = ghStatus(['api', `repos/${repo}/commits/${sha}/pulls`], callOpts);
     if (status === 404 || status === 422) return { merged: undefined };
     return null;
@@ -702,7 +548,7 @@ function mergedPRForCommit(repo, def, sha, opts) {
 // which the caller treats as "every branch might have one" rather than "none
 // do": a branch whose review is still running must not be offered for deletion
 // because the list behind that protection failed to load.
-// Called from both paths with the same budget, for the same reason as above.
+// Called from the remote listing and re-check with the same budget.
 // Open pull requests are few compared with closed ones, so this rarely needs
 // it, but "rarely" is what makes a timeout here a bug somebody hits once and
 // cannot reproduce.
@@ -710,113 +556,6 @@ function openPRHeadRefs(repo, opts) {
   const lines = ghLines(['api', `repos/${repo}/pulls?state=open&per_page=100`, '--paginate',
     '--jq', '.[].head.ref'], Object.assign({ timeout: MERGED_PR_TIMEOUT_MS }, opts));
   return lines === null ? null : new Set(lines);
-}
-
-// The `owner/name` this checkout pushes to, read from the remote URL rather
-// than asked of `gh`. It is a string operation on something already on disk, so
-// it costs nothing and works with no network and no token, which matters
-// because the answer decides whether a failure further down is worth reporting.
-//
-// `host` comes back too. A repository whose origin is not GitHub has no pull
-// requests to miss, so a merged-PR lookup that does not happen there is not a
-// gap and must not be reported as one.
-function parseOriginUrl(url) {
-  if (!url) return null;
-  // scp form (git@host:owner/name.git) and URL form (https://host/owner/name).
-  const scp = url.match(/^[^@/]+@([^:]+):([^/]+\/[^/]+?)(?:\.git)?$/);
-  if (scp) return { host: scp[1], repo: scp[2] };
-  const full = url.match(/^[a-z+]+:\/\/(?:[^@/]+@)?([^/:]+)(?::\d+)?\/([^/]+\/[^/]+?)(?:\.git)?\/?$/i);
-  if (full) return { host: full[1], repo: full[2] };
-  return null;
-}
-
-function originRepo(cwd) {
-  return parseOriginUrl(tryRun('git', ['-C', cwd, 'remote', 'get-url', 'origin']));
-}
-
-const IS_GITHUB_HOST = /(^|\.)github\.com$/i;
-
-function validGitHubRepo(repo) {
-  if (typeof repo !== 'string') return false;
-  const parts = repo.split('/');
-  return parts.length === 2 && parts.every((part) => (
-    /^[\w.-]+$/.test(part) && part !== '.' && part !== '..'
-  ));
-}
-
-const conclusiveNonGitHub = (parsed) => parsed
-  && parsed.host.includes('.')
-  && !IS_GITHUB_HOST.test(parsed.host);
-
-// Network-free answer for deadline-bound callers. An unparseable or dotless
-// host may be an SSH alias to GitHub, so uncertainty is reported as a possible
-// GitHub repository and therefore as skipped evidence. Fully qualified
-// non-GitHub hosts and repositories with no origin have nothing to skip.
-function originMayBeGitHub(cwd) {
-  const configured = parseOriginUrl(tryRun('git', ['-C', cwd, 'config', '--get', 'remote.origin.url']));
-  const effective = originRepo(cwd);
-  if ((configured && IS_GITHUB_HOST.test(configured.host))
-      || (effective && IS_GITHUB_HOST.test(effective.host))) return true;
-  if (conclusiveNonGitHub(configured) || conclusiveNonGitHub(effective)) return false;
-  return !!(configured || effective);
-}
-
-// Whether this checkout is on GitHub, and under what name.
-//
-// The URL text alone is not the authority, which is what the first version of
-// this assumed. Two ordinary setups make it lie, and both were reported:
-//
-//   url.<base>.insteadOf     `git remote get-url` applies the rewrite, so a
-//                            corporate proxy turns github.com into something
-//                            else before this ever sees it
-//   an ssh host alias        `git@github-work:owner/name` in ~/.ssh/config
-//                            resolves to GitHub and says nothing about it
-//
-// Three sources, cheapest first, and none of them is trusted alone.
-//
-// `git config --get remote.origin.url` is the raw configured value, before any
-// insteadOf rewriting, so it settles the proxy case with no network and no gh.
-// `git remote get-url` is the rewritten value, which settles the ordinary case
-// and is what a checkout without rewrites reports either way.
-//
-// An alias survives both, because nothing in the repository records where the
-// alias points. `gh` resolves the remote the same way it would for any of its
-// own commands, so it is asked last and only when the text was inconclusive.
-//
-// Residual, stated rather than papered over: an aliased origin on a machine
-// where `gh` does not work is reported as not-GitHub, so no caveat is printed.
-// Nothing is misclassified as merged by it, and the evidence it would have
-// fetched is unobtainable on that machine anyway, so the only loss is the note
-// saying so.
-function githubRepo(cwd) {
-  const configured = parseOriginUrl(tryRun('git', ['-C', cwd, 'config', '--get', 'remote.origin.url']));
-  if (configured && IS_GITHUB_HOST.test(configured.host)) {
-    return validGitHubRepo(configured.repo) ? configured.repo : null;
-  }
-
-  const effective = originRepo(cwd);
-  if (effective && IS_GITHUB_HOST.test(effective.host)) {
-    return validGitHubRepo(effective.repo) ? effective.repo : null;
-  }
-
-  // A host that parsed cleanly and is not GitHub is conclusive. `gh repo view`
-  // is only for an unparseable ssh alias whose destination is absent from the
-  // repository; asking it here can select a different GitHub remote and attach
-  // that repository's pull requests to this checkout.
-  if (conclusiveNonGitHub(configured) || conclusiveNonGitHub(effective)) return null;
-
-  // No origin at all is a local-only repository. It has no pull requests to
-  // miss, so asking gh about it would be a network call to learn nothing.
-  if (!configured && !effective) return null;
-
-  const slug = tryRun('gh', ['repo', 'view', '--json', 'nameWithOwner', '--jq', '.nameWithOwner'],
-    { cwd, timeout: REMOTE_PROBE_TIMEOUT_MS });
-  return validGitHubRepo(slug) ? slug : null;
-}
-
-function githubDefaultBranch(repo, opts) {
-  const def = tryRun('gh', ['api', `repos/${repo}`, '--jq', '.default_branch'], opts);
-  return def && !/[\r\n]/.test(def) ? def : null;
 }
 
 function remoteBranches(repo) {
@@ -865,10 +604,7 @@ function remoteBranches(repo) {
   // Unreadable is not empty here either. It degrades to an empty map so every
   // branch falls back to ancestry, and the fact that it failed rides out to the
   // caller, because a Keep list missing this evidence looks exactly like one
-  // that never needed it. The local path reported that from the start and this
-  // one did not, which made the note it prints ("`--repo owner/name` asks
-  // GitHub directly and will say so if it cannot reach it") untrue at the
-  // moment somebody acted on it.
+  // that never needed it.
   const mergedPRs = mergedPRsBySha(repo, def);
   const mergedBySha = mergedPRs || new Map();
 
@@ -926,16 +662,8 @@ function remoteBranches(repo) {
     // repository with nothing but its default branch produces an empty list
     // that looks identical either way.
     remote: true,
-    // The same key the local path returns, so a caller totalling several
-    // repositories reads one field rather than knowing which path produced the
-    // answer. It was returned by one of the two, which made it unconditionally
-    // false for every `--repo` run and told a sweep that the review check had
-    // happened when nobody could check it.
-    //
-    // What it means differs by path, and the note printed for it says so: an
-    // unreadable list holds every branch back here, and holds none back
-    // locally, because `git branch -d` is a second opinion the API has no
-    // equivalent of.
+    // An unreadable list holds every remote branch back because the API has no
+    // equivalent of `git branch -d` as a second opinion.
     openPRCheckUnavailable: prsUnknown,
     mergedPRCheckUnavailable: mergedPRs === null,
   };
@@ -1043,6 +771,5 @@ function remoteBranch(repo, name) {
 module.exports = {
   isGitRepo, localBranches, remoteBranches, remoteBranch,
   tryRun, ghJSON, ghLines, toLines,
-  originRepo, githubRepo, validGitHubRepo, originMayBeGitHub,
-  githubDefaultBranch, mergedPRsBySha, mergedPRForCommit, openPRHeadRefs,
+  mergedPRsBySha, mergedPRForCommit, openPRHeadRefs,
 };

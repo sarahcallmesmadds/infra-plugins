@@ -276,7 +276,6 @@ check('a deadline already past skips the work that costs, and reports it', () =>
   git('checkout', '-q', 'main');
   git('merge', '-q', '--squash', 'squashed');
   git('commit', '-qm', 'squash squashed');
-  git('remote', 'add', 'origin', 'https://github.com/example/repo.git');
 
   // Both capabilities probed for real rather than read off `git --version`,
   // the same way the write-tree probe further down is. They change what this
@@ -305,10 +304,6 @@ check('a deadline already past skips the work that costs, and reports it', () =>
   // deadline, and a branch that only a skipped call could have cleared must
   // come back uncleared.
   assert.strictEqual(r.truncated, true, 'an expired deadline must be reported, not hidden');
-  assert.strictEqual(r.mergedPRCheckUnavailable, true,
-    'a deadline-skipped merged-PR check must be reported as missing');
-  assert.strictEqual(r.openPRCheckUnavailable, true,
-    'a deadline-skipped open-PR check must be reported as missing');
   assert.strictEqual(by('squashed').merged, false,
     'the tree comparison ran after the deadline had passed');
 
@@ -336,12 +331,6 @@ check('a deadline already past skips the work that costs, and reports it', () =>
   }
 
   // And with time to work, the branch it withheld is found.
-  git('remote', 'remove', 'origin');
-  const localOnly = collect.localBranches(repo, { deadline: Date.now() - 1 });
-  assert.strictEqual(localOnly.mergedPRCheckUnavailable, false,
-    'a local-only repository has no GitHub evidence to skip');
-  assert.strictEqual(localOnly.openPRCheckUnavailable, false,
-    'the deadline caveat must not invent pull requests without an origin');
   const full = collect.localBranches(repo, {});
   assert.strictEqual(full.truncated, false, 'no pressure, no truncation');
   if (hasWriteTree) {
@@ -851,12 +840,11 @@ check('the force path re-checks each branch immediately before deleting it', () 
     'and one branch at a time, so a change part way through cannot reach a branch already cleared');
 });
 
-check('sweep guidance distinguishes local and GitHub open-PR failures', () => {
+check('sweep guidance limits pull-request caveats to GitHub repositories', () => {
   const skill = fs.readFileSync(path.join(ROOT, 'skills', 'stale-branches', 'SKILL.md'), 'utf8');
   const line = skill.split('\n').find((x) => x.includes('`openPRCheckUnavailable`')) || '';
-  assert.ok(line.includes('`remote`'), 'the caveat must tell a JSON consumer which path decides its meaning');
-  assert.ok(/local checkout/.test(line) && /GitHub repository/.test(line),
-    'the sweep must describe both consequences, not silently apply local semantics to --repo');
+  assert.ok(/`--repo`/.test(line),
+    'the caveat must say it belongs to the GitHub path, not local cleanup');
   assert.ok(/every branch is held/.test(line),
     'the remote consequence must say the Keep list expands to every branch');
 });
@@ -1272,108 +1260,9 @@ check('no remote means no note', () => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-// --- merged pull requests in the local path --------------------------------
+// --- GitHub evidence on the remote path only -------------------------------
 //
-// The defect these pin: for one repository, `--repo` cleared seven branches by
-// number while the local run kept the same seven as work in progress, and on
-// 2026-08-11 a listing cleared a branch as "merged in #96" and the check that
-// runs immediately before the delete refused the same branch seconds later.
-// Neither answer was unsafe on its own. Having two was, because somebody
-// watching that happen cannot tell which one is wrong, and the reading that
-// fits, that the branch gained work in between, is the one thing that had not
-// happened.
-//
-// `gh` is stubbed rather than called. These tests describe how an answer is
-// used, not whether GitHub is reachable, and a test that needs the network to
-// pass fails for reasons that have nothing to do with the code.
-
-// Runs `fn` with the developer's own git configuration out of the picture.
-//
-// Anything asserting on what `git remote get-url` returns has to, because
-// `url.<base>.insteadOf` is a global rewrite and it is applied to that output.
-// A contributor whose machine has one, which a corporate proxy configures as a
-// matter of course, gets a URL back with a different host and an extra path
-// segment, and a test written against the plain form fails on their machine and
-// nowhere else. It happened: this suite failed in review for exactly that
-// reason while passing here.
-//
-// The production code is not affected, because `githubRepo` reads the raw
-// configured value first. That is what the rewrite test below pins. This is
-// only about the fixture describing the machine it runs on.
-function withIsolatedGitConfig(fn) {
-  const prev = {
-    global: process.env.GIT_CONFIG_GLOBAL,
-    system: process.env.GIT_CONFIG_SYSTEM,
-  };
-  process.env.GIT_CONFIG_GLOBAL = '/dev/null';
-  process.env.GIT_CONFIG_SYSTEM = '/dev/null';
-  try {
-    return fn();
-  } finally {
-    if (prev.global === undefined) delete process.env.GIT_CONFIG_GLOBAL;
-    else process.env.GIT_CONFIG_GLOBAL = prev.global;
-    if (prev.system === undefined) delete process.env.GIT_CONFIG_SYSTEM;
-    else process.env.GIT_CONFIG_SYSTEM = prev.system;
-  }
-}
-
-// The URL forms git actually writes, and what each one means for whether a
-// missing merged-PR list is worth reporting.
-check('an origin URL is read for its host and repository, in every form git writes', () => withIsolatedGitConfig(() => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stale-origin-url-'));
-  const g = (...a) => execFileSync('git', ['-C', dir, ...a], { encoding: 'utf8', stdio: 'pipe' });
-  execFileSync('git', ['init', '-q', '-b', 'main', dir], { stdio: 'pipe' });
-
-  const cases = [
-    ['git@github.com:owner/name.git', 'github.com', 'owner/name'],
-    ['git@github.com:owner/name', 'github.com', 'owner/name'],
-    ['https://github.com/owner/name.git', 'github.com', 'owner/name'],
-    ['https://github.com/owner/name', 'github.com', 'owner/name'],
-    ['https://user@github.com/owner/name.git', 'github.com', 'owner/name'],
-    ['ssh://git@github.com/owner/name.git', 'github.com', 'owner/name'],
-    ['ssh://git@github.com:22/owner/name.git', 'github.com', 'owner/name'],
-    // Not GitHub, and it matters: a repository with no pull requests to miss
-    // must not be told that its merged pull requests could not be read.
-    ['git@gitlab.com:owner/name.git', 'gitlab.com', 'owner/name'],
-  ];
-  g('remote', 'add', 'origin', 'https://example.com/a/b');
-  for (const [url, host, repo] of cases) {
-    g('remote', 'set-url', 'origin', url);
-    const got = collect.originRepo(dir);
-    assert.ok(got, `${url}: parsed to nothing`);
-    assert.strictEqual(got.host, host, `${url}: wrong host`);
-    assert.strictEqual(got.repo, repo, `${url}: wrong repository`);
-  }
-
-  // A local path is a legitimate origin and is not a repository slug. Reading
-  // one as `owner/name` would send a pull request query at a made-up name.
-  g('remote', 'set-url', 'origin', dir);
-  const local = collect.originRepo(dir);
-  assert.ok(local === null || !/^github\.com$/i.test(local.host),
-    'a filesystem path must not be read as a GitHub repository');
-
-  fs.rmSync(dir, { recursive: true, force: true });
-}));
-
-check('a parsed GitHub repository slug cannot change the API path', () => {
-  for (const slug of ['owner/name', 'owner/repo.js', 'some-org/a_repo']) {
-    assert.strictEqual(collect.validGitHubRepo(slug), true, `${slug}: ordinary slug rejected`);
-  }
-  for (const slug of ['../someother', 'owner/..', './repo', 'owner/.', 'owner/name/extra',
-    'owner/name?state=open', 'owner/%2e%2e']) {
-    assert.strictEqual(collect.validGitHubRepo(slug), false, `${slug}: unsafe slug accepted`);
-  }
-
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stale-malformed-origin-'));
-  const g = (...a) => execFileSync('git', ['-C', dir, ...a], { encoding: 'utf8', stdio: 'pipe' });
-  execFileSync('git', ['init', '-q', '-b', 'main', dir], { stdio: 'pipe' });
-  g('remote', 'add', 'origin', 'https://github.com/../someother');
-  assert.strictEqual(collect.githubRepo(dir), null,
-    'a GitHub-hosted URL with path traversal must produce no API repository');
-  fs.rmSync(dir, { recursive: true, force: true });
-});
-
-// The two lookups that answer one question get one budget.
+// The remote listing and pre-delete lookup answer one question with one budget.
 //
 // Asserted by reading the source, which is unusual here and is the point: a
 // timeout difference has no observable behaviour until a slow repository makes
@@ -1384,7 +1273,7 @@ check('a parsed GitHub repository slug cannot change the API path', () => {
 // commit with many containing pull requests could answer one and time out the
 // other, refusing a branch cleared seconds earlier. Both code paths correct,
 // which is what would have made it hard to find.
-check('the merged-PR lookups run under the same timeout, on both paths', () => {
+check('the remote merged-PR listing and re-check use the same timeout', () => {
   const src = fs.readFileSync(
     path.join(__dirname, '..', 'plugins', 'git-hygiene', 'scripts', 'collect.js'),
     'utf8'
@@ -1411,614 +1300,46 @@ check('the merged-PR lookups run under the same timeout, on both paths', () => {
   }
 });
 
-// The isolation above has to actually isolate. Without this, a later change to
-// `withIsolatedGitConfig` that quietly stops working would leave the test above
-// passing here and failing on a contributor's machine again, which is the exact
-// failure it was written to remove.
-check('the isolation neutralises a rewrite that would otherwise break the test above', () => {
-  const cfg = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'stale-rewrite-cfg-')), 'gitconfig');
-  fs.writeFileSync(cfg, '[url "https://proxy.example.com/proxy/github.com/"]\n\tinsteadOf = git@github.com:\n');
-
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stale-isolation-'));
-  const withCfg = (env) => execFileSync(
-    'git', ['-C', dir, 'remote', 'get-url', 'origin'],
-    { encoding: 'utf8', stdio: 'pipe', env: { ...process.env, ...env } }
-  ).trim();
-  execFileSync('git', ['init', '-q', '-b', 'main', dir], { stdio: 'pipe' });
-  execFileSync('git', ['-C', dir, 'remote', 'add', 'origin', 'git@github.com:owner/name.git'], { stdio: 'pipe' });
-
-  assert.ok(
-    /proxy\.example\.com/.test(withCfg({ GIT_CONFIG_GLOBAL: cfg })),
-    'the fixture has to reproduce the rewrite, or this proves nothing'
-  );
-  assert.strictEqual(
-    withCfg({ GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' }),
-    'git@github.com:owner/name.git',
-    'and the isolation has to remove it'
-  );
-
-  fs.rmSync(dir, { recursive: true, force: true });
-  fs.rmSync(path.dirname(cfg), { recursive: true, force: true });
-});
-
-// The three shapes of gh call the code makes, answered the way GitHub would.
-//
-// Written out per query rather than as one catch-all, because the listing and
-// the pre-delete re-check deliberately ask different questions and a stub that
-// answers both identically cannot tell them apart. The first version of these
-// tests did exactly that, and it went on passing when the re-check moved to the
-// single-commit query, which is the one thing they existed to notice.
-//
-// `printf` rather than `echo`, because `echo "\t"` prints a backslash and a t
-// on some shells, and the fields here are tab separated.
-const GH_MERGED = [
-  // The re-check: pull requests containing one commit.
-  // number, base ref, head sha, merged.
-  '  *commits/*/pulls*) printf \'96\\tmain\\t%s\\ttrue\\n\' "$MERGED_SHA" ;;',
-  // The listing: every closed pull request against the default branch.
-  '  *state=closed*) printf \'%s\\t96\\n\' "$MERGED_SHA" ;;',
-  // Open pull requests, asked on both paths now. None, unless a test says so.
-  '  *state=open*) : ;;',
-  '  *) exit 1 ;;',
-].join('\n');
-
-// Builds a checkout whose branch tip is a known sha, with `origin` pointing at
-// github.com so the merged-PR path is reachable, and a stubbed `gh` on PATH.
-// `stub` receives the arguments as one string and returns what gh should print,
-// or null to make it exit non-zero, which is how an unreadable list is spelled.
-function withStubbedGh(stub, fn) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stale-merged-pr-'));
+check('local listing and pre-delete verification never invoke gh', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stale-local-offline-'));
   const repo = path.join(dir, 'work');
   const bin = path.join(dir, 'bin');
   fs.mkdirSync(bin);
   const g = (...a) => execFileSync('git', ['-C', repo, ...a], { encoding: 'utf8', stdio: 'pipe' });
-
   execFileSync('git', ['init', '-q', '-b', 'main', repo], { stdio: 'pipe' });
   g('config', 'user.email', 'test@example.com');
   g('config', 'user.name', 'test');
   fs.writeFileSync(path.join(repo, 'f.txt'), 'base\n');
   g('add', '.'); g('commit', '-qm', 'base');
-
-  // A branch carrying work that main does not have, so ancestry reports it as
-  // unmerged and the tree comparison cannot clear it either. That is the state
-  // a squash-merged branch is in once main has moved on, and the only thing
-  // that can clear it is the merged pull request.
   g('checkout', '-qb', 'feature');
-  fs.appendFileSync(path.join(repo, 'f.txt'), 'work\n');
+  fs.appendFileSync(path.join(repo, 'f.txt'), 'unique work\n');
   g('commit', '-qam', 'work');
   g('checkout', '-q', 'main');
-  fs.appendFileSync(path.join(repo, 'f.txt'), 'something else entirely\n');
-  g('commit', '-qam', 'unrelated');
-  const tip = g('rev-parse', 'feature').trim();
-
+  g('tag', 'feature', 'main');
   g('remote', 'add', 'origin', 'https://github.com/example/repo.git');
 
-  const script = `#!/bin/sh\ncase "$*" in\n  *"api repos/example/repo --jq .default_branch"*) [ -z "\${GH_DEFAULT_BRANCH_UNAVAILABLE:-}" ] || exit 1; printf '%s\\n' "\${GH_DEFAULT_BRANCH:-main}" ;;\n${stub}\nesac\n`;
-  fs.writeFileSync(path.join(bin, 'gh'), script);
-  fs.chmodSync(path.join(bin, 'gh'), 0o755);
-
-  const prevPath = process.env.PATH;
-  process.env.PATH = `${bin}${path.delimiter}${prevPath}`;
-  try {
-    return fn({ repo, tip, dir, g });
-  } finally {
-    process.env.PATH = prevPath;
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-}
-
-// `only` is the pre-delete re-check, and it is the path that refused a branch
-// the listing had just cleared. Both paths ask now, which is what makes the two
-// answers the same answer.
-check('the pre-delete check clears a branch its listing cleared', () => {
-  withStubbedGh(
-    GH_MERGED,
-    ({ repo, tip }) => {
-      process.env.MERGED_SHA = tip;
-      try {
-        const r = collect.localBranches(repo, { only: 'feature' });
-        const feature = r.branches.find((b) => b.name === 'feature');
-        assert.ok(feature, 'the branch asked about was not returned');
-        assert.strictEqual(feature.merged, true,
-          'a merged pull request whose head is this tip is evidence the re-check has to see');
-        assert.strictEqual(feature.mergedVia, 'merged in #96',
-          'and it reads the same as the remote path, so the two can be seen to agree');
-      } finally {
-        delete process.env.MERGED_SHA;
-      }
-    }
-  );
-});
-
-check('the pre-delete check reads the branch tip when a tag has the same name', () => {
-  withStubbedGh(
-    [
-      '  *commits/*/pulls*) printf \'96\\tmain\\t%s\\ttrue\\n\' "$BRANCH_SHA" ;;',
-      '  *state=open*) : ;;',
-      '  *) exit 1 ;;',
-    ].join('\n'),
-    ({ repo, tip, g }) => {
-      g('tag', 'feature', 'main');
-      const tagTip = g('rev-parse', 'refs/tags/feature').trim();
-      assert.notStrictEqual(tagTip, tip, 'the fixture needs two different commits');
-      process.env.BRANCH_SHA = tip;
-      try {
-        const branch = collect.localBranches(repo, { only: 'feature' })
-          .branches.find((b) => b.name === 'feature');
-        assert.strictEqual(branch.merged, true,
-          'evidence for the branch tip must apply despite the same-named tag');
-      } finally {
-        delete process.env.BRANCH_SHA;
-      }
-    }
-  );
-});
-
-checkWriteTree('a same-named tag cannot make unique branch work look merged', () => {
-  withStubbedGh(
-    [
-      '  *commits/*/pulls*) : ;;',
-      '  *state=open*) : ;;',
-      '  *) exit 1 ;;',
-    ].join('\n'),
-    ({ repo, g }) => {
-      g('tag', 'feature', 'main');
-      const branch = collect.localBranches(repo, { only: 'feature' })
-        .branches.find((b) => b.name === 'feature');
-      assert.ok(branch.aheadBy > 0, 'the branch really carries unique work');
-      assert.strictEqual(branch.merged, false,
-        'merge-tree must compare refs/heads/feature, never refs/tags/feature');
-      assert.strictEqual(classify([branch], {}, Date.now()).safe.length, 0,
-        'the destructive force-delete path must not receive this branch');
-    }
-  );
-});
-
-check('the old-git ancestry fallback uses fully qualified branch refs', () => {
-  const src = fs.readFileSync(path.join(ROOT, 'scripts', 'collect.js'), 'utf8');
-  assert.ok(src.includes('`${defRef}..${branchRef}`'),
-    'rev-list must not resolve a same-named tag in place of either branch');
-  assert.ok(src.includes("target.ref, branchRef"),
-    'merge-tree must receive the fully qualified branch ref too');
-  assert.ok(!src.includes('`${def}..${name}`'),
-    'the ambiguous fallback must not remain alongside the fixed path');
-});
-
-check('a commit GitHub does not know is an answered empty lookup', () => {
-  withStubbedGh(
-    [
-      '  *commits/*/pulls*--jq*--include*) exit 2 ;;',
-      '  *commits/*/pulls*--include*) printf \'HTTP/2 404 Not Found\\n\'; exit 1 ;;',
-      '  *commits/*/pulls*) exit 1 ;;',
-      '  *state=open*) : ;;',
-      '  *) exit 1 ;;',
-    ].join('\n'),
-    ({ repo }) => {
-      const r = collect.localBranches(repo, { only: 'feature' });
-      assert.strictEqual(r.mergedPRCheckUnavailable, false,
-        'an unpushed tip is not evidence of an authentication failure');
-      assert.strictEqual(r.branches.find((b) => b.name === 'feature').merged, false,
-        'unknown to GitHub means no merged-PR evidence, never merged');
-    }
-  );
-});
-
-check('GitHub current default overrides a stale or guessed local default for pull requests', () => {
-  withStubbedGh(
-    [
-      '  *state=closed*) printf \'%s\\t96\\n\' "$MERGED_SHA"; printf \'%s\\n\' "$*" > "$GH_CALLS" ;;',
-      '  *state=open*) : ;;',
-      '  *) exit 1 ;;',
-    ].join('\n'),
-    ({ repo, tip, dir, g }) => {
-      const calls = path.join(dir, 'calls.log');
-      // A fetched origin/HEAD can remain on an old name after GitHub renames
-      // the default branch. Its presence must not suppress the API lookup.
-      g('branch', 'old-default', 'main');
-      g('branch', 'release', 'main');
-      g('update-ref', 'refs/remotes/origin/old-default', 'refs/heads/main');
-      g('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/old-default');
-      process.env.GH_CALLS = calls;
-      process.env.GH_DEFAULT_BRANCH = 'release';
-      process.env.MERGED_SHA = tip;
-      try {
-        const result = collect.localBranches(repo);
-        const asked = fs.readFileSync(calls, 'utf8');
-        assert.ok(asked.includes('base=release'),
-          `the API's default branch must be the pull-request base: ${asked}`);
-        assert.ok(!asked.includes('base=main'),
-          `the local fallback must not silently narrow the API query: ${asked}`);
-        const feature = result.branches.find((b) => b.name === 'feature');
-        assert.strictEqual(feature.mergedVia, 'merged in #96 to release',
-          'mismatched defaults must name where the pull request actually landed');
-        const release = result.branches.find((b) => b.name === 'release');
-        assert.strictEqual(release.isDefault, true,
-          'GitHub current default must remain protected when origin/HEAD is stale');
-        assert.strictEqual(classify([release], {}, Date.now()).safe.length, 0,
-          'the current GitHub default must never enter a deletion flow');
-      } finally {
-        delete process.env.GH_CALLS;
-        delete process.env.GH_DEFAULT_BRANCH;
-        delete process.env.MERGED_SHA;
-      }
-    }
-  );
-});
-
-check('a failed default-branch lookup is reported on listing and pre-delete paths', () => {
-  withStubbedGh(
-    GH_MERGED,
-    ({ repo }) => {
-      process.env.GH_DEFAULT_BRANCH_UNAVAILABLE = '1';
-      try {
-        const listing = collect.localBranches(repo);
-        assert.strictEqual(listing.mergedPRCheckUnavailable, true,
-          'the listing must report that its merged-PR base was unavailable');
-
-        const verify = collect.localBranches(repo, { only: 'feature' });
-        assert.strictEqual(verify.mergedPRCheckUnavailable, true,
-          'a skipped per-commit query is missing evidence, not a successful empty lookup');
-
-        let message = '';
-        try {
-          execFileSync('node', [CLI, '--cwd', repo, '--verify', 'feature'], { encoding: 'utf8' });
-        } catch (error) {
-          message = `${error.stdout || ''}${error.stderr || ''}`;
-        }
-        assert.ok(/Could not complete the pull-request checks/.test(message),
-          `the contradiction must be explained at the delete boundary: ${message}`);
-      } finally {
-        delete process.env.GH_DEFAULT_BRANCH_UNAVAILABLE;
-      }
-    }
-  );
-});
-
-// A normal merge is already proved by ancestry. A matching merged pull request
-// may improve provenance, but setting `merged` here changes the local delete
-// protocol: the CLI says `git branch -d` will refuse and asks for `-D`, even
-// though `-d` succeeds. PR evidence is only the fallback for ahead branches.
-check('an ancestry-clean branch is not relabelled as needing force', () => {
-  withStubbedGh(
-    GH_MERGED,
-    ({ repo, g }) => {
-      g('branch', 'already-in', 'main');
-      process.env.MERGED_SHA = g('rev-parse', 'already-in').trim();
-      try {
-        const branch = collect.localBranches(repo, { only: 'already-in' })
-          .branches.find((b) => b.name === 'already-in');
-        assert.strictEqual(branch.aheadBy, 0, 'the fixture must be ancestry-clean');
-        assert.strictEqual(branch.merged, false,
-          'PR evidence must not turn an ordinary merge into the force-delete path');
-
-        const out = execFileSync('node', [CLI, '--cwd', repo, '--verify', 'already-in'],
-          { encoding: 'utf8' });
-        assert.ok(!/needs-force:/.test(out),
-          `an ordinary -d deletion must not request force approval: ${out}`);
-        assert.ok(/git branch -d already-in/.test(out),
-          `the normal deletion command must still be printed: ${out}`);
-      } finally {
-        delete process.env.MERGED_SHA;
-      }
-    }
-  );
-});
-
-// The safety property that keying on the tip buys. A branch reused after its
-// pull request merged has a name matching a merged pull request and a tip that
-// is new work, and clearing it on the name would delete that work.
-check('a branch reused after its pull request merged is not cleared', () => {
-  withStubbedGh(
-    GH_MERGED,
-    ({ repo, tip, g }) => {
-      // The pull request merged at this tip, so both halves below run against
-      // one unchanging piece of evidence and only the branch moves.
-      process.env.MERGED_SHA = tip;
-      try {
-        // Cleared while the branch still points at the merged commit. Asserted
-        // here rather than taken from the test above, so that the pair is what
-        // fails if the keying is ever loosened to the branch name: on a name
-        // both halves would clear, and only having both in one test shows that.
-        const before = collect.localBranches(repo, { only: 'feature' })
-          .branches.find((b) => b.name === 'feature');
-        assert.strictEqual(before.merged, true,
-          'the branch is at the merged commit, so the evidence applies');
-
-        g('checkout', '-q', 'feature');
-        fs.appendFileSync(path.join(repo, 'f.txt'), 'later, unmerged work\n');
-        g('commit', '-qam', 'more');
-        g('checkout', '-q', 'main');
-
-        const after = collect.localBranches(repo, { only: 'feature' })
-          .branches.find((b) => b.name === 'feature');
-        assert.strictEqual(after.merged, false,
-          'the evidence is about a commit this branch no longer points at');
-      } finally {
-        delete process.env.MERGED_SHA;
-      }
-    }
-  );
-});
-
-// Unreadable is not empty. Nothing gains evidence, and the run says so rather
-// than presenting a Keep list that looks settled.
-check('an unreadable merged pull request list is reported, not assumed empty', () => {
-  withStubbedGh('  *) exit 1 ;;', ({ repo, g }) => {
-    const r = collect.localBranches(repo, { only: 'feature' });
-    const feature = r.branches.find((b) => b.name === 'feature');
-    assert.strictEqual(feature.merged, false, 'no list means no evidence, never a clearance');
-    assert.strictEqual(r.mergedPRCheckUnavailable, true,
-      'and the caller has to be told the answer is partial');
-
-    let message = '';
-    try {
-      execFileSync('node', [CLI, '--cwd', repo, '--verify', 'feature'], { encoding: 'utf8' });
-    } catch (error) {
-      message = `${error.stdout || ''}${error.stderr || ''}`;
-    }
-    assert.ok(/no longer safe.*commit.*not in the default branch/i.test(message),
-      `the re-check must preserve the branch's actual keep reason: ${message}`);
-    assert.ok(/Could not complete the pull-request checks/.test(message),
-      `the re-check must also report the missing evidence: ${message}`);
-
-    g('checkout', '-q', 'feature');
-    try {
-      execFileSync('node', [CLI, '--cwd', repo, '--verify', 'feature'], { encoding: 'utf8' });
-    } catch (error) {
-      message = `${error.stdout || ''}${error.stderr || ''}`;
-    }
-    assert.ok(/checked out/.test(message),
-      `a PR lookup failure must not hide an unconditional keep reason: ${message}`);
-  });
-});
-
-// The mirror of it, and the reason the flag is conditioned on the host. A
-// repository that pushes nowhere near GitHub has no pull requests to miss, so
-// reporting a gap would be inventing one.
-// The re-check asks about one commit, not about every closed pull request.
-//
-// The paginated walk is right for a listing, which asks once and answers for
-// every branch, and wrong for the check that runs once per delete: twenty
-// branches would repeat it twenty times, and a walk that exceeds its limit
-// returns null, so a branch the listing just cleared gets refused. That is the
-// contradiction this release removes, arriving as a timeout instead.
-check('the pre-delete check asks about one commit, not the whole history', () => {
-  withStubbedGh(
-    // Records what was asked, and refuses the paginated form outright so that
-    // using it fails loudly here rather than merely being slower in the field.
-    [
-      '  *commits/*/pulls*) printf \'96\\tmain\\t%s\\ttrue\\n\' "$MERGED_SHA" ;;',
-      '  *state=closed*) echo "PAGINATED" >> "$GH_CALLS"; exit 1 ;;',
-      '  *state=open*) : ;;',
-      '  *) exit 1 ;;',
-    ].join('\n'),
-    ({ repo, tip, dir }) => {
-      const calls = path.join(dir, 'calls.log');
-      process.env.MERGED_SHA = tip;
-      process.env.GH_CALLS = calls;
-      try {
-        const r = collect.localBranches(repo, { only: 'feature' });
-        const feature = r.branches.find((b) => b.name === 'feature');
-        assert.strictEqual(feature.merged, true,
-          'the single-commit query has to be enough on its own');
-        assert.strictEqual(feature.mergedVia, 'merged in #96');
-        assert.ok(!fs.existsSync(calls),
-          'the re-check must not walk every closed pull request');
-      } finally {
-        delete process.env.MERGED_SHA;
-        delete process.env.GH_CALLS;
-      }
-    }
-  );
-});
-
-// Parity on the other protection. This path hardcoded `false` because it had no
-// way to ask, which was defensible while it asked GitHub nothing at all. Once
-// it clears branches on GitHub evidence and calls the two paths one answer, a
-// branch whose review is still running would be kept by `--repo` and offered
-// locally, which is the same drift in a new place.
-check('a branch with an open pull request is not offered locally either', () => {
-  withStubbedGh(
-    [
-      '  *state=open*) echo "feature" ;;',
-      '  *state=closed*) printf \'%s\\t96\\n\' "$MERGED_SHA" ;;',
-      '  *commits/*/pulls*) printf \'96\\tmain\\t%s\\topen\\tfalse\\n\' "$MERGED_SHA" ;;',
-      '  *) exit 1 ;;',
-    ].join('\n'),
-    ({ repo, tip }) => {
-      process.env.MERGED_SHA = tip;
-      try {
-        const listed = collect.localBranches(repo)
-          .branches.find((b) => b.name === 'feature');
-        assert.strictEqual(listed.hasOpenPR, true,
-          'an open pull request has to reach the classifier from a local run too');
-      } finally {
-        delete process.env.MERGED_SHA;
-      }
-    }
-  );
-});
-
-// Kept for the right reason, not merely kept.
-//
-// A branch whose pull requests could not be read carries `hasOpenPR: true` so
-// that it stays, which is correct. Printing that as "it has an open pull
-// request" is not: it states a fact nobody established, and it sends someone
-// looking for a review that may not exist. Found by running the degraded path
-// rather than reported, and it is a defect this round introduced, because the
-// local path had no open-PR evidence to fail at until this change gave it some.
-// An unreachable GitHub costs a caveat, not the whole plugin.
-//
-// This asserts the opposite of what it asserted one round ago, and the reversal
-// is the finding. Failing safe into "every branch might have a review" matched
-// the remote path, where it is right because the API deletes whatever ref you
-// name. Here it meant that with `gh` missing or logged out, no branch in a
-// GitHub-hosted checkout could be deleted at all, including ones the tree
-// comparison had cleared with no network. The README shipped in the same change
-// promised offline still worked. A protection against a review that might not
-// exist was bought by removing the function entirely.
-check('an unreachable GitHub costs the open-PR check, not every deletion', () => {
-  withStubbedGh('  *) exit 1 ;;', ({ repo, g }) => {
-    // A label on a commit main already has, so ancestry alone clears it with no
-    // network at all. This is the branch that stopped being offered, and it is
-    // the whole point: nothing about it needs GitHub, and GitHub being
-    // unreachable was keeping it anyway.
-    g('branch', 'already-in', 'main');
-
-    const r = collect.localBranches(repo);
-    const settled = r.branches.find((x) => x.name === 'already-in');
-    assert.strictEqual(settled.aheadBy, 0, 'the fixture has to be what this claims');
-    assert.strictEqual(settled.hasOpenPR, false,
-      'an unreadable list carries no evidence, and no evidence keeps nothing');
-    assert.strictEqual(settled.openPRUnknown, false,
-      'and there is no keep reason left that needs explaining');
-    assert.strictEqual(r.openPRCheckUnavailable, true,
-      'the gap is reported once, against the run');
-
-    const out = execFileSync('node', [CLI, '--cwd', repo], { encoding: 'utf8' });
-    assert.ok(/open pull requests could not be read/.test(out),
-      'the run has to say what it could not check');
-    assert.ok(!/it has an open pull request/.test(out),
-      'and must not assert a review nobody confirmed');
-    assert.ok(/Safe to delete \(1\)/.test(out),
-      'and the branch needing no network is still offered');
-  });
-});
-
-// The mirror. A real open pull request still reads as one, so the test above
-// cannot be satisfied by a run that has stopped detecting them at all.
-check('a branch with a pull request genuinely open still says exactly that', () => {
-  withStubbedGh(
-    [
-      '  *state=open*) echo "feature" ;;',
-      '  *state=closed*) : ;;',
-      '  *commits/*/pulls*) : ;;',
-      '  *) exit 1 ;;',
-    ].join('\n'),
-    ({ repo }) => {
-      const b = collect.localBranches(repo).branches.find((x) => x.name === 'feature');
-      assert.strictEqual(b.hasOpenPR, true);
-      assert.strictEqual(b.openPRUnknown, false, 'this one was actually checked');
-
-      const out = execFileSync('node', [CLI, '--cwd', repo], { encoding: 'utf8' });
-      assert.ok(/it has an open pull request/.test(out));
-      assert.ok(!/pull requests could not be read/.test(out));
-    }
-  );
-});
-
-// Unreadable is not empty, on the path that reports it to a reader who asked by
-// name. The local path carried this from the start and the remote one did not,
-// which made the note the local path prints wrong at the moment it mattered.
-// The origin URL text is not the authority on whether a checkout is on GitHub.
-//
-// Two ordinary setups make it lie, and the run that gets it wrong is silent
-// about it: no pull request evidence is fetched and no caveat is printed, so
-// the local answer disagrees with `--repo` for the same repository and looks
-// complete. The second case below is not hypothetical, it is the environment
-// the review ran in.
-check('a rewritten origin is still recognised as GitHub', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stale-rewrite-'));
-  const g = (...a) => execFileSync('git', ['-C', dir, ...a], { encoding: 'utf8', stdio: 'pipe' });
-  execFileSync('git', ['init', '-q', '-b', 'main', dir], { stdio: 'pipe' });
-  g('remote', 'add', 'origin', 'git@github.com:owner/name.git');
-
-  // url.<base>.insteadOf, as a corporate proxy configures it. `git remote
-  // get-url` applies the rewrite, so the URL comes back pointing somewhere that
-  // is not GitHub and carrying an extra path segment.
-  g('config', 'url.https://proxy.example.com/proxy/github.com/.insteadOf', 'git@github.com:');
-
-  const rewritten = g('remote', 'get-url', 'origin').trim();
-  assert.ok(!/^git@github\.com:/.test(rewritten),
-    `the fixture has to actually rewrite, and got: ${rewritten}`);
-
-  assert.strictEqual(collect.githubRepo(dir), 'owner/name',
-    'the configured URL settles this with no network, and it was not consulted');
-
-  fs.rmSync(dir, { recursive: true, force: true });
-});
-
-check('a repository that is genuinely not on GitHub stays not on GitHub', () => {
-  // The control. A resolver that answered "owner/name" to everything would
-  // satisfy the check above, and would then print a GitHub caveat at people
-  // whose code is nowhere near GitHub.
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stale-not-github-'));
-  const g = (...a) => execFileSync('git', ['-C', dir, ...a], { encoding: 'utf8', stdio: 'pipe' });
-  execFileSync('git', ['init', '-q', '-b', 'main', dir], { stdio: 'pipe' });
-
-  // No origin at all, which must not cost a `gh` call to work out.
-  assert.strictEqual(collect.githubRepo(dir), null, 'a repository with no origin has no pull requests');
-
-  g('remote', 'add', 'origin', 'git@gitlab.com:owner/name.git');
-  const bin = path.join(dir, 'bin');
-  fs.mkdirSync(bin);
-  // A conclusive non-GitHub origin must not invoke gh at all. Recording before
-  // failure distinguishes that promise from a call that happened to fail.
-  const calls = path.join(dir, 'gh-called');
-  fs.writeFileSync(path.join(bin, 'gh'), `#!/bin/sh\ntouch "${calls}"\nexit 1\n`);
+  const marker = path.join(dir, 'gh-called');
+  fs.writeFileSync(path.join(bin, 'gh'), `#!/bin/sh\nprintf called > "${marker}"\nexit 1\n`);
   fs.chmodSync(path.join(bin, 'gh'), 0o755);
   const prevPath = process.env.PATH;
   process.env.PATH = `${bin}${path.delimiter}${prevPath}`;
   try {
-    assert.strictEqual(collect.githubRepo(dir), null, 'gitlab is not github');
-    assert.ok(!fs.existsSync(calls),
-      'a parsed non-GitHub origin must not contact gh or resolve another remote');
-  } finally {
-    process.env.PATH = prevPath;
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-check('an ssh host alias is resolved by asking gh, since nothing in the repo records it', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stale-alias-'));
-  const g = (...a) => execFileSync('git', ['-C', dir, ...a], { encoding: 'utf8', stdio: 'pipe' });
-  execFileSync('git', ['init', '-q', '-b', 'main', dir], { stdio: 'pipe' });
-  g('remote', 'add', 'origin', 'git@github-work:owner/name.git');
-
-  const bin = path.join(dir, 'bin');
-  fs.mkdirSync(bin);
-  fs.writeFileSync(path.join(bin, 'gh'), '#!/bin/sh\necho owner/name\n');
-  fs.chmodSync(path.join(bin, 'gh'), 0o755);
-  const prevPath = process.env.PATH;
-  process.env.PATH = `${bin}${path.delimiter}${prevPath}`;
-  try {
-    assert.strictEqual(collect.githubRepo(dir), 'owner/name',
-      'an alias points at GitHub and says so nowhere, so gh is the only thing that knows');
-  } finally {
-    process.env.PATH = prevPath;
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-// A name beginning with `-` is read by git as an option rather than a ref, and
-// whatever comes back is then interpolated into a GitHub API path. Both delete
-// builders in classify.js refuse such a name for exactly this reason, and this
-// call site was added without that guard.
-//
-// The stub records every call, so the assertion is about what left the machine
-// rather than only about the return value.
-check('a branch name that looks like a flag never reaches the API', () => {
-  withStubbedGh(
-    [
-      '  *commits/*/pulls*) echo "$*" >> "$GH_CALLS"; exit 1 ;;',
-      '  *state=open*) : ;;',
-      '  *) exit 1 ;;',
-    ].join('\n'),
-    ({ repo, dir }) => {
-      const calls = path.join(dir, 'flagname.log');
-      process.env.GH_CALLS = calls;
-      try {
-        for (const name of ['--upload-pack=touch /tmp/pwned', '-n', '--all']) {
-          const r = collect.localBranches(repo, { only: name });
-          assert.ok(r, `${name}: the run has to survive the name, not crash on it`);
-        }
-        assert.ok(!fs.existsSync(calls),
-          'a name git would read as an option must not reach a URL');
-      } finally {
-        delete process.env.GH_CALLS;
-      }
+    const listed = collect.localBranches(repo);
+    const checked = collect.localBranches(repo, { only: 'feature' });
+    for (const result of [listed, checked]) {
+      const feature = result.branches.find((b) => b.name === 'feature');
+      assert.ok(feature && feature.aheadBy > 0, 'the branch carries unique local work');
+      assert.strictEqual(feature.merged, false,
+        'a same-named tag and GitHub origin must not clear unique local work');
+      assert.strictEqual(classify([feature], {}, Date.now()).safe.length, 0,
+        'the branch must stay outside the deletion flow');
     }
-  );
+    assert.strictEqual(fs.existsSync(marker), false,
+      'neither local listing nor its pre-delete check may invoke gh');
+  } finally {
+    process.env.PATH = prevPath;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 // The same distinction on the one path that was missed when it was introduced.
@@ -2158,7 +1479,7 @@ check('a direct repository check reports an unreadable merged list', () => {
   }
 });
 
-check('a repository with no GitHub origin reports no gap', () => {
+check('local collection has no pull-request lookup state', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stale-no-origin-'));
   const g = (...a) => execFileSync('git', ['-C', dir, ...a], { encoding: 'utf8', stdio: 'pipe' });
   execFileSync('git', ['init', '-q', '-b', 'main', dir], { stdio: 'pipe' });
@@ -2169,8 +1490,10 @@ check('a repository with no GitHub origin reports no gap', () => {
   g('branch', 'other');
 
   const r = collect.localBranches(dir);
-  assert.strictEqual(r.mergedPRCheckUnavailable, false,
-    'no GitHub origin means nothing was missed');
+  assert.strictEqual(r.mergedPRCheckUnavailable, undefined,
+    'local collection must not imply that it attempted a GitHub lookup');
+  assert.strictEqual(r.openPRCheckUnavailable, undefined,
+    'open pull requests are not part of local collection');
   const out = execFileSync('node', [CLI, '--cwd', dir], { encoding: 'utf8' });
   assert.ok(!/merged pull requests for this repository could not be read/.test(out),
     'and nothing is said about it');

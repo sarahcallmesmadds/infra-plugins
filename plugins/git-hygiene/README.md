@@ -72,21 +72,16 @@ recoverable.
 fails for any reason, the branch is kept and the reason is shown. Not knowing is
 never rounded down to zero.
 
-**It gives the same answer about a repository whichever way you ask it.** A
-local checkout and `--repo owner/name` both read merged pull requests, so a
-branch cleared as "merged in #96" one way is cleared the same way the other, and
-both read open ones, so a branch whose review is still running is kept either
-way. It was not always so: until 0.3.6 the local run had only a tree comparison,
-which cannot clear a branch squash-merged before the default branch moved on,
-and the same repository would keep seven branches that `--repo` cleared by
-number. When the pull requests cannot be read at all, either way round, the run
-says so rather than presenting the shorter answer as the whole one.
+**Local cleanup stays local.** It uses commit reachability and tree comparison,
+then relies on `git branch -d` as a final safeguard. It does not contact GitHub
+or use pull-request state. That makes listing and pre-delete checks fast and
+consistent even when the network is slow or unavailable. The trade-off is
+conservative: a squash merge that local Git cannot prove may remain under Keep
+until you check and remove it yourself.
 
-They part company on one point, deliberately. An unreadable open-pull-request
-list holds every remote branch back and holds no local branch back. The reason
-is the section below: `git branch -d` is a second opinion that the GitHub API
-has no equivalent of, so on the remote side an unknown has to block, and on the
-local side blocking everything would cost more than it protects.
+`--repo owner/name` is a different environment. It has no local Git objects or
+`git branch -d`, so it uses merged and open pull requests from GitHub and holds
+everything back when that evidence cannot be read.
 
 **It will not touch** the default branch, a protected branch, the branch you
 have checked out, or a branch with an open pull request, whatever their merge
@@ -141,30 +136,8 @@ Add the marketplace **by repository**, as above. Pasting a direct URL to
 `marketplace.json` downloads only that one file, the plugin folders never
 arrive, and the install fails.
 
-Checking a repository on GitHub needs the `gh` CLI, logged in.
-
-Checking a local checkout uses it too, from 0.3.6, when the checkout pushes to
-GitHub. It reads merged and open pull requests, which is the evidence that
-survives a squash merge into a default branch that has since moved on.
-
-**Without it the run still works, and that is a promise about what it does
-rather than a hope.** Both lookups fail into having no evidence, never into
-holding everything back. The tree comparison and the commit count need no
-network and still decide what is safe, so a branch whose work is plainly in the
-default branch is still offered. What you lose is named at the top of the
-output: a squash merge the comparison cannot see may be listed under Keep, and
-nothing accounts for a review still in progress.
-
-The one thing that changes is the open-pull-request protection, which the local
-path never had before 0.3.6 anyway. If that matters to you, `gh auth status`
-gets it back.
-
-A checkout whose origin has a fully qualified non-GitHub host, or which has no
-origin at all, contacts nothing and is told nothing is missing, because for
-that repository nothing is. A dotless SSH host such as `github-work` is
-ambiguous: it may be an alias for GitHub, so the tool asks `gh` to resolve it.
-If it is an intranet host instead, use a fully qualified hostname to make the
-local-only intent conclusive.
+Checking a repository on GitHub needs the `gh` CLI, logged in. Checking a local
+checkout does not contact GitHub, whatever its origin URL is.
 
 ## Configuration
 

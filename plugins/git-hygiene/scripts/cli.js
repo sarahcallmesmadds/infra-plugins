@@ -131,7 +131,7 @@ function render(result, where, lookup) {
     lines.push('`--repo owner/name` uses merged pull requests instead and does not need it.');
   }
 
-  // The origin is on GitHub and its merged pull requests could not be read, so
+  // A GitHub repository's merged pull requests could not be read, so
   // the run is missing the one piece of evidence that survives a squash merge
   // into a default branch that has since moved on. Said plainly, because the
   // alternative is a Keep list that looks settled and is not: this is the exact
@@ -147,23 +147,11 @@ function render(result, where, lookup) {
   // the change that added it. Attaching it per branch made every branch carry a
   // keep reason and nothing could be deleted at all.
   //
-  // The wording differs by path because the consequence does. Locally an
-  // unreadable list costs the open-pull-request check and nothing else, since
-  // `git branch -d` still refuses unmerged work. On GitHub the API deletes
-  // whatever ref it is given, so an unknown holds every branch back, and the
-  // same sentence would be wrong in both directions at once.
   if (lookup && lookup.openPRCheckUnavailable) {
     lines.push('');
-    if (lookup.remote) {
-      lines.push('Note: the open pull requests could not be read, so every branch is being held');
-      lines.push('back in case a review is still running on it. Nothing here is wrong, but the');
-      lines.push('Keep list is longer than the evidence requires. Check `gh auth status`.');
-    } else {
-      lines.push('Note: the open pull requests could not be read, so nothing below accounts for');
-      lines.push('a review still in progress. Everything else is unaffected, and a branch is');
-      lines.push('still only offered on evidence its work is in the default branch. Check');
-      lines.push('`gh auth status` if you want that checked too.');
-    }
+    lines.push('Note: the open pull requests could not be read, so every branch is being held');
+    lines.push('back in case a review is still running on it. Nothing here is wrong, but the');
+    lines.push('Keep list is longer than the evidence requires. Check `gh auth status`.');
   }
 
   if (keep.length) {
