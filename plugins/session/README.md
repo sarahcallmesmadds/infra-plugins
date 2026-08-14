@@ -383,3 +383,10 @@ export CLAUDE_HOOK_NODE=/path/to/node
 When that variable is set it is the only interpreter tried, and a value that
 does not resolve is an error rather than a reason to look elsewhere. Naming
 an interpreter and silently getting a different one hides the mistake.
+
+**The status line is separate.** It is not a hook, so it does not go through
+`bin/hook-node`. `/status-bar` prints a `settings.json` fragment naming your
+node by absolute path, resolved when the installer runs, because that string
+lives in your settings and has to keep working after the plugin updates. If
+node moves, re-run `/status-bar` and replace the value. A status line that
+cannot start shows nothing and reports nothing, so there is no error to see.

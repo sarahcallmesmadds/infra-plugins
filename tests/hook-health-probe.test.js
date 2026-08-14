@@ -39,7 +39,7 @@ const { execFileSync, spawnSync } = require('child_process');
 const ROOT = path.join(__dirname, '..');
 const PROBE = path.join(ROOT, 'plugins', 'build-loop', 'hooks', 'hook-health-probe.sh');
 
-const EXPECTED_CHECKS = 22;
+const EXPECTED_CHECKS = 23;
 
 // The probe calls these and nothing else. `sh` is not among them: the kernel
 // reads the shebang and runs /bin/sh by absolute path, so PATH never decides
@@ -138,9 +138,22 @@ function readLog(home) {
 // pick the interpreter, hand it the event on stdin. `env` builds the whole
 // environment from scratch so a PATH inherited from this process cannot quietly
 // rescue a case that is meant to fail.
-function runProbe(home, { withNode, env = {}, session = SESSION } = {}) {
+// `pathOverride` is for the cases that are about PATH itself: a PATH holding
+// the home directory, one holding wildcards, one that is empty. They used to
+// call spawnSync by hand for that, which is how the pin below missed them and
+// how the suite came to pass here and fail everywhere else. Varying one field
+// is not a reason to rebuild the environment.
+// `spawnOptions` is merged into the spawn itself rather than the environment.
+// One case drops to an unprivileged uid to make the log genuinely unwritable,
+// which is a property of the process and not of what it can see.
+function runProbe(home, {
+  withNode, env = {}, session = SESSION, pathOverride, spawnOptions = {},
+} = {}) {
   const parts = ['-i', `HOME=${home}`];
-  parts.push(withNode ? `PATH=${NODE_BIN}:${BIN}` : `PATH=${BIN}`);
+  const searchPath = pathOverride !== undefined
+    ? pathOverride
+    : (withNode ? `${NODE_BIN}:${BIN}` : BIN);
+  parts.push(`PATH=${searchPath}`);
 
   // The probe asks bin/hook-node whether node can be found, and that search
   // reaches past PATH into ~/.local/bin, Homebrew, /usr/local and /usr/bin.
@@ -160,10 +173,37 @@ function runProbe(home, { withNode, env = {}, session = SESSION } = {}) {
 
   for (const [k, v] of Object.entries(env)) parts.push(`${k}=${v}`);
   parts.push(PROBE);
-  return spawnSync('env', parts, { input: eventFor(session), encoding: 'utf8' });
+  return spawnSync('env', parts, {
+    input: eventFor(session), encoding: 'utf8', ...spawnOptions,
+  });
 }
 
 // --- the interpreter it cannot report on itself ----------------------------
+
+check('every case starts the probe through runProbe', () => {
+  // The 2026-08-14 review. runProbe learned to pin $CLAUDE_HOOK_NODE so that
+  // "node is missing" means the same thing everywhere, but seven invocations
+  // called spawnSync by hand to vary PATH and inherited no pin. On this machine
+  // node sits at none of the absolute paths the launcher searches, so the suite
+  // was green here and six checks failed on Debian, Ubuntu, Homebrew and most
+  // CI images, which is the trap in this file's own header arriving by a new
+  // route for the second time.
+  //
+  // The pin cannot be enforced by asking each case to remember it, so this asks
+  // instead that there is only one door.
+  const source = fs.readFileSync(__filename, 'utf8');
+  const callSites = source.split('\n')
+    .map((line, i) => ({ n: i + 1, line }))
+    .filter(({ line }) => /spawnSync\(/.test(line))
+    .filter(({ line }) => !/require\(/.test(line))
+    .filter(({ line }) => !/^\s*\/\//.test(line));
+
+  assert.strictEqual(callSites.length, 1,
+    'the probe is started from more than one place, so the $CLAUDE_HOOK_NODE pin '
+    + 'does not reach every case and the suite passes or fails by machine:\n        '
+    + `${callSites.map((c) => `line ${c.n}: ${c.line.trim()}`).join('\n        ')}\n`
+    + '        Add a runProbe option instead of spawning it directly.');
+});
 
 check('the probe is not written in node', () => {
   // A node script cannot tell you node is missing. If this file is ever
@@ -405,8 +445,7 @@ check('a failure line names the search path without naming the machine', () => {
   fs.mkdirSync(inHome, { recursive: true });
   for (const tool of PROBE_NEEDS) fs.symlinkSync(locate(tool), path.join(inHome, tool));
 
-  const r = spawnSync('env', ['-i', `HOME=${home}`, `PATH=${inHome}`, PROBE],
-    { input: eventFor(SESSION), encoding: 'utf8' });
+  const r = runProbe(home, { pathOverride: inHome });
   assert.strictEqual(r.status, 0, `the probe exited ${r.status}`);
 
   const line = readLog(home).trim();
@@ -431,8 +470,7 @@ check('a home directory that reads as a regular expression is masked, in silence
   fs.mkdirSync(inHome, { recursive: true });
   for (const tool of PROBE_NEEDS) fs.symlinkSync(locate(tool), path.join(inHome, tool));
 
-  const r = spawnSync('env', ['-i', `HOME=${home}`, `PATH=${inHome}`, PROBE],
-    { input: eventFor(SESSION), encoding: 'utf8' });
+  const r = runProbe(home, { pathOverride: inHome });
   assert.strictEqual(r.status, 0, `the probe exited ${r.status}`);
   assert.strictEqual(
     r.stderr, '',
@@ -481,9 +519,7 @@ check('a log it cannot read is not something it complains about or rewrites', ()
     fs.chmodSync(home, 0o755);
     fs.chmodSync(path.join(home, '.claude'), 0o755);
     fs.chmodSync(dir, 0o777);
-    r = spawnSync('env', ['-i', `HOME=${home}`, `PATH=${BIN}`, PROBE], {
-      input: eventFor(SESSION), encoding: 'utf8', uid: 65534, gid: 65534,
-    });
+    r = runProbe(home, { pathOverride: BIN, spawnOptions: { uid: 65534, gid: 65534 } });
   } else {
     fs.chmodSync(logPath(home), 0o000);
     r = runProbe(home, { withNode: false });
@@ -506,8 +542,7 @@ check('PATH entries containing wildcards and empty entries are recorded literall
   fs.mkdirSync(path.dirname(logPath(home)), { recursive: true });
 
   const suppliedPath = `:${wildcard}::${BIN}:`;
-  const r = spawnSync('env', ['-i', `HOME=${home}`, `PATH=${suppliedPath}`, PROBE],
-    { input: eventFor(SESSION), encoding: 'utf8' });
+  const r = runProbe(home, { pathOverride: suppliedPath });
   assert.strictEqual(r.status, 0, `the probe exited ${r.status}`);
   const line = readLog(home).trim();
   assert.ok(
@@ -522,8 +557,7 @@ check('an empty PATH keeps session ids separate without cat', () => {
   fs.mkdirSync(path.dirname(logPath(home)), { recursive: true });
 
   for (const session of [SESSION, OTHER_SESSION, SESSION, OTHER_SESSION]) {
-    const r = spawnSync('env', ['-i', `HOME=${home}`, 'PATH=', PROBE],
-      { input: eventFor(session), encoding: 'utf8' });
+    const r = runProbe(home, { pathOverride: '', session });
     assert.strictEqual(r.status, 0, `session ${session} exited ${r.status}`);
     assert.strictEqual(r.stderr, '', `session ${session} spoke: ${JSON.stringify(r.stderr)}`);
   }
@@ -544,8 +578,7 @@ check('an empty PATH still produces a line, and still produces no noise', () => 
   const home = sandbox();
   fs.mkdirSync(path.dirname(logPath(home)), { recursive: true });
 
-  const r = spawnSync('env', ['-i', `HOME=${home}`, 'PATH=', PROBE],
-    { input: eventFor(SESSION), encoding: 'utf8' });
+  const r = runProbe(home, { pathOverride: '' });
   assert.strictEqual(r.status, 0, `the probe exited ${r.status}`);
   assert.strictEqual(r.stderr, '', `the probe spoke: ${JSON.stringify(r.stderr)}`);
 
@@ -571,8 +604,7 @@ check('an empty PATH records the fault once, not once per prompt', () => {
   fs.mkdirSync(path.dirname(logPath(home)), { recursive: true });
 
   for (let i = 0; i < 4; i += 1) {
-    const r = spawnSync('env', ['-i', `HOME=${home}`, 'PATH=', PROBE],
-      { input: eventFor(SESSION), encoding: 'utf8' });
+    const r = runProbe(home, { pathOverride: '' });
     assert.strictEqual(r.status, 0, `prompt ${i + 1} exited ${r.status}`);
     assert.strictEqual(r.stderr, '', `prompt ${i + 1} spoke: ${JSON.stringify(r.stderr)}`);
   }
