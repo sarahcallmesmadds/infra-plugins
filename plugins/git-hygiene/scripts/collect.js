@@ -212,6 +212,7 @@ function localBranches(cwd, opts) {
   // exists. Assuming "main" outright is how a repo on "master" ends up with its
   // trunk in the deletable list.
   let def = tryRun('git', ['-C', cwd, 'symbolic-ref', '--short', 'refs/remotes/origin/HEAD']);
+  const defFromOriginHead = !!def;
   if (def) def = def.replace(/^origin\//, '');
   if (!def) {
     for (const candidate of ['main', 'master']) {
@@ -236,7 +237,11 @@ function localBranches(cwd, opts) {
   // `%(objectname)` rides along on the listing that was already being asked for,
   // so the tip of every branch costs nothing extra. It is what the merged pull
   // request lookup below is keyed on.
-  const FIELDS = '%(refname:short)%09%(committerdate:iso-strict)%09%(objectname)';
+  // The query is already restricted to refs/heads, so strip that fixed prefix
+  // directly. `refname:short` tries to disambiguate and changes `feature` to
+  // `heads/feature` when a tag named `feature` exists, which makes an `only`
+  // check fail to find the branch at all.
+  const FIELDS = '%(refname:lstrip=2)%09%(committerdate:iso-strict)%09%(objectname)';
   let listed = tryRun('git', ['-C', cwd, 'for-each-ref', `--format=${FIELDS}%09%(ahead-behind:${def})`, 'refs/heads/']);
   const listedHasAhead = listed !== null;
   if (!listedHasAhead) {
@@ -357,6 +362,13 @@ function localBranches(cwd, opts) {
   // the one outcome this release cannot have.
   const ghRepo = deadline === null ? githubRepo(cwd) : null;
   const askGitHub = ghRepo !== null;
+  // `origin/HEAD` is Git's record of the remote default. When it is absent,
+  // `def` above is only a local main/master guess and must not be used as a
+  // GitHub pull-request base filter: a repository whose real default is
+  // `release` would return a readable, empty answer and hide every merge.
+  const githubDef = askGitHub && !defFromOriginHead
+    ? githubDefaultBranch(ghRepo, { cwd })
+    : def;
 
   let mergedBySha = null;   // listing: tip sha -> pull request number
   let singleMerged;         // re-check: undefined = not asked, null = could not look
@@ -374,17 +386,18 @@ function localBranches(cwd, opts) {
     openPRs = openPRHeadRefs(ghRepo, { cwd });
 
     if (only === null) {
-      mergedBySha = mergedPRsBySha(ghRepo, def, { cwd });
+      mergedBySha = githubDef
+        ? mergedPRsBySha(ghRepo, githubDef, { cwd })
+        : null;
     } else {
-      // `--end-of-options` so a branch named like a flag is read as a ref.
-      // Everything downstream trusts this value: it is interpolated into a
-      // GitHub API path, and both delete-command builders in classify.js
-      // already refuse a name starting with `-`. This was the one call site
-      // without that guard.
-      const sha = /^-/.test(only)
-        ? null
-        : tryRun('git', ['-C', cwd, 'rev-parse', '--verify', '--end-of-options', only]);
-      singleMerged = sha ? mergedPRForCommit(ghRepo, def, sha, { cwd }) : null;
+      // The row came from refs/heads and already carries the exact branch tip.
+      // Resolving the bare name again lets a same-named tag win Git's ref
+      // precedence and makes the safety check inspect the wrong commit.
+      const row = rows[0] ? rows[0].split('\t') : null;
+      const sha = row && row[0] === only ? row[2] : null;
+      if (sha && githubDef) {
+        singleMerged = mergedPRForCommit(ghRepo, githubDef, sha, { cwd });
+      }
     }
   }
 
@@ -557,10 +570,10 @@ function ghLines(args, opts) {
 //
 // Returns null when even that cannot be determined, which is its own answer:
 // nothing was learned.
-function ghStatus(args) {
+function ghStatus(args, opts) {
   const withHeaders = args.concat(['--silent', '--include']);
   try {
-    run('gh', withHeaders);
+    run('gh', withHeaders, opts);
     return 200;
   } catch (e) {
     const text = `${(e && e.stdout) || ''}${(e && e.stderr) || ''}`;
@@ -647,10 +660,17 @@ function mergedPRForCommit(repo, def, sha, opts) {
   // later. That is the disagreement this release exists to remove, arriving as
   // a clock rather than as a missing query, and it would have been the harder
   // one to diagnose because both code paths are correct.
-  const pulls = ghLines(['api', `repos/${repo}/commits/${sha}/pulls`, '--paginate',
-    '--jq', '.[] | "\\(.number)\\t\\(.base.ref)\\t\\(.head.sha)\\t\\(.merged_at != null)"'],
-  Object.assign({ timeout: MERGED_PR_TIMEOUT_MS }, opts));
-  if (pulls === null) return null;
+  const args = ['api', `repos/${repo}/commits/${sha}/pulls`, '--paginate',
+    '--jq', '.[] | "\\(.number)\\t\\(.base.ref)\\t\\(.head.sha)\\t\\(.merged_at != null)"'];
+  const callOpts = Object.assign({ timeout: MERGED_PR_TIMEOUT_MS }, opts);
+  const pulls = ghLines(args, callOpts);
+  if (pulls === null) {
+    // A local-only tip is a complete negative answer, not an authentication
+    // failure. GitHub answers 404 or 422 when the commit object is unknown.
+    const status = ghStatus(args, callOpts);
+    if (status === 404 || status === 422) return { merged: undefined };
+    return null;
+  }
 
   const numbers = pulls.map((l) => l.split('\t')).filter((r) => r.length === 4)
     .filter((r) => r[3] === 'true' && r[1] === def && r[2] === sha)
@@ -759,6 +779,11 @@ function githubRepo(cwd) {
   const slug = tryRun('gh', ['repo', 'view', '--json', 'nameWithOwner', '--jq', '.nameWithOwner'],
     { cwd, timeout: REMOTE_PROBE_TIMEOUT_MS });
   return validGitHubRepo(slug) ? slug : null;
+}
+
+function githubDefaultBranch(repo, opts) {
+  const def = tryRun('gh', ['api', `repos/${repo}`, '--jq', '.default_branch'], opts);
+  return def && !/[\r\n]/.test(def) ? def : null;
 }
 
 function remoteBranches(repo) {
@@ -986,5 +1011,5 @@ module.exports = {
   isGitRepo, localBranches, remoteBranches, remoteBranch,
   tryRun, ghJSON, ghLines, toLines,
   originRepo, githubRepo, validGitHubRepo,
-  mergedPRsBySha, mergedPRForCommit, openPRHeadRefs,
+  githubDefaultBranch, mergedPRsBySha, mergedPRForCommit, openPRHeadRefs,
 };

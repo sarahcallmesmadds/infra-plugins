@@ -1482,7 +1482,7 @@ function withStubbedGh(stub, fn) {
 
   g('remote', 'add', 'origin', 'https://github.com/example/repo.git');
 
-  const script = `#!/bin/sh\ncase "$*" in\n${stub}\nesac\n`;
+  const script = `#!/bin/sh\ncase "$*" in\n  *"api repos/example/repo --jq .default_branch"*) printf '%s\\n' "\${GH_DEFAULT_BRANCH:-main}" ;;\n${stub}\nesac\n`;
   fs.writeFileSync(path.join(bin, 'gh'), script);
   fs.chmodSync(path.join(bin, 'gh'), 0o755);
 
@@ -1514,6 +1514,74 @@ check('the pre-delete check clears a branch its listing cleared', () => {
           'and it reads the same as the remote path, so the two can be seen to agree');
       } finally {
         delete process.env.MERGED_SHA;
+      }
+    }
+  );
+});
+
+check('the pre-delete check reads the branch tip when a tag has the same name', () => {
+  withStubbedGh(
+    [
+      '  *commits/*/pulls*) printf \'96\\tmain\\t%s\\ttrue\\n\' "$BRANCH_SHA" ;;',
+      '  *state=open*) : ;;',
+      '  *) exit 1 ;;',
+    ].join('\n'),
+    ({ repo, tip, g }) => {
+      g('tag', 'feature', 'main');
+      const tagTip = g('rev-parse', 'refs/tags/feature').trim();
+      assert.notStrictEqual(tagTip, tip, 'the fixture needs two different commits');
+      process.env.BRANCH_SHA = tip;
+      try {
+        const branch = collect.localBranches(repo, { only: 'feature' })
+          .branches.find((b) => b.name === 'feature');
+        assert.strictEqual(branch.merged, true,
+          'evidence for the branch tip must apply despite the same-named tag');
+      } finally {
+        delete process.env.BRANCH_SHA;
+      }
+    }
+  );
+});
+
+check('a commit GitHub does not know is an answered empty lookup', () => {
+  withStubbedGh(
+    [
+      '  *commits/*/pulls*--include*) printf \'HTTP/2 404 Not Found\\n\'; exit 1 ;;',
+      '  *commits/*/pulls*) exit 1 ;;',
+      '  *state=open*) : ;;',
+      '  *) exit 1 ;;',
+    ].join('\n'),
+    ({ repo }) => {
+      const r = collect.localBranches(repo, { only: 'feature' });
+      assert.strictEqual(r.mergedPRCheckUnavailable, false,
+        'an unpushed tip is not evidence of an authentication failure');
+      assert.strictEqual(r.branches.find((b) => b.name === 'feature').merged, false,
+        'unknown to GitHub means no merged-PR evidence, never merged');
+    }
+  );
+});
+
+check('a guessed local default does not filter GitHub pull requests', () => {
+  withStubbedGh(
+    [
+      '  *state=closed*) printf \'%s\\n\' "$*" > "$GH_CALLS" ;;',
+      '  *state=open*) : ;;',
+      '  *) exit 1 ;;',
+    ].join('\n'),
+    ({ repo, dir }) => {
+      const calls = path.join(dir, 'calls.log');
+      process.env.GH_CALLS = calls;
+      process.env.GH_DEFAULT_BRANCH = 'release';
+      try {
+        collect.localBranches(repo);
+        const asked = fs.readFileSync(calls, 'utf8');
+        assert.ok(asked.includes('base=release'),
+          `the API's default branch must be the pull-request base: ${asked}`);
+        assert.ok(!asked.includes('base=main'),
+          `the local fallback must not silently narrow the API query: ${asked}`);
+      } finally {
+        delete process.env.GH_CALLS;
+        delete process.env.GH_DEFAULT_BRANCH;
       }
     }
   );
