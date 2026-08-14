@@ -39,7 +39,7 @@ const { execFileSync, spawnSync } = require('child_process');
 const ROOT = path.join(__dirname, '..');
 const PROBE = path.join(ROOT, 'plugins', 'build-loop', 'hooks', 'hook-health-probe.sh');
 
-const EXPECTED_CHECKS = 20;
+const EXPECTED_CHECKS = 25;
 
 // The probe calls these and nothing else. `sh` is not among them: the kernel
 // reads the shebang and runs /bin/sh by absolute path, so PATH never decides
@@ -138,15 +138,72 @@ function readLog(home) {
 // pick the interpreter, hand it the event on stdin. `env` builds the whole
 // environment from scratch so a PATH inherited from this process cannot quietly
 // rescue a case that is meant to fail.
-function runProbe(home, { withNode, env = {}, session = SESSION } = {}) {
+// `pathOverride` is for the cases that are about PATH itself: a PATH holding
+// the home directory, one holding wildcards, one that is empty. They used to
+// call spawnSync by hand for that, which is how the pin below missed them and
+// how the suite came to pass here and fail everywhere else. Varying one field
+// is not a reason to rebuild the environment.
+// `spawnOptions` is merged into the spawn itself rather than the environment.
+// One case drops to an unprivileged uid to make the log genuinely unwritable,
+// which is a property of the process and not of what it can see.
+function runProbe(home, {
+  withNode, env = {}, session = SESSION, pathOverride, spawnOptions = {},
+} = {}) {
   const parts = ['-i', `HOME=${home}`];
-  parts.push(withNode ? `PATH=${NODE_BIN}:${BIN}` : `PATH=${BIN}`);
+  const searchPath = pathOverride !== undefined
+    ? pathOverride
+    : (withNode ? `${NODE_BIN}:${BIN}` : BIN);
+  parts.push(`PATH=${searchPath}`);
+
+  // The probe asks bin/hook-node whether node can be found, and that search
+  // reaches past PATH into ~/.local/bin, Homebrew, /usr/local and /usr/bin.
+  // HOME is a sandbox here so the first is empty, but the others are real
+  // absolute paths, and whether they hold a node is a property of whoever runs
+  // this suite rather than of the case being tested. $CLAUDE_HOOK_NODE is
+  // authoritative to the launcher, so pinning it is what makes "node is
+  // missing" mean the same thing on every machine.
+  //
+  // This is the trap the header above describes, arriving by a new route: a
+  // negative case that quietly keeps node passes for the author and fails for
+  // everybody else. Pushed before the caller's own entries so a case can still
+  // override it, since `env` takes the last assignment of a name.
+  parts.push(withNode
+    ? `CLAUDE_HOOK_NODE=${path.join(NODE_BIN, 'node')}`
+    : 'CLAUDE_HOOK_NODE=/nonexistent/node');
+
   for (const [k, v] of Object.entries(env)) parts.push(`${k}=${v}`);
   parts.push(PROBE);
-  return spawnSync('env', parts, { input: eventFor(session), encoding: 'utf8' });
+  return spawnSync('env', parts, {
+    input: eventFor(session), encoding: 'utf8', ...spawnOptions,
+  });
 }
 
 // --- the interpreter it cannot report on itself ----------------------------
+
+check('every case starts the probe through runProbe', () => {
+  // The 2026-08-14 review. runProbe learned to pin $CLAUDE_HOOK_NODE so that
+  // "node is missing" means the same thing everywhere, but seven invocations
+  // called spawnSync by hand to vary PATH and inherited no pin. On this machine
+  // node sits at none of the absolute paths the launcher searches, so the suite
+  // was green here and six checks failed on Debian, Ubuntu, Homebrew and most
+  // CI images, which is the trap in this file's own header arriving by a new
+  // route for the second time.
+  //
+  // The pin cannot be enforced by asking each case to remember it, so this asks
+  // instead that there is only one door.
+  const source = fs.readFileSync(__filename, 'utf8');
+  const callSites = source.split('\n')
+    .map((line, i) => ({ n: i + 1, line }))
+    .filter(({ line }) => /spawnSync\(/.test(line))
+    .filter(({ line }) => !/require\(/.test(line))
+    .filter(({ line }) => !/^\s*\/\//.test(line));
+
+  assert.strictEqual(callSites.length, 1,
+    'the probe is started from more than one place, so the $CLAUDE_HOOK_NODE pin '
+    + 'does not reach every case and the suite passes or fails by machine:\n        '
+    + `${callSites.map((c) => `line ${c.n}: ${c.line.trim()}`).join('\n        ')}\n`
+    + '        Add a runProbe option instead of spawning it directly.');
+});
 
 check('the probe is not written in node', () => {
   // A node script cannot tell you node is missing. If this file is ever
@@ -199,6 +256,107 @@ check('a missing node is recorded', () => {
   const log = readLog(home);
   assert.ok(log.includes('MISSING'), `nothing was recorded. log: ${JSON.stringify(log)}`);
   assert.ok(log.includes('node'), `the log does not name node. log: ${JSON.stringify(log)}`);
+});
+
+check('a session where PATH lacks node but the launcher finds it is not reported broken', () => {
+  // This is every GUI-launched host on this machine, and the reason the probe
+  // stopped asking PATH. Codex started from the Dock gets a bare PATH with no
+  // node on it, and since 2026-08-13 its hooks run anyway, because hooks.json
+  // starts them through bin/hook-node. A probe still asking `command -v node`
+  // wrote MISSING on the first prompt of every one of those sessions while the
+  // hooks it was reporting on were running perfectly.
+  //
+  // Node is reachable here only through $CLAUDE_HOOK_NODE, exactly as it is
+  // reachable on that machine only through ~/.local/bin. PATH holds the
+  // probe's utilities and no node at all.
+  const home = sandbox();
+  const r = runProbe(home, {
+    withNode: false,
+    env: { CLAUDE_HOOK_NODE: path.join(NODE_BIN, 'node') },
+  });
+  assert.strictEqual(r.status, 0, `the probe exited ${r.status}, it must never fail a prompt`);
+  assert.strictEqual(
+    readLog(home), '',
+    'the probe called a session broken because node was not on PATH, but the '
+    + 'launcher resolves node and the hooks run. The log now reports a fault '
+    + 'that is not there, which is how a diagnostic gets muted and then cannot '
+    + 'report the fault that is.'
+  );
+});
+
+check('the probe decides node health through the launcher, not through PATH', () => {
+  // The check above passes on a healthy tree whether the probe asks the right
+  // question or not, as long as the answers happen to agree. This reads the
+  // source, because the two questions agree on most machines and disagree on
+  // exactly the ones this work is for.
+  const source = fs.readFileSync(PROBE, 'utf8');
+  assert.ok(
+    source.includes('--which'),
+    'the probe does not ask bin/hook-node --which, so it is deciding hook '
+    + 'health from something other than what starts the hooks'
+  );
+  const barePathCheck = /^\s*command -v node[^\n]*\|\|\s*missing=/m;
+  const lines = source.split('\n');
+  const bareLine = lines.findIndex((l) => barePathCheck.test(l));
+  assert.ok(
+    bareLine === -1 || lines.slice(0, bareLine).some((l) => l.includes('launcher')),
+    'the probe asks `command -v node` without having asked the launcher first, '
+    + 'so a GUI-launched session is reported broken while its hooks run'
+  );
+});
+
+check('an interpreter setting pointing at a directory is reported, not accepted', () => {
+  // The 2026-08-14 review. `[ -x path ]` is true for a directory, because a
+  // directory's execute bit is its search bit, so CLAUDE_HOOK_NODE naming the
+  // folder that holds node was taken as node. Run mode then died with "is a
+  // directory" and exit 126, which Claude Code discards, while --which printed
+  // the directory and exited 0. Every hook in all five plugins was dead and
+  // this log said everything was fine, which is this probe's purpose inverted
+  // by a single mistyped setting.
+  const home = sandbox();
+  const r = runProbe(home, {
+    withNode: false,
+    env: { CLAUDE_HOOK_NODE: os.tmpdir() },   // executable, and not a program
+  });
+  assert.strictEqual(r.status, 0, `the probe exited ${r.status}, it must never fail a prompt`);
+  const log = readLog(home);
+  assert.ok(log.includes('MISSING'),
+    'a directory was accepted as the interpreter, so the hooks are dead and the '
+    + `log says nothing. log: ${JSON.stringify(log)}`);
+  assert.ok(log.includes('hook_node=set-unusable'),
+    `the line does not say the override was the cause. log: ${JSON.stringify(log)}`);
+});
+
+check('a failure line names what was searched, and never the override value', () => {
+  // The evidence has to match the question. Health is decided by the launcher,
+  // which looks in six places, so a line reporting only PATH sends somebody to
+  // fix a PATH that was never involved. build-loop/README.md promises this line
+  // names what was searched.
+  //
+  // The override's value is deliberately absent. It is a path on somebody's
+  // machine and this file is written to be pasted into a bug report, which is
+  // the same reason the home directory is masked out of the PATH field.
+  const secret = path.join(sandbox(), 'a-private-looking-path');
+  const home = sandbox();
+  runProbe(home, { withNode: false, env: { CLAUDE_HOOK_NODE: secret } });
+  const withOverride = readLog(home);
+  assert.ok(withOverride.includes('searched=$CLAUDE_HOOK_NODE'),
+    `the line does not name the override as the scope. log: ${JSON.stringify(withOverride)}`);
+  assert.ok(!withOverride.includes(secret),
+    `the override's value was written to the log: ${JSON.stringify(withOverride)}`);
+
+  // With no override the scope is the launcher's whole list, taken from the
+  // launcher itself rather than restated here, so the two cannot drift.
+  const plain = sandbox();
+  runProbe(plain, { withNode: false, env: { CLAUDE_HOOK_NODE: '' } });
+  const line = readLog(plain);
+  assert.ok(/searched=\S*PATH\S*/.test(line),
+    `the line does not name the searched scope. log: ${JSON.stringify(line)}`);
+  assert.ok(line.includes('~/.local/bin/node'),
+    'the searched scope omits the fixed locations the launcher looks in, so the '
+    + `line still implies PATH was the whole question. log: ${JSON.stringify(line)}`);
+  assert.ok(/searched=[^ ]+ /.test(line),
+    `the searched field contains a space and has split the log line: ${JSON.stringify(line)}`);
 });
 
 check('a working environment records nothing', () => {
@@ -341,8 +499,7 @@ check('a failure line names the search path without naming the machine', () => {
   fs.mkdirSync(inHome, { recursive: true });
   for (const tool of PROBE_NEEDS) fs.symlinkSync(locate(tool), path.join(inHome, tool));
 
-  const r = spawnSync('env', ['-i', `HOME=${home}`, `PATH=${inHome}`, PROBE],
-    { input: eventFor(SESSION), encoding: 'utf8' });
+  const r = runProbe(home, { pathOverride: inHome });
   assert.strictEqual(r.status, 0, `the probe exited ${r.status}`);
 
   const line = readLog(home).trim();
@@ -367,8 +524,7 @@ check('a home directory that reads as a regular expression is masked, in silence
   fs.mkdirSync(inHome, { recursive: true });
   for (const tool of PROBE_NEEDS) fs.symlinkSync(locate(tool), path.join(inHome, tool));
 
-  const r = spawnSync('env', ['-i', `HOME=${home}`, `PATH=${inHome}`, PROBE],
-    { input: eventFor(SESSION), encoding: 'utf8' });
+  const r = runProbe(home, { pathOverride: inHome });
   assert.strictEqual(r.status, 0, `the probe exited ${r.status}`);
   assert.strictEqual(
     r.stderr, '',
@@ -417,9 +573,7 @@ check('a log it cannot read is not something it complains about or rewrites', ()
     fs.chmodSync(home, 0o755);
     fs.chmodSync(path.join(home, '.claude'), 0o755);
     fs.chmodSync(dir, 0o777);
-    r = spawnSync('env', ['-i', `HOME=${home}`, `PATH=${BIN}`, PROBE], {
-      input: eventFor(SESSION), encoding: 'utf8', uid: 65534, gid: 65534,
-    });
+    r = runProbe(home, { pathOverride: BIN, spawnOptions: { uid: 65534, gid: 65534 } });
   } else {
     fs.chmodSync(logPath(home), 0o000);
     r = runProbe(home, { withNode: false });
@@ -442,8 +596,7 @@ check('PATH entries containing wildcards and empty entries are recorded literall
   fs.mkdirSync(path.dirname(logPath(home)), { recursive: true });
 
   const suppliedPath = `:${wildcard}::${BIN}:`;
-  const r = spawnSync('env', ['-i', `HOME=${home}`, `PATH=${suppliedPath}`, PROBE],
-    { input: eventFor(SESSION), encoding: 'utf8' });
+  const r = runProbe(home, { pathOverride: suppliedPath });
   assert.strictEqual(r.status, 0, `the probe exited ${r.status}`);
   const line = readLog(home).trim();
   assert.ok(
@@ -458,8 +611,7 @@ check('an empty PATH keeps session ids separate without cat', () => {
   fs.mkdirSync(path.dirname(logPath(home)), { recursive: true });
 
   for (const session of [SESSION, OTHER_SESSION, SESSION, OTHER_SESSION]) {
-    const r = spawnSync('env', ['-i', `HOME=${home}`, 'PATH=', PROBE],
-      { input: eventFor(session), encoding: 'utf8' });
+    const r = runProbe(home, { pathOverride: '', session });
     assert.strictEqual(r.status, 0, `session ${session} exited ${r.status}`);
     assert.strictEqual(r.stderr, '', `session ${session} spoke: ${JSON.stringify(r.stderr)}`);
   }
@@ -480,8 +632,7 @@ check('an empty PATH still produces a line, and still produces no noise', () => 
   const home = sandbox();
   fs.mkdirSync(path.dirname(logPath(home)), { recursive: true });
 
-  const r = spawnSync('env', ['-i', `HOME=${home}`, 'PATH=', PROBE],
-    { input: eventFor(SESSION), encoding: 'utf8' });
+  const r = runProbe(home, { pathOverride: '' });
   assert.strictEqual(r.status, 0, `the probe exited ${r.status}`);
   assert.strictEqual(r.stderr, '', `the probe spoke: ${JSON.stringify(r.stderr)}`);
 
@@ -507,8 +658,7 @@ check('an empty PATH records the fault once, not once per prompt', () => {
   fs.mkdirSync(path.dirname(logPath(home)), { recursive: true });
 
   for (let i = 0; i < 4; i += 1) {
-    const r = spawnSync('env', ['-i', `HOME=${home}`, 'PATH=', PROBE],
-      { input: eventFor(SESSION), encoding: 'utf8' });
+    const r = runProbe(home, { pathOverride: '' });
     assert.strictEqual(r.status, 0, `prompt ${i + 1} exited ${r.status}`);
     assert.strictEqual(r.stderr, '', `prompt ${i + 1} spoke: ${JSON.stringify(r.stderr)}`);
   }

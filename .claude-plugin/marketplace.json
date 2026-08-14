@@ -12,7 +12,7 @@
       "name": "guardrails",
       "source": "./plugins/guardrails",
       "description": "Blocks commits to protected branches, asks before irreversible deletes, flags prompt injection in content the model reads or writes, and can require a governing document be read before a directory is written.",
-      "version": "0.5.2",
+      "version": "0.5.3",
       "author": {
         "name": "Sarah Madden"
       },
@@ -28,7 +28,7 @@
       "name": "git-hygiene",
       "source": "./plugins/git-hygiene",
       "description": "Tells you which old branches are safe to delete and which still hold work that exists nowhere else, then cleans up the safe ones once you approve them. Never deletes unmerged commits.",
-      "version": "0.3.6",
+      "version": "0.3.7",
       "author": {
         "name": "Sarah Madden"
       },
@@ -45,7 +45,7 @@
       "name": "build-loop",
       "source": "./plugins/build-loop",
       "description": "Keep everything you build honest. Log what a skill, hook, command, plugin or script got wrong the moment it happens, fix it from the queue with an approval gate, know what else the fix puts at risk, and keep a to-build list that closes itself when the work actually ships.",
-      "version": "0.9.7",
+      "version": "0.9.8",
       "author": {
         "name": "Sarah Madden"
       },
@@ -64,7 +64,7 @@
       "name": "slop-check",
       "source": "./plugins/slop-check",
       "description": "Catch the habits that mean nobody edited it. Blocks em dashes and choppy sentence runs in the assistant's own writing, and checks any draft, document, pull request, chart or spec for the signs it shipped unreviewed.",
-      "version": "0.3.1",
+      "version": "0.3.2",
       "author": {
         "name": "Sarah Madden"
       },
@@ -81,7 +81,7 @@
       "name": "session",
       "source": "./plugins/session",
       "description": "Make sessions continuous. Wrap one up into a handoff the next one loads, start with today's date and a compact build-loop brief, warn when another session is already working here, and put cost, context and connected tool health in the status line.",
-      "version": "0.8.5",
+      "version": "0.8.6",
       "author": {
         "name": "Sarah Madden"
       },

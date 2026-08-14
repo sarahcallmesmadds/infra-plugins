@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/hooks/style-lint.js"
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/bin/hook-node \"${CLAUDE_PLUGIN_ROOT}\"/hooks/style-lint.js"
           }
         ]
       }
@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/hooks/consistency-lint.js"
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/bin/hook-node \"${CLAUDE_PLUGIN_ROOT}\"/hooks/consistency-lint.js"
           }
         ]
       }

@@ -362,3 +362,39 @@ Both runtimes share one copy of the logic in `scripts/`.
 
 Restart afterwards. Hooks and skills load at startup, so nothing changes in a
 session that was already open, and the plugin will look broken until you do.
+
+**Requires Node.js.** The hooks are plain Node scripts with no dependencies
+to install, and `node` does not have to be on your `PATH`. Each hook is
+started by `bin/hook-node`, which tries `$CLAUDE_HOOK_NODE`, then your
+`PATH`, then `~/.local/bin`, `/opt/homebrew/bin`, `/usr/local/bin` and
+`/usr/bin`, and uses the first one it finds.
+
+That list exists because an app launched from the Dock never reads your shell
+profile, so it starts with a bare `PATH` that has none of those directories
+on it. Before 0.8.6 every hook here exited 127 under Codex for that reason,
+and silently, because a failed hook does not interrupt your session.
+
+If your Node is somewhere else, name it:
+
+```
+export CLAUDE_HOOK_NODE=/path/to/node
+```
+
+Name the node program itself, not the directory holding it. When that variable
+is set it is the only interpreter tried, and a value that is not an executable
+file is an error rather than a reason to look elsewhere. Naming an interpreter
+and silently getting a different one hides the mistake, and a directory passes
+an executable check while starting nothing.
+
+**The status line is separate.** It is not a hook, so what ends up in your
+settings does not go through `bin/hook-node`. `/status-bar` prints a
+`settings.json` fragment naming your node by absolute path, resolved when the
+installer runs, because that string lives in your settings and has to keep
+working after the plugin updates, and `bin/hook-node` sits in a directory whose
+name carries a version number. If node moves, re-run `/status-bar` and replace
+the value. A status line that cannot start shows nothing and reports nothing,
+so there is no error to see.
+
+The installer itself is run through `bin/hook-node`, since it is a Node script
+like any other and the host that most needs it is the one with no `node` on
+`PATH`.

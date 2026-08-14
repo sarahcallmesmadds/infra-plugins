@@ -49,7 +49,60 @@ log_dir="${HOME}/.claude/build-loop"
 log="${log_dir}/hook-health.log"
 
 missing=""
-command -v node >/dev/null 2>&1 || missing="${missing}node "
+
+# Ask the launcher, because the launcher is what actually starts every JS hook
+# here. Since 2026-08-13 hooks.json runs them through bin/hook-node, which
+# searches $CLAUDE_HOOK_NODE, PATH, ~/.local/bin, Homebrew, /usr/local and
+# /usr/bin. Asking `command -v node` instead would report a GUI-launched
+# session as broken while its hooks ran perfectly, which is this file's own
+# failure inverted: a diagnostic that cries about a fault that is not there
+# gets muted or deleted, and then it cannot report the one that is. The whole
+# reason this probe exists is that a hook failure went unnamed for four days.
+#
+# `--which` resolves without starting node, so the common path stays a couple
+# of lookups rather than a process spawn on every prompt.
+#
+# ${0%/*} rather than `dirname`, for the reason everything else here avoids
+# external commands: this has to work when PATH resolves nothing at all, which
+# is the exact condition it was built to report on.
+#
+# What was actually searched goes in the log with the failure, because PATH on
+# its own stopped being the answer the moment the launcher took over. A line
+# saying `path=...` under a launcher that also looks in four fixed places and
+# an environment variable sends somebody to fix a PATH that was never involved.
+# build-loop/README.md promises this line names what was searched, and until
+# now that promise was not kept.
+launcher="${0%/*}/../bin/hook-node"
+
+hook_node="unset"
+[ -n "${CLAUDE_HOOK_NODE}" ] && hook_node="set"
+searched=""
+
+if [ -x "${launcher}" ]; then
+    # stderr captured, stdout discarded: on failure the launcher names every
+    # place it looked, comma-separated and with the home directory written as ~,
+    # which is exactly the evidence this line has been missing.
+    if ! launcher_error=$("${launcher}" --which 2>&1 >/dev/null); then
+        missing="${missing}node "
+        if [ "${hook_node}" = "set" ]; then
+            # When the override is set it is the only thing tried, so it is the
+            # cause. Its value is a path on somebody's machine and does not go
+            # in a file people paste into bug reports; naming the variable is
+            # what tells them where to look, and it is enough.
+            hook_node="set-unusable"
+            searched="\$CLAUDE_HOOK_NODE"
+        else
+            searched="${launcher_error#*Tried: }"
+        fi
+    fi
+else
+    # An install predating the launcher, where hooks still carry
+    # `#!/usr/bin/env node` and PATH is genuinely the question being asked.
+    if ! command -v node >/dev/null 2>&1; then
+        missing="${missing}node "
+        searched="PATH"
+    fi
+fi
 
 # cmux is only relevant on a machine running inside it. Reporting it absent
 # everywhere else would mean every prompt on a plain terminal writes a line
@@ -236,8 +289,19 @@ else
         fi
     done
 
-    printf '%s MISSING session=%s %s path=%s\n' \
-        "${stamp}" "${sid}" "${state}" "${logged_path}" 2>/dev/null >> "${log}"
+    # `searched` is the whole scope the answer came from and `path` is one part
+    # of it, kept because a broken PATH is still the commonest cause and the
+    # entries are the evidence for it. `hook_node` says whether the override was
+    # set, and whether it was the thing that failed, without ever writing its
+    # value: that value is a path on somebody's machine, and this line is
+    # written to be pasteable.
+    #
+    # Both are empty on a probe that predates a launcher and found node on PATH,
+    # which cannot reach this branch, so a reader seeing them blank is looking
+    # at a line from an older version rather than at a missing measurement.
+    printf '%s MISSING session=%s %s hook_node=%s searched=%s path=%s\n' \
+        "${stamp}" "${sid}" "${state}" "${hook_node}" "${searched}" "${logged_path}" \
+        2>/dev/null >> "${log}"
 fi
 
 exit 0

@@ -650,6 +650,17 @@ check('the settings fragment points at the resolver, never at a versioned path',
   const fragment = install.settingsFragment(home);
   assert.match(fragment.statusLine.command, /\.claude\/statusline\.js/);
   assert.doesNotMatch(fragment.statusLine.command, /plugins\/cache/);
+
+  // The interpreter is named absolutely rather than looked up on PATH. A bare
+  // `node` here dies with 127 under any host launched outside a terminal, which
+  // is the same failure the hooks carried until 2026-08-13, and a status line
+  // that does not start is quieter than a hook that does not run.
+  assert.match(fragment.statusLine.command, /^"\//,
+    `the status line command starts with ${JSON.stringify(fragment.statusLine.command.slice(0, 20))}, `
+    + 'so the interpreter is resolved from PATH rather than named');
+  assert.doesNotMatch(fragment.statusLine.command, /^node\b|^"node"/,
+    'the status line is started with a bare node, so it exits 127 wherever no '
+    + 'login shell has been read');
 });
 
 check('installing writes the resolver and reports it, and is idempotent', () => {

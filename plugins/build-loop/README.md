@@ -82,6 +82,31 @@ Add the marketplace **by repository**, as above. Adding it by pasting a direct
 URL to `marketplace.json` downloads only that one file, the plugin folders
 never arrive, and the install fails.
 
+**Requires Node.js.** The hooks are plain Node scripts with no dependencies
+to install, and `node` does not have to be on your `PATH`. Each hook is
+started by `bin/hook-node`, which tries `$CLAUDE_HOOK_NODE`, then your
+`PATH`, then `~/.local/bin`, `/opt/homebrew/bin`, `/usr/local/bin` and
+`/usr/bin`, and uses the first one it finds.
+
+That list exists because an app launched from the Dock never reads your shell
+profile, so it starts with a bare `PATH` that has none of those directories
+on it. Before 0.9.8 every hook here exited 127 under Codex for that reason,
+and silently, because a failed hook does not interrupt your session.
+
+If your Node is somewhere else, name it:
+
+```
+export CLAUDE_HOOK_NODE=/path/to/node
+```
+
+Name the node program itself, not the directory holding it. When that variable
+is set it is the only interpreter tried, and a value that is not an executable
+file is an error rather than a reason to look elsewhere. Naming an interpreter
+and silently getting a different one hides the mistake, and a directory passes
+an executable check while starting nothing. If
+nothing is found, the hook exits 127 and `hook-health-probe.sh` records a line
+in `~/.claude/build-loop/hook-health.log` naming what was searched.
+
 ## Where it keeps its state
 
 Queue entries, the to-build list, the dependency map, and weekly summaries live

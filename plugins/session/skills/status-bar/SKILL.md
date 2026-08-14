@@ -114,8 +114,15 @@ skill writes everything else and shows the line for approval.
 Run:
 
 ```bash
-"${CLAUDE_PLUGIN_ROOT}"/statusline/install.js
+"${CLAUDE_PLUGIN_ROOT}"/bin/hook-node "${CLAUDE_PLUGIN_ROOT}"/statusline/install.js
 ```
+
+Through `bin/hook-node`, not directly. The installer is a Node script starting
+`#!/usr/bin/env node`, so running it directly needs `node` on `PATH`, and the
+host that most needs this setup is the one where it is not: an app launched
+outside a terminal never reads a shell profile. Running it directly there is
+the same 127 the hooks used to give, which would leave the person who needs the
+resolved path unable to get it.
 
 This writes a small resolver to `~/.claude/statusline.js` and prints the exact
 settings fragment to add.
@@ -139,12 +146,19 @@ without a yes.
 {
   "statusLine": {
     "type": "command",
-    "command": "node \"/Users/you/.claude/statusline.js\""
+    "command": "\"/absolute/path/to/node\" \"/Users/you/.claude/statusline.js\""
   }
 }
 ```
 
 Merge it into the existing file. Do not replace the file.
+
+**Use the fragment the installer printed, not this one.** The interpreter is
+named absolutely and the installer fills in the real path, because an app
+launched from the Dock never reads a shell profile and a bare `node` there dies
+with 127. A status line that fails to start says nothing at all, so this is not
+a failure anyone would otherwise notice. If node ever moves, re-run the
+installer and replace the value.
 
 ---
 
