@@ -79,10 +79,26 @@ Add the marketplace **by repository**, as above. If you add it by pasting a
 direct URL to `marketplace.json`, only that one file downloads and the plugin
 folders never arrive, so the install fails.
 
-**Requires Node.js.** The hooks and the scanner are plain Node scripts with no
-dependencies to install, but `node` has to be on your `PATH`. If it is not,
-the hooks fail silently rather than breaking your session, which means you get
-no protection and no error. Check with `node --version` before relying on it.
+**Requires Node.js.** The hooks are plain Node scripts with no dependencies
+to install, and `node` does not have to be on your `PATH`. Each hook is
+started by `bin/hook-node`, which tries `$CLAUDE_HOOK_NODE`, then your
+`PATH`, then `~/.local/bin`, `/opt/homebrew/bin`, `/usr/local/bin` and
+`/usr/bin`, and uses the first one it finds.
+
+That list exists because an app launched from the Dock never reads your shell
+profile, so it starts with a bare `PATH` that has none of those directories
+on it. Before 0.5.3 every hook here exited 127 under Codex for that reason,
+and silently, because a failed hook does not interrupt your session.
+
+If your Node is somewhere else, name it:
+
+```
+export CLAUDE_HOOK_NODE=/path/to/node
+```
+
+When that variable is set it is the only interpreter tried, and a value that
+does not resolve is an error rather than a reason to look elsewhere. Naming
+an interpreter and silently getting a different one hides the mistake.
 
 **The delete rule asks when somebody is there and refuses when nobody is.**
 From 0.5.1 the destructive and commit-hook rules ask rather than refuse, and an

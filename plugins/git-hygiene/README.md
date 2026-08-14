@@ -140,6 +140,27 @@ Checking a repository on GitHub needs the `gh` CLI, logged in. Local cleanup
 does not use `gh`; its ordinary listing may make the bounded `git ls-remote`
 freshness check described below, while its pre-delete check stays offline.
 
+**Requires Node.js.** The hooks are plain Node scripts with no dependencies
+to install, and `node` does not have to be on your `PATH`. Each hook is
+started by `bin/hook-node`, which tries `$CLAUDE_HOOK_NODE`, then your
+`PATH`, then `~/.local/bin`, `/opt/homebrew/bin`, `/usr/local/bin` and
+`/usr/bin`, and uses the first one it finds.
+
+That list exists because an app launched from the Dock never reads your shell
+profile, so it starts with a bare `PATH` that has none of those directories
+on it. Before 0.3.7 every hook here exited 127 under Codex for that reason,
+and silently, because a failed hook does not interrupt your session.
+
+If your Node is somewhere else, name it:
+
+```
+export CLAUDE_HOOK_NODE=/path/to/node
+```
+
+When that variable is set it is the only interpreter tried, and a value that
+does not resolve is an error rather than a reason to look elsewhere. Naming
+an interpreter and silently getting a different one hides the mistake.
+
 ## Configuration
 
 None needed. The defaults are at the top of `scripts/classify.js`:

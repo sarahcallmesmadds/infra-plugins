@@ -49,7 +49,30 @@ log_dir="${HOME}/.claude/build-loop"
 log="${log_dir}/hook-health.log"
 
 missing=""
-command -v node >/dev/null 2>&1 || missing="${missing}node "
+
+# Ask the launcher, because the launcher is what actually starts every JS hook
+# here. Since 2026-08-13 hooks.json runs them through bin/hook-node, which
+# searches $CLAUDE_HOOK_NODE, PATH, ~/.local/bin, Homebrew, /usr/local and
+# /usr/bin. Asking `command -v node` instead would report a GUI-launched
+# session as broken while its hooks ran perfectly, which is this file's own
+# failure inverted: a diagnostic that cries about a fault that is not there
+# gets muted or deleted, and then it cannot report the one that is. The whole
+# reason this probe exists is that a hook failure went unnamed for four days.
+#
+# `--which` resolves without starting node, so the common path stays a couple
+# of lookups rather than a process spawn on every prompt.
+#
+# ${0%/*} rather than `dirname`, for the reason everything else here avoids
+# external commands: this has to work when PATH resolves nothing at all, which
+# is the exact condition it was built to report on.
+launcher="${0%/*}/../bin/hook-node"
+if [ -x "${launcher}" ]; then
+    "${launcher}" --which >/dev/null 2>&1 || missing="${missing}node "
+else
+    # An install predating the launcher, where hooks still carry
+    # `#!/usr/bin/env node` and PATH is genuinely the question being asked.
+    command -v node >/dev/null 2>&1 || missing="${missing}node "
+fi
 
 # cmux is only relevant on a machine running inside it. Reporting it absent
 # everywhere else would mean every prompt on a plain terminal writes a line

@@ -39,7 +39,7 @@ const { execFileSync, spawnSync } = require('child_process');
 const ROOT = path.join(__dirname, '..');
 const PROBE = path.join(ROOT, 'plugins', 'build-loop', 'hooks', 'hook-health-probe.sh');
 
-const EXPECTED_CHECKS = 20;
+const EXPECTED_CHECKS = 22;
 
 // The probe calls these and nothing else. `sh` is not among them: the kernel
 // reads the shebang and runs /bin/sh by absolute path, so PATH never decides
@@ -141,6 +141,23 @@ function readLog(home) {
 function runProbe(home, { withNode, env = {}, session = SESSION } = {}) {
   const parts = ['-i', `HOME=${home}`];
   parts.push(withNode ? `PATH=${NODE_BIN}:${BIN}` : `PATH=${BIN}`);
+
+  // The probe asks bin/hook-node whether node can be found, and that search
+  // reaches past PATH into ~/.local/bin, Homebrew, /usr/local and /usr/bin.
+  // HOME is a sandbox here so the first is empty, but the others are real
+  // absolute paths, and whether they hold a node is a property of whoever runs
+  // this suite rather than of the case being tested. $CLAUDE_HOOK_NODE is
+  // authoritative to the launcher, so pinning it is what makes "node is
+  // missing" mean the same thing on every machine.
+  //
+  // This is the trap the header above describes, arriving by a new route: a
+  // negative case that quietly keeps node passes for the author and fails for
+  // everybody else. Pushed before the caller's own entries so a case can still
+  // override it, since `env` takes the last assignment of a name.
+  parts.push(withNode
+    ? `CLAUDE_HOOK_NODE=${path.join(NODE_BIN, 'node')}`
+    : 'CLAUDE_HOOK_NODE=/nonexistent/node');
+
   for (const [k, v] of Object.entries(env)) parts.push(`${k}=${v}`);
   parts.push(PROBE);
   return spawnSync('env', parts, { input: eventFor(session), encoding: 'utf8' });
@@ -199,6 +216,53 @@ check('a missing node is recorded', () => {
   const log = readLog(home);
   assert.ok(log.includes('MISSING'), `nothing was recorded. log: ${JSON.stringify(log)}`);
   assert.ok(log.includes('node'), `the log does not name node. log: ${JSON.stringify(log)}`);
+});
+
+check('a session where PATH lacks node but the launcher finds it is not reported broken', () => {
+  // This is every GUI-launched host on this machine, and the reason the probe
+  // stopped asking PATH. Codex started from the Dock gets a bare PATH with no
+  // node on it, and since 2026-08-13 its hooks run anyway, because hooks.json
+  // starts them through bin/hook-node. A probe still asking `command -v node`
+  // wrote MISSING on the first prompt of every one of those sessions while the
+  // hooks it was reporting on were running perfectly.
+  //
+  // Node is reachable here only through $CLAUDE_HOOK_NODE, exactly as it is
+  // reachable on that machine only through ~/.local/bin. PATH holds the
+  // probe's utilities and no node at all.
+  const home = sandbox();
+  const r = runProbe(home, {
+    withNode: false,
+    env: { CLAUDE_HOOK_NODE: path.join(NODE_BIN, 'node') },
+  });
+  assert.strictEqual(r.status, 0, `the probe exited ${r.status}, it must never fail a prompt`);
+  assert.strictEqual(
+    readLog(home), '',
+    'the probe called a session broken because node was not on PATH, but the '
+    + 'launcher resolves node and the hooks run. The log now reports a fault '
+    + 'that is not there, which is how a diagnostic gets muted and then cannot '
+    + 'report the fault that is.'
+  );
+});
+
+check('the probe decides node health through the launcher, not through PATH', () => {
+  // The check above passes on a healthy tree whether the probe asks the right
+  // question or not, as long as the answers happen to agree. This reads the
+  // source, because the two questions agree on most machines and disagree on
+  // exactly the ones this work is for.
+  const source = fs.readFileSync(PROBE, 'utf8');
+  assert.ok(
+    source.includes('--which'),
+    'the probe does not ask bin/hook-node --which, so it is deciding hook '
+    + 'health from something other than what starts the hooks'
+  );
+  const barePathCheck = /^\s*command -v node[^\n]*\|\|\s*missing=/m;
+  const lines = source.split('\n');
+  const bareLine = lines.findIndex((l) => barePathCheck.test(l));
+  assert.ok(
+    bareLine === -1 || lines.slice(0, bareLine).some((l) => l.includes('launcher')),
+    'the probe asks `command -v node` without having asked the launcher first, '
+    + 'so a GUI-launched session is reported broken while its hooks run'
+  );
 });
 
 check('a working environment records nothing', () => {
