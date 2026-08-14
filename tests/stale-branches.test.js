@@ -1482,7 +1482,7 @@ function withStubbedGh(stub, fn) {
 
   g('remote', 'add', 'origin', 'https://github.com/example/repo.git');
 
-  const script = `#!/bin/sh\ncase "$*" in\n  *"api repos/example/repo --jq .default_branch"*) printf '%s\\n' "\${GH_DEFAULT_BRANCH:-main}" ;;\n${stub}\nesac\n`;
+  const script = `#!/bin/sh\ncase "$*" in\n  *"api repos/example/repo --jq .default_branch"*) [ -z "\${GH_DEFAULT_BRANCH_UNAVAILABLE:-}" ] || exit 1; printf '%s\\n' "\${GH_DEFAULT_BRANCH:-main}" ;;\n${stub}\nesac\n`;
   fs.writeFileSync(path.join(bin, 'gh'), script);
   fs.chmodSync(path.join(bin, 'gh'), 0o755);
 
@@ -1592,15 +1592,19 @@ check('a commit GitHub does not know is an answered empty lookup', () => {
   );
 });
 
-check('a guessed local default does not filter GitHub pull requests', () => {
+check('GitHub current default overrides a stale or guessed local default for pull requests', () => {
   withStubbedGh(
     [
       '  *state=closed*) printf \'%s\\n\' "$*" > "$GH_CALLS" ;;',
       '  *state=open*) : ;;',
       '  *) exit 1 ;;',
     ].join('\n'),
-    ({ repo, dir }) => {
+    ({ repo, dir, g }) => {
       const calls = path.join(dir, 'calls.log');
+      // A fetched origin/HEAD can remain on an old name after GitHub renames
+      // the default branch. Its presence must not suppress the API lookup.
+      g('update-ref', 'refs/remotes/origin/old-default', 'refs/heads/main');
+      g('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/old-default');
       process.env.GH_CALLS = calls;
       process.env.GH_DEFAULT_BRANCH = 'release';
       try {
@@ -1613,6 +1617,35 @@ check('a guessed local default does not filter GitHub pull requests', () => {
       } finally {
         delete process.env.GH_CALLS;
         delete process.env.GH_DEFAULT_BRANCH;
+      }
+    }
+  );
+});
+
+check('a failed default-branch lookup is reported on listing and pre-delete paths', () => {
+  withStubbedGh(
+    GH_MERGED,
+    ({ repo }) => {
+      process.env.GH_DEFAULT_BRANCH_UNAVAILABLE = '1';
+      try {
+        const listing = collect.localBranches(repo);
+        assert.strictEqual(listing.mergedPRCheckUnavailable, true,
+          'the listing must report that its merged-PR base was unavailable');
+
+        const verify = collect.localBranches(repo, { only: 'feature' });
+        assert.strictEqual(verify.mergedPRCheckUnavailable, true,
+          'a skipped per-commit query is missing evidence, not a successful empty lookup');
+
+        let message = '';
+        try {
+          execFileSync('node', [CLI, '--cwd', repo, '--verify', 'feature'], { encoding: 'utf8' });
+        } catch (error) {
+          message = `${error.stdout || ''}${error.stderr || ''}`;
+        }
+        assert.ok(/Could not complete the pull-request checks/.test(message),
+          `the contradiction must be explained at the delete boundary: ${message}`);
+      } finally {
+        delete process.env.GH_DEFAULT_BRANCH_UNAVAILABLE;
       }
     }
   );

@@ -212,7 +212,6 @@ function localBranches(cwd, opts) {
   // exists. Assuming "main" outright is how a repo on "master" ends up with its
   // trunk in the deletable list.
   let def = tryRun('git', ['-C', cwd, 'symbolic-ref', '--short', 'refs/remotes/origin/HEAD']);
-  const defFromOriginHead = !!def;
   if (def) def = def.replace(/^origin\//, '');
   if (!def) {
     for (const candidate of ['main', 'master']) {
@@ -367,13 +366,12 @@ function localBranches(cwd, opts) {
   // the one outcome this release cannot have.
   const ghRepo = deadline === null ? githubRepo(cwd) : null;
   const askGitHub = ghRepo !== null;
-  // `origin/HEAD` is Git's record of the remote default. When it is absent,
-  // `def` above is only a local main/master guess and must not be used as a
-  // GitHub pull-request base filter: a repository whose real default is
-  // `release` would return a readable, empty answer and hide every merge.
-  const githubDef = askGitHub && !defFromOriginHead
-    ? githubDefaultBranch(ghRepo, { cwd })
-    : def;
+  // `origin/HEAD` is only a cached local record. A normal fetch does not update
+  // it after GitHub renames the default branch, so using it as an API filter can
+  // return a perfectly readable empty list for the wrong base. GitHub is the
+  // authority for GitHub pull requests; failure to read that answer is a gap,
+  // never permission to fall back to a guessed or stale name.
+  const githubDef = askGitHub ? githubDefaultBranch(ghRepo, { cwd }) : null;
 
   let mergedBySha = null;   // listing: tip sha -> pull request number
   let singleMerged;         // re-check: undefined = not asked, null = could not look
@@ -400,8 +398,10 @@ function localBranches(cwd, opts) {
       // precedence and makes the safety check inspect the wrong commit.
       const row = rows[0] ? rows[0].split('\t') : null;
       const sha = row && row[0] === only ? row[2] : null;
-      if (sha && githubDef) {
-        singleMerged = mergedPRForCommit(ghRepo, githubDef, sha, { cwd });
+      if (sha) {
+        singleMerged = githubDef
+          ? mergedPRForCommit(ghRepo, githubDef, sha, { cwd })
+          : null;
       }
     }
   }
