@@ -1,8 +1,13 @@
 #!/usr/bin/env node
-// PreToolUse hook for Bash. Blocks three classes of command:
-//   1. Recursive force-delete outside known-disposable paths
-//   2. Commits directly to a protected branch
-//   3. Commit messages that miss the Conventional Commits format (opt in)
+// PreToolUse hook for Bash. Stops three classes of command, in two ways:
+//   1. Recursive force-delete outside known-disposable paths     asks
+//   2. Commits directly to a protected branch                    denies
+//   3. Commit messages that miss the Conventional Commits format denies (opt in)
+//
+// Which of the two a rule gets is not a severity ranking. It is whether the
+// guard can name the command you wanted instead. For 2 and 3 it can, so it
+// prints it and refuses. For 1 it cannot: whether a delete is intended is
+// yours to answer, so it says what would happen and asks.
 
 'use strict';
 
@@ -12,13 +17,41 @@ const os = require('os');
 const path = require('path');
 
 const ROOT = path.join(__dirname, '..');
-const { readEvent, block } = require(path.join(ROOT, 'scripts', 'hook-io'));
+const { readEvent, block, confirm } = require(path.join(ROOT, 'scripts', 'hook-io'));
 const { loadConfig } = require(path.join(ROOT, 'scripts', 'config'));
 const { checkCommand, ALL_RULES } = require(path.join(ROOT, 'scripts', 'command'));
 
 const IS_GIT_COMMIT = /\bgit\s+(?:-[^\s]+(?:\s+[^\s-][^\s]*)?\s+)*commit\b/;
 
 const CONVENTIONAL = /^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([^)]+\))?!?: .+/;
+
+// Ask only in documented modes whose ordinary contract includes interactive
+// approval. This is deliberately an allowlist: a missing field, a new mode, or
+// a third-party harness with a different permission contract must fail closed
+// for an irreversible command rather than inherit an optimistic assumption.
+// `acceptEdits` still has a person present; its automatic scope does not settle
+// a PreToolUse `ask`. Every other value refuses. Keeping policy in the allowlist
+// means a newly added or renamed upstream mode fails closed until its
+// interaction contract is reviewed here.
+const INTERACTIVE = new Set(['default', 'plan', 'acceptEdits']);
+
+const RULE_SETTINGS = {
+  destructive: 'blockDestructiveCommands',
+  'commit-hook-skip': 'blockCommitHookSkip',
+};
+
+// A reason shown beside an `ask` may tell the person how to answer that ask.
+// The same sentence is a dead end beside a refusal, so remove only that
+// interaction instruction and keep the command-specific risk and safer
+// alternative intact.
+function refusalReason(reason) {
+  return reason
+    .replace(/\n\nConfirm this is intended before running it\.\s*/i, '\n\n')
+    .replace(
+      /\n\nBefore running it, say what is being deleted, why it is safe to delete, and how it could be recovered if the answer turns out to be wrong\.\s*/i,
+      '\n\n'
+    );
+}
 
 // The repository a git command actually targets is not necessarily the hook's
 // own working directory. `git -C <path> commit` and `cd <path> && git commit`
@@ -162,43 +195,103 @@ readEvent((event) => {
     rule === 'destructive' ? config.blockDestructiveCommands !== false
       : config.blockCommitHookSkip !== false
   ));
+  // A confirm verdict is put to the user, not refused on their behalf. Both of
+  // these rules describe what a command would do and then ask whether that is
+  // intended, and only the person typing it knows. Answering for them made the
+  // reason text a dead end: it said "confirm this is intended before running
+  // it" and there was no way to confirm, so a merged branch could not be
+  // deleted through the tool at any point, however many times it was approved
+  // in conversation.
+  //
+  // Assessed here and emitted at the bottom, after the two rules that refuse.
+  //
+  // A hook emits one decision, so whichever rule speaks first is the entire
+  // answer and the others never run. While every verdict was a `deny` the order
+  // did not matter: the command was stopped whichever one got there. It matters
+  // now, because an `ask` reaching the wire first replaces a `deny` that would
+  // otherwise have followed, and `git commit --no-verify -m "wip"` on main is
+  // both at once. Emitting the ask where the assessment happens turned the
+  // strongest rule in the plugin into a prompt that one approval walks through.
+  //
+  // So: refusals are decided first, and the question is only asked once nothing
+  // has refused. Strongest decision wins, regardless of which rule noticed
+  // first.
   const verdict = checkCommand(command, config, { rules });
-  if (verdict.verdict === 'confirm') {
-    block(verdict.reason);
-    return;
-  }
 
+  // 2 and 3, the two rules that refuse. Each knows the command you wanted
+  // instead and prints it, so there is nothing to weigh and nothing to ask.
+  //
   // `git commit`, but also `git -C <path> commit`, `git --no-pager commit`, and
   // any other option between the two words. Matching only the adjacent form is
   // what let `git -C <path> commit` past the branch guard entirely.
-  if (!IS_GIT_COMMIT.test(command)) return;
+  if (IS_GIT_COMMIT.test(command)) {
+    // 2. Protected branches.
+    if (config.blockCommitToProtectedBranch) {
+      const branch = currentBranch(command, event.cwd);
+      if (branch && config.protectedBranches.includes(branch)) {
+        block(
+          `You are on "${branch}", which is a protected branch.\n\n` +
+          `Branch first, then commit:\n` +
+          `  git checkout -b <short-description-of-the-change>\n\n` +
+          `To change which branches are protected, edit protectedBranches in ` +
+          `~/.claude/guardrails.config.json.`
+        );
+        return;
+      }
+    }
 
-  // 2. Protected branches.
-  if (config.blockCommitToProtectedBranch) {
-    const branch = currentBranch(command, event.cwd);
-    if (branch && config.protectedBranches.includes(branch)) {
-      block(
-        `You are on "${branch}", which is a protected branch.\n\n` +
-        `Branch first, then commit:\n` +
-        `  git checkout -b <short-description-of-the-change>\n\n` +
-        `To change which branches are protected, edit protectedBranches in ` +
-        `~/.claude/guardrails.config.json.`
-      );
-      return;
+    // 3. Commit message format.
+    if (config.requireConventionalCommits) {
+      const message = commitMessageFrom(command);
+      if (message && !CONVENTIONAL.test(message)) {
+        block(
+          `Commit message does not match Conventional Commits:\n  "${message}"\n\n` +
+          `Expected "<type>: <description>", where type is one of feat, fix, docs, ` +
+          `style, refactor, perf, test, build, ci, chore, revert.\n\n` +
+          `To turn this check off, set requireConventionalCommits to false in ` +
+          `~/.claude/guardrails.config.json.`
+        );
+        return;
+      }
     }
   }
 
-  // 3. Commit message format.
-  if (config.requireConventionalCommits) {
-    const message = commitMessageFrom(command);
-    if (message && !CONVENTIONAL.test(message)) {
+  // 1. Nothing refused, so the question stands on its own.
+  //
+  // Unless the mode establishes that there is somebody to ask, in which case
+  // asking is not a weaker answer,
+  // it is no answer. `ask` is settled by whatever answers permission prompts,
+  // and outside the interactive allowlist that may not be a person. A guard
+  // that prompts there has the form of a check and none of the
+  // effect, which is worse than either real answer because the output still
+  // reads as though something was considered.
+  //
+  // So the decision follows who is listening. Someone there, ask them. Nobody
+  // there, refuse, which is what these runs got before 0.5.1 and is therefore
+  // not a change for them.
+  //
+  // `permission_mode` is a documented field on every Claude Code PreToolUse
+  // event. A harness that omits it has not established an interactive approval
+  // path, so it refuses like an unknown or non-interactive mode.
+  if (verdict.verdict === 'confirm') {
+    if (!INTERACTIVE.has(event.permission_mode)) {
+      // Deliberately not the confirm wording. "Confirm this is intended before
+      // running it" is exactly the dead end this release was opened to remove,
+      // and printing it on a refusal that cannot be confirmed would reintroduce
+      // it in the one place where confirming is genuinely impossible.
+      const setting = RULE_SETTINGS[verdict.rule];
+      const mode = event.permission_mode || '(missing)';
       block(
-        `Commit message does not match Conventional Commits:\n  "${message}"\n\n` +
-        `Expected "<type>: <description>", where type is one of feat, fix, docs, ` +
-        `style, refactor, perf, test, build, ci, chore, revert.\n\n` +
-        `To turn this check off, set requireConventionalCommits to false in ` +
-        `~/.claude/guardrails.config.json.`
+        `${refusalReason(verdict.reason)}\n\n` +
+        `Refused rather than asked, because this session runs with ` +
+        `permission_mode "${mode}", which does not establish an interactive ` +
+        `approval path.\n\n` +
+        `Run it in an interactive session to be asked instead, or set ` +
+        `${setting} to false in ~/.claude/guardrails.config.json ` +
+        `if you want this rule off here.`
       );
+      return;
     }
+    confirm(verdict.reason);
   }
 });

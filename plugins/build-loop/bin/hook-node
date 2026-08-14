@@ -1,0 +1,97 @@
+#!/bin/sh
+# Run a Node hook without depending on a login shell having been read.
+#
+# The bug, on 2026-08-12: every hook in this repository exited 127 under Codex.
+# A GUI-launched host, Codex started from the Dock and any other app started
+# outside a terminal, never sources ~/.zshrc, so it hands its hooks the bare
+# macOS PATH of /usr/bin:/bin:/usr/sbin:/sbin. On a machine where node was
+# unpacked into ~/.local rather than installed system-wide, `#!/usr/bin/env
+# node` then fails with "env: node: No such file or directory" and the shell
+# answers 127. Claude Code discards a hook failure, so twelve hooks were dead
+# for their whole life in that host while every test passed.
+#
+# The shebang could not fix itself: it names one interpreter path and cannot
+# search. So the search moved here, and hooks.json calls this instead.
+#
+# This file is duplicated in every plugin that ships hooks. Plugins install
+# independently and one cannot reach into another, so a shared copy at the
+# repository root would be absent for anyone who installed a single plugin.
+# tests/hook-executable.test.js asserts the copies stay identical.
+#
+# Usage:
+#   hook-node <script.js> [args...]   run a hook
+#   hook-node --which                 print the interpreter, run nothing
+#
+# --which exists for hook-health-probe.sh, which asks on every prompt whether
+# hooks can run at all. It must not pay for starting node to find out, and it
+# must not carry a second copy of the list below, which would drift from this
+# one and then report on a resolution order nothing uses.
+
+mode="run"
+if [ "$1" = "--which" ]; then
+  mode="which"
+  shift
+fi
+
+found=""
+
+# Set means authoritative. A value that does not resolve is an error rather
+# than a reason to look elsewhere: somebody who names an interpreter is saying
+# which one to use, and quietly running a different one hides their mistake and
+# produces results from a version they did not choose. This is also what lets
+# the probe's tests pin the answer, since every other candidate below is a real
+# path that may or may not exist depending on whose machine this is.
+if [ -n "${CLAUDE_HOOK_NODE}" ]; then
+  # -f as well as -x. A directory carries the execute bit as its search bit, so
+  # `[ -x ~/.local/bin ]` is true, and pointing this at the folder holding node
+  # rather than at node was accepted. Run mode then died with "is a directory"
+  # and exit 126, which Claude Code discards, while --which printed the
+  # directory and exited 0, so the probe called every hook healthy while none of
+  # them started. A wrong value has to fail, and be seen to fail.
+  if [ -f "${CLAUDE_HOOK_NODE}" ] && [ -x "${CLAUDE_HOOK_NODE}" ]; then
+    found="${CLAUDE_HOOK_NODE}"
+  else
+    echo "hook-node: \$CLAUDE_HOOK_NODE is set to \"${CLAUDE_HOOK_NODE}\", which is not an executable file. Name the node program itself, not the directory holding it." >&2
+    exit 127
+  fi
+else
+  # PATH first, because a host that did read a login shell already knows better
+  # than this list does. The rest are where node actually lands when it was not
+  # installed system-wide: an unpacked tarball, Homebrew on Apple silicon,
+  # Homebrew on Intel, and a package that installs into /usr.
+  for candidate in \
+    "$(command -v node 2>/dev/null)" \
+    "${HOME}/.local/bin/node" \
+    /opt/homebrew/bin/node \
+    /usr/local/bin/node \
+    /usr/bin/node
+  do
+    # -f here too, and for the same reason. A candidate that is a directory is
+    # skipped rather than fatal: unlike the override, nobody asked for it, so
+    # the right response is to keep looking.
+    if [ -n "${candidate}" ] && [ -f "${candidate}" ] && [ -x "${candidate}" ]; then
+      found="${candidate}"
+      break
+    fi
+  done
+fi
+
+if [ -z "${found}" ]; then
+  # Exit 127 deliberately, matching what the shell says when it cannot find a
+  # command, so this reads the same as the failure it replaces. The difference
+  # is the line above it, which says what was looked for.
+  # Comma-separated with no spaces, and the home directory written as ~ rather
+  # than expanded. hook-health-probe.sh lifts everything after "Tried: " into a
+  # `searched=` field of a space-separated log line, so a space here would split
+  # the value, and an expanded home would put a username in a file people paste
+  # into bug reports.
+  echo "hook-node: no node interpreter found. Tried: \$CLAUDE_HOOK_NODE,PATH,~/.local/bin/node,/opt/homebrew/bin/node,/usr/local/bin/node,/usr/bin/node" >&2
+  exit 127
+fi
+
+if [ "${mode}" = "which" ]; then
+  echo "${found}"
+  exit 0
+fi
+
+exec "${found}" "$@"

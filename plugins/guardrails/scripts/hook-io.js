@@ -43,6 +43,32 @@ function block(reason) {
   }));
 }
 
+// Put the decision to the user and tell them why. PreToolUse only, same as
+// `block`, and the difference between the two is who gets to answer.
+//
+// `deny` ends the question. It is right where the guard knows a better command
+// and can name it, so the reason reads as an instruction: branch first, fix the
+// message, then carry on.
+//
+// `ask` is right where the guard cannot know. "This deletes a branch even if it
+// was never merged" is a fact about the command, not a verdict on whether the
+// user wants it, and the person typing it is the only one who can settle that.
+// Every one of those reasons ended with "confirm this is intended before
+// running it" while arriving as a `deny`, which offers a confirmation the shape
+// cannot accept. The command was then unreachable through the tool at all, and
+// the way past it was to leave the session and run it by hand, which is worse
+// than either answer: the guard stopped being a checkpoint and became something
+// to walk around.
+function confirm(reason) {
+  process.stdout.write(JSON.stringify({
+    hookSpecificOutput: {
+      hookEventName: 'PreToolUse',
+      permissionDecision: 'ask',
+      permissionDecisionReason: reason,
+    },
+  }));
+}
+
 // Add a note to the conversation without stopping anything.
 function advise(hookEventName, additionalContext) {
   process.stdout.write(JSON.stringify({
@@ -50,4 +76,4 @@ function advise(hookEventName, additionalContext) {
   }));
 }
 
-module.exports = { readEvent, block, advise };
+module.exports = { readEvent, block, confirm, advise };

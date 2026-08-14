@@ -770,8 +770,8 @@ check('a remote re-check asks about one commit rather than paginating every clos
   assert.ok(/opts\.verify\s*\?\s*collect\.remoteBranch/.test(src),
     '--verify must use the single-branch collector, not filter the full listing afterwards');
   const collectSrc = fs.readFileSync(path.join(ROOT, 'scripts', 'collect.js'), 'utf8');
-  assert.ok(/commits\/\$\{head\.sha\}\/pulls/.test(collectSrc),
-    'merge evidence for one branch comes from the pull requests on its head commit');
+  assert.ok(/mergedPRForCommit\(repo, def, head\.sha\)/.test(collectSrc),
+    'merge evidence for one branch comes through the shared commit lookup');
 });
 
 // `merge-tree --write-tree` needs git 2.38. On older git it exits non-zero,
@@ -838,6 +838,15 @@ check('the force path re-checks each branch immediately before deleting it', () 
     'the re-check has to come before the force delete, not after the group was approved');
   assert.ok(/one at a time/.test(section),
     'and one branch at a time, so a change part way through cannot reach a branch already cleared');
+});
+
+check('sweep guidance limits pull-request caveats to GitHub repositories', () => {
+  const skill = fs.readFileSync(path.join(ROOT, 'skills', 'stale-branches', 'SKILL.md'), 'utf8');
+  const line = skill.split('\n').find((x) => x.includes('`openPRCheckUnavailable`')) || '';
+  assert.ok(/`--repo`/.test(line),
+    'the caveat must say it belongs to the GitHub path, not local cleanup');
+  assert.ok(/every branch is held/.test(line),
+    'the remote consequence must say the Keep list expands to every branch');
 });
 
 // The number of explanation lines varies: a branch cleared by merge evidence
@@ -1138,6 +1147,7 @@ check('--json carries the caveats, present whether or not they are set', () => {
     const stale = JSON.parse(execFileSync('node', [CLI, '--cwd', local, '--json'], { encoding: 'utf8' }));
     assert.strictEqual(stale.remoteStale, true, 'the caveat has to survive the format');
     assert.strictEqual(typeof stale.mergeCheckUnavailable, 'boolean');
+    assert.strictEqual(typeof stale.mergedPRCheckUnavailable, 'boolean');
 
     g(local, 'fetch', '-q', 'origin');
     const fresh = JSON.parse(execFileSync('node', [CLI, '--cwd', local, '--json'], { encoding: 'utf8' }));
@@ -1145,6 +1155,8 @@ check('--json carries the caveats, present whether or not they are set', () => {
       'and must be present as false rather than absent, which is what an older '
       + 'version without the key looks like');
     assert.ok(Object.prototype.hasOwnProperty.call(fresh, 'remoteStale'));
+    assert.ok(Object.prototype.hasOwnProperty.call(fresh, 'mergedPRCheckUnavailable'),
+      'the newest caveat is subject to the same rule as the two before it');
   });
 });
 
@@ -1244,6 +1256,286 @@ check('no remote means no note', () => {
   assert.strictEqual(r.remoteStale, false, 'nothing to be out of date with');
   const out = execFileSync('node', [CLI, '--cwd', dir], { encoding: 'utf8' });
   assert.ok(!/the remote has moved past it/.test(out), 'and nothing said about one');
+
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// --- GitHub evidence on the remote path only -------------------------------
+//
+// The remote listing and pre-delete lookup answer one question with one budget.
+//
+// Asserted by reading the source, which is unusual here and is the point: a
+// timeout difference has no observable behaviour until a slow repository makes
+// it observable, and then it looks like the listing and the re-check disagreeing
+// rather than like a clock. There is nothing to feed a stub that would catch it.
+//
+// The re-check inherited the 5 second default while the listing had 20, so a
+// commit with many containing pull requests could answer one and time out the
+// other, refusing a branch cleared seconds earlier. Both code paths correct,
+// which is what would have made it hard to find.
+check('the remote merged-PR listing and re-check use the same timeout', () => {
+  const src = fs.readFileSync(
+    path.join(__dirname, '..', 'plugins', 'git-hygiene', 'scripts', 'collect.js'),
+    'utf8'
+  );
+  for (const fn of ['mergedPRsBySha', 'mergedPRForCommit', 'openPRHeadRefs']) {
+    const at = src.indexOf(`function ${fn}(`);
+    assert.notStrictEqual(at, -1, `${fn} is gone, so this check is watching nothing`);
+    const body = src.slice(at, src.indexOf('\n}', at));
+    assert.ok(
+      body.includes('MERGED_PR_TIMEOUT_MS'),
+      `${fn} does not set MERGED_PR_TIMEOUT_MS, so it falls back to the 5 second `
+        + 'default and can time out where its counterpart succeeds'
+    );
+  }
+
+  const listingAt = src.indexOf('function remoteBranches(');
+  const listingBody = src.slice(listingAt, src.indexOf('\n}', listingAt));
+  assert.ok(listingBody.includes('openPRHeadRefs('),
+    'the listing must read all open PRs once, not once per branch');
+
+  const verifyAt = src.indexOf('function remoteBranch(');
+  const verifyBody = src.slice(verifyAt, src.indexOf('\n}', verifyAt));
+  assert.ok(verifyBody.includes('mergedPRForCommit('),
+    'the one-branch re-check must use its commit-scoped pull-request query');
+  assert.ok(!verifyBody.includes('openPRHeadRefs('),
+    'the one-branch re-check must not paginate every open PR per deletion');
+});
+
+check('local listing and pre-delete verification never invoke gh', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stale-local-offline-'));
+  const repo = path.join(dir, 'work');
+  const bin = path.join(dir, 'bin');
+  fs.mkdirSync(bin);
+  const g = (...a) => execFileSync('git', ['-C', repo, ...a], { encoding: 'utf8', stdio: 'pipe' });
+  execFileSync('git', ['init', '-q', '-b', 'main', repo], { stdio: 'pipe' });
+  g('config', 'user.email', 'test@example.com');
+  g('config', 'user.name', 'test');
+  fs.writeFileSync(path.join(repo, 'f.txt'), 'base\n');
+  g('add', '.'); g('commit', '-qm', 'base');
+  g('checkout', '-qb', 'feature');
+  fs.appendFileSync(path.join(repo, 'f.txt'), 'unique work\n');
+  g('commit', '-qam', 'work');
+  g('checkout', '-q', 'main');
+  g('tag', 'feature', 'main');
+  g('remote', 'add', 'origin', 'https://github.com/example/repo.git');
+
+  const marker = path.join(dir, 'gh-called');
+  fs.writeFileSync(path.join(bin, 'gh'), `#!/bin/sh\nprintf called > "${marker}"\nexit 1\n`);
+  fs.chmodSync(path.join(bin, 'gh'), 0o755);
+  const prevPath = process.env.PATH;
+  process.env.PATH = `${bin}${path.delimiter}${prevPath}`;
+  try {
+    const listed = collect.localBranches(repo);
+    const checked = collect.localBranches(repo, { only: 'feature' });
+    for (const result of [listed, checked]) {
+      const feature = result.branches.find((b) => b.name === 'feature');
+      assert.ok(feature && feature.aheadBy > 0, 'the branch carries unique local work');
+      assert.strictEqual(feature.merged, false,
+        'a same-named tag and GitHub origin must not clear unique local work');
+      assert.strictEqual(classify([feature], {}, Date.now()).safe.length, 0,
+        'the branch must stay outside the deletion flow');
+    }
+    assert.strictEqual(fs.existsSync(marker), false,
+      'neither local listing nor its pre-delete check may invoke gh');
+  } finally {
+    process.env.PATH = prevPath;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+check('remote pre-delete reads open state from the one-commit query', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stale-remote-one-pr-'));
+  const bin = path.join(dir, 'bin');
+  const calls = path.join(dir, 'calls');
+  fs.mkdirSync(bin);
+  fs.writeFileSync(path.join(bin, 'gh'), [
+    '#!/bin/sh',
+    'printf \'%s\\n\' "$*" >> "$GH_CALLS"',
+    'case "$*" in',
+    '  *commits/deadbeef/pulls*) printf \'96\\tmain\\tdeadbeef\\topen\\tfalse\\n\' ;;',
+    '  *repos/*/branches/*) echo \'{"sha":"deadbeef","d":"2026-07-01T00:00:00Z"}\' ;;',
+    '  *repos/*/compare/*) echo \'{"a":2}\' ;;',
+    '  *repos/*) echo \'{"default_branch":"main"}\' ;;',
+    '  *) exit 1 ;;',
+    'esac',
+  ].join('\n'));
+  fs.chmodSync(path.join(bin, 'gh'), 0o755);
+
+  const prevPath = process.env.PATH;
+  process.env.PATH = `${bin}${path.delimiter}${prevPath}`;
+  process.env.GH_CALLS = calls;
+  try {
+    const r = collect.remoteBranch('example/repo', 'feature');
+    assert.strictEqual(r.branch.hasOpenPR, true,
+      'the exact branch remains protected when its commit-scoped PR is open');
+    assert.strictEqual(r.openPRCheckUnavailable, false);
+    const asked = fs.readFileSync(calls, 'utf8');
+    assert.ok(/commits\/deadbeef\/pulls/.test(asked), 'the bounded commit query must run');
+    assert.ok(!/pulls\?state=open/.test(asked),
+      `the re-check must not paginate the repository-wide open list: ${asked}`);
+  } finally {
+    process.env.PATH = prevPath;
+    delete process.env.GH_CALLS;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// The same distinction on the one path that was missed when it was introduced.
+// `remoteBranch` backs `--repo owner/name --verify <branch>`, fails safe into
+// `hasOpenPR: true`, and carried no marker saying why, so the pre-delete check
+// told people a review was open on a branch whose pull requests it could not
+// read. The fix and the hole it left shipped in the same commit.
+check('the direct pre-delete check says nobody could look, rather than inventing a review', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stale-remote-verify-'));
+  const bin = path.join(dir, 'bin');
+  fs.mkdirSync(bin);
+  fs.writeFileSync(path.join(bin, 'gh'), [
+    '#!/bin/sh',
+    'case "$*" in',
+    // The branch resolves; its pull requests do not. Order matters in a case:
+    // the first pattern that matches wins, so the specific paths come first.
+    '  *commits/*/pulls*) exit 1 ;;',
+    '  *state=open*) exit 1 ;;',
+    '  *repos/*/branches/*) echo \'{"sha":"deadbeef","d":"2026-07-01T00:00:00Z"}\' ;;',
+    '  *repos/*/compare/*) echo \'{"a":2}\' ;;',
+    '  *repos/*) echo \'{"default_branch":"main"}\' ;;',
+    '  *) exit 1 ;;',
+    'esac',
+  ].join('\n'));
+  fs.chmodSync(path.join(bin, 'gh'), 0o755);
+
+  const prevPath = process.env.PATH;
+  process.env.PATH = `${bin}${path.delimiter}${prevPath}`;
+  try {
+    const r = collect.remoteBranch('example/repo', 'feature');
+    assert.ok(r.branch, 'the branch itself has to resolve for this to test anything');
+    assert.strictEqual(r.branch.hasOpenPR, true, 'it still fails safe and keeps the branch');
+    assert.strictEqual(r.branch.openPRUnknown, true,
+      'and has to say the list was unreadable rather than that a review is open');
+    assert.strictEqual(r.openPRCheckUnavailable, true,
+      'the caveat has to reach the remote verify caller');
+    assert.strictEqual(r.mergedPRCheckUnavailable, true,
+      'the failed merge lookup has to reach the remote verify caller too');
+
+    let message = '';
+    try {
+      execFileSync('node', [CLI, '--repo', 'example/repo', '--verify', 'feature'],
+        { encoding: 'utf8' });
+    } catch (error) {
+      message = `${error.stdout || ''}${error.stderr || ''}`;
+    }
+    assert.ok(/no longer safe/.test(message),
+      `the remote re-check must preserve the actual keep reason: ${message}`);
+    assert.ok(/Could not complete the pull-request checks/.test(message),
+      `the remote re-check must also name the lookup failure: ${message}`);
+  } finally {
+    process.env.PATH = prevPath;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// The machine-readable output is the one a sweep across many repositories
+// reads, and `--repo` returned this key never set. So a sweep reported a
+// confident answer for a repository where the review check had silently failed,
+// while SKILL.md told the model that key means the open pull requests could not
+// be read. The local path carried it from the start; this one did not.
+check('a direct repository check reports an unreadable open list, in the JSON too', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stale-remote-openpr-'));
+  const bin = path.join(dir, 'bin');
+  fs.mkdirSync(bin);
+  fs.writeFileSync(path.join(bin, 'gh'), [
+    '#!/bin/sh',
+    'case "$*" in',
+    // Merged list readable, open list not, so this isolates the one key.
+    '  *state=open*) exit 1 ;;',
+    '  *state=closed*) : ;;',
+    '  *repos/*/branches*) printf \'feature\\tdeadbeef\\n\' ;;',
+    '  *repos/*/commits/*) echo \'{"d":"2026-07-01T00:00:00Z"}\' ;;',
+    '  *repos/*/compare/*) echo \'{"a":3}\' ;;',
+    '  *repos/*) echo \'{"default_branch":"main"}\' ;;',
+    '  *) exit 1 ;;',
+    'esac',
+  ].join('\n'));
+  fs.chmodSync(path.join(bin, 'gh'), 0o755);
+
+  const prevPath = process.env.PATH;
+  process.env.PATH = `${bin}${path.delimiter}${prevPath}`;
+  try {
+    const r = collect.remoteBranches('example/repo');
+    assert.strictEqual(r.openPRCheckUnavailable, true,
+      'the remote path has to report an open list it could not read');
+
+    const out = execFileSync('node', [CLI, '--repo', 'example/repo', '--json'], { encoding: 'utf8' });
+    const json = JSON.parse(out);
+    assert.strictEqual(json.openPRCheckUnavailable, true,
+      'and it has to survive into the JSON, which is what a sweep reads');
+    assert.strictEqual(json.remote, true,
+      'the sweep needs the path to interpret the caveat correctly');
+
+    // The note has to match this path. Locally an unreadable list costs the
+    // check and nothing else; here it holds every branch back, so the local
+    // sentence would be wrong in both directions at once.
+    const text = execFileSync('node', [CLI, '--repo', 'example/repo'], { encoding: 'utf8' });
+    assert.ok(/every branch is being held\s+back/.test(text.replace(/\n/g, ' ')),
+      `the remote wording has to say what an unknown costs here: ${text}`);
+    assert.ok(!/Everything else is unaffected/.test(text),
+      'and must not print the local wording, which is false on this path');
+  } finally {
+    process.env.PATH = prevPath;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+check('a direct repository check reports an unreadable merged list', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stale-remote-caveat-'));
+  const bin = path.join(dir, 'bin');
+  fs.mkdirSync(bin);
+  // Answers the repository and branch queries, refuses the merged list. That is
+  // the shape of an expired token against a repository that is still readable.
+  fs.writeFileSync(path.join(bin, 'gh'), [
+    '#!/bin/sh',
+    'case "$*" in',
+    '  *pulls*) exit 1 ;;',
+    '  *repos/*/branches*) printf \'feature\\tdeadbeef\\n\' ;;',
+    '  *repos/*/commits/*) echo \'{"d":"2026-07-01T00:00:00Z"}\' ;;',
+    '  *repos/*/compare/*) echo \'{"a":3}\' ;;',
+    '  *repos/*) echo \'{"default_branch":"main"}\' ;;',
+    '  *) exit 1 ;;',
+    'esac',
+  ].join('\n'));
+  fs.chmodSync(path.join(bin, 'gh'), 0o755);
+
+  const prevPath = process.env.PATH;
+  process.env.PATH = `${bin}${path.delimiter}${prevPath}`;
+  try {
+    const r = collect.remoteBranches('example/repo');
+    assert.strictEqual(r.mergedPRCheckUnavailable, true,
+      'the remote path has to report a merged list it could not read');
+  } finally {
+    process.env.PATH = prevPath;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+check('local collection has no pull-request lookup state', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stale-no-origin-'));
+  const g = (...a) => execFileSync('git', ['-C', dir, ...a], { encoding: 'utf8', stdio: 'pipe' });
+  execFileSync('git', ['init', '-q', '-b', 'main', dir], { stdio: 'pipe' });
+  g('config', 'user.email', 'test@example.com');
+  g('config', 'user.name', 'test');
+  fs.writeFileSync(path.join(dir, 'f.txt'), 'base\n');
+  g('add', '.'); g('commit', '-qm', 'base');
+  g('branch', 'other');
+
+  const r = collect.localBranches(dir);
+  assert.strictEqual(r.mergedPRCheckUnavailable, undefined,
+    'local collection must not imply that it attempted a GitHub lookup');
+  assert.strictEqual(r.openPRCheckUnavailable, undefined,
+    'open pull requests are not part of local collection');
+  const out = execFileSync('node', [CLI, '--cwd', dir], { encoding: 'utf8' });
+  assert.ok(!/merged pull requests for this repository could not be read/.test(out),
+    'and nothing is said about it');
 
   fs.rmSync(dir, { recursive: true, force: true });
 });

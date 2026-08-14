@@ -155,11 +155,29 @@ process.stdin.on('end', function () {
 // Nothing here edits settings.json. That file holds permissions and enabled
 // plugins, a plugin rewriting it unasked is the kind of thing that should be
 // refused rather than automated, and the skill shows this and waits.
+// The interpreter is named absolutely, resolved now rather than looked up later.
+//
+// This used to emit `node "<shim>"`, which is the same defect the hooks had
+// until 2026-08-13: an app launched from the Dock never reads a shell profile,
+// so it gets a bare PATH, and on a machine where node was not installed
+// system-wide the status line dies with 127. A status line that fails is even
+// quieter than a hook that fails, because there is nothing there to notice.
+//
+// bin/hook-node is deliberately not used here, though it solves the same
+// problem for hooks. It lives inside the installed plugin, whose path carries a
+// version number and is replaced on the next update, and this string is written
+// into the user's settings.json where it has to keep working afterwards.
+// tests/session-handoffs.test.js asserts the fragment never points into
+// plugins/cache for that reason.
+//
+// process.execPath is the node currently running this installer, so it needs no
+// candidate list and cannot disagree with one. Re-running the installer
+// refreshes it if node ever moves.
 function settingsFragment(home = os.homedir()) {
   return {
     statusLine: {
       type: 'command',
-      command: `node "${SHIM_PATH(home)}"`,
+      command: `"${process.execPath}" "${SHIM_PATH(home)}"`,
     },
   };
 }

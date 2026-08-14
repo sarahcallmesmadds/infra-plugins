@@ -72,9 +72,20 @@ recoverable.
 fails for any reason, the branch is kept and the reason is shown. Not knowing is
 never rounded down to zero.
 
-**It will not touch** the default branch, a protected branch, the branch you
-have checked out, or a branch with an open pull request, whatever their merge
-state.
+**Local cleanup does not use GitHub's API or pull-request state.** It uses commit
+reachability and tree comparison, then relies on `git branch -d` as a final
+safeguard. A normal listing may make one bounded `git ls-remote` call to check
+whether the cached remote branch is stale; the pre-delete check makes no network
+call. The trade-off is conservative: a squash merge that local Git cannot prove
+may remain under Keep until you check and remove it yourself.
+
+`--repo owner/name` is a different environment. It has no local Git objects or
+`git branch -d`, so it uses merged and open pull requests from GitHub and holds
+everything back when that evidence cannot be read.
+
+**It will not touch** the default branch, a protected branch, or the branch you
+have checked out. On `--repo`, it also holds back branches with open pull
+requests. Local cleanup does not read review state.
 
 **It will not push, merge, or rebase.** Removing a label whose work is already
 saved is the entire scope.
@@ -125,8 +136,32 @@ Add the marketplace **by repository**, as above. Pasting a direct URL to
 `marketplace.json` downloads only that one file, the plugin folders never
 arrive, and the install fails.
 
-Checking a repository on GitHub needs the `gh` CLI, logged in. Checking a local
-checkout does not.
+Checking a repository on GitHub needs the `gh` CLI, logged in. Local cleanup
+does not use `gh`; its ordinary listing may make the bounded `git ls-remote`
+freshness check described below, while its pre-delete check stays offline.
+
+**Requires Node.js.** The hooks are plain Node scripts with no dependencies
+to install, and `node` does not have to be on your `PATH`. Each hook is
+started by `bin/hook-node`, which tries `$CLAUDE_HOOK_NODE`, then your
+`PATH`, then `~/.local/bin`, `/opt/homebrew/bin`, `/usr/local/bin` and
+`/usr/bin`, and uses the first one it finds.
+
+That list exists because an app launched from the Dock never reads your shell
+profile, so it starts with a bare `PATH` that has none of those directories
+on it. Before 0.3.7 every hook here exited 127 under Codex for that reason,
+and silently, because a failed hook does not interrupt your session.
+
+If your Node is somewhere else, name it:
+
+```
+export CLAUDE_HOOK_NODE=/path/to/node
+```
+
+Name the node program itself, not the directory holding it. When that variable
+is set it is the only interpreter tried, and a value that is not an executable
+file is an error rather than a reason to look elsewhere. Naming an interpreter
+and silently getting a different one hides the mistake, and a directory passes
+an executable check while starting nothing.
 
 ## Configuration
 
