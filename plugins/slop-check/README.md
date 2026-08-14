@@ -113,6 +113,13 @@ own repositories: none scored strong. Deliberately sloppy samples of both kinds
 score strong. Adding nine new soft categories did not move the false-positive
 rate at all.
 
+Splitting the copular contrast into its own category moved one document of the
+41 in this repository from "little" to "some", on a real hit rather than a
+false one. That measurement is worth repeating whenever a category is added,
+because the first version of this change also added a reversed-order contrast
+pattern, and that one carried the contrast category onto 16 of the 41 before it
+was withdrawn.
+
 The checkable problems are worth much more than the stylistic ones. A shipped
 `your-api-key`, percentages that do not add up, or a left-in `oaicite` are
 facts. "Uses the word robust" is an opinion. Those facts are marked hard and

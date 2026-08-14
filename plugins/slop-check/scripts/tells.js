@@ -104,35 +104,46 @@ function countPhrases(haystack, needles) {
 // "Not X, but Y" and "It's not about X. It's about Y." Very common in machine
 // prose, and rare at this density in a human draft.
 //
-// Corrected 2026-08-11. Every pattern here used to lead with "not", so the
-// detector only saw the negation-first order. The author's own rule is written
-// the other way round, "no X, not Y antithesis", and that shape reaches the
-// same construction from the opposite end. Nine drafts of a LinkedIn post ran
-// through this clean, two of which carried a textbook example, because
-// "groups them by what they actually are, not what the campaign is called"
-// puts the negation last and nothing here was looking there.
+// Both patterns here lead with "not", so only the negation-first order is
+// detected. The reversed order, "what they actually are, not what the campaign
+// is called", is a known gap and is deliberately not covered.
+//
+// A reversed pattern was added on 2026-08-11 and withdrawn on 2026-08-14, after
+// review measured what it did to ordinary prose. It carried the antithesis
+// category onto 16 of this repository's 41 markdown documents, from none, and
+// moved four of them from "little" to "some". Every hit was normal writing:
+// ", not the airbag", ", not instruction", ", not a standard tax on every
+// installation".
+//
+// The diagnosis worth keeping is why, because it rules out the obvious repairs.
+// The forward pattern is anchored by its explicit ", but" foil, and that anchor
+// is the whole reason it stays rare. A bare ", not X" has no anchor, so it
+// matches any negated afterthought, and "a comma then a short not-clause" is
+// everyday English rather than a tic. No threshold separates them, because a
+// restrictive appositive and the rhetorical tell are the same shape. Density
+// does not either: CONTRIBUTING.md carries two in 307 words, the same rate as
+// the short draft that prompted the pattern.
+//
+// Covering the reversed order needs an anchor of its own, and finding one is
+// its own change rather than a line in a pull request about house rules. Queue
+// entry 2026-08-14T18-44-05-tells carries it.
 function antithesis(prose) {
   const patterns = [
     /\bnot (just |merely |only )?[^.,;]{3,40}, but\b/gi,
     /\bless [^.,;]{3,30} and more\b/gi,
-    // The reversed order: an affirmative clause, then a comma, then the foil.
-    // Bounded to 40 characters and stopped at sentence punctuation so it reads
-    // one clause rather than swallowing a paragraph.
-    /,\s*not (just |merely |only )?[^.,;!?]{3,40}(?=[.,;!?]|$)/gi,
   ];
   // Distinct spans, not a sum of per-pattern counts. Corrected 2026-08-14.
   //
-  // The forward and reversed patterns read the same construction from opposite
-  // ends, so a sentence carrying it once is matched twice. "The plan is a
-  // rewrite, not just a patch, but a full rebuild" gives the first pattern
-  // "not just a patch, but" and the third ", not just a patch", and the two
-  // matches cover the same words. Summing them returned 2, which is the whole
-  // threshold, so one ordinary sentence raised the reading on its own when the
-  // bar was written to require two separate ones.
+  // Two patterns can read the same construction, and summing their counts
+  // scored it twice, which is the whole threshold, so one sentence raised the
+  // reading on its own when the bar was written to require two separate ones.
+  // "The result is not less noisy and more useful, but simply different" gives
+  // the first pattern "not less noisy and more useful, but" and the second
+  // "less noisy and more", and the second sits inside the first.
   //
-  // Overlapping spans merge transitively, so a construction matched by three
-  // patterns still counts once, and two genuinely separate contrasts in the
-  // same paragraph still count twice.
+  // Overlapping spans merge transitively, so a construction matched by every
+  // pattern still counts once, and two genuinely separate contrasts in the same
+  // paragraph still count twice.
   const spans = [];
   for (const re of patterns) {
     for (const m of prose.matchAll(re)) spans.push([m.index, m.index + m[0].length]);

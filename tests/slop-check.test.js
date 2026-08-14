@@ -327,9 +327,16 @@ const softNames = (t) => checkAll(t).soft.map((s) => s.name);
 check('negation-first order still counts',
   checkAll('It is not merely a report, but a plan. This is not just talk, but action.').soft
     .some((s) => s.name === 'antithesis'), true);
-check('the reversed order is counted too',
+// The reversed order is a known gap, withdrawn 2026-08-14 after review measured
+// it carrying the category onto 16 of this repository's 41 documents. Asserted
+// rather than left unsaid, so that reinstating it without an anchor fails here
+// first. See queue entry 2026-08-14T18-44-05-tells.
+check('the reversed order is not covered, on purpose',
   checkAll('It groups them by what they are, not what the campaign is called. It ranks by spend, not by recency.').soft
-    .some((s) => s.name === 'antithesis'), true);
+    .some((s) => s.name === 'antithesis'), false);
+check('and an ordinary clarifying clause is not a tell',
+  softNames('The check reads the branch tip, not the directory holding it.')
+    .includes('antithesis'), false);
 check('the copular form reports on a single hit',
   softNames("The output isn't a report, it's a build list.").includes('antithesis-copular'), true);
 check('a plain contrast with a comma is not antithesis',
@@ -352,24 +359,23 @@ check('folding the prose does not blind the smart-quote signal',
 check('a bare negative clause is not antithesis',
   softNames('The skill does not touch the warehouse.').includes('antithesis'), false);
 
-// Found by review. The forward and reversed patterns read the same
-// construction from opposite ends, so summing their counts scored one sentence
-// as two and reached a threshold written to require two separate ones.
+// Found by review. Two patterns can read the same construction, and summing
+// their counts scored one sentence as two, reaching a threshold written to
+// require two separate ones. "not less noisy and more useful, but" contains
+// "less noisy and more", so the second match sits inside the first.
 console.log('\none construction counts once, however many patterns match it');
 const antiCount = (t) =>
   (checkAll(t).soft.find((s) => s.name === 'antithesis') || {}).count || 0;
+check('a nested pair of patterns does not reach the two-hit bar on one sentence',
+  softNames('The result is not less noisy and more useful, but simply different.')
+    .includes('antithesis'), false);
 // The count is only reported once the category fires, so the merge is asserted
 // through the threshold: the overlapping sentence plus one separate contrast
 // reads as 2, where summing the patterns read it as 3.
 check('an overlapping construction adds one, not two, to the count',
-  antiCount('The plan is a rewrite, not just a patch, but a full rebuild. It ranks by spend, not by recency.'), 2);
-check('and on its own it does not reach the two-hit bar',
-  softNames('The plan is a rewrite, not just a patch, but a full rebuild of the pipeline.')
-    .includes('antithesis'), false);
+  antiCount('The result is not less noisy and more useful, but simply different. It is not a report, but a plan.'), 2);
 check('two separate constructions still count twice',
   antiCount('It is not merely a report, but a plan. This is not just talk, but action.'), 2);
-check('a forward and a reversed construction in one paragraph count twice',
-  antiCount('It ranks by spend, not by recency. The result is not a list, but a decision.'), 2);
 
 // Found by review. At a threshold of one there is no aggregation to absorb a
 // false positive, so every shape this matches has to be the restatement and
