@@ -48,7 +48,18 @@ function runHook(command, { eventCwd, processCwd, permissionMode = 'default' } =
   const stdout = execFileSync(process.execPath, [HOOK], {
     input: event,
     encoding: 'utf8',
-    cwd: processCwd || __dirname,
+    // NOWHERE rather than __dirname. __dirname is inside this repository, so
+    // the hook read whatever branch the person running the suite happened to
+    // be on, and every case that commits inherited it. On a feature branch the
+    // suite passed; on `main` the protected-branch rule fired first and
+    // `every unattended refusal is actionable and names its own switch` failed,
+    // because the refusal it got was about the branch rather than about the
+    // rule under test. That is a suite whose result depends on the checkout,
+    // and the state it fails in is the one every merge leaves behind.
+    //
+    // The cases that are about branches build their own repository and reach
+    // it with `git -C`, so none of them need this to be a repository at all.
+    cwd: processCwd || NOWHERE,
     env: { ...process.env, HOME: FAKE_HOME },
   }).trim();
   return stdout ? JSON.parse(stdout) : null;
@@ -134,6 +145,31 @@ check('recursive force-delete is put to the user, in the shape PreToolUse reads'
 
 check('a delete inside a quoted bash -c is put to the user', () => {
   assertAsks(runHook('bash -c "rm -rf ~/live"'), 'bash -c "rm -rf ~/live"');
+});
+
+check('the hook is not spawned inside this repository by default', () => {
+  // The default used to be __dirname, which is inside this checkout, so the
+  // guard read the branch the person running the suite was on. Every case that
+  // commits inherited it, the suite passed on a feature branch, and it failed
+  // on `main`, which is the state a merge leaves behind and the state anything
+  // running the suite unattended is most likely to be in.
+  //
+  // A behavioural check cannot catch this on its own: whether the leak matters
+  // depends on which branch the checkout is on, so on a feature branch it would
+  // pass against the broken default too. This asserts the arrangement instead.
+  const repoRoot = path.join(__dirname, '..');
+  assert.ok(
+    !NOWHERE.startsWith(repoRoot),
+    `the default spawn directory ${NOWHERE} is inside the repository, so the `
+    + 'checkout can decide what the guard says'
+  );
+
+  const source = fs.readFileSync(__filename, 'utf8');
+  assert.ok(
+    /cwd: processCwd \|\| NOWHERE/.test(source),
+    'runHook no longer defaults to NOWHERE, so a case that does not name its '
+    + 'own directory is judged against whatever branch this checkout is on'
+  );
 });
 
 check('committing on a protected branch is denied', () => {
