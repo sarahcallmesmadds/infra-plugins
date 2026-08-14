@@ -12,7 +12,9 @@ Everything here rests on positive evidence that the work is already in the defau
 
 The first is a count: how many commits a branch has that are not already in the default branch. Zero means the work is safely there and the branch is just a label. One or more means those commits exist in exactly one place, and deleting the branch destroys them.
 
-The second exists because that count cannot see a squash merge, which rewrites a branch into one new commit and leaves the originals unreachable. In a repository that squash-merges every pull request the count never reaches zero, so a merged pull request into the default branch counts too, and on a local checkout so does a comparison showing the branch adds nothing the default branch does not already have.
+The second exists because that count cannot see a squash merge, which rewrites a branch into one new commit and leaves the originals unreachable. On a local checkout, a comparison showing the branch adds nothing to the default branch counts. On `--repo`, where no local trees exist, a merged pull request into the default branch counts instead.
+
+Local cleanup deliberately avoids the GitHub API. It does not read merged or open pull requests, so it may keep a squash-merged branch that GitHub can prove safe. A normal listing may make one bounded `git ls-remote` freshness check; the pre-delete check is fully local and does not repeat network work per branch. Never upgrade a local Keep result using GitHub evidence yourself.
 
 A branch with neither kind of evidence is kept, whatever its age.
 
@@ -57,12 +59,14 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/cli.js" --repo {owner/name}
 
 Add `--json` when sweeping several repositories, so you can total them up, and render the summary yourself. For a single repository the text output is already in the right shape, so show it as it comes rather than rewriting it.
 
-**When you render the summary yourself, carry the caveats with it.** The JSON has two boolean keys beside `safe` and `keep`, and both mean the answer below them is less certain than it looks:
+**When you render the summary yourself, carry the caveats with it.** The JSON has four boolean keys beside `safe` and `keep`, and each means the answer below it is less certain than it looks:
 
 - `remoteStale` — the comparison ran against a ref the remote has moved past, named in `remoteStaleRef`. Anything merged since then is sitting in "Keep" with a commit count, which is exactly what unmerged work looks like. Say so, and say to run `git fetch` and try again.
 - `mergeCheckUnavailable` — this git is too old to spot a squash merge, so every squash-merged branch is in "Keep".
+- `mergedPRCheckUnavailable` — on `--repo`, merged pull requests could not be read, so a squash-merged branch may be in "Keep". Say to check `gh auth status`.
+- `openPRCheckUnavailable` — on `--repo`, every branch is held in "Keep" because the API has no safe-delete second opinion. Recommend `gh auth status`; never present the result as a normal complete listing.
 
-Printing the counts without these turns a hedged answer into a confident one, which is the one thing this command must never do. The text output prints both as notes on its own; it is only the sweep, where you do the rendering, that can lose them.
+Printing the counts without these turns a hedged answer into a confident one, which is the one thing this command must never do. The text output prints them as notes on its own; it is only the sweep, where you do the rendering, that can lose them.
 
 Across many repositories this takes a few seconds per repository, because working out the commit count is one API call per branch. Say that before starting a sweep of more than about five, so the wait is expected rather than alarming.
 
@@ -189,11 +193,11 @@ If a deleted branch was the last one in a repository besides the default, that i
 
 - **It never deletes a branch with unmerged commits** without the user saying so in a second, explicit sentence.
 - **It never treats "could not compare" as "merged".** A branch whose state cannot be determined is kept, and the reason is shown.
-- **It never touches the default branch, a protected branch, the branch that is checked out, or a branch with an open pull request**, whatever their merge state.
+- **It never touches the default branch, a protected branch, or the branch that is checked out.** On `--repo`, it also never touches a branch with an open pull request. Local cleanup does not read GitHub review state.
 - **It never pushes, merges, or rebases anything.** Deleting a merged label is the entire scope.
 
 ## Failure handling
 
-- If `gh` is not installed or not logged in, say exactly that and stop. Do not fall back to guessing from branch names.
+- For `--repo`, if `gh` is not installed or not logged in, say exactly that and stop. Local cleanup does not require `gh`.
 - If the command exits non-zero, show its message as it came. It is written to be read by the user rather than parsed.
 - If a repository has no branches besides the default, say so in one line rather than printing two empty groups.
