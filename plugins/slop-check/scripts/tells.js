@@ -120,8 +120,30 @@ function antithesis(prose) {
     // one clause rather than swallowing a paragraph.
     /,\s*not (just |merely |only )?[^.,;!?]{3,40}(?=[.,;!?]|$)/gi,
   ];
+  // Distinct spans, not a sum of per-pattern counts. Corrected 2026-08-14.
+  //
+  // The forward and reversed patterns read the same construction from opposite
+  // ends, so a sentence carrying it once is matched twice. "The plan is a
+  // rewrite, not just a patch, but a full rebuild" gives the first pattern
+  // "not just a patch, but" and the third ", not just a patch", and the two
+  // matches cover the same words. Summing them returned 2, which is the whole
+  // threshold, so one ordinary sentence raised the reading on its own when the
+  // bar was written to require two separate ones.
+  //
+  // Overlapping spans merge transitively, so a construction matched by three
+  // patterns still counts once, and two genuinely separate contrasts in the
+  // same paragraph still count twice.
+  const spans = [];
+  for (const re of patterns) {
+    for (const m of prose.matchAll(re)) spans.push([m.index, m.index + m[0].length]);
+  }
+  spans.sort((a, b) => a[0] - b[0]);
   let count = 0;
-  for (const re of patterns) count += (prose.match(re) || []).length;
+  let reach = -1;
+  for (const [start, end] of spans) {
+    if (start >= reach) count += 1;
+    if (end > reach) reach = end;
+  }
   return count;
 }
 
@@ -129,11 +151,31 @@ function antithesis(prose) {
 // detector above because it is unmistakable. Nobody writes this by accident
 // the way they write an incidental ", not Y", so one is worth reporting where
 // the graded version needs two.
+//
+// Which restatements count was narrowed 2026-08-14, after review found the
+// detector reporting on ordinary sentences at its threshold of one. Two ways
+// in, and both came from writing the pronoun and its verb as loosely as
+// possible:
+//
+//   an optional apostrophe let the possessive through, so "wasn't obvious at
+//   first, its cause turned up later" read as a restatement;
+//
+//   a bare "that is" or "this is" opens an independent clause far more often
+//   than it restates the thing just denied, so "isn't empty, that is why the
+//   run stalled" and "wasn't broken by the patch, this is a known flake" both
+//   reported.
+//
+// So the apostrophe is now required where the contracted form is what makes it
+// contrastive, and the spaced form is allowed only for "it" and "they", which
+// is where it genuinely restates. "that's a feature" is kept, because the
+// contraction carries the same force; "that is" and "this is" are not. The two
+// real hits in this repository's own documents, both "is not X, it is Y", are
+// unaffected.
 function copularAntithesis(prose) {
   const patterns = [
     /\bit'?s not (about )?[^.]{3,50}\. it'?s\b/gi,
-    /\b(is|are|was|were)n'?t (just |merely |only )?[^.,;]{3,50}, (it|they|that|this)'?(s| is| are)\b/gi,
-    /\b(is|are) not (just |merely |only )?[^.,;]{3,50}, (it|they|that|this) (is|are)\b/gi,
+    /\b(is|are|was|were)n'?t (just |merely |only )?[^.,;]{3,50}, (?:it(?:'s| is)|they(?:'re| are)|that's)\b/gi,
+    /\b(is|are) not (just |merely |only )?[^.,;]{3,50}, (?:it|they) (?:is|are)\b/gi,
   ];
   let count = 0;
   for (const re of patterns) count += (prose.match(re) || []).length;

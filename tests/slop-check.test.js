@@ -352,5 +352,49 @@ check('folding the prose does not blind the smart-quote signal',
 check('a bare negative clause is not antithesis',
   softNames('The skill does not touch the warehouse.').includes('antithesis'), false);
 
+// Found by review. The forward and reversed patterns read the same
+// construction from opposite ends, so summing their counts scored one sentence
+// as two and reached a threshold written to require two separate ones.
+console.log('\none construction counts once, however many patterns match it');
+const antiCount = (t) =>
+  (checkAll(t).soft.find((s) => s.name === 'antithesis') || {}).count || 0;
+// The count is only reported once the category fires, so the merge is asserted
+// through the threshold: the overlapping sentence plus one separate contrast
+// reads as 2, where summing the patterns read it as 3.
+check('an overlapping construction adds one, not two, to the count',
+  antiCount('The plan is a rewrite, not just a patch, but a full rebuild. It ranks by spend, not by recency.'), 2);
+check('and on its own it does not reach the two-hit bar',
+  softNames('The plan is a rewrite, not just a patch, but a full rebuild of the pipeline.')
+    .includes('antithesis'), false);
+check('two separate constructions still count twice',
+  antiCount('It is not merely a report, but a plan. This is not just talk, but action.'), 2);
+check('a forward and a reversed construction in one paragraph count twice',
+  antiCount('It ranks by spend, not by recency. The result is not a list, but a decision.'), 2);
+
+// Found by review. At a threshold of one there is no aggregation to absorb a
+// false positive, so every shape this matches has to be the restatement and
+// not merely a clause that follows a negation.
+console.log('\nthe copular form is the restatement, not anything after a negation');
+check('a possessive is not a restatement',
+  softNames("The failure wasn't obvious at first, its cause turned up later.")
+    .includes('antithesis-copular'), false);
+check('"that is" opening a clause is not a restatement',
+  softNames("The queue isn't empty, that is why the run stalled.")
+    .includes('antithesis-copular'), false);
+check('"this is" opening a clause is not a restatement',
+  softNames("The build wasn't broken by the patch, this is a known flake.")
+    .includes('antithesis-copular'), false);
+check('nor is "that is" on the uncontracted pattern',
+  softNames('The answer is not simple, that is clear enough.')
+    .includes('antithesis-copular'), false);
+check('nor is "this is" on the uncontracted pattern',
+  softNames('The runs are not identical, this is expected.')
+    .includes('antithesis-copular'), false);
+check('but the contracted "that\'s" is kept',
+  softNames("It isn't a bug, that's a feature.").includes('antithesis-copular'), true);
+check('and "is not X, it is Y" still reports, which this repository writes',
+  softNames('It is not context that might be useful, it is the thing the work has to comply with.')
+    .includes('antithesis-copular'), true);
+
 console.log(`\n${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);
