@@ -260,6 +260,13 @@ function checkHard(text, config = {}) {
       violations.push({
         name: 'house-rule',
         count: hits.length,
+        // The bare list as well as the sentence. `what` is prose written for
+        // the hook, which says it once in a message it composes itself, and a
+        // reader that wants only the phrases had to unpick them back out of
+        // that sentence. The report needs them without the framing, because
+        // the framing is the part that is wrong when the document under review
+        // belongs to somebody else.
+        phrases: hits,
         what: `phrases ruled out for this author (${hits.join(', ')})`,
       });
     }

@@ -451,5 +451,50 @@ const emDashMessage = runStyleHook(`a sentence ${EM} with a dash in it`);
 check('the em dash remedy names the fault once',
   emDashMessage.split('em dash').length - 1 <= 2, true);
 
+// --- whose document is this ---------------------------------------------------
+//
+// Found by review. checkAll delegates to checkHard, so the house-rule check
+// runs over whatever the skill was pointed at, and the skill is pointed at
+// other people's documents as often as at your own. A document somebody else
+// wrote came back reading "Hard rules: BROKEN. phrases ruled out for this
+// author", which is the tier with no defence, about an author who never agreed
+// to the rule. The detection is kept and the framing is fixed, so these check
+// the report's wording and the enforcement paths separately.
+
+console.log('\nhouse rules are reported as yours, not as the document being broken');
+
+const CLI = path.join(__dirname, '..', 'plugins', 'slop-check', 'scripts', 'cli.js');
+
+function runCli(args, text) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'slop-cli-'));
+  return execFileSync(process.execPath, [CLI, 'check', ...args], {
+    input: text,
+    encoding: 'utf8',
+    env: { ...process.env, HOME: dir },
+  });
+}
+
+const BANNED = 'This approach is worth stealing. The team shipped it last week and it held up well.';
+const report = runCli(['--prose'], BANNED);
+
+check('a banned phrase does not make the hard tier read BROKEN',
+  report.includes('Hard rules: BROKEN'), false);
+check('it is reported under a heading that says whose rule it is',
+  report.includes('Your own standing phrase rules'), true);
+check('and names the phrase without the sentence about "this author"',
+  report.includes('\n  worth stealing'), true);
+check('the report no longer calls the writer "this author"',
+  report.includes('phrases ruled out for this author'), false);
+
+// A genuine hard rule is still a hard rule, so the tier did not lose its teeth.
+const withEmDash = runCli(['--prose'], `a sentence ${EM} with a dash in it, written out at length`);
+check('a real hard rule still reads BROKEN',
+  withEmDash.includes('Hard rules: BROKEN'), true);
+
+// The two enforcement paths are unchanged, and they are the ones where the
+// author genuinely is the person whose rules these are.
+check('--hard-only still reports the house rule',
+  runCli(['--hard-only'], BANNED).includes('phrases ruled out for this author'), true);
+
 console.log(`\n${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

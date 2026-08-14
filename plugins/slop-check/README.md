@@ -41,14 +41,22 @@ or send back to whoever produced it.
 ### Prose
 
 Hard, and worth fixing every time: em dashes, runs of sentences under four
-words, generation artefacts left in the text (`oaicite`, `[cite: 1]`, "As
-of my last update"), and house rules. Artefacts are proof rather than taste.
-Nobody types `oaicite` by hand.
+words, and generation artefacts left in the text (`oaicite`, `[cite: 1]`, "As
+of my last update"). Artefacts are proof rather than taste. Nobody types
+`oaicite` by hand.
 
 House rules are phrases the author has ruled out for her own writing, and one
 hit is the whole threshold. A phrase you have decided never to use does not
 become a violation on the second use, which is what separates these from the
 graded signals below. Add your own with `bannedPhrases` in the config.
+
+They are checked alongside the hard rules and reported apart from them, because
+the two answer to different people. The Stop hook and `--hard-only` are looking
+at writing that is yours, so a hit there is an instruction you gave being
+ignored. A report is as often about a document somebody else sent you, and
+telling them their draft is broken by a rule they never agreed to is the report
+being wrong rather than the draft. So a report lists them under a heading that
+names them as yours and counts them towards no verdict.
 
 Softer, and only meaningful together: filler, machine vocabulary, avoiding
 plain "is" and "has" in favour of "serves as", participles bolted onto sentence
