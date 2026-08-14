@@ -1543,9 +1543,40 @@ check('the pre-delete check reads the branch tip when a tag has the same name', 
   );
 });
 
+checkWriteTree('a same-named tag cannot make unique branch work look merged', () => {
+  withStubbedGh(
+    [
+      '  *commits/*/pulls*) : ;;',
+      '  *state=open*) : ;;',
+      '  *) exit 1 ;;',
+    ].join('\n'),
+    ({ repo, g }) => {
+      g('tag', 'feature', 'main');
+      const branch = collect.localBranches(repo, { only: 'feature' })
+        .branches.find((b) => b.name === 'feature');
+      assert.ok(branch.aheadBy > 0, 'the branch really carries unique work');
+      assert.strictEqual(branch.merged, false,
+        'merge-tree must compare refs/heads/feature, never refs/tags/feature');
+      assert.strictEqual(classify([branch], {}, Date.now()).safe.length, 0,
+        'the destructive force-delete path must not receive this branch');
+    }
+  );
+});
+
+check('the old-git ancestry fallback uses fully qualified branch refs', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'scripts', 'collect.js'), 'utf8');
+  assert.ok(src.includes('`${defRef}..${branchRef}`'),
+    'rev-list must not resolve a same-named tag in place of either branch');
+  assert.ok(src.includes("target.ref, branchRef"),
+    'merge-tree must receive the fully qualified branch ref too');
+  assert.ok(!src.includes('`${def}..${name}`'),
+    'the ambiguous fallback must not remain alongside the fixed path');
+});
+
 check('a commit GitHub does not know is an answered empty lookup', () => {
   withStubbedGh(
     [
+      '  *commits/*/pulls*--jq*--include*) exit 2 ;;',
       '  *commits/*/pulls*--include*) printf \'HTTP/2 404 Not Found\\n\'; exit 1 ;;',
       '  *commits/*/pulls*) exit 1 ;;',
       '  *state=open*) : ;;',

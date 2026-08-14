@@ -216,10 +216,14 @@ function localBranches(cwd, opts) {
   if (def) def = def.replace(/^origin\//, '');
   if (!def) {
     for (const candidate of ['main', 'master']) {
-      if (tryRun('git', ['-C', cwd, 'rev-parse', '--verify', candidate])) { def = candidate; break; }
+      if (tryRun('git', ['-C', cwd, 'rev-parse', '--verify', `refs/heads/${candidate}`])) {
+        def = candidate;
+        break;
+      }
     }
   }
   if (!def) return { defaultBranch: null, branches: [] };
+  const defRef = `refs/heads/${def}`;
 
   // `unreadable` rather than an empty list, because a caller asking about one
   // branch cannot otherwise tell "looked, and it is gone" from "could not
@@ -242,7 +246,7 @@ function localBranches(cwd, opts) {
   // `heads/feature` when a tag named `feature` exists, which makes an `only`
   // check fail to find the branch at all.
   const FIELDS = '%(refname:lstrip=2)%09%(committerdate:iso-strict)%09%(objectname)';
-  let listed = tryRun('git', ['-C', cwd, 'for-each-ref', `--format=${FIELDS}%09%(ahead-behind:${def})`, 'refs/heads/']);
+  let listed = tryRun('git', ['-C', cwd, 'for-each-ref', `--format=${FIELDS}%09%(ahead-behind:${defRef})`, 'refs/heads/']);
   const listedHasAhead = listed !== null;
   if (!listedHasAhead) {
     listed = tryRun('git', ['-C', cwd, 'for-each-ref', `--format=${FIELDS}`, 'refs/heads/']);
@@ -254,7 +258,7 @@ function localBranches(cwd, opts) {
   // produces this exact tree adds nothing `def` does not already have. If this
   // cannot be read the comparison is simply not attempted, and every branch
   // falls back to ancestry alone.
-  const defTree = tryRun('git', ['-C', cwd, 'rev-parse', `${def}^{tree}`]);
+  const defTree = tryRun('git', ['-C', cwd, 'rev-parse', `${defRef}^{tree}`]);
 
   // And the remote-tracking copy, when it exists and has moved on from the
   // local one. `def` above is a local branch name, stripped of its `origin/`
@@ -267,12 +271,13 @@ function localBranches(cwd, opts) {
   // somewhere that is not this branch. Skipped when the two agree, which is the
   // steady state, so it costs nothing in the common case.
   const remoteDef = `origin/${def}`;
-  const remoteDefSha = tryRun('git', ['-C', cwd, 'rev-parse', remoteDef]);
-  const defSha = tryRun('git', ['-C', cwd, 'rev-parse', def]);
-  const remoteDefTree = tryRun('git', ['-C', cwd, 'rev-parse', `${remoteDef}^{tree}`]);
-  const compareAgainst = [{ ref: def, tree: defTree, label: 'already in the default branch' }];
+  const remoteDefRef = `refs/remotes/${remoteDef}`;
+  const remoteDefSha = tryRun('git', ['-C', cwd, 'rev-parse', remoteDefRef]);
+  const defSha = tryRun('git', ['-C', cwd, 'rev-parse', defRef]);
+  const remoteDefTree = tryRun('git', ['-C', cwd, 'rev-parse', `${remoteDefRef}^{tree}`]);
+  const compareAgainst = [{ ref: defRef, tree: defTree, label: 'already in the default branch' }];
   if (remoteDefTree && remoteDefTree !== defTree) {
-    compareAgainst.push({ ref: remoteDef, tree: remoteDefTree, label: `already in ${remoteDef}` });
+    compareAgainst.push({ ref: remoteDefRef, tree: remoteDefTree, label: `already in ${remoteDef}` });
   }
 
   const rows = listed.split('\n').filter(Boolean)
@@ -285,7 +290,7 @@ function localBranches(cwd, opts) {
   // Only asked when there is something to compare against. With no readable
   // default tree the comparison cannot run either way, and reporting that as a
   // git version problem would send someone to upgrade a git that is fine.
-  const versionOk = defTree ? supportsWriteTree(cwd, def) : null;
+  const versionOk = defTree ? supportsWriteTree(cwd, defRef) : null;
   const canCompare = !!defTree && versionOk === true;
 
   // Asked for the listing and not for `only`, the re-check that runs immediately
@@ -426,7 +431,8 @@ function localBranches(cwd, opts) {
         // Out of time. Leave aheadBy null so this branch is kept, not offered.
         truncated = true;
       } else {
-        const n = tryRun('git', ['-C', cwd, 'rev-list', '--count', `${def}..${name}`]);
+        const branchRef = `refs/heads/${name}`;
+        const n = tryRun('git', ['-C', cwd, 'rev-list', '--count', `${defRef}..${branchRef}`]);
         if (n !== null && /^\d+$/.test(n)) aheadBy = parseInt(n, 10);
       }
 
@@ -447,7 +453,8 @@ function localBranches(cwd, opts) {
         } else {
           for (const target of compareAgainst) {
             if (!target.tree) continue;
-            const t = tryRun('git', ['-C', cwd, 'merge-tree', '--write-tree', target.ref, name]);
+            const branchRef = `refs/heads/${name}`;
+            const t = tryRun('git', ['-C', cwd, 'merge-tree', '--write-tree', target.ref, branchRef]);
             if (t !== null && t.split('\n')[0] === target.tree) {
               merged = true;
               mergedVia = target.label;
@@ -667,7 +674,7 @@ function mergedPRForCommit(repo, def, sha, opts) {
   if (pulls === null) {
     // A local-only tip is a complete negative answer, not an authentication
     // failure. GitHub answers 404 or 422 when the commit object is unknown.
-    const status = ghStatus(args, callOpts);
+    const status = ghStatus(['api', `repos/${repo}/commits/${sha}/pulls`], callOpts);
     if (status === 404 || status === 422) return { merged: undefined };
     return null;
   }
