@@ -78,12 +78,30 @@ function declaredHooks() {
           const command = hook.command || '';
           const named = command.match(/\/hooks\/([\w.-]+)/);
           if (!named) continue;
+
+          // What the shell executes is the first token. Everything after it is
+          // an argument, and an argument is read rather than executed, so the
+          // permission bit and the shebang belong to the first token alone.
+          // Since 2026-08-12 that token is usually bin/hook-node with the hook
+          // file passed to it, which is the point of the launcher: the file
+          // carrying the shebang becomes one this repository controls.
+          const tokens = command
+            .replace(/"?\$\{CLAUDE_PLUGIN_ROOT\}"?/g, '<ROOT>')
+            .split(/\s+/).filter(Boolean);
+          const first = tokens[0] || '';
+          const inRepo = (t) => (t.startsWith('<ROOT>/')
+            ? path.posix.join(pluginDir, t.slice('<ROOT>/'.length))
+            : null);
+
           found.push({
             manifest,
+            pluginDir,
             file: path.posix.join(pluginDir, 'hooks', named[1]),
-            // `node x.js` reads the file rather than executing it, so the bit
-            // does not matter. Anything else is handed to a shell.
-            viaInterpreter: /^\s*(node|sh|bash|python3?)\b/.test(command),
+            // The file the shell hands to execve. null when the command names a
+            // bare interpreter, `node x.js`, which the host resolves and this
+            // repository has no file for.
+            executed: inRepo(first),
+            viaInterpreter: /^(node|sh|bash|python3?)$/.test(first),
           });
         }
       }
@@ -108,11 +126,17 @@ check('every hook file named by a manifest exists', () => {
   assert.deepStrictEqual(missing, [], `a manifest names a hook that is not there:\n        ${missing.join('\n        ')}`);
 });
 
+// The files a shell is actually asked to execute, deduplicated. One launcher
+// serves every hook in its plugin, so it appears once here rather than once
+// per hook that uses it.
+function executedFiles() {
+  return [...new Set(declaredHooks().filter((h) => h.executed).map((h) => h.executed))];
+}
+
 check('every directly-invoked hook is executable in the git index', () => {
-  const notExecutable = declaredHooks()
-    .filter((h) => !h.viaInterpreter)
-    .filter((h) => indexMode(h.file) !== '100755')
-    .map((h) => `${h.file} is ${indexMode(h.file)}, should be 100755`);
+  const notExecutable = executedFiles()
+    .filter((file) => indexMode(file) !== '100755')
+    .map((file) => `${file} is ${indexMode(file)}, should be 100755`);
 
   assert.deepStrictEqual(notExecutable, [],
     'a hook is run as a shell command but is not executable, so it fails with '
@@ -123,11 +147,10 @@ check('every directly-invoked hook is executable in the git index', () => {
 check('every directly-invoked hook starts with a shebang', () => {
   // The bit without the line is the same failure. The shell would run the file
   // as a shell script, and the first line of JavaScript is not a shell command.
-  const noShebang = declaredHooks()
-    .filter((h) => !h.viaInterpreter)
-    .filter((h) => fs.existsSync(path.join(ROOT, h.file)))
-    .filter((h) => !fs.readFileSync(path.join(ROOT, h.file), 'utf8').startsWith('#!'))
-    .map((h) => h.file);
+  const noShebang = executedFiles()
+    .filter((file) => fs.existsSync(path.join(ROOT, file)))
+    .filter((file) => !fs.readFileSync(path.join(ROOT, file), 'utf8').startsWith('#!'))
+    .map((file) => file);
   assert.deepStrictEqual(noShebang, [], `a directly-invoked hook has no shebang:\n        ${noShebang.join('\n        ')}`);
 });
 
@@ -177,17 +200,111 @@ check('every directly-invoked hook is executable on disk as well as in the index
   // shell asks before it runs the file, which is the whole of what the old
   // check was for, without executing anything.
   const notExecutable = [];
-  for (const hook of declaredHooks().filter((h) => !h.viaInterpreter)) {
-    const full = path.join(ROOT, hook.file);
+  for (const file of executedFiles()) {
+    const full = path.join(ROOT, file);
     if (!fs.existsSync(full)) continue;   // reported by its own check above
     try {
       fs.accessSync(full, fs.constants.X_OK);
     } catch {
-      notExecutable.push(`${hook.file} is not executable on disk`);
+      notExecutable.push(`${file} is not executable on disk`);
     }
   }
   assert.deepStrictEqual(notExecutable, [],
     `the shell would refuse to run a hook this repository declares:\n        ${notExecutable.join('\n        ')}`);
+});
+
+// The PATH a process gets when nothing has read a login shell. macOS hands
+// this to anything launched from the Dock or by launchd, which is every GUI
+// host: Codex, and any other app started outside a terminal.
+const BARE_PATH = '/usr/bin:/bin:/usr/sbin:/sbin';
+
+function shebangInterpreter(file) {
+  const first = fs.readFileSync(path.join(ROOT, file), 'utf8').split('\n')[0];
+  if (!first.startsWith('#!')) return null;
+  const parts = first.slice(2).trim().split(/\s+/);
+  // `#!/usr/bin/env node` names env as the interpreter and node as its
+  // argument, and it is node that has to be found. Every other form names an
+  // absolute path, which needs no search.
+  return parts[0].endsWith('/env') ? parts[1] : parts[0];
+}
+
+function resolvesOnBarePath(interpreter) {
+  if (!interpreter) return true;                       // no shebang: its own check
+  if (interpreter.startsWith('/')) return fs.existsSync(interpreter);
+  try {
+    execFileSync('sh', ['-c', `command -v ${interpreter}`],
+      { env: { PATH: BARE_PATH }, stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+check('every executed hook names an interpreter a GUI-launched host can find', () => {
+  // The bug, on 2026-08-12: every hook here began `#!/usr/bin/env node`, and
+  // node on this machine lives at ~/.local/bin/node, put on PATH by a single
+  // line in ~/.zshrc. Codex is launched from the Dock and so never reads that
+  // file. env could not find node, the shell answered 127, Claude Code
+  // discarded the failure, and twelve of the thirteen declared hooks did
+  // nothing at all in that host for their whole life.
+  //
+  // This is the same shape as the 2026-08-04 permission-bit bug one level
+  // down. That one was "the shell may refuse to run this file"; this one is
+  // "the shell may not find what the file asks to be run by". The check above
+  // it asserts a shebang is present, which was true throughout and never the
+  // question.
+  const unresolvable = executedFiles()
+    .filter((file) => fs.existsSync(path.join(ROOT, file)))
+    .map((file) => ({ file, interpreter: shebangInterpreter(file) }))
+    .filter(({ interpreter }) => !resolvesOnBarePath(interpreter))
+    .map(({ file, interpreter }) => `${file} asks for "${interpreter}"`);
+
+  assert.deepStrictEqual(unresolvable, [],
+    'a hook names an interpreter that is not on the PATH a GUI-launched host gets, '
+    + `so it exits 127 there and the failure is discarded:\n        ${unresolvable.join('\n        ')}\n`
+    + '        Invoke it through bin/hook-node instead of naming node in the shebang.');
+});
+
+check('every JavaScript hook is invoked through the launcher, not directly', () => {
+  // The fix for the above, stated as a rule rather than left to whoever adds
+  // the next hook. A .js file invoked directly is a file whose shebang has to
+  // find node, which is the failure. Through bin/hook-node the shebang is
+  // `#!/bin/sh`, which is on every PATH there has ever been, and the search
+  // for node happens in a file this repository controls.
+  const direct = declaredHooks()
+    .filter((h) => h.file.endsWith('.js'))
+    .filter((h) => h.executed === h.file)
+    .map((h) => `${h.file} is invoked directly by ${h.manifest}`);
+
+  assert.deepStrictEqual(direct, [],
+    'a JavaScript hook is executed directly, so it depends on node being on PATH:\n        '
+    + `${direct.join('\n        ')}\n        Use: "\${CLAUDE_PLUGIN_ROOT}"/bin/hook-node "\${CLAUDE_PLUGIN_ROOT}"/hooks/<file>`);
+});
+
+check('every launcher copy is identical', () => {
+  // Five copies, because plugins install independently and one cannot reach
+  // into another, so a single shared copy at the repository root would be
+  // absent for anyone who installed one plugin. Copies drift, so this is what
+  // stops them.
+  const launchers = executedFiles().filter((file) => file.endsWith('/bin/hook-node'));
+  assert.ok(launchers.length >= 5,
+    `only ${launchers.length} launchers are referenced by a manifest, so the copies have stopped being used`);
+
+  const distinct = new Set(launchers.map((file) => fs.readFileSync(path.join(ROOT, file), 'utf8')));
+  assert.strictEqual(distinct.size, 1,
+    `the launcher copies have drifted apart, ${distinct.size} distinct versions across:\n        ${launchers.join('\n        ')}`);
+});
+
+check('an unfindable interpreter is actually caught', () => {
+  // The assertion above passes on a healthy tree whether it works or not, so
+  // it is exercised against shebangs built to fail and to pass. Nothing in the
+  // repository is touched.
+  assert.strictEqual(resolvesOnBarePath('definitely-not-a-real-interpreter'), false,
+    'an interpreter that exists nowhere was reported as findable, so the check above proves nothing');
+  assert.strictEqual(resolvesOnBarePath('sh'), true,
+    'sh was reported as unfindable, so the check above would fail on a healthy tree');
+  assert.strictEqual(resolvesOnBarePath('/bin/sh'), true,
+    'an absolute interpreter path that exists was reported as unfindable');
 });
 
 check('a hook with no executable bit is actually caught', () => {

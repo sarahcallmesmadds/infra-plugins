@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/hooks/session-start.js"
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/bin/hook-node \"${CLAUDE_PLUGIN_ROOT}\"/hooks/session-start.js"
           }
         ]
       }
@@ -15,7 +15,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/hooks/context-monitor.js"
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/bin/hook-node \"${CLAUDE_PLUGIN_ROOT}\"/hooks/context-monitor.js"
           }
         ]
       }

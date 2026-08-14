@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/hooks/resource-owner-guard.js"
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/bin/hook-node \"${CLAUDE_PLUGIN_ROOT}\"/hooks/resource-owner-guard.js"
           }
         ]
       },
@@ -15,7 +15,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/hooks/bash-guard.js"
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/bin/hook-node \"${CLAUDE_PLUGIN_ROOT}\"/hooks/bash-guard.js"
           }
         ]
       },
@@ -24,7 +24,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/hooks/write-scan.js"
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/bin/hook-node \"${CLAUDE_PLUGIN_ROOT}\"/hooks/write-scan.js"
           }
         ]
       }
@@ -35,7 +35,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/hooks/read-scan.js"
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/bin/hook-node \"${CLAUDE_PLUGIN_ROOT}\"/hooks/read-scan.js"
           }
         ]
       }

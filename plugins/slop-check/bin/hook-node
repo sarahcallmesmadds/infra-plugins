@@ -1,0 +1,41 @@
+#!/bin/sh
+# Run a Node hook without depending on a login shell having been read.
+#
+# The bug, on 2026-08-12: every hook in this repository exited 127 under Codex.
+# A GUI-launched host, Codex started from the Dock and any other app started
+# outside a terminal, never sources ~/.zshrc, so it hands its hooks the bare
+# macOS PATH of /usr/bin:/bin:/usr/sbin:/sbin. On a machine where node was
+# unpacked into ~/.local rather than installed system-wide, `#!/usr/bin/env
+# node` then fails with "env: node: No such file or directory" and the shell
+# answers 127. Claude Code discards a hook failure, so twelve hooks were dead
+# for their whole life in that host while every test passed.
+#
+# The shebang could not fix itself: it names one interpreter path and cannot
+# search. So the search moved here, and hooks.json calls this instead.
+#
+# This file is duplicated in every plugin that ships hooks. Plugins install
+# independently and one cannot reach into another, so a shared copy at the
+# repository root would be absent for anyone who installed a single plugin.
+# tests/hook-executable.test.js asserts the copies stay identical.
+
+# Ordered by how specific the answer is. $CLAUDE_HOOK_NODE first so a machine
+# with node somewhere none of these guess can say where without editing this.
+# PATH second, because a host that did read a login shell already knows best.
+for candidate in \
+  "$CLAUDE_HOOK_NODE" \
+  "$(command -v node 2>/dev/null)" \
+  "$HOME/.local/bin/node" \
+  /opt/homebrew/bin/node \
+  /usr/local/bin/node \
+  /usr/bin/node
+do
+  if [ -n "$candidate" ] && [ -x "$candidate" ]; then
+    exec "$candidate" "$@"
+  fi
+done
+
+# Exit 127 deliberately, matching what the shell says when it cannot find a
+# command, so this reads the same as the failure it replaces. The difference is
+# the line above it, which says what was looked for.
+echo "hook-node: no node interpreter found. Tried \$CLAUDE_HOOK_NODE, PATH, ~/.local/bin/node, /opt/homebrew/bin/node, /usr/local/bin/node, /usr/bin/node." >&2
+exit 127
