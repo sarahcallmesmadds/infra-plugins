@@ -366,6 +366,11 @@ function localBranches(cwd, opts) {
   // the one outcome this release cannot have.
   const ghRepo = deadline === null ? githubRepo(cwd) : null;
   const askGitHub = ghRepo !== null;
+  // A deadline deliberately forbids the network work below, but skipping a
+  // check is not the same as completing it. Determine from repository text
+  // alone whether GitHub evidence may exist so the returned contract stays
+  // honest without spending the caller's time budget on `gh`.
+  const skippedGitHub = deadline !== null && originMayBeGitHub(cwd);
   // `origin/HEAD` is only a cached local record. A normal fetch does not update
   // it after GitHub renames the default branch, so using it as an API filter can
   // return a perfectly readable empty list for the wrong base. GitHub is the
@@ -410,8 +415,9 @@ function localBranches(cwd, opts) {
   // GitHub origin has none, so the tree comparison is the whole of the evidence
   // and nothing is missing.
   const mergedPRCheckUnavailable = askGitHub
-    && (only === null ? mergedBySha === null : singleMerged === null);
-  const openPRCheckUnavailable = askGitHub && openPRs === null;
+    ? (only === null ? mergedBySha === null : singleMerged === null)
+    : skippedGitHub;
+  const openPRCheckUnavailable = askGitHub ? openPRs === null : skippedGitHub;
 
   const branches = rows.map((line) => {
     const [name, date, tipSha, aheadBehind] = line.split('\t');
@@ -476,7 +482,9 @@ function localBranches(cwd, opts) {
         : (singleMerged ? singleMerged.merged : undefined);
       if (aheadBy !== null && aheadBy > 0 && !merged && num !== undefined) {
         merged = true;
-        mergedVia = `merged in #${num}`;
+        mergedVia = githubDef && githubDef !== def
+          ? `merged in #${num} to ${githubDef}`
+          : `merged in #${num}`;
       }
     }
     return {
@@ -485,7 +493,11 @@ function localBranches(cwd, opts) {
       aheadBy,
       merged,
       mergedVia,
-      isDefault: name === def,
+      // A stale origin/HEAD can disagree with GitHub after a default-branch
+      // rename. Protect both names: one is the checkout's comparison target,
+      // and the other is the repository's current default and must never enter
+      // a deletion flow merely because the local symbolic ref is old.
+      isDefault: name === def || (!!githubDef && name === githubDef),
       isCurrent: name === current,
       // Open pull requests, which this path used to hardcode to false because
       // it had no way to ask. It does now, and leaving it false while claiming
@@ -732,6 +744,23 @@ function validGitHubRepo(repo) {
   ));
 }
 
+const conclusiveNonGitHub = (parsed) => parsed
+  && parsed.host.includes('.')
+  && !IS_GITHUB_HOST.test(parsed.host);
+
+// Network-free answer for deadline-bound callers. An unparseable or dotless
+// host may be an SSH alias to GitHub, so uncertainty is reported as a possible
+// GitHub repository and therefore as skipped evidence. Fully qualified
+// non-GitHub hosts and repositories with no origin have nothing to skip.
+function originMayBeGitHub(cwd) {
+  const configured = parseOriginUrl(tryRun('git', ['-C', cwd, 'config', '--get', 'remote.origin.url']));
+  const effective = originRepo(cwd);
+  if ((configured && IS_GITHUB_HOST.test(configured.host))
+      || (effective && IS_GITHUB_HOST.test(effective.host))) return true;
+  if (conclusiveNonGitHub(configured) || conclusiveNonGitHub(effective)) return false;
+  return !!(configured || effective);
+}
+
 // Whether this checkout is on GitHub, and under what name.
 //
 // The URL text alone is not the authority, which is what the first version of
@@ -774,9 +803,6 @@ function githubRepo(cwd) {
   // is only for an unparseable ssh alias whose destination is absent from the
   // repository; asking it here can select a different GitHub remote and attach
   // that repository's pull requests to this checkout.
-  const conclusiveNonGitHub = (parsed) => parsed
-    && parsed.host.includes('.')
-    && !IS_GITHUB_HOST.test(parsed.host);
   if (conclusiveNonGitHub(configured) || conclusiveNonGitHub(effective)) return null;
 
   // No origin at all is a local-only repository. It has no pull requests to
@@ -1017,6 +1043,6 @@ function remoteBranch(repo, name) {
 module.exports = {
   isGitRepo, localBranches, remoteBranches, remoteBranch,
   tryRun, ghJSON, ghLines, toLines,
-  originRepo, githubRepo, validGitHubRepo,
+  originRepo, githubRepo, validGitHubRepo, originMayBeGitHub,
   githubDefaultBranch, mergedPRsBySha, mergedPRForCommit, openPRHeadRefs,
 };

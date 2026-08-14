@@ -276,6 +276,7 @@ check('a deadline already past skips the work that costs, and reports it', () =>
   git('checkout', '-q', 'main');
   git('merge', '-q', '--squash', 'squashed');
   git('commit', '-qm', 'squash squashed');
+  git('remote', 'add', 'origin', 'https://github.com/example/repo.git');
 
   // Both capabilities probed for real rather than read off `git --version`,
   // the same way the write-tree probe further down is. They change what this
@@ -304,6 +305,10 @@ check('a deadline already past skips the work that costs, and reports it', () =>
   // deadline, and a branch that only a skipped call could have cleared must
   // come back uncleared.
   assert.strictEqual(r.truncated, true, 'an expired deadline must be reported, not hidden');
+  assert.strictEqual(r.mergedPRCheckUnavailable, true,
+    'a deadline-skipped merged-PR check must be reported as missing');
+  assert.strictEqual(r.openPRCheckUnavailable, true,
+    'a deadline-skipped open-PR check must be reported as missing');
   assert.strictEqual(by('squashed').merged, false,
     'the tree comparison ran after the deadline had passed');
 
@@ -331,6 +336,12 @@ check('a deadline already past skips the work that costs, and reports it', () =>
   }
 
   // And with time to work, the branch it withheld is found.
+  git('remote', 'remove', 'origin');
+  const localOnly = collect.localBranches(repo, { deadline: Date.now() - 1 });
+  assert.strictEqual(localOnly.mergedPRCheckUnavailable, false,
+    'a local-only repository has no GitHub evidence to skip');
+  assert.strictEqual(localOnly.openPRCheckUnavailable, false,
+    'the deadline caveat must not invent pull requests without an origin');
   const full = collect.localBranches(repo, {});
   assert.strictEqual(full.truncated, false, 'no pressure, no truncation');
   if (hasWriteTree) {
@@ -1595,28 +1606,40 @@ check('a commit GitHub does not know is an answered empty lookup', () => {
 check('GitHub current default overrides a stale or guessed local default for pull requests', () => {
   withStubbedGh(
     [
-      '  *state=closed*) printf \'%s\\n\' "$*" > "$GH_CALLS" ;;',
+      '  *state=closed*) printf \'%s\\t96\\n\' "$MERGED_SHA"; printf \'%s\\n\' "$*" > "$GH_CALLS" ;;',
       '  *state=open*) : ;;',
       '  *) exit 1 ;;',
     ].join('\n'),
-    ({ repo, dir, g }) => {
+    ({ repo, tip, dir, g }) => {
       const calls = path.join(dir, 'calls.log');
       // A fetched origin/HEAD can remain on an old name after GitHub renames
       // the default branch. Its presence must not suppress the API lookup.
+      g('branch', 'old-default', 'main');
+      g('branch', 'release', 'main');
       g('update-ref', 'refs/remotes/origin/old-default', 'refs/heads/main');
       g('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/old-default');
       process.env.GH_CALLS = calls;
       process.env.GH_DEFAULT_BRANCH = 'release';
+      process.env.MERGED_SHA = tip;
       try {
-        collect.localBranches(repo);
+        const result = collect.localBranches(repo);
         const asked = fs.readFileSync(calls, 'utf8');
         assert.ok(asked.includes('base=release'),
           `the API's default branch must be the pull-request base: ${asked}`);
         assert.ok(!asked.includes('base=main'),
           `the local fallback must not silently narrow the API query: ${asked}`);
+        const feature = result.branches.find((b) => b.name === 'feature');
+        assert.strictEqual(feature.mergedVia, 'merged in #96 to release',
+          'mismatched defaults must name where the pull request actually landed');
+        const release = result.branches.find((b) => b.name === 'release');
+        assert.strictEqual(release.isDefault, true,
+          'GitHub current default must remain protected when origin/HEAD is stale');
+        assert.strictEqual(classify([release], {}, Date.now()).safe.length, 0,
+          'the current GitHub default must never enter a deletion flow');
       } finally {
         delete process.env.GH_CALLS;
         delete process.env.GH_DEFAULT_BRANCH;
+        delete process.env.MERGED_SHA;
       }
     }
   );
