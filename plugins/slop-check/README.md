@@ -156,9 +156,11 @@ If your Node is somewhere else, name it:
 export CLAUDE_HOOK_NODE=/path/to/node
 ```
 
-When that variable is set it is the only interpreter tried, and a value that
-does not resolve is an error rather than a reason to look elsewhere. Naming
-an interpreter and silently getting a different one hides the mistake.
+Name the node program itself, not the directory holding it. When that variable
+is set it is the only interpreter tried, and a value that is not an executable
+file is an error rather than a reason to look elsewhere. Naming an interpreter
+and silently getting a different one hides the mistake, and a directory passes
+an executable check while starting nothing.
 
 ## Configuration
 

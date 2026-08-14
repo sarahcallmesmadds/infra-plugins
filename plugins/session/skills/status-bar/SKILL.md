@@ -114,8 +114,15 @@ skill writes everything else and shows the line for approval.
 Run:
 
 ```bash
-"${CLAUDE_PLUGIN_ROOT}"/statusline/install.js
+"${CLAUDE_PLUGIN_ROOT}"/bin/hook-node "${CLAUDE_PLUGIN_ROOT}"/statusline/install.js
 ```
+
+Through `bin/hook-node`, not directly. The installer is a Node script starting
+`#!/usr/bin/env node`, so running it directly needs `node` on `PATH`, and the
+host that most needs this setup is the one where it is not: an app launched
+outside a terminal never reads a shell profile. Running it directly there is
+the same 127 the hooks used to give, which would leave the person who needs the
+resolved path unable to get it.
 
 This writes a small resolver to `~/.claude/statusline.js` and prints the exact
 settings fragment to add.

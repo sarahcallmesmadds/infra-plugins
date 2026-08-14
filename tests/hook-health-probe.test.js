@@ -39,7 +39,7 @@ const { execFileSync, spawnSync } = require('child_process');
 const ROOT = path.join(__dirname, '..');
 const PROBE = path.join(ROOT, 'plugins', 'build-loop', 'hooks', 'hook-health-probe.sh');
 
-const EXPECTED_CHECKS = 23;
+const EXPECTED_CHECKS = 25;
 
 // The probe calls these and nothing else. `sh` is not among them: the kernel
 // reads the shebang and runs /bin/sh by absolute path, so PATH never decides
@@ -303,6 +303,60 @@ check('the probe decides node health through the launcher, not through PATH', ()
     'the probe asks `command -v node` without having asked the launcher first, '
     + 'so a GUI-launched session is reported broken while its hooks run'
   );
+});
+
+check('an interpreter setting pointing at a directory is reported, not accepted', () => {
+  // The 2026-08-14 review. `[ -x path ]` is true for a directory, because a
+  // directory's execute bit is its search bit, so CLAUDE_HOOK_NODE naming the
+  // folder that holds node was taken as node. Run mode then died with "is a
+  // directory" and exit 126, which Claude Code discards, while --which printed
+  // the directory and exited 0. Every hook in all five plugins was dead and
+  // this log said everything was fine, which is this probe's purpose inverted
+  // by a single mistyped setting.
+  const home = sandbox();
+  const r = runProbe(home, {
+    withNode: false,
+    env: { CLAUDE_HOOK_NODE: os.tmpdir() },   // executable, and not a program
+  });
+  assert.strictEqual(r.status, 0, `the probe exited ${r.status}, it must never fail a prompt`);
+  const log = readLog(home);
+  assert.ok(log.includes('MISSING'),
+    'a directory was accepted as the interpreter, so the hooks are dead and the '
+    + `log says nothing. log: ${JSON.stringify(log)}`);
+  assert.ok(log.includes('hook_node=set-unusable'),
+    `the line does not say the override was the cause. log: ${JSON.stringify(log)}`);
+});
+
+check('a failure line names what was searched, and never the override value', () => {
+  // The evidence has to match the question. Health is decided by the launcher,
+  // which looks in six places, so a line reporting only PATH sends somebody to
+  // fix a PATH that was never involved. build-loop/README.md promises this line
+  // names what was searched.
+  //
+  // The override's value is deliberately absent. It is a path on somebody's
+  // machine and this file is written to be pasted into a bug report, which is
+  // the same reason the home directory is masked out of the PATH field.
+  const secret = path.join(sandbox(), 'a-private-looking-path');
+  const home = sandbox();
+  runProbe(home, { withNode: false, env: { CLAUDE_HOOK_NODE: secret } });
+  const withOverride = readLog(home);
+  assert.ok(withOverride.includes('searched=$CLAUDE_HOOK_NODE'),
+    `the line does not name the override as the scope. log: ${JSON.stringify(withOverride)}`);
+  assert.ok(!withOverride.includes(secret),
+    `the override's value was written to the log: ${JSON.stringify(withOverride)}`);
+
+  // With no override the scope is the launcher's whole list, taken from the
+  // launcher itself rather than restated here, so the two cannot drift.
+  const plain = sandbox();
+  runProbe(plain, { withNode: false, env: { CLAUDE_HOOK_NODE: '' } });
+  const line = readLog(plain);
+  assert.ok(/searched=\S*PATH\S*/.test(line),
+    `the line does not name the searched scope. log: ${JSON.stringify(line)}`);
+  assert.ok(line.includes('~/.local/bin/node'),
+    'the searched scope omits the fixed locations the launcher looks in, so the '
+    + `line still implies PATH was the whole question. log: ${JSON.stringify(line)}`);
+  assert.ok(/searched=[^ ]+ /.test(line),
+    `the searched field contains a space and has split the log line: ${JSON.stringify(line)}`);
 });
 
 check('a working environment records nothing', () => {
