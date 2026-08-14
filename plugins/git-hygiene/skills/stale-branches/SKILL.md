@@ -14,7 +14,7 @@ The first is a count: how many commits a branch has that are not already in the 
 
 The second exists because that count cannot see a squash merge, which rewrites a branch into one new commit and leaves the originals unreachable. On a local checkout, a comparison showing the branch adds nothing to the default branch counts. On `--repo`, where no local trees exist, a merged pull request into the default branch counts instead.
 
-Local cleanup deliberately stays offline. It does not read merged or open pull requests, so it may keep a squash-merged branch that GitHub can prove safe. That is the trade-off for a fast pre-delete check whose answer does not change with network conditions. Never upgrade a local Keep result using GitHub evidence yourself.
+Local cleanup deliberately avoids the GitHub API. It does not read merged or open pull requests, so it may keep a squash-merged branch that GitHub can prove safe. A normal listing may make one bounded `git ls-remote` freshness check; the pre-delete check is fully local and does not repeat network work per branch. Never upgrade a local Keep result using GitHub evidence yourself.
 
 A branch with neither kind of evidence is kept, whatever its age.
 
@@ -193,7 +193,7 @@ If a deleted branch was the last one in a repository besides the default, that i
 
 - **It never deletes a branch with unmerged commits** without the user saying so in a second, explicit sentence.
 - **It never treats "could not compare" as "merged".** A branch whose state cannot be determined is kept, and the reason is shown.
-- **It never touches the default branch, a protected branch, or the branch that is checked out.** On `--repo`, it also never touches a branch with an open pull request. Local cleanup does not contact GitHub, so it cannot see review state.
+- **It never touches the default branch, a protected branch, or the branch that is checked out.** On `--repo`, it also never touches a branch with an open pull request. Local cleanup does not read GitHub review state.
 - **It never pushes, merges, or rebases anything.** Deleting a merged label is the entire scope.
 
 ## Failure handling

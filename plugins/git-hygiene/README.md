@@ -72,20 +72,20 @@ recoverable.
 fails for any reason, the branch is kept and the reason is shown. Not knowing is
 never rounded down to zero.
 
-**Local cleanup stays local.** It uses commit reachability and tree comparison,
-then relies on `git branch -d` as a final safeguard. It does not contact GitHub
-or use pull-request state. That makes listing and pre-delete checks fast and
-consistent even when the network is slow or unavailable. The trade-off is
-conservative: a squash merge that local Git cannot prove may remain under Keep
-until you check and remove it yourself.
+**Local cleanup does not use GitHub's API or pull-request state.** It uses commit
+reachability and tree comparison, then relies on `git branch -d` as a final
+safeguard. A normal listing may make one bounded `git ls-remote` call to check
+whether the cached remote branch is stale; the pre-delete check makes no network
+call. The trade-off is conservative: a squash merge that local Git cannot prove
+may remain under Keep until you check and remove it yourself.
 
 `--repo owner/name` is a different environment. It has no local Git objects or
 `git branch -d`, so it uses merged and open pull requests from GitHub and holds
 everything back when that evidence cannot be read.
 
-**It will not touch** the default branch, a protected branch, the branch you
-have checked out, or a branch with an open pull request, whatever their merge
-state.
+**It will not touch** the default branch, a protected branch, or the branch you
+have checked out. On `--repo`, it also holds back branches with open pull
+requests. Local cleanup does not read review state.
 
 **It will not push, merge, or rebase.** Removing a label whose work is already
 saved is the entire scope.
@@ -136,8 +136,9 @@ Add the marketplace **by repository**, as above. Pasting a direct URL to
 `marketplace.json` downloads only that one file, the plugin folders never
 arrive, and the install fails.
 
-Checking a repository on GitHub needs the `gh` CLI, logged in. Checking a local
-checkout does not contact GitHub, whatever its origin URL is.
+Checking a repository on GitHub needs the `gh` CLI, logged in. Local cleanup
+does not use `gh`; its ordinary listing may make the bounded `git ls-remote`
+freshness check described below, while its pre-delete check stays offline.
 
 ## Configuration
 

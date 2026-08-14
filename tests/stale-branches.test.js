@@ -1289,15 +1289,17 @@ check('the remote merged-PR listing and re-check use the same timeout', () => {
     );
   }
 
-  for (const fn of ['remoteBranches', 'remoteBranch']) {
-    const at = src.indexOf(`function ${fn}(`);
-    assert.notStrictEqual(at, -1, `${fn} is gone, so this check is watching nothing`);
-    const body = src.slice(at, src.indexOf('\n}', at));
-    assert.ok(body.includes('openPRHeadRefs('),
-      `${fn} bypasses the shared open-PR lookup and can drift onto another timeout`);
-    assert.ok(!body.includes('pulls?state=open'),
-      `${fn} still carries a private open-PR query beside the shared helper`);
-  }
+  const listingAt = src.indexOf('function remoteBranches(');
+  const listingBody = src.slice(listingAt, src.indexOf('\n}', listingAt));
+  assert.ok(listingBody.includes('openPRHeadRefs('),
+    'the listing must read all open PRs once, not once per branch');
+
+  const verifyAt = src.indexOf('function remoteBranch(');
+  const verifyBody = src.slice(verifyAt, src.indexOf('\n}', verifyAt));
+  assert.ok(verifyBody.includes('mergedPRForCommit('),
+    'the one-branch re-check must use its commit-scoped pull-request query');
+  assert.ok(!verifyBody.includes('openPRHeadRefs('),
+    'the one-branch re-check must not paginate every open PR per deletion');
 });
 
 check('local listing and pre-delete verification never invoke gh', () => {
@@ -1338,6 +1340,43 @@ check('local listing and pre-delete verification never invoke gh', () => {
       'neither local listing nor its pre-delete check may invoke gh');
   } finally {
     process.env.PATH = prevPath;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+check('remote pre-delete reads open state from the one-commit query', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stale-remote-one-pr-'));
+  const bin = path.join(dir, 'bin');
+  const calls = path.join(dir, 'calls');
+  fs.mkdirSync(bin);
+  fs.writeFileSync(path.join(bin, 'gh'), [
+    '#!/bin/sh',
+    'printf \'%s\\n\' "$*" >> "$GH_CALLS"',
+    'case "$*" in',
+    '  *commits/deadbeef/pulls*) printf \'96\\tmain\\tdeadbeef\\topen\\tfalse\\n\' ;;',
+    '  *repos/*/branches/*) echo \'{"sha":"deadbeef","d":"2026-07-01T00:00:00Z"}\' ;;',
+    '  *repos/*/compare/*) echo \'{"a":2}\' ;;',
+    '  *repos/*) echo \'{"default_branch":"main"}\' ;;',
+    '  *) exit 1 ;;',
+    'esac',
+  ].join('\n'));
+  fs.chmodSync(path.join(bin, 'gh'), 0o755);
+
+  const prevPath = process.env.PATH;
+  process.env.PATH = `${bin}${path.delimiter}${prevPath}`;
+  process.env.GH_CALLS = calls;
+  try {
+    const r = collect.remoteBranch('example/repo', 'feature');
+    assert.strictEqual(r.branch.hasOpenPR, true,
+      'the exact branch remains protected when its commit-scoped PR is open');
+    assert.strictEqual(r.openPRCheckUnavailable, false);
+    const asked = fs.readFileSync(calls, 'utf8');
+    assert.ok(/commits\/deadbeef\/pulls/.test(asked), 'the bounded commit query must run');
+    assert.ok(!/pulls\?state=open/.test(asked),
+      `the re-check must not paginate the repository-wide open list: ${asked}`);
+  } finally {
+    process.env.PATH = prevPath;
+    delete process.env.GH_CALLS;
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });

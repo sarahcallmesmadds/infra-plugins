@@ -509,12 +509,9 @@ function mergedPRsBySha(repo, def, opts) {
 // into the default branch did reach the default branch, but it would clear
 // branches the remote listing kept.
 //
-// Returns null for "could not look", and otherwise `{ merged }` where `merged`
-// is undefined for "no such evidence". The caller has to keep those apart: one
-// is an answer and the other is the absence of one.
-//
-// Merged evidence only. Open pull requests come from `openPRHeadRefs`, matched
-// on the branch name.
+// Returns null for "could not look", and otherwise `{ merged, hasOpenPR }`
+// where `merged` is undefined for "no such evidence". The caller has to keep
+// those apart: one is an answer and the other is the absence of one.
 function mergedPRForCommit(repo, def, sha, opts) {
   // The same budget the listing's lookup gets, deliberately.
   //
@@ -526,29 +523,34 @@ function mergedPRForCommit(repo, def, sha, opts) {
   // a clock rather than as a missing query, and it would have been the harder
   // one to diagnose because both code paths are correct.
   const args = ['api', `repos/${repo}/commits/${sha}/pulls`, '--paginate',
-    '--jq', '.[] | "\\(.number)\\t\\(.base.ref)\\t\\(.head.sha)\\t\\(.merged_at != null)"'];
+    '--jq', '.[] | "\\(.number)\\t\\(.base.ref)\\t\\(.head.sha)\\t\\(.state)\\t\\(.merged_at != null)"'];
   const callOpts = Object.assign({ timeout: MERGED_PR_TIMEOUT_MS }, opts);
   const pulls = ghLines(args, callOpts);
   if (pulls === null) {
     // An unknown commit is a complete negative answer, not an authentication
     // failure. GitHub answers 404 or 422 when it has no such object.
     const status = ghStatus(['api', `repos/${repo}/commits/${sha}/pulls`], callOpts);
-    if (status === 404 || status === 422) return { merged: undefined };
+    if (status === 404 || status === 422) return { merged: undefined, hasOpenPR: false };
     return null;
   }
 
-  const numbers = pulls.map((l) => l.split('\t')).filter((r) => r.length === 4)
-    .filter((r) => r[3] === 'true' && r[1] === def && r[2] === sha)
+  const rows = pulls.map((l) => l.split('\t')).filter((r) => r.length === 5);
+  const numbers = rows
+    .filter((r) => r[4] === 'true' && r[1] === def && r[2] === sha)
     .map((r) => parseInt(r[0], 10))
     .filter((n) => !Number.isNaN(n));
-  return { merged: numbers.length ? Math.min(...numbers) : undefined };
+  return {
+    merged: numbers.length ? Math.min(...numbers) : undefined,
+    hasOpenPR: rows.some((r) => r[3] === 'open' && r[2] === sha),
+  };
 }
 
 // Branch names with an open pull request. Null when the list could not be read,
 // which the caller treats as "every branch might have one" rather than "none
 // do": a branch whose review is still running must not be offered for deletion
 // because the list behind that protection failed to load.
-// Called from the remote listing and re-check with the same budget.
+// Used by the remote listing, where one repository-wide read is the efficient
+// shape. The one-branch re-check uses its commit-scoped query instead.
 // Open pull requests are few compared with closed ones, so this rarely needs
 // it, but "rarely" is what makes a timeout here a bug somebody hits once and
 // cannot reproduce.
@@ -677,7 +679,7 @@ function remoteBranches(repo) {
 // scans and twenty paginations. The listing needs the whole picture; this does
 // not.
 //
-// Five calls, fixed, whatever the size of the repository. The merge evidence
+// Four calls, fixed, whatever the size of the repository. The pull-request evidence
 // comes from `commits/{sha}/pulls`, which asks the question directly: which
 // pull requests have this exact commit as their head. That is the same pair of
 // conditions the listing applies, merged and into the default branch, asked of
@@ -707,9 +709,10 @@ function remoteBranch(repo, name) {
     if (cmp && typeof cmp.a === 'number') aheadBy = cmp.a;
   }
 
-  // Merge evidence is keyed on this exact commit; open-review evidence is
-  // keyed on the branch name. Keeping those questions in their shared helpers
-  // makes the listing and re-check use the same semantics and timeout budgets.
+  // Merge and open-review evidence come from one commit-scoped query. Reusing
+  // the repository-wide open-PR listing here would paginate the whole list once
+  // per branch being deleted, defeating the bounded re-check this function
+  // exists to provide.
   //
   // GitHub documents this endpoint as returning "the merged pull request that
   // introduced the commit", and, "if the commit is not present in the default
@@ -737,9 +740,8 @@ function remoteBranch(repo, name) {
   // reason: an unpaginated page cap would truncate evidence and produce a
   // different answer from the listing rather than the same one.
   const mergedPR = mergedPRForCommit(repo, def, head.sha);
-  const openPRs = openPRHeadRefs(repo);
   const mergedNum = mergedPR === null ? undefined : mergedPR.merged;
-  const hasOpenPR = openPRs === null ? true : openPRs.has(name);
+  const hasOpenPR = mergedPR === null ? true : mergedPR.hasOpenPR;
 
   return {
     defaultBranch: def,
@@ -759,11 +761,11 @@ function remoteBranch(repo, name) {
       // keep reason exists to prevent. Added on the listing paths in the round
       // before this one and missed here, so the fix and the hole it left
       // shipped in the same commit.
-      openPRUnknown: openPRs === null,
+      openPRUnknown: mergedPR === null,
       remote: true,
     },
     remote: true,
-    openPRCheckUnavailable: openPRs === null,
+    openPRCheckUnavailable: mergedPR === null,
     mergedPRCheckUnavailable: mergedPR === null,
   };
 }
