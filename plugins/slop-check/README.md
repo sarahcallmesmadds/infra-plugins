@@ -45,6 +45,19 @@ words, and generation artefacts left in the text (`oaicite`, `[cite: 1]`, "As
 of my last update"). Artefacts are proof rather than taste. Nobody types
 `oaicite` by hand.
 
+House rules are phrases the author has ruled out for her own writing, and one
+hit is the whole threshold. A phrase you have decided never to use does not
+become a violation on the second use, which is what separates these from the
+graded signals below. Add your own with `bannedPhrases` in the config.
+
+They are checked alongside the hard rules and reported apart from them, because
+the two answer to different people. The Stop hook and `--hard-only` are looking
+at writing that is yours, so a hit there is an instruction you gave being
+ignored. A report is as often about a document somebody else sent you, and
+telling them their draft is broken by a rule they never agreed to is the report
+being wrong rather than the draft. So a report lists them under a heading that
+names them as yours and counts them towards no verdict.
+
 Softer, and only meaningful together: filler, machine vocabulary, avoiding
 plain "is" and "has" in favour of "serves as", participles bolted onto sentence
 ends, claims sourced to nobody, hedging with no position, "not X but Y"
@@ -107,6 +120,13 @@ Measured against 68 real documents and 26 real source files from the author's
 own repositories: none scored strong. Deliberately sloppy samples of both kinds
 score strong. Adding nine new soft categories did not move the false-positive
 rate at all.
+
+Splitting the copular contrast into its own category moved one document of the
+41 in this repository from "little" to "some", on a real hit rather than a
+false one. That measurement is worth repeating whenever a category is added,
+because the first version of this change also added a reversed-order contrast
+pattern, and that one carried the contrast category onto 16 of the 41 before it
+was withdrawn.
 
 The checkable problems are worth much more than the stylistic ones. A shipped
 `your-api-key`, percentages that do not add up, or a left-in `oaicite` are
@@ -172,12 +192,20 @@ a time, so setting one does not reset the others.
 {
   "allowEmDash": false,
   "choppyRunLimit": 3,
-  "enforce": true
+  "enforce": true,
+  "houseRules": true,
+  "bannedPhrases": []
 }
 ```
 
 Set `enforce` to false to keep the skill and turn the hook off, for when you
 are deliberately drafting something that needs the forbidden shapes.
+
+`bannedPhrases` is added to the built-in house rules rather than replacing
+them, so adding one phrase later cannot quietly drop the rest. Matching is on
+lowercased text by substring, so keep each entry to the shortest distinctive
+form. Set `houseRules` to false to turn that check off on its own and leave the
+other hard rules running.
 
 ## What this is not
 

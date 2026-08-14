@@ -32,6 +32,38 @@ const VOCABULARY = [
   'actionable insights', 'unlock',
 ];
 
+// Phrases the author has ruled out for her own writing. These are not machine
+// tells and they are not a matter of taste, they are a standing instruction, so
+// they are HARD and one hit is enough. Everything else in this file is graded
+// on aggregate; this list is not.
+//
+// Matching is by substring on lowercased text, same as the soft lists, so keep
+// each entry to the shortest distinctive form.
+//
+// Added 2026-08-11 after four consecutive drafts of a LinkedIn post shipped
+// with "worth stealing" in them and the tool reported all four clean. Her
+// ruling was "absolutely not okay to say to me or to say as me ever", which is
+// a different class of thing from "delve" and is why it does not live in
+// VOCABULARY.
+// Only the steal framing, rule 12, and only the phrasings that are always an
+// invitation. Everything here has to survive being read by somebody discussing
+// the topic rather than using the phrase, because one hit blocks a whole reply
+// and there is no aggregation to absorb a false positive.
+//
+// Rule 13, telling the reader about their own business, was tried here and
+// removed. "you already know" matched this repository's own README, in
+// "assumes you already know the failure modes", which is a sentence nobody
+// would object to. A bare "steal it" went the same way, since "somebody could
+// steal it" discusses theft rather than inviting it. The general shape needs
+// tone, and tone is not a substring, so rule 13 stays uncovered rather than
+// half covered by something that blocks ordinary sentences.
+const HOUSE_RULES = [
+  'worth stealing',
+  'go steal',
+  'steal this',
+  'stealable',
+];
+
 // Replacing plain "is" and "has" with something that sounds weightier. One of
 // the most reliable tells, and one almost nobody edits out.
 const COPULA_AVOIDANCE = [
@@ -75,6 +107,7 @@ const FILLER = [
   'in today’s world', "in today's world", 'in the world of', 'when it comes to',
   'at the end of the day', 'the key is', 'navigate the complexities',
   'in the realm of', 'in an era where', 'more than ever',
+  "here's the thing", 'here’s the thing',
 ];
 
 // Forced energy, usually at the top or bottom of a piece.
@@ -113,4 +146,5 @@ module.exports = {
   FAKE_ENTHUSIASM,
   MELODRAMA,
   TOOL_ARTEFACTS,
+  HOUSE_RULES,
 };

@@ -11,6 +11,11 @@ const DEFAULTS = {
   // The two hard rules. Both enforced by the Stop hook.
   allowEmDash: false,
   choppyRunLimit: 3,
+  // Phrases ruled out for this author, enforced the same way. The built-in
+  // list is in patterns.js as HOUSE_RULES; anything here is added to it.
+  // Set houseRules to false to turn the whole check off.
+  houseRules: true,
+  bannedPhrases: [],
   // Turn the hook off without uninstalling, when drafting something that
   // genuinely needs the forbidden shapes.
   enforce: true,

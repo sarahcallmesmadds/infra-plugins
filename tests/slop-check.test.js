@@ -9,7 +9,10 @@
 'use strict';
 
 const assert = require('assert');
+const fs = require('fs');
+const os = require('os');
 const path = require('path');
+const { execFileSync } = require('child_process');
 
 const base = path.join(__dirname, '..', 'plugins', 'slop-check', 'scripts');
 const { checkHard, checkAll } = require(path.join(base, 'tells.js'));
@@ -271,6 +274,227 @@ console.log('\nconfig loading');
 
   fs.rmSync(sandbox, { recursive: true, force: true });
 }
+
+console.log('\nhouse rules are hard, one hit is enough');
+check('a banned steal phrase blocks',
+  checkHard('This one is worth stealing.').ok, false);
+check('go steal it blocks',
+  checkHard('go steal it!!').ok, false);
+check('the finding names the phrase it caught',
+  checkHard('This one is worth stealing.').violations.some((v) => v.what.includes('worth stealing')), true);
+check('an ordinary sentence about theft is not caught',
+  checkHard('The report covers retail theft in the northeast.').ok, true);
+check('discussing theft rather than inviting it is not caught',
+  checkHard('Somebody could steal it from the shared folder.').ok, true);
+check('being told what you already know is not a hard rule',
+  checkHard('This assumes you already know the failure modes.').ok, true);
+
+// Found by review rather than by use: the first version of this list matched
+// two of the repository's own shipped documents. A hard rule blocks a whole
+// reply on one hit, so anything that fires on ordinary writing is a bug, and
+// the repository is the nearest supply of ordinary writing.
+{
+  const docs = [
+    path.join(__dirname, '..', 'README.md'),
+    path.join(__dirname, '..', 'plugins', 'slop-check', 'README.md'),
+    path.join(__dirname, '..', 'plugins', 'guardrails', 'skills', 'undo-possible', 'SKILL.md'),
+  ];
+  const fsMod = require('fs');
+  const offenders = docs
+    .filter((f) => fsMod.existsSync(f))
+    .filter((f) => checkHard(fsMod.readFileSync(f, 'utf8')).violations
+      .some((v) => v.name === 'house-rule'))
+    .map((f) => path.basename(path.dirname(f)) + '/' + path.basename(f));
+  check(`no shipped document trips a house rule${offenders.length ? ` (${offenders.join(', ')})` : ''}`,
+    offenders.length, 0);
+}
+
+console.log('\na banned phrase cannot hide behind a smart quote');
+check('the straight apostrophe form is caught',
+  checkHard("here's the thing, it works", { bannedPhrases: ["here's the thing"] }).ok, false);
+check('the curly apostrophe form is caught by a straight-quoted rule',
+  checkHard('here’s the thing, it works', { bannedPhrases: ["here's the thing"] }).ok, false);
+check('and a curly-quoted rule catches the straight form',
+  checkHard("here's the thing, it works", { bannedPhrases: ['here’s the thing'] }).ok, false);
+check('houseRules false turns the check off',
+  checkHard('This one is worth stealing.', { houseRules: false }).ok, true);
+check('a configured phrase is added to the built-in list',
+  checkHard('we should circle back on this', { bannedPhrases: ['circle back'] }).ok, false);
+check('configuring one phrase does not drop the built-in ones',
+  checkHard('This one is worth stealing.', { bannedPhrases: ['circle back'] }).ok, false);
+check('a non-array bannedPhrases is ignored rather than crashing',
+  checkHard('a clean sentence with nothing wrong in it', { bannedPhrases: 'circle back' }).ok, true);
+
+console.log('\nantithesis is caught in both word orders');
+const softNames = (t) => checkAll(t).soft.map((s) => s.name);
+check('negation-first order still counts',
+  checkAll('It is not merely a report, but a plan. This is not just talk, but action.').soft
+    .some((s) => s.name === 'antithesis'), true);
+// The reversed order is a known gap, withdrawn 2026-08-14 after review measured
+// it carrying the category onto 16 of this repository's 41 documents. Asserted
+// rather than left unsaid, so that reinstating it without an anchor fails here
+// first. See queue entry 2026-08-14T18-44-05-tells.
+check('the reversed order is not covered, on purpose',
+  checkAll('It groups them by what they are, not what the campaign is called. It ranks by spend, not by recency.').soft
+    .some((s) => s.name === 'antithesis'), false);
+check('and an ordinary clarifying clause is not a tell',
+  softNames('The check reads the branch tip, not the directory holding it.')
+    .includes('antithesis'), false);
+check('the copular form reports on a single hit',
+  softNames("The output isn't a report, it's a build list.").includes('antithesis-copular'), true);
+check('a plain contrast with a comma is not antithesis',
+  softNames('She reviewed the draft on Tuesday, then sent it on Wednesday.').includes('antithesis'), false);
+
+// Found by review. Every soft detector spells the apostrophe as `'?`, which
+// matches a straight quote or nothing and never a curly one, so the same
+// sentence pasted out of a post scored clean. Text arriving with smart quotes
+// is the normal case for this tool, not the edge.
+check('the copular form is caught with curly apostrophes too',
+  softNames('The output isn’t a report, it’s a build list.').includes('antithesis-copular'), true);
+check('and reads identically to the straight-quoted sentence',
+  JSON.stringify(softNames("The output isn't a report, it's a build list.")),
+  JSON.stringify(softNames('The output isn’t a report, it’s a build list.')));
+check('a curly-quoted filler phrase is caught by the straight-quoted entry',
+  softNames("It’s important to note that this is in today’s world of work.").includes('filler'), true);
+check('folding the prose does not blind the smart-quote signal',
+  softNames('One ‘a’ two ‘b’ three “c” four “d” five ‘e’ six ‘f’ in a sentence of prose.')
+    .includes('typographic-quotes-throughout'), true);
+check('a bare negative clause is not antithesis',
+  softNames('The skill does not touch the warehouse.').includes('antithesis'), false);
+
+// Found by review. Two patterns can read the same construction, and summing
+// their counts scored one sentence as two, reaching a threshold written to
+// require two separate ones. "not less noisy and more useful, but" contains
+// "less noisy and more", so the second match sits inside the first.
+console.log('\none construction counts once, however many patterns match it');
+const antiCount = (t) =>
+  (checkAll(t).soft.find((s) => s.name === 'antithesis') || {}).count || 0;
+check('a nested pair of patterns does not reach the two-hit bar on one sentence',
+  softNames('The result is not less noisy and more useful, but simply different.')
+    .includes('antithesis'), false);
+// The count is only reported once the category fires, so the merge is asserted
+// through the threshold: the overlapping sentence plus one separate contrast
+// reads as 2, where summing the patterns read it as 3.
+check('an overlapping construction adds one, not two, to the count',
+  antiCount('The result is not less noisy and more useful, but simply different. It is not a report, but a plan.'), 2);
+check('two separate constructions still count twice',
+  antiCount('It is not merely a report, but a plan. This is not just talk, but action.'), 2);
+
+// Found by review. At a threshold of one there is no aggregation to absorb a
+// false positive, so every shape this matches has to be the restatement and
+// not merely a clause that follows a negation.
+console.log('\nthe copular form is the restatement, not anything after a negation');
+check('a possessive is not a restatement',
+  softNames("The failure wasn't obvious at first, its cause turned up later.")
+    .includes('antithesis-copular'), false);
+check('"that is" opening a clause is not a restatement',
+  softNames("The queue isn't empty, that is why the run stalled.")
+    .includes('antithesis-copular'), false);
+check('"this is" opening a clause is not a restatement',
+  softNames("The build wasn't broken by the patch, this is a known flake.")
+    .includes('antithesis-copular'), false);
+check('nor is "that is" on the uncontracted pattern',
+  softNames('The answer is not simple, that is clear enough.')
+    .includes('antithesis-copular'), false);
+check('nor is "this is" on the uncontracted pattern',
+  softNames('The runs are not identical, this is expected.')
+    .includes('antithesis-copular'), false);
+check('but the contracted "that\'s" is kept',
+  softNames("It isn't a bug, that's a feature.").includes('antithesis-copular'), true);
+check('and "is not X, it is Y" still reports, which this repository writes',
+  softNames('It is not context that might be useful, it is the thing the work has to comply with.')
+    .includes('antithesis-copular'), true);
+
+// --- the message the Stop hook actually sends back ---------------------------
+//
+// Found by review. remedyFor interpolated the house-rule violation's `what`
+// into its own parenthetical, and `what` is already a whole sentence that the
+// opening line prints. The writer was handed "phrases ruled out for this
+// author (worth stealing)" twice in one message, the second time nested inside
+// brackets. Asserted against the bytes the hook writes rather than against
+// remedyFor, because the doubling was only visible once both halves were
+// joined, which is the same reason bash-guard.test.js spawns its hook.
+
+console.log('\nthe rewrite instruction the Stop hook sends back');
+
+const STYLE_HOOK = path.join(__dirname, '..', 'plugins', 'slop-check', 'hooks', 'style-lint.js');
+
+// A transcript holding one assistant turn, which is what the hook walks back to.
+function runStyleHook(assistantText) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'slop-style-'));
+  const transcript = path.join(dir, 'transcript.jsonl');
+  fs.writeFileSync(transcript, JSON.stringify({
+    type: 'assistant',
+    message: { content: [{ type: 'text', text: assistantText }] },
+  }) + '\n');
+  const stdout = execFileSync(process.execPath, [STYLE_HOOK], {
+    input: JSON.stringify({ transcript_path: transcript, stop_hook_active: false }),
+    encoding: 'utf8',
+    env: { ...process.env, HOME: dir },
+  });
+  return stdout.trim() ? JSON.parse(stdout).reason : '';
+}
+
+const houseRuleMessage = runStyleHook('This one is worth stealing.');
+
+check('a banned phrase is blocked at all',
+  houseRuleMessage.includes('phrases ruled out for this author'), true);
+check('and the phrase itself is named once, not twice',
+  houseRuleMessage.split('worth stealing').length - 1, 1);
+check('the remedy carries no nested parenthetical',
+  /ruled out \(phrases ruled out/.test(houseRuleMessage), false);
+check('and still says what to do about it',
+  houseRuleMessage.includes('Say the thing plainly instead'), true);
+
+// The other remedies never restated `what`, which is the shape this now matches.
+const emDashMessage = runStyleHook(`a sentence ${EM} with a dash in it`);
+check('the em dash remedy names the fault once',
+  emDashMessage.split('em dash').length - 1 <= 2, true);
+
+// --- whose document is this ---------------------------------------------------
+//
+// Found by review. checkAll delegates to checkHard, so the house-rule check
+// runs over whatever the skill was pointed at, and the skill is pointed at
+// other people's documents as often as at your own. A document somebody else
+// wrote came back reading "Hard rules: BROKEN. phrases ruled out for this
+// author", which is the tier with no defence, about an author who never agreed
+// to the rule. The detection is kept and the framing is fixed, so these check
+// the report's wording and the enforcement paths separately.
+
+console.log('\nhouse rules are reported as yours, not as the document being broken');
+
+const CLI = path.join(__dirname, '..', 'plugins', 'slop-check', 'scripts', 'cli.js');
+
+function runCli(args, text) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'slop-cli-'));
+  return execFileSync(process.execPath, [CLI, 'check', ...args], {
+    input: text,
+    encoding: 'utf8',
+    env: { ...process.env, HOME: dir },
+  });
+}
+
+const BANNED = 'This approach is worth stealing. The team shipped it last week and it held up well.';
+const report = runCli(['--prose'], BANNED);
+
+check('a banned phrase does not make the hard tier read BROKEN',
+  report.includes('Hard rules: BROKEN'), false);
+check('it is reported under a heading that says whose rule it is',
+  report.includes('Your own standing phrase rules'), true);
+check('and names the phrase without the sentence about "this author"',
+  report.includes('\n  worth stealing'), true);
+check('the report no longer calls the writer "this author"',
+  report.includes('phrases ruled out for this author'), false);
+
+// A genuine hard rule is still a hard rule, so the tier did not lose its teeth.
+const withEmDash = runCli(['--prose'], `a sentence ${EM} with a dash in it, written out at length`);
+check('a real hard rule still reads BROKEN',
+  withEmDash.includes('Hard rules: BROKEN'), true);
+
+// The two enforcement paths are unchanged, and they are the ones where the
+// author genuinely is the person whose rules these are.
+check('--hard-only still reports the house rule',
+  runCli(['--hard-only'], BANNED).includes('phrases ruled out for this author'), true);
 
 console.log(`\n${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

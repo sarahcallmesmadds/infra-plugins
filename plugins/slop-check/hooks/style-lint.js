@@ -34,6 +34,19 @@ function remedyFor(violations) {
   if (names.has('tool-artefact')) {
     parts.push('Delete the leftover generation artefacts. They are not prose and should never have been in the output.');
   }
+  if (names.has('house-rule')) {
+    // No parenthetical naming the phrase. The caller below already opens with
+    // every violation's `what`, and this one's `what` is itself the sentence
+    // "phrases ruled out for this author (worth stealing)". Interpolating it
+    // again nested that whole sentence inside these brackets, so the writer was
+    // handed the same wording twice in one message, the second time inside its
+    // own parentheses. The other three remedies say what to do and leave the
+    // naming to the opening sentence, which is the shape that reads.
+    parts.push(
+      'Remove the phrase this author has ruled out, named above. '
+      + 'Say the thing plainly instead. This is a standing instruction rather than a style preference, so rephrasing around it is the fix, not softening it.'
+    );
+  }
   return parts.join(' ');
 }
 

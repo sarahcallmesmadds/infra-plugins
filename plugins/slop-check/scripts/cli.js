@@ -31,11 +31,36 @@ async function readStdin() {
 function formatReport(result) {
   const lines = [];
 
-  if (result.hard.length === 0) {
+  // House rules are reported apart from the hard rules, and said differently.
+  //
+  // Found by review. checkAll delegates to checkHard, so this half runs over
+  // whatever the skill was pointed at, and the skill is pointed at other
+  // people's documents as often as at your own. A pull request somebody sent
+  // you came back reading "Hard rules: BROKEN. phrases ruled out for this
+  // author", which is the tier that has no defence, about an author who never
+  // agreed to the rule and cannot be expected to know it.
+  //
+  // The detection stays, because running this over your own draft is exactly
+  // when you want it, and suppressing it here would take that away to fix a
+  // sentence. Only the framing changes: named as yours, kept out of the
+  // verdict tier, and printed as the bare phrases rather than through a
+  // sentence that names the wrong person.
+  const houseRules = result.hard.filter((v) => v.name === 'house-rule');
+  const hard = result.hard.filter((v) => v.name !== 'house-rule');
+
+  if (hard.length === 0) {
     lines.push('Hard rules: clean. No em dashes, no runs of very short sentences.');
   } else {
     lines.push('Hard rules: BROKEN.');
-    for (const v of result.hard) lines.push(`  ${v.what}`);
+    for (const v of hard) lines.push(`  ${v.what}`);
+  }
+
+  if (houseRules.length) {
+    lines.push('');
+    lines.push('Your own standing phrase rules, which count only if this is your draft:');
+    for (const v of houseRules) {
+      lines.push(`  ${(v.phrases || []).join(', ')}`);
+    }
   }
 
   lines.push('');

@@ -30,7 +30,17 @@ which is why one command handles a LinkedIn draft and a pull request equally.
 
 **Prose.** Hard rules first: em dashes, runs of very short sentences, and
 generation artefacts left in the text (`oaicite`, `[cite: 1]`, "As of my last
-update"). Artefacts are proof rather than taste, so one is enough. Then the
+update"). Artefacts are proof rather than taste, so one is enough.
+
+House rules are phrases the author has ruled out for her own writing, extended
+with `bannedPhrases` in the config, and they sit beside the hard rules rather
+than inside them. Where the writing is hers, in the Stop hook and in
+`--hard-only`, a hit is a standing instruction that was broken, never a
+stylistic suggestion, and the fix is to say the thing plainly rather than to
+soften the banned phrase. In a report, which is as often about a document
+somebody else wrote, they are listed under a heading that says whose rules they
+are and counted against nothing. A rule the writer never agreed to is not a
+fault in their draft. Then the
 softer habits: filler, machine vocabulary, avoiding plain "is" and "has",
 participles bolted onto sentence ends, claims sourced to nobody, hedging with
 no position, antithesis, lists of three, forced enthusiasm, melodrama, and
