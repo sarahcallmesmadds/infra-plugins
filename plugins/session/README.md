@@ -282,6 +282,44 @@ missing document in a surviving directory was deleted or renamed. A missing
 directory means the project moved or its volume is not mounted, and nothing here
 can tell those apart, so it does not guess.
 
+### Two sessions wrapping at once
+
+The record is written under a lock, held for the read and the write together.
+
+It has to be. The index was read, changed in memory and written back in four
+places, and the write renamed a temporary file over the real one. That rename is
+atomic and does stop a reader seeing half a file, so it looked like enough. It
+covers one writer, not two: session B reads the index before session A renames,
+then B renames its own copy over A's entry and A's handoff is unlisted. Forty
+concurrent records kept 15 to 18 of them, varying run to run. On the machine this
+was found on, 13 of 47 real handoffs had no index entry, so `/pickup` could not
+find them by name.
+
+Every change to the index goes through one gate that takes the lock, reads and
+writes. Not four locked call sites: a list of guarded call sites has to be
+extended by whoever adds the next kind of change, and the one that gets missed is
+the bug coming back.
+
+Three things this leaves visible.
+
+A `.index.lock` directory appears in `~/.planning/handoffs/` while a write is in
+flight. The listings filter on the `HANDOFF-` prefix, so it is never mistaken for
+a handoff.
+
+A lock abandoned by a session that died is taken over after 30 seconds, and says
+so on stderr, because it means somebody's write was interrupted.
+
+If the lock cannot be taken within five seconds, the write still goes ahead
+without it and says so on stderr, naming what may have been lost. Going ahead is
+deliberate: losing an index entry degrades `/pickup` to the guessed locations, and
+failing the wrap to protect it would cost the handoff itself, which is the thing
+worth keeping. Saying so is equally deliberate, because a skip path quieter than
+the pass path is indistinguishable from success.
+
+A directory that cannot hold a lock at all, usually one that is not writable, is a
+different case and stays quiet. The index write is about to fail there too, and
+`indexWritten: false` already reports that properly.
+
 ## Constraints that outlive the session that set them
 
 A handoff records what happened. It also has to record what is still binding,

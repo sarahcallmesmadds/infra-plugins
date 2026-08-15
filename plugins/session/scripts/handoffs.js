@@ -19,11 +19,20 @@ const os = require('os');
 const path = require('path');
 
 const config = require('./config');
+const { withIndexLock } = require('./index-lock');
 
 const DEFAULT_STALE_DAYS = 30;
 
 function handoffRoot(home = os.homedir()) {
   return path.join(home, '.planning', 'handoffs');
+}
+
+// The lock covering every read-then-write of the index.
+//
+// Next to the file it protects, so two homes lock independently and the tests
+// can drive contention inside a throwaway one.
+function indexLockPath(home = os.homedir()) {
+  return path.join(handoffRoot(home), '.index.lock');
 }
 
 function archiveRoot(home = os.homedir()) {
@@ -131,11 +140,18 @@ function readIndex(home = os.homedir()) {
 // deliberate: an entry pointing at a file that was never written costs nothing,
 // because every read verifies existence, whereas an entry that was never
 // written costs the whole lookup.
+//
+// The read and the write are one locked region. Separately they were the bug
+// that unlisted 13 of 47 handoffs: two sessions wrapping at once both read the
+// index, both added their own entry, and the second rename discarded the
+// first. See `index-lock.js` for why the atomic rename in `writeIndex` did not
+// already cover this.
 function recordHandoff({ slug, target, kind, home = os.homedir(), now = Date.now() }) {
   if (!slug || !target) return null;
-  const handoffs = readIndex(home);
-  handoffs[slugify(slug)] = { path: target, kind: kind || 'project', recorded_at: new Date(now).toISOString() };
-  return writeIndex(handoffs, home);
+  return mutateIndex(home, (handoffs, save) => {
+    handoffs[slugify(slug)] = { path: target, kind: kind || 'project', recorded_at: new Date(now).toISOString() };
+    return save(handoffs) ? handoffs : null;
+  });
 }
 
 // Write the index the only way it is ever written: to a temporary file, then
@@ -148,7 +164,12 @@ function recordHandoff({ slug, target, kind, home = os.homedir(), now = Date.now
 //
 // Shared by every writer here so that a new one cannot be added with a plain
 // `writeFileSync`, which is how the guarantee would quietly be lost.
-function writeIndex(handoffs, home = os.homedir()) {
+//
+// Named `Unlocked` because on its own it is not safe to call. It covers one
+// writer and says nothing about two, which is the whole of the bug that
+// `index-lock.js` exists for. `mutateIndex` below is the only thing that calls
+// it, and a second call site would be the defect rather than a use.
+function writeIndexUnlocked(handoffs, home = os.homedir()) {
   try {
     fs.mkdirSync(handoffRoot(home), { recursive: true });
     const file = indexPath(home);
@@ -161,6 +182,31 @@ function writeIndex(handoffs, home = os.homedir()) {
     // It must never take the wrap down, since the handoff itself is the point.
     return null;
   }
+}
+
+// The one way the index is ever changed.
+//
+// `change` is handed the current map and a `save`, and whatever it returns is
+// returned to the caller. The lock, the read and the write all live here, so a
+// new kind of change cannot be added that takes the lock and forgets to read
+// inside it, or reads inside it and writes outside.
+//
+// A gate rather than four guarded call sites, and that distinction is the whole
+// reason this function exists. The first version of this fix locked each of the
+// four mutations separately and left `writeIndex` exported, which reads as the
+// guarantee while leaving the next mutation free to route around it without
+// deleting anything. That is the shape recorded against PR #55: a list of
+// guarded call sites has to be extended by whoever adds the next option, and
+// the fourth way in is the one that gets missed.
+//
+// `save` returns whether the write reached the disk, because
+// `writeIndexUnlocked` swallows its errors and reporting a change that never
+// landed is the other thing this plugin keeps catching in itself.
+function mutateIndex(home, change) {
+  return withIndexLock(indexLockPath(home), () => {
+    const save = (handoffs) => writeIndexUnlocked(handoffs, home) !== null;
+    return change(readIndex(home), save);
+  }).value;
 }
 
 // Drop one entry by slug, without touching the handoff it names.
@@ -178,18 +224,23 @@ function forgetHandoff(slug, home = os.homedir()) {
   const key = slugify(slug);
   if (!key) return { slug: key, removed: false, reason: 'empty slug' };
 
-  const handoffs = readIndex(home);
-  const entry = handoffs[key];
-  if (!entry) return { slug: key, removed: false, reason: 'not in the index' };
+  // Locked for the same reason as `recordHandoff`, and with a sharper failure:
+  // unlocked, a forget that lands between another session's read and write is
+  // undone by that write, so the entry the user was told was dropped is still
+  // there.
+  return mutateIndex(home, (handoffs, save) => {
+    const entry = handoffs[key];
+    if (!entry) return { slug: key, removed: false, reason: 'not in the index' };
 
-  let fileStillThere = false;
-  try { fileStillThere = !!entry.path && fs.existsSync(entry.path); } catch (_) { /* treat as gone */ }
+    let fileStillThere = false;
+    try { fileStillThere = !!entry.path && fs.existsSync(entry.path); } catch (_) { /* treat as gone */ }
 
-  delete handoffs[key];
-  if (writeIndex(handoffs, home) === null) {
-    return { slug: key, removed: false, reason: 'the index could not be written', entry };
-  }
-  return { slug: key, removed: true, entry, fileStillThere };
+    delete handoffs[key];
+    if (!save(handoffs)) {
+      return { slug: key, removed: false, reason: 'the index could not be written', entry };
+    }
+    return { slug: key, removed: true, entry, fileStillThere };
+  });
 }
 
 // Drop every entry whose file is not there any more.
@@ -236,29 +287,36 @@ function entryState(entry) {
 }
 
 function pruneIndex({ home = os.homedir(), dryRun = false } = {}) {
-  const handoffs = readIndex(home);
-  const dropped = [];
-  const unreachable = [];
-  const kept = {};
+  // Locked, and the write here replaces the whole map rather than one key, so
+  // unlocked it discards every entry another session recorded since the read.
+  // That makes this the most destructive of the four sites, not the least.
+  //
+  // Re-entrant: `archiveStale` calls this from inside the same lock, and both
+  // halves of that sweep have to be one region anyway.
+  return mutateIndex(home, (handoffs, save) => {
+    const dropped = [];
+    const unreachable = [];
+    const kept = {};
 
-  for (const [key, entry] of Object.entries(handoffs)) {
-    const state = entryState(entry);
-    if (state === 'gone') {
-      dropped.push({ slug: key, path: entry && entry.path });
-      continue;
+    for (const [key, entry] of Object.entries(handoffs)) {
+      const state = entryState(entry);
+      if (state === 'gone') {
+        dropped.push({ slug: key, path: entry && entry.path });
+        continue;
+      }
+      kept[key] = entry;
+      if (state === 'unreachable') unreachable.push({ slug: key, path: entry.path });
     }
-    kept[key] = entry;
-    if (state === 'unreachable') unreachable.push({ slug: key, path: entry.path });
-  }
 
-  // Whether the write succeeded, so the caller can say what happened rather
-  // than what was attempted. `writeIndex` swallows its errors on purpose, and
-  // reporting a drop that never reached the disk is the exact shape of bug
-  // this plugin keeps finding in itself.
-  let written = true;
-  if (dropped.length && !dryRun) written = writeIndex(kept, home) !== null;
+    // Whether the write succeeded, so the caller can say what happened rather
+    // than what was attempted. `writeIndex` swallows its errors on purpose, and
+    // reporting a drop that never reached the disk is the exact shape of bug
+    // this plugin keeps finding in itself.
+    let written = true;
+    if (dropped.length && !dryRun) written = save(kept);
 
-  return { dropped, unreachable, written };
+    return { dropped, unreachable, written };
+  });
 }
 
 function slugify(text) {
@@ -412,20 +470,31 @@ function archiveStale({ days = DEFAULT_STALE_DAYS, home = os.homedir(), now = Da
   // would rewrite. Only the write is conditional now.
   const repointed = [];
   let repointWritten = true;
-  if (relocations.length) {
-    const handoffs = readIndex(home);
-    let touched = false;
-    for (const [key, entry] of Object.entries(handoffs)) {
-      const hit = entry && relocations.find((r) => r.from === entry.path);
-      if (!hit) continue;
-      handoffs[key] = { ...entry, path: hit.to, kind: 'archived' };
-      repointed.push({ slug: key, from: hit.from, to: hit.to });
-      touched = true;
-    }
-    if (touched && !dryRun) repointWritten = writeIndex(handoffs, home) !== null;
-  }
 
-  const { dropped, unreachable, written } = pruneIndex({ home, dryRun });
+  // The repoint and the prune are one locked region, not two.
+  //
+  // They were two separate read-then-write pairs, so another session could
+  // record a handoff between them and have it discarded by the prune's write.
+  // Locking each half on its own would leave that window exactly where it was,
+  // which is why the lock is taken here rather than inside the two blocks.
+  // `pruneIndex` takes the same lock and re-enters it.
+  const { dropped, unreachable, written } = mutateIndex(home, (handoffs, save) => {
+    if (relocations.length) {
+      let touched = false;
+      for (const [key, entry] of Object.entries(handoffs)) {
+        const hit = entry && relocations.find((r) => r.from === entry.path);
+        if (!hit) continue;
+        handoffs[key] = { ...entry, path: hit.to, kind: 'archived' };
+        repointed.push({ slug: key, from: hit.from, to: hit.to });
+        touched = true;
+      }
+      if (touched && !dryRun) repointWritten = save(handoffs);
+    }
+
+    // Re-enters the gate on this process, which reads the index again so the
+    // prune sees the repoint above rather than the map from before it.
+    return pruneIndex({ home, dryRun });
+  });
 
   return {
     moved,
@@ -802,9 +871,17 @@ module.exports = {
   carriedConstraints,
   handoffRoot,
   archiveRoot,
+  indexLockPath,
   indexPath,
   readIndex,
-  writeIndex,
+  // `writeIndex` is deliberately not exported. It was, and an exported raw
+  // writer is a way to change the index without the lock, which is the bug this
+  // module was changed to close. Anything that needs to change the index uses
+  // `mutateIndex`, which cannot be called without holding the lock, because
+  // taking it is the first thing it does. Nothing outside this file ever called
+  // the raw writer, so removing it from the contract costs nothing today and
+  // stops the next caller being written.
+  mutateIndex,
   recordHandoff,
   forgetHandoff,
   pruneIndex,
