@@ -347,6 +347,14 @@ Nothing on disk separates "not written yet" from "written and then deleted", so
 the same ten minutes apply to both. That is the cost, and it is small: a dead
 entry survives ten minutes longer, against a live handoff being lost.
 
+A note stamped slightly ahead of the reading clock counts as young, rather than
+failing the test for being in the future. Two processes rarely agree to the
+millisecond, and the notes most likely to sit ahead are the newest ones, so
+rejecting them dropped exactly the wrap that was still being written. Past the
+window it stops being ordinary disagreement and starts being a clock that is
+wrong, and a note that cannot say when it was written does not get to be
+unprunable forever on the strength of it.
+
 The sweep also used to move documents into `archived/` before taking the lock,
 so between the move and the repoint the index named a path nothing was at, and
 another session pruning in that gap was entitled to drop the entry. Moving,

@@ -345,10 +345,33 @@ function recentlyRecorded(entry, now = Date.now()) {
   if (!stamp) return false;
   const at = Date.parse(stamp);
   if (Number.isNaN(at)) return false;
-  // A stamp from the future is a clock that disagrees rather than a young
-  // entry, and treating it as young would make it unprunable for as long as the
-  // clocks differ. Only the window behind now counts.
-  return at <= now && now - at < PENDING_MS;
+  // A stamp a little ahead of this clock is clamped to now. A stamp wildly
+  // ahead is not trusted at all.
+  //
+  // It used to be rejected outright, on the reasoning that a future stamp is a
+  // clock that disagrees rather than a young entry, and that treating it as
+  // young would leave the entry unprunable for as long as the clocks differ.
+  // That failed at the worst possible moment: the stamps most likely to sit
+  // ahead are the newest ones, so the entry it dropped was a wrap that had just
+  // recorded and was still being written, which is the case this window exists
+  // for. Devin round 3 on PR #111.
+  //
+  // Clamping alone does not fix it, which the check for this found. Clamping to
+  // `now` on every read makes a far-future stamp look freshly recorded every
+  // time it is read, so it is spared not for the window but until real time
+  // catches up to it, which for a badly wrong clock is never in any useful
+  // sense. That is the property the old reasoning was protecting, and it was
+  // right to protect it.
+  //
+  // So both, split at the window itself. Inside it, a stamp ahead of this clock
+  // is ordinary skew between two processes and the entry is young. Beyond it,
+  // the clock is wrong rather than early, and an entry that cannot be trusted to
+  // say when it was written does not get to be permanently unprunable on the
+  // strength of it. The cost is that a machine more than ten minutes ahead of
+  // itself loses this protection, and a machine in that state has larger
+  // problems than a swept index entry.
+  if (at > now + PENDING_MS) return false;
+  return now - Math.min(at, now) < PENDING_MS;
 }
 
 function pruneIndex({ home = os.homedir(), dryRun = false } = {}) {
@@ -974,6 +997,12 @@ module.exports = {
   indexLockPath,
   indexPath,
   readIndex,
+  // Exported because `staleRecord` already hands its result to callers, so the
+  // states are part of this module's surface rather than an internal detail,
+  // and because the window is a documented behaviour that a check has to be
+  // able to name.
+  entryState,
+  PENDING_MS,
   // `writeIndex` is deliberately not exported. It was, and an exported raw
   // writer is a way to change the index without the lock, which is the bug this
   // module was changed to close. Anything that needs to change the index uses

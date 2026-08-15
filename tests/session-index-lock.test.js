@@ -632,6 +632,62 @@ check('an entry that is merely old is still pruned', () => {
     'an entry whose document never appeared is dropped once it is no longer plausibly in flight');
 });
 
+check('a wrap whose stamp is ahead of this clock is still spared', () => {
+  // Devin round 3 on PR #111. Future stamps were rejected outright, so a clock
+  // that had shifted, or a second machine writing the same home, made the newest
+  // entries fail the freshness test. The entry it dropped was a wrap that had
+  // just recorded and was still being written, which is the case the window
+  // exists for.
+  const home = tmpHome();
+  const root = path.join(home, '.planning', 'handoffs');
+  fs.mkdirSync(path.join(home, 'code', 'skewed'), { recursive: true });
+  handoffs.recordHandoff({ slug: 'skewed', target: path.join(home, 'code', 'skewed', 'HANDOFF.md'), kind: 'project', home });
+
+  const index = JSON.parse(fs.readFileSync(path.join(root, 'index.json'), 'utf8'));
+  index.handoffs.skewed.recorded_at = new Date(Date.now() + 60 * 1000).toISOString(); // a minute ahead
+  fs.writeFileSync(path.join(root, 'index.json'), JSON.stringify(index, null, 2));
+
+  const out = handoffs.pruneIndex({ home });
+  assert.deepStrictEqual(out.dropped, [],
+    'a stamp ahead of this clock is the newest kind of entry, not the oldest');
+  assert.deepStrictEqual(out.pending.map((p) => p.slug), ['skewed']);
+});
+
+check('a stamp wildly ahead does not become permanently unprunable', () => {
+  // The property the old reasoning was protecting, kept, and the reason the fix
+  // is not clamping alone. Clamping to now on every read makes a far-future
+  // stamp look freshly recorded every single time, so it would be spared until
+  // real time caught up to it rather than for the window. This check is what
+  // found that, after the clamp had already been written.
+  const home = tmpHome();
+  const root = path.join(home, '.planning', 'handoffs');
+  fs.mkdirSync(path.join(home, 'code', 'wayoff'), { recursive: true });
+  handoffs.recordHandoff({ slug: 'wayoff', target: path.join(home, 'code', 'wayoff', 'HANDOFF.md'), kind: 'project', home });
+
+  const index = JSON.parse(fs.readFileSync(path.join(root, 'index.json'), 'utf8'));
+  index.handoffs.wayoff.recorded_at = new Date(Date.now() + 365 * 86400000).toISOString();
+  fs.writeFileSync(path.join(root, 'index.json'), JSON.stringify(index, null, 2));
+
+  const out = handoffs.pruneIndex({ home });
+  assert.deepStrictEqual(out.dropped.map((d) => d.slug), ['wayoff'],
+    'a year ahead is a wrong clock rather than an early one, and an entry that cannot say when '
+    + 'it was written does not get to be unprunable forever on the strength of it');
+});
+
+check('the line between ordinary skew and a wrong clock is the window itself', () => {
+  const home = tmpHome();
+  const entry = (msAhead) => ({
+    path: path.join(home, 'nothing-here.md'),
+    recorded_at: new Date(Date.now() + msAhead).toISOString(),
+  });
+  fs.mkdirSync(home, { recursive: true });
+
+  assert.strictEqual(handoffs.entryState(entry(60 * 1000)), 'pending',
+    'a minute ahead is two processes disagreeing, and the entry is young');
+  assert.strictEqual(handoffs.entryState(entry(handoffs.PENDING_MS * 2)), 'gone',
+    'well past the window is a clock that is wrong, and it is not trusted');
+});
+
 check('an entry with no timestamp is still prunable', () => {
   // Missing evidence is not evidence. An index written before the field existed
   // would otherwise become unprunable forever.
