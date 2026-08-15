@@ -203,23 +203,31 @@ function release(lock) {
 // point. Refusing to write after a five second wait would fail the wrap to
 // protect an index that is a convenience.
 //
-// But an unprotected write must not be silent about it. A skip path quieter
-// than the pass path is the shape this repository keeps catching in itself: a
-// check that could not run reads exactly like a check that passed. So 'busy'
-// says so on stderr, because 'busy' means another writer is active right now
-// and this is the case the lock exists for.
+// An unprotected write must not be silent about it, but the warning belongs to
+// the write and not to the region. It used to be printed here, up front, from
+// the lock answer alone. Every path through the gate reaches this line,
+// including the ones that only read: a dry run, or a sweep with nothing to move
+// and nothing to prune. Those printed "an entry may have been lost" after
+// changing nothing, which is not a warning, it is a false statement, and it is
+// the same contract the surrounding code enforces on `indexWritten`. Devin
+// round 2 on PR #109.
 //
-// 'unavailable' stays quiet on purpose. It means no lock could be created at
-// all, which almost always means the directory is not writable, in which case
-// the index write is about to fail too and `indexWritten: false` reports it
-// properly. Two messages for one failure, one of them speculative, is worse
-// than one.
-function withIndexLock(lock, fn) {
+// So `warnUnprotectedWrite` is exported and called at the moment a write
+// actually happens without the lock. Once per region, because one write is one
+// warning however many nested calls made it.
+//
+// A caller that knows it cannot write says so with `readOnly`, and then no lock
+// is taken and nothing waits. That is what stops a preview stalling five
+// seconds behind another session's write.
+function withIndexLock(lock, fn, { readOnly = false } = {}) {
   // Already inside a region for this lock on this process, so run directly and
   // inherit its answer. Inherited whether or not that region holds the lock: a
   // nested call that goes looking again can wait a second deadline, warn twice
   // about one write, and end up on the other side of the lock from the call
   // that contains it.
+  //
+  // A read-only nested call inherits too rather than opting out, because the
+  // region around it may still write and the snapshot has to be the same one.
   const outer = regions.get(lock);
   if (outer) {
     outer.count += 1;
@@ -227,6 +235,22 @@ function withIndexLock(lock, fn) {
       return { value: fn(), locked: outer.locked, reason: 'reentrant' };
     } finally {
       outer.count -= 1;
+    }
+  }
+
+  // A caller that cannot write does not queue behind one that can. Reads are
+  // safe unlocked: `writeIndexUnlocked` renames a finished file over the old
+  // one, so a reader gets one whole version or the other and never a torn one.
+  // A preview of state that another session is changing is approximate by
+  // nature, and waiting five seconds does not make it less so.
+  if (readOnly) {
+    const region = { count: 1, locked: false, reason: 'read-only' };
+    regions.set(lock, region);
+    try {
+      return { value: fn(), locked: false, reason: 'read-only' };
+    } finally {
+      region.count -= 1;
+      if (region.count === 0) regions.delete(lock);
     }
   }
 
@@ -239,13 +263,6 @@ function withIndexLock(lock, fn) {
   }
 
   const locked = reason === 'acquired';
-  if (reason === 'busy') {
-    process.stderr.write(
-      `session: wrote the handoff index without the lock at ${lock}, after waiting ${WAIT_MS}ms. `
-      + 'Another session was writing at the same time, so an entry may have been lost.\n',
-    );
-  }
-
   const region = { count: 1, locked, reason };
   regions.set(lock, region);
   try {
@@ -261,8 +278,31 @@ function withIndexLock(lock, fn) {
   }
 }
 
+// Say that a write went ahead without the lock, at the moment it does.
+//
+// Called by the writer rather than by the region, because only the writer knows
+// a write happened. Once per region: one write is one warning, however many
+// nested calls contributed to it.
+//
+// Silent when the region holds the lock, obviously, and silent for
+// 'unavailable' too. That one means no lock could be created at all, usually a
+// directory that is not writable, in which case the index write is about to
+// fail and `indexWritten: false` reports it properly. Two messages for one
+// failure, one of them speculative, is worse than one.
+function warnUnprotectedWrite(lock) {
+  const region = regions.get(lock);
+  if (!region || region.reason !== 'busy' || region.warned) return false;
+  region.warned = true;
+  process.stderr.write(
+    `session: wrote the handoff index without the lock at ${lock}, after waiting ${WAIT_MS}ms. `
+    + 'Another session was writing at the same time, so an entry may have been lost.\n',
+  );
+  return true;
+}
+
 module.exports = {
   withIndexLock,
+  warnUnprotectedWrite,
   WAIT_MS,
   STALE_MS,
   // Exported for the tests, which need to drive contention deterministically

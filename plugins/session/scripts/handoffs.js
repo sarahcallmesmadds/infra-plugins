@@ -19,7 +19,7 @@ const os = require('os');
 const path = require('path');
 
 const config = require('./config');
-const { withIndexLock } = require('./index-lock');
+const { withIndexLock, warnUnprotectedWrite } = require('./index-lock');
 
 const DEFAULT_STALE_DAYS = 30;
 
@@ -202,11 +202,27 @@ function writeIndexUnlocked(handoffs, home = os.homedir()) {
 // `save` returns whether the write reached the disk, because
 // `writeIndexUnlocked` swallows its errors and reporting a change that never
 // landed is the other thing this plugin keeps catching in itself.
-function mutateIndex(home, change) {
-  return withIndexLock(indexLockPath(home), () => {
-    const save = (handoffs) => writeIndexUnlocked(handoffs, home) !== null;
+//
+// `save` is also where an unprotected write announces itself, because it is the
+// only place that knows a write happened at all. The warning used to be printed
+// by the lock, up front, from the lock answer alone, and so it fired on every
+// path through this gate including the ones that only read. A dry run said "an
+// entry may have been lost" having changed nothing.
+//
+// `readOnly` is for a caller that knows in advance it cannot write. It skips
+// the lock, so a preview does not wait behind another session's write. Do not
+// pass it on a path that might call `save`: the point of this gate is that the
+// read and the write are one region, and a write from an unlocked read is that
+// guarantee gone.
+function mutateIndex(home, change, { readOnly = false } = {}) {
+  const lock = indexLockPath(home);
+  return withIndexLock(lock, () => {
+    const save = (handoffs) => {
+      warnUnprotectedWrite(lock);
+      return writeIndexUnlocked(handoffs, home) !== null;
+    };
     return change(readIndex(home), save);
-  }).value;
+  }, { readOnly }).value;
 }
 
 // Drop one entry by slug, without touching the handoff it names.
@@ -293,6 +309,10 @@ function pruneIndex({ home = os.homedir(), dryRun = false } = {}) {
   //
   // Re-entrant: `archiveStale` calls this from inside the same lock, and both
   // halves of that sweep have to be one region anyway.
+  //
+  // A dry run cannot reach `save` below, so it says so and skips the lock. A
+  // preview waiting five seconds behind another session, to preview state that
+  // session is in the middle of changing, buys nothing.
   return mutateIndex(home, (handoffs, save) => {
     const dropped = [];
     const unreachable = [];
@@ -316,7 +336,7 @@ function pruneIndex({ home = os.homedir(), dryRun = false } = {}) {
     if (dropped.length && !dryRun) written = save(kept);
 
     return { dropped, unreachable, written };
-  });
+  }, { readOnly: dryRun });
 }
 
 function slugify(text) {
@@ -500,7 +520,7 @@ function archiveStale({ days = DEFAULT_STALE_DAYS, home = os.homedir(), now = Da
     // Re-enters the gate on this process, which reads the index again so the
     // prune sees the repoint above rather than the map from before it.
     return pruneIndex({ home, dryRun });
-  });
+  }, { readOnly: dryRun });
 
   return {
     moved,

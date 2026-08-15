@@ -321,6 +321,17 @@ The archive sweep changes the index twice, repointing what it moved and then
 pruning what has gone, and both run inside one region that asks for the lock
 once. Whatever answer it gets, both halves get the same one.
 
+The warning belongs to the write, not to the attempt. A run that changed nothing
+says nothing, because nothing could have been lost: a sweep with nothing to move
+and nothing to prune is silent, and so is any `--dry-run`.
+
+A dry run does not take the lock at all. It cannot write, so it has nothing to
+protect and no reason to queue behind a session that is writing. Reads are safe
+unlocked because the index is replaced by renaming a finished file over the old
+one, so a reader gets one whole version or the other. A preview of state another
+session is changing is approximate whatever you do, and waiting five seconds
+does not make it less so.
+
 A directory that cannot hold a lock at all, usually one that is not writable, is a
 different case and stays quiet. The index write is about to fail there too, and
 `indexWritten: false` already reports that properly.

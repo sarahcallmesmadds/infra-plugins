@@ -301,13 +301,25 @@ check('an unprotected write says so on stderr rather than passing quietly', () =
   // cannot take it and falls through to the unprotected path.
   const child = spawnSync(process.execPath, ['-e', `
     const fs = require('fs'), path = require('path');
-    const { withIndexLock } = require(${JSON.stringify(path.join(ROOT, 'scripts', 'index-lock.js'))});
+    const { withIndexLock, warnUnprotectedWrite } =
+      require(${JSON.stringify(path.join(ROOT, 'scripts', 'index-lock.js'))});
     const lock = ${JSON.stringify(lock)};
     fs.mkdirSync(path.dirname(lock), { recursive: true });
     fs.mkdirSync(lock);
     fs.writeFileSync(path.join(lock, 'owner'), 'somebody-else');
-    const r = withIndexLock(lock, () => 'ran anyway');
-    process.stdout.write(JSON.stringify({ value: r.value, locked: r.locked, reason: r.reason }));
+    let warned = '', warnedTwice = false;
+    const r = withIndexLock(lock, () => {
+      // Nothing has written yet, so nothing should have been said yet.
+      const before = process.stderr.write;
+      process.stderr.write = (s) => { warned += s; return true; };
+      warnUnprotectedWrite(lock);                 // a write happens here
+      warnedTwice = warnUnprotectedWrite(lock);   // and the writer asks again
+      process.stderr.write = before;
+      return 'ran anyway';
+    });
+    process.stdout.write(JSON.stringify({
+      value: r.value, locked: r.locked, reason: r.reason, warned, warnedTwice,
+    }));
   `], { encoding: 'utf8' });
 
   const r = JSON.parse(child.stdout);
@@ -316,12 +328,20 @@ check('an unprotected write says so on stderr rather than passing quietly', () =
   assert.strictEqual(r.locked, false, 'it does not claim a lock it never took');
   assert.strictEqual(r.reason, 'busy');
 
-  // The bytes a person actually sees, not the source that produces them. A test
-  // asserting the source says X passes while the thing printed says Y.
-  assert.match(child.stderr, /without the lock/,
+  // Silent until something writes. The warning belongs to the write, not to the
+  // region: every path through the gate reaches the region, including the ones
+  // that only read, and this body never wrote.
+  assert.ok(!/may have been lost/.test(child.stderr),
+    `a region that read and did not write has nothing to warn about. stderr was: ${child.stderr}`);
+
+  // And once a write does happen, it says so, once. The bytes a person actually
+  // sees, not the source that produces them.
+  assert.match(r.warned, /without the lock/,
     'an unprotected write must not be silent, or a skip reads exactly like a pass');
-  assert.match(child.stderr, /may have been lost/,
+  assert.match(r.warned, /may have been lost/,
     'and it names the consequence, not just the fact that something was skipped');
+  assert.strictEqual(r.warnedTwice, false,
+    'one write is one warning, however many times the writer asks');
 });
 
 check('a sweep that lost the lock does not wait or warn a second time', () => {
@@ -338,19 +358,41 @@ check('a sweep that lost the lock does not wait or warn a second time', () => {
   const home = tmpHome();
   const lock = handoffs.indexLockPath(home);
 
+  // The sweep has to actually write, or it warns zero times for the right
+  // reason and proves nothing about warning once. A stale document that is also
+  // in the index makes both halves of the region write: the repoint and the
+  // prune. The earlier version of this test set up neither and passed only
+  // because the warning was unconditional.
   const child = spawnSync(process.execPath, ['-e', `
     const fs = require('fs'), path = require('path');
     const h = require(${JSON.stringify(HANDOFFS)});
+    const home = ${JSON.stringify(home)};
+    const root = path.join(home, '.planning', 'handoffs');
+    fs.mkdirSync(root, { recursive: true });
+
+    const stale = path.join(root, 'HANDOFF-ancient.md');
+    fs.writeFileSync(stale, '# Session Handoff');
+    const longAgo = (Date.now() - 90 * 86400000) / 1000;
+    fs.utimesSync(stale, longAgo, longAgo);
+    h.recordHandoff({ slug: 'ancient', target: stale, kind: 'central', home });
+    h.recordHandoff({ slug: 'vanished', target: path.join(root, 'HANDOFF-vanished.md'), kind: 'central', home });
+
     const lock = ${JSON.stringify(lock)};
-    fs.mkdirSync(path.dirname(lock), { recursive: true });
     fs.mkdirSync(lock);                                    // held, and fresh, so never judged stale
     fs.writeFileSync(path.join(lock, 'owner'), 'another-session');
     const started = Date.now();
-    h.archiveStale({ home: ${JSON.stringify(home)}, days: 30 });
-    process.stdout.write(String(Date.now() - started));
+    const out = h.archiveStale({ home, days: 30 });
+    process.stdout.write(JSON.stringify({
+      ms: Date.now() - started, moved: out.moved.length, repointed: out.repointed.length, pruned: out.pruned.length,
+    }));
   `], { encoding: 'utf8' });
 
-  const elapsed = Number(child.stdout);
+  const summary = JSON.parse(child.stdout);
+  assert.strictEqual(summary.moved, 1, 'setup: the stale document moved');
+  assert.strictEqual(summary.repointed, 1, 'setup: its index entry was repointed, so the region wrote');
+  assert.strictEqual(summary.pruned, 1, 'setup: the entry with no document was pruned, so the region wrote twice');
+
+  const elapsed = summary.ms;
   const warnings = (child.stderr.match(/without the lock/g) || []).length;
 
   assert.ok(elapsed < WAIT_MS * 2,
@@ -397,6 +439,72 @@ check('a region is cleared once it ends, so the next call starts fresh', () => {
   assert.strictEqual(second.locked, true);
   assert.strictEqual(second.reason, 'acquired', 'a fresh call acquires rather than inheriting');
   assert.ok(!fs.existsSync(lock), 'and the lock is released when the region ends');
+});
+
+// Devin round 2 on PR #109. The warning was printed by the lock, up front, from
+// the lock answer alone, so every path through the gate reached it including the
+// ones that only read. A dry run said "an entry may have been lost" having
+// changed nothing, and waited five seconds first.
+//
+// Driven through `cli.js`, because a dry run is something a person asks for.
+function sweepUnderContention(home, args) {
+  const lock = handoffs.indexLockPath(home);
+  return spawnSync(process.execPath, ['-e', `
+    const fs = require('fs'), path = require('path');
+    const { spawnSync } = require('child_process');
+    const lock = ${JSON.stringify(lock)};
+    fs.mkdirSync(path.dirname(lock), { recursive: true });
+    fs.mkdirSync(lock);                                  // held, and fresh, so never judged stale
+    fs.writeFileSync(path.join(lock, 'owner'), 'another-session');
+    const started = Date.now();
+    const r = spawnSync(process.execPath, [${JSON.stringify(CLI)}, ...${JSON.stringify(args)},
+      '--home', ${JSON.stringify(home)}], { encoding: 'utf8' });
+    process.stdout.write(JSON.stringify({ ms: Date.now() - started, err: r.stderr }));
+  `], { encoding: 'utf8' });
+}
+
+check('a dry run neither waits for the lock nor claims it wrote', () => {
+  const home = tmpHome();
+  const root = path.join(home, '.planning', 'handoffs');
+  fs.mkdirSync(root, { recursive: true });
+  const old = path.join(root, 'HANDOFF-ancient.md');
+  fs.writeFileSync(old, '# Session Handoff\n');
+  const longAgo = (Date.now() - 90 * 86400000) / 1000;
+  fs.utimesSync(old, longAgo, longAgo);
+
+  const r = JSON.parse(sweepUnderContention(home, ['archive', '--dry-run', '--json']).stdout);
+
+  assert.ok(r.ms < WAIT_MS,
+    `a preview cannot write, so it must not queue behind a writer. Took ${r.ms}ms against a ${WAIT_MS}ms deadline.`);
+  assert.ok(!/may have been lost/.test(r.err),
+    `a run that changed nothing must not say an entry may have been lost. stderr was: ${r.err}`);
+});
+
+check('a sweep with nothing to do does not claim it wrote', () => {
+  // Not a dry run, so it takes the lock and waits, which is correct because it
+  // might have needed to write. It just never does, so there is nothing to warn
+  // about.
+  const home = tmpHome();
+  fs.mkdirSync(path.join(home, '.planning', 'handoffs'), { recursive: true });
+
+  const r = JSON.parse(sweepUnderContention(home, ['archive', '--json']).stdout);
+
+  assert.ok(!/may have been lost/.test(r.err),
+    `nothing was moved and nothing was pruned, so nothing could have been lost. stderr was: ${r.err}`);
+});
+
+check('a real unprotected write still warns, exactly once', () => {
+  // The other half. Removing the false warnings must not remove the true one,
+  // which is the whole reason it exists.
+  const home = tmpHome();
+  const repo = path.join(home, 'code', 'thing');
+  fs.mkdirSync(path.join(repo, '.git'), { recursive: true });
+
+  const r = JSON.parse(sweepUnderContention(home, ['target', 'topic', '--cwd', repo, '--json']).stdout);
+
+  const warnings = (r.err.match(/may have been lost/g) || []).length;
+  assert.strictEqual(warnings, 1,
+    `a write that went ahead without the lock says so once. stderr was: ${r.err}`);
 });
 
 check('release leaves a lock belonging to someone else alone', () => {
