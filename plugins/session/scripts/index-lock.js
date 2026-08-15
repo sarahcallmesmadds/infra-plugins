@@ -314,6 +314,42 @@ function withIndexLock(lock, fn, { readOnly = false, mayCreate = false } = {}) {
   }
 }
 
+// Push the lock's staleness clock forward while a region is still working.
+//
+// `acquire` judges a lock abandoned from its directory mtime alone, after
+// STALE_MS. That was safe when a region held a read and one small write and
+// could not plausibly take 30 seconds. The archive sweep now does its renames
+// inside the region too, so the region's length depends on how many documents
+// are being archived and how fast the disk is. A sweep that ran past the
+// threshold would have its lock taken over while it was still repointing, which
+// puts two writers inside the critical section: the exact failure the lock
+// exists to prevent, arriving through the recovery path.
+//
+// Measured on a local disk, 2000 documents took 299ms against a 30s threshold,
+// so this is not reachable today. It is not defended by measuring, though,
+// because that measurement is about this machine: a home directory on a network
+// share can be orders of magnitude slower per rename, and the margin is an
+// assumption about somebody's hardware rather than a property of the code.
+//
+// Called during long work rather than on a timer, because the whole file is
+// synchronous by design and a timer cannot fire while a rename loop is running.
+//
+// Refuses to touch a lock this process does not own, for the same reason
+// `release` does: if ours was taken over as stale, the lock at that path now
+// belongs to a live writer and extending it would be extending someone else's.
+function refreshLock(lock) {
+  const region = regions.get(lock);
+  if (!region || !region.locked) return false;
+  try {
+    if (fs.readFileSync(path.join(lock, 'owner'), 'utf8') !== OWNER) return false;
+    const now = new Date();
+    fs.utimesSync(lock, now, now);
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
 // Say that a write went ahead without the lock, at the moment it does.
 //
 // Called by the writer rather than by the region, because only the writer knows
@@ -339,6 +375,7 @@ function warnUnprotectedWrite(lock) {
 module.exports = {
   withIndexLock,
   warnUnprotectedWrite,
+  refreshLock,
   WAIT_MS,
   STALE_MS,
   // Exported for the tests, which need to drive contention deterministically

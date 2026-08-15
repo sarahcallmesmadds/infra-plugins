@@ -19,7 +19,7 @@ const os = require('os');
 const path = require('path');
 
 const config = require('./config');
-const { withIndexLock, warnUnprotectedWrite } = require('./index-lock');
+const { withIndexLock, warnUnprotectedWrite, refreshLock } = require('./index-lock');
 
 const DEFAULT_STALE_DAYS = 30;
 
@@ -551,6 +551,11 @@ function archiveStale({ days = DEFAULT_STALE_DAYS, home = os.homedir(), now = Da
         }
         moved.push(name.replace(/^HANDOFF-/, '').replace(/\.md$/, ''));
         relocations.push({ from, to });
+        // The region's length now depends on how many documents are moving and
+        // how fast the disk is, and the lock is judged abandoned on its mtime
+        // alone. Say we are still here after each one, so a slow sweep cannot
+        // be taken over mid-flight and put a second writer beside itself.
+        refreshLock(indexLockPath(home));
       } catch (_) {
         // One unreadable file must not stop the sweep.
       }

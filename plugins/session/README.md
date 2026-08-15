@@ -353,6 +353,16 @@ another session pruning in that gap was entitled to drop the entry. Moving,
 repointing and pruning are one change to one thing, so they now happen inside one
 locked region.
 
+That makes the region as long as the sweep, and a lock is judged abandoned after
+30 seconds of an unchanged timestamp. So the sweep pushes that timestamp forward
+after each document it moves. Without it, a sweep slow enough to cross the
+threshold would have its lock taken over while it was still working, which puts
+two writers in the critical section: the failure the lock exists to prevent,
+arriving through the recovery path. On a local disk 2000 documents take about
+300ms against a 30 second threshold, so this is not reachable today. It is not
+left to that margin, because the margin is a fact about one machine and a home
+directory on a network share is a different machine.
+
 A command that changes nothing creates nothing. The lock lives inside
 `~/.planning/handoffs/`, so taking it means creating that folder, which would put
 one on a machine that has never had one on the say-so of a command that did

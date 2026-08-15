@@ -32,7 +32,9 @@ const path = require('path');
 const ROOT = path.join(__dirname, '..', 'plugins', 'session');
 const HANDOFFS = path.join(ROOT, 'scripts', 'handoffs.js');
 const handoffs = require(HANDOFFS);
-const { withIndexLock, acquire, release, WAIT_MS, STALE_MS } = require(path.join(ROOT, 'scripts', 'index-lock.js'));
+const {
+  withIndexLock, acquire, release, refreshLock, WAIT_MS, STALE_MS,
+} = require(path.join(ROOT, 'scripts', 'index-lock.js'));
 
 let failures = 0;
 function check(name, fn) {
@@ -699,6 +701,87 @@ check('the sweep does not move documents while another session holds the lock', 
 
   assert.strictEqual(moved.movedWhileHeld, false,
     'moving, repointing and pruning are one change to one thing, so the move waits for the lock too');
+
+  fs.rmSync(lock, { recursive: true, force: true });
+});
+
+// Devin round 1 on PR #111.
+
+check('pickup is taught every state staleRecord can return', () => {
+  // The states live in two places: the code that produces them and the skill
+  // that words them for the reader. `/pickup` reads --json and formats from its
+  // own rules, so a state the skill has never heard of gets the nearest wording,
+  // which for a wrap still being written was "deleted or renamed".
+  //
+  // Asserted against the code rather than against a list written here, so
+  // adding a fourth state fails this until the skill is taught it too.
+  const src = fs.readFileSync(HANDOFFS, 'utf8');
+  const entryState = src.slice(src.indexOf('function entryState'), src.indexOf('function recentlyRecorded'));
+  // `present` is excluded, and not as a convenience. `stale` is only built when
+  // nothing matched (cli.js: `const stale = match ? null : staleRecord(...)`),
+  // and `findHandoff` matches whenever the recorded path exists, so a `stale`
+  // object carrying `present` cannot be produced. Every other state can be.
+  // Every quoted literal in the function, not just the ones on a bare `return`.
+  // The first version of this check matched `return '...'` and so never saw
+  // `pending`, which is returned from a ternary. It reported two states, which
+  // is the shape of check this repository keeps catching: one that passes, or
+  // fails, for a reason unrelated to what it claims to measure.
+  const states = [...new Set([...entryState.matchAll(/'([a-z][a-z-]*)'/g)].map((m) => m[1]))]
+    .filter((s) => s !== 'present');
+  assert.ok(states.length >= 3, `expected at least three reachable states, found ${states}`);
+
+  const skill = fs.readFileSync(path.join(ROOT, 'skills', 'pickup', 'SKILL.md'), 'utf8');
+  const untaught = states.filter((s) => !skill.includes(`\`${s}\``));
+  assert.deepStrictEqual(untaught, [],
+    `staleRecord can return ${untaught.join(', ')} and pickup/SKILL.md never mentions it, so the `
+    + 'model picks the nearest wording it does know');
+});
+
+check('pickup is told not to call a pending handoff deleted', () => {
+  // The specific wrong answer, not just that the word appears somewhere.
+  const skill = fs.readFileSync(path.join(ROOT, 'skills', 'pickup', 'SKILL.md'), 'utf8');
+  assert.match(skill, /Never describe a `pending` handoff as deleted/,
+    'the state being listed is not the same as the reader being told what not to say about it');
+});
+
+check('a long sweep keeps its lock alive rather than being taken over', () => {
+  // The renames run inside the region now, so the region is as long as the
+  // sweep. `acquire` judges a lock abandoned on mtime alone after 30s, and a
+  // sweep that outran that would have its lock taken over mid-repoint, putting
+  // two writers in the critical section.
+  const home = tmpHome();
+  const lock = handoffs.indexLockPath(home);
+  fs.mkdirSync(path.dirname(lock), { recursive: true });
+
+  const seen = withIndexLock(lock, () => {
+    // Backdate the lock past the staleness threshold, which is what a slow
+    // sweep looks like from outside, then say we are still working.
+    const old = (Date.now() - STALE_MS * 2) / 1000;
+    fs.utimesSync(lock, old, old);
+    const before = fs.statSync(lock).mtimeMs;
+
+    const refreshed = refreshLock(lock);
+    const after = fs.statSync(lock).mtimeMs;
+    return { refreshed, before, after };
+  });
+
+  assert.strictEqual(seen.value.refreshed, true, 'the region holds the lock, so it may refresh it');
+  assert.ok(seen.value.after > seen.value.before,
+    'the staleness clock moved forward, so a sweep still working is not judged abandoned');
+  assert.ok(Date.now() - seen.value.after < STALE_MS,
+    'and it is now inside the window rather than outside it');
+});
+
+check('refresh will not extend a lock this process does not own', () => {
+  // Same rule as release. If ours was taken over as stale, the lock at that
+  // path belongs to a live writer and extending it would extend theirs.
+  const home = tmpHome();
+  const lock = handoffs.indexLockPath(home);
+  fs.mkdirSync(path.dirname(lock), { recursive: true });
+  fs.mkdirSync(lock);
+  fs.writeFileSync(path.join(lock, 'owner'), 'somebody-else');
+
+  assert.strictEqual(refreshLock(lock), false, 'no region here, and not ours anyway');
 
   fs.rmSync(lock, { recursive: true, force: true });
 });
