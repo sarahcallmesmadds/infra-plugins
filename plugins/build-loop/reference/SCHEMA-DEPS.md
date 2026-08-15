@@ -256,7 +256,22 @@ nothing reports.
 |---|---|---|
 | Written by | a person, or `/audit-deps` | `deps-watch`, unattended |
 | Means | these edges were judged correct | every reference this file makes is already recorded |
-| Read by | `/audit-deps`, to decide an entry is STALE and may need `depends_on` re-inferred | the session brief, to decide whether to raise a drift warning |
+| Read by | `/audit-deps`, to decide an entry is STALE and may need `depends_on` re-inferred | nothing, since session 0.8.7 |
+
+**`last_auto_checked` currently has no reader, and that row is not a mistake.**
+The session brief was its only one. It compared the field against the file's
+modification time and raised a drift warning, and session 0.8.7 removed that
+warning: on 2026-08-15 it was reporting 82 of 127 entries as changed with
+nothing actually missing, because `last_updated` is never bumped by machine, so
+a reviewed-and-since-edited entry counted as drifted forever. `/audit-deps`
+compares against `last_updated` and its skill says explicitly never to compare
+against this one, so the field is now written and read by nothing.
+
+Whether `deps-watch` should go on writing it is an open question, filed as queue
+entry `2026-08-15T19-17-34-deps-watch`. It is recorded here rather than quietly
+left, because a field with a writer and no reader looks like an oversight to the
+next person and they will either delete it or start reading it, and both are
+decisions worth making deliberately.
 
 The distinction is not stylistic. `deps-watch` can only see mechanical
 references: a `require()`, a fenced `scripts/<name>.js`, a `hooks.json`

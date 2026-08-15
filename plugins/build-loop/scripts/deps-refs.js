@@ -10,6 +10,12 @@
 //
 // So this reads references instead of dates.
 //
+// That warning is gone entirely as of session 0.8.7, which found it still
+// reporting 82 of 127 entries with nothing actually missing. Said here because
+// the paragraph above is the motivation for this file and a reader would
+// otherwise go looking for a line that no longer exists. What this file reports
+// in the conversation is untouched by that and is the reason it earns its keep.
+//
 // THE ONE DIRECTION IT REPORTS. It reports a reference the file makes that the
 // map does not record. It never reports the reverse, and that asymmetry is
 // deliberate rather than unfinished:
@@ -452,6 +458,17 @@ function acquire(lockPath) {
 // added one left the entry looking freshly reviewed and it never came up again.
 // The map-level `last_updated` is left alone for the same reason: an unattended
 // machine check is not a revision of the map.
+//
+// NOTHING READS `last_auto_checked` AS OF SESSION 0.8.7. The session brief was
+// its only reader and that comparison is gone, while /audit-deps reads
+// `last_updated` and its skill says explicitly never to compare against this
+// one. So this stamp currently goes nowhere. Whether to keep writing it is a
+// real decision rather than a tidy-up, and it is filed as queue entry
+// 2026-08-15T19-17-34-deps-watch. Recorded at the write itself, because a field
+// with a writer and no reader reads as an oversight to the next person, and
+// they will either delete it or start reading it without knowing either was a
+// choice. Everything above about never touching `last_updated` still applies
+// whichever way that goes.
 //
 // `onBeforeWrite` exists for the race test below and is not used in production.
 function bump(key, nowIso, depsPath = DEPS_PATH, { onBeforeWrite } = {}) {
