@@ -64,7 +64,7 @@ function run(dirName, body, toolName = 'Write') {
 
 function runOnPath(file, toolName = 'Write') {
   const event = JSON.stringify({ tool_name: toolName, tool_input: { file_path: file } });
-  const out = execFileSync('node', [HOOK], { input: event, encoding: 'utf8' });
+  const out = execFileSync(process.execPath, [HOOK], { input: event, encoding: 'utf8' });
   if (!out.trim()) return null;
   return JSON.parse(out);
 }
