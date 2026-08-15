@@ -140,53 +140,75 @@ check('only known repeat sources suppress the weekly summary', () => {
   assert.strictEqual(sessionStart.includeWeeklySummary('future-source'), true);
 });
 
-check('DEPS reports missing and files changed since their record', () => {
+check('an entry pointing at a file that is gone is reported, with the remedy', () => {
   const home = tempHome();
   const root = path.join(home, '.claude', 'build-loop');
   fs.mkdirSync(root, { recursive: true });
-  const changed = path.join(home, 'changed.js');
-  const current = path.join(home, 'current.js');
-  fs.writeFileSync(changed, 'changed');
-  fs.writeFileSync(current, 'current');
+  fs.writeFileSync(path.join(home, 'here.js'), 'here');
   writeJson(path.join(root, 'DEPS.json'), { targets: {
-    changed: { path: '~/changed.js', last_updated: '2000-01-01T00:00:00Z' },
-    current: { path: '~/current.js', last_updated: '2999-01-01T00:00:00Z' },
-    missing: { path: '~/missing.js', last_updated: '2000-01-01T00:00:00Z' },
+    here: { path: '~/here.js', last_updated: '2000-01-01T00:00:00Z' },
+    gone: { path: '~/gone.js', last_updated: '2000-01-01T00:00:00Z' },
   } });
 
   const out = brief.buildBrief({ home });
-  assert.match(out, /DEPS\.json drift warning: 1 missing, 1 changed\./);
-  assert.doesNotMatch(out, /\/audit-deps/);
-  assert.match(out, /Review it before relying on it/);
+  assert.match(out, /Dependency map: 1 entry points at a file that is gone\./);
+  assert.match(out, /Run \/audit-deps to drop it\./,
+    'the line names the fault and not what to do about it, which is what makes '
+    + 'a session-start line something to skip past');
 });
 
-check('an automatic check quiets the drift line without hiding a real change', () => {
-  // deps-watch writes last_auto_checked after an edit that added no new
-  // dependency. It is a separate field from last_updated on purpose: that one
-  // is the human and audit review date, and /audit-deps needs it left alone to
-  // decide an entry's edges want re-inferring. So this line has to read both
-  // and take the later, or every ordinary edit keeps producing the warning
-  // that made it noise in the first place.
+check('an edited file is not reported at all', () => {
+  // The whole bug. `last_updated` is a human review date and is deliberately
+  // never bumped by machine, so an entry reviewed once and edited since counts
+  // as drifted forever. On 2026-08-15 that was 82 of 127 entries with nothing
+  // actually gone, printed as a warning not to rely on the map. Both files
+  // below are present and both were edited long after their recorded date, and
+  // the brief has nothing to say about either.
   const home = tempHome();
   const root = path.join(home, '.claude', 'build-loop');
   fs.mkdirSync(root, { recursive: true });
-  const checked = path.join(home, 'checked.js');
-  const stale = path.join(home, 'stale.js');
-  fs.writeFileSync(checked, 'checked');
-  fs.writeFileSync(stale, 'stale');
+  fs.writeFileSync(path.join(home, 'reviewed.js'), 'reviewed');
+  fs.writeFileSync(path.join(home, 'watched.js'), 'watched');
   writeJson(path.join(root, 'DEPS.json'), { targets: {
-    checked: {
-      path: '~/checked.js',
-      last_updated: '2000-01-01T00:00:00Z',        // never reviewed since
-      last_auto_checked: '2999-01-01T00:00:00Z',   // but confirmed by the hook
+    reviewed: { path: '~/reviewed.js', last_updated: '2000-01-01T00:00:00Z' },
+    watched: {
+      path: '~/watched.js',
+      last_updated: '2000-01-01T00:00:00Z',
+      last_auto_checked: '2000-01-02T00:00:00Z',
     },
-    stale: { path: '~/stale.js', last_updated: '2000-01-01T00:00:00Z' },
   } });
 
   const out = brief.buildBrief({ home });
-  assert.match(out, /DEPS\.json drift warning: 1 changed\./,
-    'the auto-checked entry should be quiet and the unchecked one should not');
+  assert.doesNotMatch(out, /Dependency map/,
+    'an edited file is a maintenance hint for /audit-deps, not a session-start '
+    + 'line, and printing it every session is what stopped the real one landing');
+  assert.doesNotMatch(out, /drift|changed|rely on it/i,
+    'the old warning wording is back');
 });
+
+check('a whole map with every file present says nothing', () => {
+  const home = tempHome();
+  const root = path.join(home, '.claude', 'build-loop');
+  fs.mkdirSync(root, { recursive: true });
+  fs.writeFileSync(path.join(home, 'one.js'), 'one');
+  writeJson(path.join(root, 'DEPS.json'), { targets: {
+    one: { path: '~/one.js', last_updated: '2000-01-01T00:00:00Z' },
+  } });
+  // Matched against the old wording as well as the new. Asserting only that the
+  // new sentence is absent is satisfied by the old warning being printed
+  // instead, which is the thing being removed, so the check would have passed
+  // against the source it exists to rule out.
+  assert.doesNotMatch(brief.buildBrief({ home }), /Dependency map|DEPS\.json drift/);
+});
+
+// There is no check here for a scan cut short partway through the map, and
+// that is deliberate. `expired` reads the wall clock with nothing to inject, so
+// reaching that branch means passing a deadline a millisecond or two out and
+// hoping the loop is slower than the guard above it. That is a test whose
+// answer depends on how busy the machine is, which is the fault #102, #103 and
+// #104 were all about. The branch is unchanged by this commit and was untested
+// before it. Reported rather than papered over with a check that passes for the
+// wrong reason.
 
 check('v1 DEPS skills are read as targets', () => {
   const home = tempHome();
@@ -195,7 +217,7 @@ check('v1 DEPS skills are read as targets', () => {
   writeJson(path.join(root, 'DEPS.json'), { skills: {
     old: { path: '~/missing-old-skill', last_updated: '2000-01-01T00:00:00Z' },
   } });
-  assert.match(brief.buildBrief({ home }), /DEPS\.json drift warning: 1 missing\./);
+  assert.match(brief.buildBrief({ home }), /Dependency map: 1 entry points at a file that is gone\./);
 });
 
 check('a deadline exhausted before any read stays silent', () => {
