@@ -518,9 +518,16 @@ check('with the field absent the transcript is still read',
   runStyleHookOn({ transcriptTurns: [clean, `a ${EM} dash`] })
     .includes('1 em dash'), true);
 
-check('a blank field falls back rather than passing everything',
-  runStyleHookOn({ ended: '   ', transcriptTurns: [`a ${EM} dash`] })
-    .includes('1 em dash'), true);
+// Absent and empty are different answers to different questions, and the first
+// version of this file got it wrong in a way that reopened the bug. An empty
+// field is a turn that ended without prose, a turn whose last act was a tool
+// call being the ordinary case. Falling back there lints an older message and
+// calls it the response just written, which is the whole fault.
+check('a turn that ended without prose is not linted against an older one',
+  runStyleHookOn({ ended: '', transcriptTurns: [`a ${EM} b ${EM} c ${EM} d`] }), '');
+
+check('whitespace alone counts as ended without prose, not as absent',
+  runStyleHookOn({ ended: '   ', transcriptTurns: [`a ${EM} b ${EM} c ${EM} d`] }), '');
 
 check('nothing readable anywhere stays silent rather than throwing',
   runStyleHookOn({ transcriptTurns: [] }), '');

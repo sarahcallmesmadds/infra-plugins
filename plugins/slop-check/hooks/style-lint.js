@@ -100,9 +100,17 @@ function fromTranscript(transcript) {
 // tests/fixtures/hook-events/Stop.json and hook-event-shape.test.js checks this
 // read against it, but it is not a contract anyone published, so if it goes
 // away the guard degrades to its old behaviour rather than to nothing.
+// Present and empty is not the same as absent, and the difference decides
+// whether the fallback runs. An empty field is a turn that ended without prose,
+// a turn whose last act was a tool call being the ordinary case, and there is
+// simply nothing to lint. Falling back there walks the transcript and blocks an
+// older message under a sentence reading "the response just written", which is
+// the exact fault this hook was changed to stop committing. Absent is different:
+// it means this build of Claude Code does not send the field, and the walk is
+// the best available answer.
 function finishedTurn(payload) {
   const direct = payload.last_assistant_message;
-  if (typeof direct === 'string' && direct.trim()) return direct.trim();
+  if (typeof direct === 'string') return direct.trim();
   return fromTranscript(payload.transcript_path);
 }
 
