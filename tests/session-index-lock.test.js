@@ -379,6 +379,12 @@ check('a sweep that lost the lock does not wait or warn a second time', () => {
     fs.utimesSync(stale, longAgo, longAgo);
     h.recordHandoff({ slug: 'ancient', target: stale, kind: 'central', home });
     h.recordHandoff({ slug: 'vanished', target: path.join(root, 'HANDOFF-vanished.md'), kind: 'central', home });
+    // Backdated past the in-flight window, or the prune spares it as a wrap
+    // that may still be writing and this setup stops exercising a write.
+    const idxPath = path.join(root, 'index.json');
+    const idx = JSON.parse(fs.readFileSync(idxPath, 'utf8'));
+    idx.handoffs.vanished.recorded_at = new Date(Date.now() - 90 * 86400000).toISOString();
+    fs.writeFileSync(idxPath, JSON.stringify(idx, null, 2));
 
     const lock = ${JSON.stringify(lock)};
     fs.mkdirSync(lock);                                    // held, and fresh, so never judged stale
@@ -567,6 +573,134 @@ check('a first wrap on a fresh machine is still protected from a concurrent one'
   for (let i = 0; i < N; i += 1) if (!index[`first-${i}`]) missing.push(`first-${i}`);
   assert.deepStrictEqual(missing, [],
     'the folder not existing yet is not a reason to skip the lock, because these writers create it');
+});
+
+// ------------------------------------------- work that is still in flight ----
+
+// Two ways the prune could delete an entry for work that was not finished yet.
+// Both end the same way: a handoff exists and `/pickup` cannot find it by name.
+
+check('a wrap survives a sweep that runs before its document is written', () => {
+  // `cli.js target` records where a wrap will write before it writes, on
+  // purpose. Another session sweeping in that gap used to see an entry naming a
+  // file that was not there, call it gone, and drop it. The wrap then finished
+  // and reported success.
+  const home = tmpHome();
+  fs.mkdirSync(path.join(home, '.planning', 'handoffs'), { recursive: true });
+  const repo = path.join(home, 'code', 'myrepo');
+  fs.mkdirSync(path.join(repo, '.git'), { recursive: true });
+
+  const cli = (args) => spawnSync(process.execPath, [CLI, ...args, '--home', home], { encoding: 'utf8' });
+
+  cli(['target', 'topic', '--cwd', repo, '--json']);   // step 2 of a wrap
+  cli(['archive', '--json']);                          // another session sweeps
+  fs.writeFileSync(path.join(repo, 'HANDOFF.md'), '# Session Handoff\n');
+
+  const found = JSON.parse(cli(['find', 'myrepo', '--json']).stdout);
+  assert.ok(found.match,
+    'a wrap that was mid-write when the sweep ran must still be findable by name afterwards');
+});
+
+check('the sweep says which entries it spared and why', () => {
+  const home = tmpHome();
+  fs.mkdirSync(path.join(home, '.planning', 'handoffs'), { recursive: true });
+  handoffs.recordHandoff({ slug: 'inflight', target: path.join(home, 'code', 'x', 'HANDOFF.md'), kind: 'project', home });
+  fs.mkdirSync(path.join(home, 'code', 'x'), { recursive: true });
+
+  const out = handoffs.archiveStale({ home });
+  assert.deepStrictEqual(out.pending.map((p) => p.slug), ['inflight'],
+    'sparing something silently is as hard to trust as dropping something silently');
+  assert.deepStrictEqual(out.pruned, [], 'and it was not dropped');
+});
+
+check('an entry that is merely old is still pruned', () => {
+  // The window must not turn into "nothing is ever prunable". This is the case
+  // the prune exists for and it has to keep working.
+  const home = tmpHome();
+  const root = path.join(home, '.planning', 'handoffs');
+  fs.mkdirSync(path.join(home, 'code', 'y'), { recursive: true });
+  handoffs.recordHandoff({ slug: 'dead', target: path.join(home, 'code', 'y', 'HANDOFF.md'), kind: 'project', home });
+
+  const index = JSON.parse(fs.readFileSync(path.join(root, 'index.json'), 'utf8'));
+  index.handoffs.dead.recorded_at = new Date(Date.now() - 90 * 86400000).toISOString();
+  fs.writeFileSync(path.join(root, 'index.json'), JSON.stringify(index, null, 2));
+
+  const out = handoffs.pruneIndex({ home });
+  assert.deepStrictEqual(out.dropped.map((d) => d.slug), ['dead'],
+    'an entry whose document never appeared is dropped once it is no longer plausibly in flight');
+});
+
+check('an entry with no timestamp is still prunable', () => {
+  // Missing evidence is not evidence. An index written before the field existed
+  // would otherwise become unprunable forever.
+  const home = tmpHome();
+  const root = path.join(home, '.planning', 'handoffs');
+  fs.mkdirSync(root, { recursive: true });
+  fs.mkdirSync(path.join(home, 'code', 'z'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'index.json'), `${JSON.stringify({
+    version: 1,
+    handoffs: { ancient: { path: path.join(home, 'code', 'z', 'HANDOFF.md'), kind: 'project' } },
+  }, null, 2)}\n`);
+
+  const out = handoffs.pruneIndex({ home });
+  assert.deepStrictEqual(out.dropped.map((d) => d.slug), ['ancient'],
+    'an entry with no recorded_at is not treated as young');
+});
+
+check('find says a wrap is in progress rather than calling it deleted', () => {
+  // Three states, three answers. `pending` used to fall into the `gone` branch
+  // and report a handoff as deleted when it had simply not been written yet.
+  const home = tmpHome();
+  fs.mkdirSync(path.join(home, '.planning', 'handoffs'), { recursive: true });
+  const repo = path.join(home, 'code', 'midwrap');
+  fs.mkdirSync(path.join(repo, '.git'), { recursive: true });
+
+  const run = (args) => spawnSync(process.execPath, [CLI, ...args, '--home', home], { encoding: 'utf8' });
+  run(['target', 'topic', '--cwd', repo, '--json']);   // recorded, not yet written
+
+  const out = run(['find', 'midwrap']).stdout;
+  assert.ok(!/which is gone/.test(out),
+    `a handoff that has not been written yet has not been deleted. Output was: ${out}`);
+  assert.match(out, /not there yet/,
+    'and it says what is actually happening, so the reader knows to let the wrap finish');
+});
+
+check('the sweep does not move documents while another session holds the lock', () => {
+  // The second way. The sweep renamed documents into archived/ before it took
+  // the lock, so between the rename and the repoint the index named a path
+  // nothing was at, and a prune in that gap was entitled to delete the entry.
+  //
+  // Racing for that window is not a test: it is microseconds wide and did not
+  // reproduce in six concurrent sweeps. What is testable is the structure. Hold
+  // the lock, start a sweep, and the document must stay put.
+  const home = tmpHome();
+  const root = path.join(home, '.planning', 'handoffs');
+  fs.mkdirSync(root, { recursive: true });
+  const doc = path.join(root, 'HANDOFF-old.md');
+  fs.writeFileSync(doc, '# Session Handoff\n');
+  const longAgo = (Date.now() - 90 * 86400000) / 1000;
+  fs.utimesSync(doc, longAgo, longAgo);
+
+  const lock = handoffs.indexLockPath(home);
+  fs.mkdirSync(lock);
+  fs.writeFileSync(path.join(lock, 'owner'), 'another-session');
+
+  const moved = JSON.parse(spawnSync(process.execPath, ['-e', `
+    const fs = require('fs'), path = require('path');
+    const { spawn } = require('child_process');
+    const sweep = spawn(process.execPath, [${JSON.stringify(CLI)}, 'archive', '--json',
+      '--home', ${JSON.stringify(home)}], { stdio: ['ignore', 'ignore', 'ignore'] });
+    setTimeout(() => {
+      process.stdout.write(JSON.stringify({ movedWhileHeld: !fs.existsSync(${JSON.stringify(doc)}) }));
+      try { sweep.kill(); } catch (_) { /* already gone */ }
+      process.exit(0);
+    }, 1500);
+  `], { encoding: 'utf8' }).stdout);
+
+  assert.strictEqual(moved.movedWhileHeld, false,
+    'moving, repointing and pruning are one change to one thing, so the move waits for the lock too');
+
+  fs.rmSync(lock, { recursive: true, force: true });
 });
 
 check('release leaves a lock belonging to someone else alone', () => {

@@ -166,6 +166,17 @@ const COMMANDS = {
       lines.push(`${would} ${result.pruned.length} index ${plural(result.pruned.length)} pointing at files that are gone: `
         + result.pruned.map((p) => p.slug).join(', '));
     }
+    // Spared, and worth saying, for the same reason as everything else here: a
+    // sweep that quietly keeps something is as hard to trust as one that
+    // quietly drops it. These are entries a wrap recorded minutes ago whose
+    // document has not appeared yet, which is what a wrap in progress looks
+    // like from outside.
+    if (result.pending && result.pending.length) {
+      const n = result.pending.length;
+      lines.push(`Left ${n} index ${plural(n)} alone as too new to judge, because a wrap records where `
+        + `it will write before it writes: ${result.pending.map((p) => p.slug).join(', ')}. `
+        + 'They are dropped by a later sweep if the document never appears.');
+    }
     // Kept, and worth saying. Silence here reads as "everything was checked",
     // when in fact one of these is a handoff whose disk was not mounted.
     if (result.unreachable.length) {
@@ -241,9 +252,17 @@ const COMMANDS = {
       // it names both rather than implying the one that happens to be rarer.
       // A moved repo lands here, not in `gone`, because its whole directory went
       // with it.
-      lines.push(stale.state === 'unreachable'
-        ? `The index points at ${stale.path}, and its directory is not there either. Either the project moved, in which case add its new parent to projectRoots, or it is on a volume that is not mounted, in which case the handoff is fine and this will find it once the volume is back.`
-        : `The index points at ${stale.path}, which is gone. The directory is still there, so the handoff itself was deleted or renamed rather than moved with the project.`);
+      // Three states, three answers. `pending` used to fall into the `gone`
+      // branch and report a handoff as deleted when it had simply not been
+      // written yet, which is the same fault as any other message that says
+      // what did not happen.
+      if (stale.state === 'unreachable') {
+        lines.push(`The index points at ${stale.path}, and its directory is not there either. Either the project moved, in which case add its new parent to projectRoots, or it is on a volume that is not mounted, in which case the handoff is fine and this will find it once the volume is back.`);
+      } else if (stale.state === 'pending') {
+        lines.push(`The index points at ${stale.path}, which was recorded in the last few minutes and is not there yet. A wrap notes where it will write before it writes, so this is what one looks like in progress. If a wrap is running, let it finish and try again.`);
+      } else {
+        lines.push(`The index points at ${stale.path}, which is gone. The directory is still there, so the handoff itself was deleted or renamed rather than moved with the project.`);
+      }
     }
     const roots = handoffs.projectRoots(opts.home).length;
     lines.push(`Searched ${roots} project root${roots === 1 ? '' : 's'}. Looked at:`);

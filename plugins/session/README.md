@@ -332,6 +332,27 @@ one, so a reader gets one whole version or the other. A preview of state another
 session is changing is approximate whatever you do, and waiting five seconds
 does not make it less so.
 
+### Work that is still in flight
+
+Two more ways a handoff could vanish from the index, both closed.
+
+A wrap records where it will write before it writes. Between those two moments
+the index names a document that is not there, and a sweep running in that gap
+used to call the entry dead and delete it. The wrap then finished and reported
+success, and `/pickup` could not find it. So an entry recorded in the last ten
+minutes whose document has not appeared is spared, and the sweep says which ones
+it spared. It is dropped by a later sweep if the document never arrives.
+
+Nothing on disk separates "not written yet" from "written and then deleted", so
+the same ten minutes apply to both. That is the cost, and it is small: a dead
+entry survives ten minutes longer, against a live handoff being lost.
+
+The sweep also used to move documents into `archived/` before taking the lock,
+so between the move and the repoint the index named a path nothing was at, and
+another session pruning in that gap was entitled to drop the entry. Moving,
+repointing and pruning are one change to one thing, so they now happen inside one
+locked region.
+
 A command that changes nothing creates nothing. The lock lives inside
 `~/.planning/handoffs/`, so taking it means creating that folder, which would put
 one on a machine that has never had one on the say-so of a command that did
