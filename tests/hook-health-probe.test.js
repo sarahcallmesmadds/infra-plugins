@@ -38,8 +38,12 @@ const { execFileSync, spawnSync } = require('child_process');
 
 const ROOT = path.join(__dirname, '..');
 const PROBE = path.join(ROOT, 'plugins', 'build-loop', 'hooks', 'hook-health-probe.sh');
+// The copy the probe actually calls, since it resolves its launcher relative to
+// its own directory. hook-executable.test.js asserts all five copies are
+// identical, so reading this one reads all of them.
+const LAUNCHER = path.join(ROOT, 'plugins', 'build-loop', 'bin', 'hook-node');
 
-const EXPECTED_CHECKS = 25;
+const EXPECTED_CHECKS = 26;
 
 // The probe calls these and nothing else. `sh` is not among them: the kernel
 // reads the shebang and runs /bin/sh by absolute path, so PATH never decides
@@ -146,8 +150,12 @@ function readLog(home) {
 // `spawnOptions` is merged into the spawn itself rather than the environment.
 // One case drops to an unprivileged uid to make the log genuinely unwritable,
 // which is a property of the process and not of what it can see.
+// `probe` names which copy of the probe to start. It is the shipped file for
+// every case but one, which needs the launcher beside it to be a stand-in; see
+// `probeBesideFailingLauncher` for why that case cannot use the real one.
 function runProbe(home, {
   withNode, env = {}, session = SESSION, pathOverride, spawnOptions = {},
+  probe = PROBE,
 } = {}) {
   const parts = ['-i', `HOME=${home}`];
   const searchPath = pathOverride !== undefined
@@ -172,10 +180,84 @@ function runProbe(home, {
     : 'CLAUDE_HOOK_NODE=/nonexistent/node');
 
   for (const [k, v] of Object.entries(env)) parts.push(`${k}=${v}`);
-  parts.push(PROBE);
+  parts.push(probe);
   return spawnSync('env', parts, {
     input: eventFor(session), encoding: 'utf8', ...spawnOptions,
   });
+}
+
+// The launcher's failure line, read from the launcher rather than written out
+// here. The probe lifts everything after "Tried: " into its `searched=` field,
+// so this file needs the same string to say whether that lift worked, and a
+// second copy of the list would drift from the first and then the suite would
+// be asserting against a search order nothing uses.
+//
+// The launcher's comments quote the string too, and the first line holding it
+// is one of those, which yields an empty list and an assertion failure that
+// reads as the launcher having changed rather than as a bad lookup here.
+// Comments are dropped, and the remaining match has to be unique so that a
+// second printer of the list is an error rather than a coin toss.
+function launcherFailureLine() {
+  const source = fs.readFileSync(LAUNCHER, 'utf8');
+  const candidates = source.split('\n')
+    .filter((l) => !/^\s*#/.test(l))
+    .filter((l) => l.includes('Tried: '));
+  if (candidates.length !== 1) {
+    throw new Error(
+      `${candidates.length} lines of the launcher print a "Tried: " list, expected 1. `
+      + 'That string is the whole contract between it and the probe: the probe '
+      + 'lifts what follows it into searched=. Either the message moved or there '
+      + `is now more than one of it.\n        ${candidates.join('\n        ')}`
+    );
+  }
+  const line = candidates[0];
+  const quoted = /"([^"]*)"/.exec(line);
+  if (!quoted) throw new Error(`the launcher's failure line is not a quoted string: ${line}`);
+  // `\$` in shell source is a literal dollar sign in the message.
+  const message = quoted[1].replace(/\\\$/g, '$');
+  return { message, tried: message.slice(message.indexOf('Tried: ') + 'Tried: '.length), line };
+}
+
+// The shipped probe, with a launcher beside it that always reports finding
+// nothing.
+//
+// The real launcher cannot be used for the no-override case, and that is the
+// 2026-08-14 review's second finding rather than a shortcut. With
+// $CLAUDE_HOOK_NODE unset the launcher searches PATH and then four absolute
+// paths, and /usr/bin/node is one of them. A sandboxed HOME hides
+// ~/.local/bin/node and nothing hides /usr/bin/node, so "no node anywhere" is
+// reachable on a machine that keeps node under its home directory and
+// unreachable on Debian, Ubuntu and most CI images. The suite passed here and
+// failed there, on a case whose whole subject is what the probe writes when the
+// search comes up empty.
+//
+// So the launcher is stood in for, and it replays the real one's own failure
+// line rather than inventing one. What is under test here is the probe: that it
+// runs the launcher, lifts the list out of its stderr and writes it as a single
+// field. Which places are in that list is the launcher's business, and it is
+// asserted separately, from the launcher's source.
+//
+// The probe itself is symlinked rather than copied, so there is no version of
+// it in a temporary directory that could differ from the one that ships. It
+// resolves its launcher as `${0%/*}/../bin/hook-node`, which follows the path it
+// was started with, so the tree below is enough to redirect it.
+function probeBesideFailingLauncher(message) {
+  const tree = fs.mkdtempSync(path.join(os.tmpdir(), 'probe-tree-'));
+  fs.mkdirSync(path.join(tree, 'hooks'));
+  fs.mkdirSync(path.join(tree, 'bin'));
+
+  const probe = path.join(tree, 'hooks', 'hook-health-probe.sh');
+  fs.symlinkSync(PROBE, probe);
+
+  // Single-quoted, so $CLAUDE_HOOK_NODE inside the message stays literal the way
+  // the launcher's own escaping keeps it literal.
+  fs.writeFileSync(
+    path.join(tree, 'bin', 'hook-node'),
+    `#!/bin/sh\nprintf '%s\\n' '${message}' >&2\nexit 127\n`,
+    { mode: 0o755 }
+  );
+
+  return probe;
 }
 
 // --- the interpreter it cannot report on itself ----------------------------
@@ -327,7 +409,7 @@ check('an interpreter setting pointing at a directory is reported, not accepted'
     `the line does not say the override was the cause. log: ${JSON.stringify(log)}`);
 });
 
-check('a failure line names what was searched, and never the override value', () => {
+check('a failure line names the override as the scope, and never its value', () => {
   // The evidence has to match the question. Health is decided by the launcher,
   // which looks in six places, so a line reporting only PATH sends somebody to
   // fix a PATH that was never involved. build-loop/README.md promises this line
@@ -336,6 +418,10 @@ check('a failure line names what was searched, and never the override value', ()
   // The override's value is deliberately absent. It is a path on somebody's
   // machine and this file is written to be pasted into a bug report, which is
   // the same reason the home directory is masked out of the PATH field.
+  //
+  // This half asks the same thing on every machine without any help. A set
+  // $CLAUDE_HOOK_NODE is authoritative to the launcher, so nothing else it can
+  // reach changes the answer.
   const secret = path.join(sandbox(), 'a-private-looking-path');
   const home = sandbox();
   runProbe(home, { withNode: false, env: { CLAUDE_HOOK_NODE: secret } });
@@ -344,19 +430,45 @@ check('a failure line names what was searched, and never the override value', ()
     `the line does not name the override as the scope. log: ${JSON.stringify(withOverride)}`);
   assert.ok(!withOverride.includes(secret),
     `the override's value was written to the log: ${JSON.stringify(withOverride)}`);
+});
 
-  // With no override the scope is the launcher's whole list, taken from the
-  // launcher itself rather than restated here, so the two cannot drift.
-  const plain = sandbox();
-  runProbe(plain, { withNode: false, env: { CLAUDE_HOOK_NODE: '' } });
-  const line = readLog(plain);
-  assert.ok(/searched=\S*PATH\S*/.test(line),
-    `the line does not name the searched scope. log: ${JSON.stringify(line)}`);
-  assert.ok(line.includes('~/.local/bin/node'),
-    'the searched scope omits the fixed locations the launcher looks in, so the '
-    + `line still implies PATH was the whole question. log: ${JSON.stringify(line)}`);
-  assert.ok(/searched=[^ ]+ /.test(line),
-    `the searched field contains a space and has split the log line: ${JSON.stringify(line)}`);
+check('a failure line with no override carries the launcher\'s whole search', () => {
+  // With no override the scope is the launcher's whole list, and the probe has
+  // to report that list rather than PATH: a line saying `path=...` under a
+  // launcher that also looks in four fixed places sends somebody to fix a PATH
+  // that was never the question.
+  //
+  // Two separate things have to hold, and they are separated here because only
+  // one of them can be observed by running the probe on an arbitrary machine.
+  // The launcher's side is what the list contains, which is read from its
+  // source. The probe's side is that it lifts that list out of stderr and
+  // writes it as one field, which is run.
+  const { message, tried, line: launcherLine } = launcherFailureLine();
+
+  assert.ok(tried.includes('PATH') && tried.includes('~/.local/bin/node'),
+    'the launcher stopped naming PATH and the fixed locations it searches, so '
+    + `the probe's line will imply PATH was the whole question. Tried: ${tried}`);
+  assert.ok(!/\s/.test(tried),
+    'the launcher\'s list contains whitespace. The probe lifts it into a field '
+    + `of a space-separated log line, so the line will split. Tried: ${tried}`);
+  assert.ok(launcherLine.includes('>&2'),
+    'the launcher no longer writes its failure line to stderr, which is the '
+    + `stream the probe captures, so the list will be lost: ${launcherLine}`);
+
+  const home = sandbox();
+  const r = runProbe(home, {
+    probe: probeBesideFailingLauncher(message),
+    withNode: false,
+    env: { CLAUDE_HOOK_NODE: '' },
+  });
+  assert.strictEqual(r.status, 0, `the probe exited ${r.status}, it must never fail a prompt`);
+
+  const logged = readLog(home).trim();
+  assert.ok(logged.includes(`searched=${tried} `),
+    'the probe did not lift the launcher\'s list into searched=, so the line '
+    + `reports a scope the launcher never used. log: ${JSON.stringify(logged)}`);
+  assert.ok(logged.includes('hook_node=unset'),
+    `the line does not say the override was out of the picture. log: ${JSON.stringify(logged)}`);
 });
 
 check('a working environment records nothing', () => {
