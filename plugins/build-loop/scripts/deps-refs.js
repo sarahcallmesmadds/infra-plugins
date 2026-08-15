@@ -296,8 +296,12 @@ function hooksJsonRefs(filePath, content) {
 // SKILL.md living outside any plugin, which is where the documented default
 // roots put every one of them, marked the entry current without a single
 // reference having been examined. Each later edit re-stamped it, so the entry
-// never reported drift again. An unreadable file has to stay drifted: not
-// knowing is exactly the state the warning exists to report.
+// never reported drift again. An unreadable file has to stay unstamped: not
+// knowing is exactly the state worth surfacing, and it is /audit-deps that
+// surfaces it now. This said "stay drifted" and "the state the warning exists
+// to report", both naming the session brief's drift line, which session 0.8.7
+// removed. The rule is unchanged and does not depend on that line: stamping a
+// file nothing was read from records a check that never happened.
 function extractRefs(filePath, content) {
   const ext = path.extname(filePath).toLowerCase();
   let refs = null;

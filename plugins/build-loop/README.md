@@ -314,10 +314,15 @@ and never calls it, and a text search would have called that a dependency,
 reproducing the exact problem being fixed. That case is pinned in
 `tests/deps-watch.test.js`.
 
-**Where the old warning can still appear, deliberately.** The hook stamps only
-a file it could actually read. Three cases stay drifted on purpose, because in
-each of them nothing was checked and saying otherwise would be a lie the map
-cannot recover from:
+**Where the old warning can still appear, deliberately.** **It cannot appear
+anywhere now: session 0.8.7 removed it. Read "stays drifted" below as "is left
+unstamped", which is what it always meant underneath and is still exactly what
+happens.** The rule survives the warning and still matters, because `/audit-deps`
+is where an unstamped entry now surfaces.
+
+The hook stamps only a file it could actually read. Three cases stay drifted on
+purpose, because in each of them nothing was checked and saying otherwise would
+be a lie the map cannot recover from:
 
 - A mapped target nothing can be read from, which today means the six
   `plugin.json` manifests, and any `SKILL.md` living outside a plugin, which is
