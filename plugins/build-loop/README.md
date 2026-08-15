@@ -218,10 +218,47 @@ answer, not its conclusion.
 opinion about whether something is any good, and it will not rewrite anything
 you did not complain about.
 
+## Upgrading to 0.9.9
+
+Documentation only. No behaviour in this plugin changes, and nothing needs doing
+on upgrade.
+
+**The drift warning is gone, and two documents here still described it.** Session
+0.8.7 removed it from the session brief. It compared a file's modification time
+against `last_updated` and, on 2026-08-15, reported 82 of 127 entries as changed
+with nothing actually missing, because `last_updated` is a human review date that
+is deliberately never bumped by machine. An entry reviewed once and edited since
+counted as drifted forever, so the number only grew and the line was always on.
+The brief now reports only an entry whose file is gone, which is a fact somebody
+can act on in one command.
+
+**What that means here.** `last_auto_checked` has no reader. The brief was its
+only one: `deps-refs.js` writes it, and `/audit-deps` carries it through while
+its own skill says explicitly never to compare against it. `SCHEMA-DEPS.md` said
+the brief read it, which is the sharper error of the two, since a schema
+reference is where somebody goes to learn what is true.
+
+**What still holds, and it is the half worth having.** `deps-watch` reporting a
+file that calls a mapped target with no recorded edge is untouched and is the
+reason the hook earns its place. Only the silent stamping lost its purpose.
+
+**What is not decided here.** Whether `deps-watch` should keep writing a field
+nothing reads. That is a design question rather than a documentation one, and it
+is filed as queue entry `2026-08-15T19-17-34-deps-watch`. This release makes the
+documents true about today; it does not pre-empt that decision.
+
 ## Upgrading to 0.9.0
 
+> **Partly superseded by session 0.8.7.** The drift warning described below no
+> longer exists. Quieting it was the stated purpose of the `last_auto_checked`
+> stamp, so that half of this section is now history rather than behaviour.
+> Everything about what `deps-watch` reports in the conversation still holds, and
+> that was always the more useful half. See "Upgrading to 0.9.9" above.
+
 The dependency map now keeps itself current for ordinary edits, and the drift
-warning finally means something.
+warning finally means something. **The second half of that no longer applies.**
+Session 0.8.7 removed the warning rather than sharpening it further, so what
+survives from this release is the first half, the map keeping itself current.
 
 **What was wrong.** The session brief called a target drifted when its file had
 been modified more recently than the date its entry was confirmed. Any edit
@@ -237,8 +274,8 @@ the recorded edges.
 
 | Outcome | What happens |
 |---|---|
-| Nothing new appeared | `last_auto_checked` is stamped, silently. No warning accumulates. |
-| The file calls a mapped target with no recorded edge | It says so in the conversation and does **not** stamp, so the drift stays visible until `/audit-deps` records the edge. |
+| Nothing new appeared | `last_auto_checked` is stamped, silently. No warning accumulates. **No longer the point: the warning meant here was removed in session 0.8.7. The stamp still happens and nothing reads it.** |
+| The file calls a mapped target with no recorded edge | It says so in the conversation and does **not** stamp, so the drift stays visible until `/audit-deps` records the edge. **"Stays visible" meant the brief's drift line, which is gone. What stays visible is the report in the conversation, which is the half that still works.** |
 
 **Two dates, kept apart.** The hook writes `last_auto_checked` and never
 `last_updated`. `last_updated` is the review date, and `/audit-deps` compares it
@@ -277,10 +314,15 @@ and never calls it, and a text search would have called that a dependency,
 reproducing the exact problem being fixed. That case is pinned in
 `tests/deps-watch.test.js`.
 
-**Where the old warning can still appear, deliberately.** The hook stamps only
-a file it could actually read. Three cases stay drifted on purpose, because in
-each of them nothing was checked and saying otherwise would be a lie the map
-cannot recover from:
+**Where the old warning can still appear, deliberately.** **It cannot appear
+anywhere now: session 0.8.7 removed it. Read "stays drifted" below as "is left
+unstamped", which is what it always meant underneath and is still exactly what
+happens.** The rule survives the warning and still matters, because `/audit-deps`
+is where an unstamped entry now surfaces.
+
+The hook stamps only a file it could actually read. Three cases stay drifted on
+purpose, because in each of them nothing was checked and saying otherwise would
+be a lie the map cannot recover from:
 
 - A mapped target nothing can be read from, which today means the six
   `plugin.json` manifests, and any `SKILL.md` living outside a plugin, which is
@@ -310,9 +352,18 @@ explains why that costs a Codex user nothing rather than leaving them worse off.
 
 **`DEPS.json` moves to schema v4.** The only change is the new
 `last_auto_checked` field, which is simply absent on an older map, so nothing
-needs migrating and older readers are unaffected. This release also needs
-Session 0.8.1, which is what teaches the brief to read the new field. Installing
-build-loop 0.9.0 without it leaves the drift line firing exactly as before.
+needs migrating and older readers are unaffected.
+
+This release originally also required Session 0.8.1, which was what taught the
+brief to read the new field. **That requirement is void.** Session 0.8.7 removed
+the reading altogether, so no version of Session does anything with
+`last_auto_checked` and there is no drift line left to fire. Pinning Session on
+account of this paragraph buys nothing.
+
+Corrected here rather than left to the banner at the top of this section. That
+banner gives context, and this was an instruction: a reader following it acts,
+and context above the fold does not undo a sentence telling somebody to install
+something.
 
 Nothing else to do on upgrade. The hook registers itself and stays quiet.
 
@@ -592,13 +643,15 @@ quietly aged.
 | `deps-watch` | Run `/audit-deps`. See below, because the trade is smaller than it looks. |
 | `hook-health-probe` | Nothing is lost. It reports which interpreter a hook could not find, and where no hooks run there is no such failure to name. |
 
-**`deps-watch` costs a Codex user nothing, and here is why.** The drift warning
-it exists to quiet is printed by the session brief, which is itself a
-`SessionStart` hook in the Session plugin. Under Codex that brief never runs, so
-the noisy warning never appears in the first place. Both halves are absent
-together rather than one half leaving the other broken. `/audit-deps` remains
-the way to check the map on either runtime, and it is the only way to record a
-new dependency on both, since the hook never writes an edge.
+**`deps-watch` costs a Codex user nothing, and here is why.** What it reports in
+the conversation, a file calling a mapped target with no recorded edge, is the
+half worth having, and it is the half a Codex user is giving up. It is a
+convenience: `/audit-deps` finds the same missing edges, and it is the only way
+to record one on either runtime, since the hook never writes an edge itself.
+This used to say the warning `deps-watch` exists to quiet is printed by the
+session brief, which never runs under Codex, so both halves went missing
+together. That reasoning is retired rather than reworded: session 0.8.7 removed
+the warning, so there is no longer a second half to be absent.
 
 ## Licence
 

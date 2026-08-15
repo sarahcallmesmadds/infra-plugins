@@ -16,6 +16,19 @@
 //                          NOT stamped, leaving the drift visible until
 //                          /audit-deps records the edge properly.
 //
+// THE WARNING AND THE DRIFT NAMED ABOVE ARE GONE AS OF SESSION 0.8.7. Both
+// meant the session brief's drift line, which compared a file's modification
+// time against its entry's recorded date. It was removed for reporting 82 of
+// 127 entries as changed with nothing actually missing, because `last_updated`
+// is a review date that is never bumped by machine. So the first row's "stop
+// accumulating a warning" describes a warning that no longer exists, and the
+// second row's "leaving the drift visible" points at a line that is not there.
+//
+// What survives is the second row's other half: saying it out loud in the
+// conversation. That was always the useful part and it is untouched. The stamp
+// still happens and nothing reads it, which is a live question rather than an
+// oversight, filed as queue entry 2026-08-15T19-17-34-deps-watch.
+//
 // It never edits the edges itself. Writing an edge means writing the `reason`
 // that goes with it, and a sentence explaining why two things are connected is
 // a judgment, not an extraction. /audit-deps still owns that, with its
@@ -66,8 +79,16 @@ readEvent((event) => {
   const refs = extractRefs(filePath, content);
   // null means nothing could be read from this file, which is not the same as
   // reading it and finding nothing new. Stamping here would mark the entry
-  // confirmed without a single reference having been checked, and it would
-  // never report drift again. Leave it drifted and say nothing.
+  // confirmed without a single reference having been checked. Leave it
+  // unstamped and say nothing.
+  //
+  // This used to say the entry "would never report drift again" and to leave it
+  // drifted, which named the session brief's drift line. That line is gone as
+  // of session 0.8.7. The reason to skip the stamp is unchanged and does not
+  // depend on it: a file that could not be read has had nothing checked, so
+  // recording it as confirmed is a false statement about work that never
+  // happened, and /audit-deps compares `last_updated` rather than this field
+  // when it decides what to look at.
   if (refs === null) return;
 
   const missing = unrecorded(deps, hit.entry, refs);
