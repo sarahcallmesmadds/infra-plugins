@@ -51,6 +51,34 @@ function flattenQuotes(text) {
     .replace(/[“”]/g, '"');
 }
 
+// A phrase inside quotation marks or inside code is being reported, not used.
+// The house rules are a standing instruction about the author's own writing,
+// and quoting the instruction back is not breaking it. `/pickup` prints those
+// constraints verbatim at the start of every session and was blocked by its own
+// rule for doing so, which is how this was found.
+//
+// Blanked to a space rather than deleted, so the text either side of a span is
+// never joined into a match that was not in the original.
+//
+// Double quotes only. `flattenQuotes` has already folded the curly pair onto
+// the straight one, so one pattern covers both. Single quotes are deliberately
+// left alone: the apostrophe in "don't" would open a span that closes on the
+// next contraction, and everything between two unrelated ordinary words would
+// stop being checked.
+//
+// Bullets, headings and table rows stay checked, which is the difference
+// between this and `proseOf`. A phrase in a list item is still the author using
+// it, and a post written in bullets is the normal shape of the writing these
+// rules exist for. Narrowing to `proseOf` here was the obvious repair and would
+// have reintroduced what the list was added for on 2026-08-11: four drafts
+// shipping with a ruled-out phrase and the tool reporting all four clean.
+function withoutQuotedSpans(text) {
+  return String(text || '')
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/`[^`]*`/g, ' ')
+    .replace(/"[^"\n]*"/g, ' ');
+}
+
 // --- hard tells ------------------------------------------------------------
 
 function emDashes(text) {
@@ -254,7 +282,11 @@ function checkHard(text, config = {}) {
     // runtime. `bannedPhrases` is configured by hand, and asking somebody to
     // remember to write their phrase twice is a rule that fails quietly.
     const banned = [...P.HOUSE_RULES, ...extra].map((p) => flattenQuotes(String(p)));
-    const lower = flattenQuotes(String(text || ''));
+    // Quoted spans and code come out before matching, so a mention of a rule is
+    // not read as a use of it. See `withoutQuotedSpans` for why that is not
+    // `proseOf`. Removing this narrowing puts the check back to blocking any
+    // document that quotes the rules, this repository's own included.
+    const lower = withoutQuotedSpans(flattenQuotes(String(text || '')));
     const hits = banned.filter((p) => p && lower.includes(p));
     if (hits.length) {
       violations.push({
