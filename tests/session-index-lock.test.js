@@ -32,7 +32,9 @@ const path = require('path');
 const ROOT = path.join(__dirname, '..', 'plugins', 'session');
 const HANDOFFS = path.join(ROOT, 'scripts', 'handoffs.js');
 const handoffs = require(HANDOFFS);
-const { withIndexLock, acquire, release, WAIT_MS, STALE_MS } = require(path.join(ROOT, 'scripts', 'index-lock.js'));
+const {
+  withIndexLock, acquire, release, refreshLock, lockLost, WAIT_MS, STALE_MS, REFRESH_MS,
+} = require(path.join(ROOT, 'scripts', 'index-lock.js'));
 
 let failures = 0;
 function check(name, fn) {
@@ -379,6 +381,12 @@ check('a sweep that lost the lock does not wait or warn a second time', () => {
     fs.utimesSync(stale, longAgo, longAgo);
     h.recordHandoff({ slug: 'ancient', target: stale, kind: 'central', home });
     h.recordHandoff({ slug: 'vanished', target: path.join(root, 'HANDOFF-vanished.md'), kind: 'central', home });
+    // Backdated past the in-flight window, or the prune spares it as a wrap
+    // that may still be writing and this setup stops exercising a write.
+    const idxPath = path.join(root, 'index.json');
+    const idx = JSON.parse(fs.readFileSync(idxPath, 'utf8'));
+    idx.handoffs.vanished.recorded_at = new Date(Date.now() - 90 * 86400000).toISOString();
+    fs.writeFileSync(idxPath, JSON.stringify(idx, null, 2));
 
     const lock = ${JSON.stringify(lock)};
     fs.mkdirSync(lock);                                    // held, and fresh, so never judged stale
@@ -567,6 +575,329 @@ check('a first wrap on a fresh machine is still protected from a concurrent one'
   for (let i = 0; i < N; i += 1) if (!index[`first-${i}`]) missing.push(`first-${i}`);
   assert.deepStrictEqual(missing, [],
     'the folder not existing yet is not a reason to skip the lock, because these writers create it');
+});
+
+// ------------------------------------------- work that is still in flight ----
+
+// Two ways the prune could delete an entry for work that was not finished yet.
+// Both end the same way: a handoff exists and `/pickup` cannot find it by name.
+
+check('a wrap survives a sweep that runs before its document is written', () => {
+  // `cli.js target` records where a wrap will write before it writes, on
+  // purpose. Another session sweeping in that gap used to see an entry naming a
+  // file that was not there, call it gone, and drop it. The wrap then finished
+  // and reported success.
+  const home = tmpHome();
+  fs.mkdirSync(path.join(home, '.planning', 'handoffs'), { recursive: true });
+  const repo = path.join(home, 'code', 'myrepo');
+  fs.mkdirSync(path.join(repo, '.git'), { recursive: true });
+
+  const cli = (args) => spawnSync(process.execPath, [CLI, ...args, '--home', home], { encoding: 'utf8' });
+
+  cli(['target', 'topic', '--cwd', repo, '--json']);   // step 2 of a wrap
+  cli(['archive', '--json']);                          // another session sweeps
+  fs.writeFileSync(path.join(repo, 'HANDOFF.md'), '# Session Handoff\n');
+
+  const found = JSON.parse(cli(['find', 'myrepo', '--json']).stdout);
+  assert.ok(found.match,
+    'a wrap that was mid-write when the sweep ran must still be findable by name afterwards');
+});
+
+check('the sweep says which entries it spared and why', () => {
+  const home = tmpHome();
+  fs.mkdirSync(path.join(home, '.planning', 'handoffs'), { recursive: true });
+  handoffs.recordHandoff({ slug: 'inflight', target: path.join(home, 'code', 'x', 'HANDOFF.md'), kind: 'project', home });
+  fs.mkdirSync(path.join(home, 'code', 'x'), { recursive: true });
+
+  const out = handoffs.archiveStale({ home });
+  assert.deepStrictEqual(out.pending.map((p) => p.slug), ['inflight'],
+    'sparing something silently is as hard to trust as dropping something silently');
+  assert.deepStrictEqual(out.pruned, [], 'and it was not dropped');
+});
+
+check('an entry that is merely old is still pruned', () => {
+  // The window must not turn into "nothing is ever prunable". This is the case
+  // the prune exists for and it has to keep working.
+  const home = tmpHome();
+  const root = path.join(home, '.planning', 'handoffs');
+  fs.mkdirSync(path.join(home, 'code', 'y'), { recursive: true });
+  handoffs.recordHandoff({ slug: 'dead', target: path.join(home, 'code', 'y', 'HANDOFF.md'), kind: 'project', home });
+
+  const index = JSON.parse(fs.readFileSync(path.join(root, 'index.json'), 'utf8'));
+  index.handoffs.dead.recorded_at = new Date(Date.now() - 90 * 86400000).toISOString();
+  fs.writeFileSync(path.join(root, 'index.json'), JSON.stringify(index, null, 2));
+
+  const out = handoffs.pruneIndex({ home });
+  assert.deepStrictEqual(out.dropped.map((d) => d.slug), ['dead'],
+    'an entry whose document never appeared is dropped once it is no longer plausibly in flight');
+});
+
+check('a wrap whose stamp is ahead of this clock is still spared', () => {
+  // Devin round 3 on PR #111. Future stamps were rejected outright, so a clock
+  // that had shifted, or a second machine writing the same home, made the newest
+  // entries fail the freshness test. The entry it dropped was a wrap that had
+  // just recorded and was still being written, which is the case the window
+  // exists for.
+  const home = tmpHome();
+  const root = path.join(home, '.planning', 'handoffs');
+  fs.mkdirSync(path.join(home, 'code', 'skewed'), { recursive: true });
+  handoffs.recordHandoff({ slug: 'skewed', target: path.join(home, 'code', 'skewed', 'HANDOFF.md'), kind: 'project', home });
+
+  const index = JSON.parse(fs.readFileSync(path.join(root, 'index.json'), 'utf8'));
+  index.handoffs.skewed.recorded_at = new Date(Date.now() + 60 * 1000).toISOString(); // a minute ahead
+  fs.writeFileSync(path.join(root, 'index.json'), JSON.stringify(index, null, 2));
+
+  const out = handoffs.pruneIndex({ home });
+  assert.deepStrictEqual(out.dropped, [],
+    'a stamp ahead of this clock is the newest kind of entry, not the oldest');
+  assert.deepStrictEqual(out.pending.map((p) => p.slug), ['skewed']);
+});
+
+check('a stamp wildly ahead does not become permanently unprunable', () => {
+  // The property the old reasoning was protecting, kept, and the reason the fix
+  // is not clamping alone. Clamping to now on every read makes a far-future
+  // stamp look freshly recorded every single time, so it would be spared until
+  // real time caught up to it rather than for the window. This check is what
+  // found that, after the clamp had already been written.
+  const home = tmpHome();
+  const root = path.join(home, '.planning', 'handoffs');
+  fs.mkdirSync(path.join(home, 'code', 'wayoff'), { recursive: true });
+  handoffs.recordHandoff({ slug: 'wayoff', target: path.join(home, 'code', 'wayoff', 'HANDOFF.md'), kind: 'project', home });
+
+  const index = JSON.parse(fs.readFileSync(path.join(root, 'index.json'), 'utf8'));
+  index.handoffs.wayoff.recorded_at = new Date(Date.now() + 365 * 86400000).toISOString();
+  fs.writeFileSync(path.join(root, 'index.json'), JSON.stringify(index, null, 2));
+
+  const out = handoffs.pruneIndex({ home });
+  assert.deepStrictEqual(out.dropped.map((d) => d.slug), ['wayoff'],
+    'a year ahead is a wrong clock rather than an early one, and an entry that cannot say when '
+    + 'it was written does not get to be unprunable forever on the strength of it');
+});
+
+check('the line between ordinary skew and a wrong clock is the window itself', () => {
+  const home = tmpHome();
+  const entry = (msAhead) => ({
+    path: path.join(home, 'nothing-here.md'),
+    recorded_at: new Date(Date.now() + msAhead).toISOString(),
+  });
+  fs.mkdirSync(home, { recursive: true });
+
+  assert.strictEqual(handoffs.entryState(entry(60 * 1000)), 'pending',
+    'a minute ahead is two processes disagreeing, and the entry is young');
+  assert.strictEqual(handoffs.entryState(entry(handoffs.PENDING_MS * 2)), 'gone',
+    'well past the window is a clock that is wrong, and it is not trusted');
+});
+
+check('an entry with no timestamp is still prunable', () => {
+  // Missing evidence is not evidence. An index written before the field existed
+  // would otherwise become unprunable forever.
+  const home = tmpHome();
+  const root = path.join(home, '.planning', 'handoffs');
+  fs.mkdirSync(root, { recursive: true });
+  fs.mkdirSync(path.join(home, 'code', 'z'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'index.json'), `${JSON.stringify({
+    version: 1,
+    handoffs: { ancient: { path: path.join(home, 'code', 'z', 'HANDOFF.md'), kind: 'project' } },
+  }, null, 2)}\n`);
+
+  const out = handoffs.pruneIndex({ home });
+  assert.deepStrictEqual(out.dropped.map((d) => d.slug), ['ancient'],
+    'an entry with no recorded_at is not treated as young');
+});
+
+check('find says a wrap is in progress rather than calling it deleted', () => {
+  // Three states, three answers. `pending` used to fall into the `gone` branch
+  // and report a handoff as deleted when it had simply not been written yet.
+  const home = tmpHome();
+  fs.mkdirSync(path.join(home, '.planning', 'handoffs'), { recursive: true });
+  const repo = path.join(home, 'code', 'midwrap');
+  fs.mkdirSync(path.join(repo, '.git'), { recursive: true });
+
+  const run = (args) => spawnSync(process.execPath, [CLI, ...args, '--home', home], { encoding: 'utf8' });
+  run(['target', 'topic', '--cwd', repo, '--json']);   // recorded, not yet written
+
+  const out = run(['find', 'midwrap']).stdout;
+  assert.ok(!/which is gone/.test(out),
+    `a handoff that has not been written yet has not been deleted. Output was: ${out}`);
+  assert.match(out, /not there yet/,
+    'and it says what is actually happening, so the reader knows to let the wrap finish');
+});
+
+check('the sweep does not move documents while another session holds the lock', () => {
+  // The second way. The sweep renamed documents into archived/ before it took
+  // the lock, so between the rename and the repoint the index named a path
+  // nothing was at, and a prune in that gap was entitled to delete the entry.
+  //
+  // Racing for that window is not a test: it is microseconds wide and did not
+  // reproduce in six concurrent sweeps. What is testable is the structure. Hold
+  // the lock, start a sweep, and the document must stay put.
+  const home = tmpHome();
+  const root = path.join(home, '.planning', 'handoffs');
+  fs.mkdirSync(root, { recursive: true });
+  const doc = path.join(root, 'HANDOFF-old.md');
+  fs.writeFileSync(doc, '# Session Handoff\n');
+  const longAgo = (Date.now() - 90 * 86400000) / 1000;
+  fs.utimesSync(doc, longAgo, longAgo);
+
+  const lock = handoffs.indexLockPath(home);
+  fs.mkdirSync(lock);
+  fs.writeFileSync(path.join(lock, 'owner'), 'another-session');
+
+  const moved = JSON.parse(spawnSync(process.execPath, ['-e', `
+    const fs = require('fs'), path = require('path');
+    const { spawn } = require('child_process');
+    const sweep = spawn(process.execPath, [${JSON.stringify(CLI)}, 'archive', '--json',
+      '--home', ${JSON.stringify(home)}], { stdio: ['ignore', 'ignore', 'ignore'] });
+    setTimeout(() => {
+      process.stdout.write(JSON.stringify({ movedWhileHeld: !fs.existsSync(${JSON.stringify(doc)}) }));
+      try { sweep.kill(); } catch (_) { /* already gone */ }
+      process.exit(0);
+    }, 1500);
+  `], { encoding: 'utf8' }).stdout);
+
+  assert.strictEqual(moved.movedWhileHeld, false,
+    'moving, repointing and pruning are one change to one thing, so the move waits for the lock too');
+
+  fs.rmSync(lock, { recursive: true, force: true });
+});
+
+// Devin round 1 on PR #111.
+
+check('pickup is taught every state staleRecord can return', () => {
+  // The states live in two places: the code that produces them and the skill
+  // that words them for the reader. `/pickup` reads --json and formats from its
+  // own rules, so a state the skill has never heard of gets the nearest wording,
+  // which for a wrap still being written was "deleted or renamed".
+  //
+  // Asserted against the code rather than against a list written here, so
+  // adding a fourth state fails this until the skill is taught it too.
+  const src = fs.readFileSync(HANDOFFS, 'utf8');
+  const entryState = src.slice(src.indexOf('function entryState'), src.indexOf('function recentlyRecorded'));
+  // `present` is excluded, and not as a convenience. `stale` is only built when
+  // nothing matched (cli.js: `const stale = match ? null : staleRecord(...)`),
+  // and `findHandoff` matches whenever the recorded path exists, so a `stale`
+  // object carrying `present` cannot be produced. Every other state can be.
+  // Every quoted literal in the function, not just the ones on a bare `return`.
+  // The first version of this check matched `return '...'` and so never saw
+  // `pending`, which is returned from a ternary. It reported two states, which
+  // is the shape of check this repository keeps catching: one that passes, or
+  // fails, for a reason unrelated to what it claims to measure.
+  const states = [...new Set([...entryState.matchAll(/'([a-z][a-z-]*)'/g)].map((m) => m[1]))]
+    .filter((s) => s !== 'present');
+  assert.ok(states.length >= 3, `expected at least three reachable states, found ${states}`);
+
+  const skill = fs.readFileSync(path.join(ROOT, 'skills', 'pickup', 'SKILL.md'), 'utf8');
+  const untaught = states.filter((s) => !skill.includes(`\`${s}\``));
+  assert.deepStrictEqual(untaught, [],
+    `staleRecord can return ${untaught.join(', ')} and pickup/SKILL.md never mentions it, so the `
+    + 'model picks the nearest wording it does know');
+});
+
+check('pickup is told not to call a pending handoff deleted', () => {
+  // The specific wrong answer, not just that the word appears somewhere.
+  const skill = fs.readFileSync(path.join(ROOT, 'skills', 'pickup', 'SKILL.md'), 'utf8');
+  assert.match(skill, /Never describe a `pending` handoff as deleted/,
+    'the state being listed is not the same as the reader being told what not to say about it');
+});
+
+check('a long sweep keeps its lock alive rather than being taken over', () => {
+  // The renames run inside the region now, so the region is as long as the
+  // sweep. `acquire` judges a lock abandoned on mtime alone after 30s, and a
+  // sweep that outran that would have its lock taken over mid-repoint, putting
+  // two writers in the critical section.
+  const home = tmpHome();
+  const lock = handoffs.indexLockPath(home);
+  fs.mkdirSync(path.dirname(lock), { recursive: true });
+
+  const seen = withIndexLock(lock, () => {
+    // Backdate the lock past the staleness threshold, which is what a slow
+    // sweep looks like from outside, then say we are still working.
+    const old = (Date.now() - STALE_MS * 2) / 1000;
+    fs.utimesSync(lock, old, old);
+    const before = fs.statSync(lock).mtimeMs;
+
+    // Paced by elapsed time, so a call inside the interval is a deliberate
+    // no-op and only the later one reaches the disk. An injected clock rather
+    // than a real wait: the pacing is the thing under test, and sleeping five
+    // seconds in a suite to observe it would test the clock instead.
+    const tooSoon = refreshLock(lock, Date.now());
+    const later = refreshLock(lock, Date.now() + REFRESH_MS + 1);
+    const after = fs.statSync(lock).mtimeMs;
+    return { tooSoon, later, before, after };
+  });
+
+  assert.strictEqual(seen.value.tooSoon, false,
+    'a call inside the interval costs a lookup and does not touch the disk');
+  assert.strictEqual(seen.value.later, true, 'the region holds the lock, so it may refresh it');
+  assert.ok(seen.value.after > seen.value.before,
+    'the staleness clock moved forward, so a sweep still working is not judged abandoned');
+});
+
+check('the heartbeat is paced by time, not by documents moved', () => {
+  // Devin round 2. The first version fired once per document actually moved, so
+  // a folder where nothing is stale renamed nothing, refreshed nothing, and
+  // could still be taken over while statting every file. Measured then: 300
+  // documents, zero stale, zero refreshes.
+  //
+  // Asserted where the sweep spends its time, rather than on the rename path.
+  const home = tmpHome();
+  const root = path.join(home, '.planning', 'handoffs');
+  fs.mkdirSync(root, { recursive: true });
+  for (let i = 0; i < 40; i += 1) fs.writeFileSync(path.join(root, `HANDOFF-fresh-${i}.md`), '# x');
+
+  // A clock that advances on every read, so the pacing interval is crossed
+  // during the scan without the suite waiting real seconds. Driven in a child
+  // process so the fake clock cannot leak into the rest of the run, and with no
+  // hook added to the sweep for the test's benefit: this counts the writes the
+  // real code makes to the real lock.
+  const out = JSON.parse(spawnSync(process.execPath, ['-e', `
+    const fs = require('fs');
+    let t = Date.now();
+    Date.now = () => { t += 2000; return t; };
+    const lock = ${JSON.stringify(path.join(root, '.index.lock'))};
+    let touches = 0;
+    const realUtimes = fs.utimesSync;
+    fs.utimesSync = (...a) => { if (String(a[0]) === lock) touches += 1; return realUtimes(...a); };
+    const h = require(${JSON.stringify(HANDOFFS)});
+    const r = h.archiveStale({ home: ${JSON.stringify(home)}, days: 30, now: t });
+    process.stdout.write(JSON.stringify({ touches, moved: r.moved.length }));
+  `], { encoding: 'utf8' }).stdout);
+
+  assert.strictEqual(out.moved, 0, 'setup: nothing is stale, so nothing moves');
+  assert.ok(out.touches > 0,
+    'the scan has to keep the lock alive on the path where nothing moves. Before this change the '
+    + `sweep refreshed once per document moved, so this count was 0. It is ${out.touches}.`);
+});
+
+check('lockLost notices the lock being taken from under a region', () => {
+  const home = tmpHome();
+  const lock = handoffs.indexLockPath(home);
+  fs.mkdirSync(path.dirname(lock), { recursive: true });
+
+  const seen = withIndexLock(lock, () => {
+    const held = lockLost(lock);
+    // Somebody else takes it over while this region is still working.
+    fs.writeFileSync(path.join(lock, 'owner'), 'another-session');
+    return { held, afterTakeover: lockLost(lock) };
+  });
+
+  assert.strictEqual(seen.value.held, false, 'nothing was lost while we held it');
+  assert.strictEqual(seen.value.afterTakeover, true,
+    'the write path asks before it writes, so a takeover is not silent');
+});
+
+check('refresh will not extend a lock this process does not own', () => {
+  // Same rule as release. If ours was taken over as stale, the lock at that
+  // path belongs to a live writer and extending it would extend theirs.
+  const home = tmpHome();
+  const lock = handoffs.indexLockPath(home);
+  fs.mkdirSync(path.dirname(lock), { recursive: true });
+  fs.mkdirSync(lock);
+  fs.writeFileSync(path.join(lock, 'owner'), 'somebody-else');
+
+  assert.strictEqual(refreshLock(lock), false, 'no region here, and not ours anyway');
+
+  fs.rmSync(lock, { recursive: true, force: true });
 });
 
 check('release leaves a lock belonging to someone else alone', () => {

@@ -26,10 +26,23 @@ exactly what someone needs to see at that moment.
 **When `stale` is present, lead with it.** It holds the path the index recorded,
 which is the only location nothing else can guess, and reporting the guesses alone
 is how a moved project reads as a handoff that never existed. `stale.state` says
-which it is: `gone` means the directory is still there and the document is not, so
-it was deleted or renamed; `unreachable` means the directory went too, so the
-project moved or its volume is not mounted, and you cannot tell which from here.
-Never describe an `unreachable` handoff as lost.
+which it is, and there are three answers, not two:
+
+- `gone` means the directory is still there and the document is not, so it was
+  deleted or renamed.
+- `unreachable` means the directory went too, so the project moved or its volume
+  is not mounted, and you cannot tell which from here. Never describe an
+  `unreachable` handoff as lost.
+- `pending` means the note was written in the last few minutes and the document
+  has not appeared yet. A wrap records where it will write before it writes, so
+  this is what one looks like while it is still running. Say that, and say to let
+  it finish and try again. **Never describe a `pending` handoff as deleted**: it
+  is the one state where the handoff is most likely about to exist.
+
+Read the state rather than assuming a missing document means a deleted one. This
+list is the whole contract, so a state that is not on it is a state this skill has
+not been taught, and the answer is to say the state is unrecognised rather than to
+pick the nearest wording.
 
 If the match is an archived handoff, open the summary with:
 

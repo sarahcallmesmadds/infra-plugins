@@ -227,7 +227,7 @@ function exists(dir) {
 // to protect. Still recorded, so a nested call inherits the answer rather than
 // going off to take a lock its caller decided against.
 function unlockedRegion(lock, fn, reason) {
-  const region = { count: 1, locked: false, reason };
+  const region = { count: 1, locked: false, reason, refreshedAt: 0 };
   regions.set(lock, region);
   try {
     return { value: fn(), locked: false, reason };
@@ -299,7 +299,10 @@ function withIndexLock(lock, fn, { readOnly = false, mayCreate = false } = {}) {
   }
 
   const locked = reason === 'acquired';
-  const region = { count: 1, locked, reason };
+  // `refreshedAt` starts at acquisition, because that is when the lock's own
+  // timestamp was last set. Starting from zero would send the first call to
+  // `refreshLock` straight to the disk for no reason.
+  const region = { count: 1, locked, reason, refreshedAt: Date.now() };
   regions.set(lock, region);
   try {
     return { value: fn(), locked, reason };
@@ -311,6 +314,80 @@ function withIndexLock(lock, fn, { readOnly = false, mayCreate = false } = {}) {
       regions.delete(lock);
       if (locked) release(lock);
     }
+  }
+}
+
+// Push the lock's staleness clock forward while a region is still working.
+//
+// `acquire` judges a lock abandoned from its directory mtime alone, after
+// STALE_MS. That was safe when a region held a read and one small write and
+// could not plausibly take 30 seconds. The archive sweep now does its renames
+// inside the region too, so the region's length depends on how many documents
+// are being archived and how fast the disk is. A sweep that ran past the
+// threshold would have its lock taken over while it was still repointing, which
+// puts two writers inside the critical section: the exact failure the lock
+// exists to prevent, arriving through the recovery path.
+//
+// Measured on a local disk, 2000 documents took 299ms against a 30s threshold,
+// so this is not reachable today. It is not defended by measuring, though,
+// because that measurement is about this machine: a home directory on a network
+// share can be orders of magnitude slower per rename, and the margin is an
+// assumption about somebody's hardware rather than a property of the code.
+//
+// Called during long work rather than on a timer, because the whole file is
+// synchronous by design and a timer cannot fire while a rename loop is running.
+//
+// Paced by elapsed time, not by units of work, and that is the whole point of
+// this version. The first one fired once per document actually moved, which
+// covered the case being thought about and none of the others: a folder where
+// most documents are not stale does zero renames and therefore zero refreshes,
+// while `statSync` over every file is the slow part. The scan, the repoint and
+// the prune all spend time and none of them moved anything. Devin round 2 on
+// PR #111, and the same shape as every other finding on this branch: the fix
+// went where the work I had in mind was, rather than everywhere the region
+// spends time.
+//
+// So it is safe to call from anywhere and often. Calls inside the interval cost
+// a map lookup and a subtraction, and only one in every REFRESH_MS reaches the
+// disk.
+//
+// Refuses to touch a lock this process does not own, for the same reason
+// `release` does: if ours was taken over as stale, the lock at that path now
+// belongs to a live writer and extending it would be extending someone else's.
+const REFRESH_MS = 5000;
+
+function refreshLock(lock, now = Date.now()) {
+  const region = regions.get(lock);
+  if (!region || !region.locked) return false;
+  if (now - region.refreshedAt < REFRESH_MS) return false;
+  try {
+    if (fs.readFileSync(path.join(lock, 'owner'), 'utf8') !== OWNER) return false;
+    const stamp = new Date(now);
+    fs.utimesSync(lock, stamp, stamp);
+    region.refreshedAt = now;
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+// Has this region's lock been taken from under it?
+//
+// The heartbeat makes a takeover unlikely rather than impossible, and the cost
+// of being wrong is two writers rewriting the index at once, which is the
+// failure this whole file exists to prevent. So the write path asks before it
+// writes, which is one `readFileSync` against a change that would otherwise be
+// silent.
+//
+// Only meaningful for a region that took the lock. A region that never had one
+// has not lost anything.
+function lockLost(lock) {
+  const region = regions.get(lock);
+  if (!region || !region.locked) return false;
+  try {
+    return fs.readFileSync(path.join(lock, 'owner'), 'utf8') !== OWNER;
+  } catch (_) {
+    return true; // The lock is gone entirely, so it is certainly not ours.
   }
 }
 
@@ -339,6 +416,9 @@ function warnUnprotectedWrite(lock) {
 module.exports = {
   withIndexLock,
   warnUnprotectedWrite,
+  refreshLock,
+  lockLost,
+  REFRESH_MS,
   WAIT_MS,
   STALE_MS,
   // Exported for the tests, which need to drive contention deterministically

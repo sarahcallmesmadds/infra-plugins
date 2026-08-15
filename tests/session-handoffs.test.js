@@ -96,6 +96,24 @@ function cli(args, home) {
   try { return JSON.parse(run.stdout); } catch (_) { return { raw: run.stdout, err: run.stderr }; }
 }
 
+// Age an entry past the in-flight window.
+//
+// The prune spares an entry recorded in the last few minutes whose document is
+// not there, because that is what a wrap looks like between recording where it
+// will write and writing it, and sweeping one of those away loses a handoff
+// that is still being written. Nothing on disk tells "not written yet" apart
+// from "written and then deleted", so the window covers both.
+//
+// Every test below that deletes a document and expects the entry pruned is
+// therefore testing the settled case, and has to say so. Without this they set
+// up a handoff that, as far as the sweep can tell, is still in progress.
+function settled(slug, home) {
+  const file = path.join(handoffs.handoffRoot(home), 'index.json');
+  const index = JSON.parse(fs.readFileSync(file, 'utf8'));
+  index.handoffs[slug].recorded_at = new Date(Date.now() - 90 * 86400000).toISOString();
+  fs.writeFileSync(file, `${JSON.stringify(index, null, 2)}\n`);
+}
+
 function roundTrip(repoPath, home) {
   fs.mkdirSync(path.join(repoPath, '.git'), { recursive: true });
   const target = cli(['target', 'anything', '--cwd', repoPath, '--json'], home);
@@ -248,6 +266,7 @@ check('a deleted handoff in a surviving directory reads as gone', () => {
   const repo = path.join(home, 'Projects', 'still-here');
   const { target } = roundTrip(repo, home);
   fs.rmSync(target.path);
+  settled(target.slug, home);
   assert.strictEqual(handoffs.staleRecord(target.slug, home).state, 'gone');
 });
 
@@ -425,6 +444,7 @@ check('the sweep drops entries whose files are gone', () => {
   const repo = path.join(home, 'code', 'deleted-later');
   roundTrip(repo, home);
   fs.rmSync(path.join(repo, 'HANDOFF.md'));
+  settled('deleted-later', home);
 
   const out = cli(['archive', '--json'], home);
   assert.deepStrictEqual(out.pruned.map((p) => p.slug), ['deleted-later']);
@@ -464,6 +484,7 @@ check('a dry run reports the prune without performing it', () => {
   const repo = path.join(home, 'code', 'dry');
   roundTrip(repo, home);
   fs.rmSync(path.join(repo, 'HANDOFF.md'));
+  settled('dry', home);
 
   const out = cli(['archive', '--dry-run', '--json'], home);
   assert.deepStrictEqual(out.pruned.map((p) => p.slug), ['dry']);
@@ -515,6 +536,7 @@ check('a file missing from a directory that is right there is still pruned', () 
   const repo = path.join(home, 'code', 'really-deleted');
   roundTrip(repo, home);
   fs.rmSync(path.join(repo, 'HANDOFF.md'));              // directory stays
+  settled('really-deleted', home);
 
   const out = cli(['archive', '--json'], home);
   assert.deepStrictEqual(out.pruned.map((p) => p.slug), ['really-deleted']);
@@ -544,6 +566,7 @@ check('an index that could not be written is not reported as changed', () => {
   const repo = path.join(home, 'code', 'unwritable');
   roundTrip(repo, home);
   fs.rmSync(path.join(repo, 'HANDOFF.md'));
+  settled('unwritable', home);
 
   const root = handoffs.handoffRoot(home);
   fs.chmodSync(root, 0o500);                             // readable, not writable
@@ -565,6 +588,7 @@ check('the sweep says out loud that it touched the index', () => {
   const repo = path.join(home, 'code', 'quietly');
   roundTrip(repo, home);
   fs.rmSync(path.join(repo, 'HANDOFF.md'));
+  settled('quietly', home);
   const out = cli(['archive'], home);
   assert.match(out.raw, /Dropped 1 index entry/, out.raw);
 });

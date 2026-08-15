@@ -19,7 +19,7 @@ const os = require('os');
 const path = require('path');
 
 const config = require('./config');
-const { withIndexLock, warnUnprotectedWrite } = require('./index-lock');
+const { withIndexLock, warnUnprotectedWrite, refreshLock, lockLost } = require('./index-lock');
 
 const DEFAULT_STALE_DAYS = 30;
 
@@ -226,6 +226,17 @@ function mutateIndex(home, change, { readOnly = false, mayCreate = false } = {})
   return withIndexLock(lock, () => {
     const save = (handoffs) => {
       warnUnprotectedWrite(lock);
+      // Asked before the write, not after, so the clock is fresh for it and so
+      // a lock lost during a long region is caught at the one place every write
+      // passes through rather than at each caller.
+      refreshLock(lock);
+      if (lockLost(lock)) {
+        process.stderr.write(
+          `session: the handoff index lock at ${lock} was taken over while this run was still `
+          + 'working, so this write went ahead beside another session and an entry may have been '
+          + 'lost.\n',
+        );
+      }
       return writeIndexUnlocked(handoffs, home) !== null;
     };
     return change(readIndex(home), save);
@@ -297,16 +308,70 @@ function forgetHandoff(slug, home = os.homedir()) {
 // entry stays. The cost is that a genuinely deleted project keeps its entry,
 // which `forget` exists to clear and which costs nothing until then, because
 // every lookup verifies the file anyway.
-function entryState(entry) {
+function entryState(entry, now = Date.now()) {
   const target = entry && entry.path;
   if (!target) return 'gone';
   try {
     if (fs.existsSync(target)) return 'present';
-    return fs.existsSync(path.dirname(target)) ? 'gone' : 'unreachable';
+    if (!fs.existsSync(path.dirname(target))) return 'unreachable';
+    return recentlyRecorded(entry, now) ? 'pending' : 'gone';
   } catch (_) {
     // A path that cannot even be tested is the clearest case of not knowing.
     return 'unreachable';
   }
+}
+
+// A wrap records where it is about to write before it writes, on purpose, so
+// there is always a moment where the entry names a document that is not there
+// yet. `entryState` called that moment `gone` and the prune collected it, so a
+// second session sweeping in that gap deleted the entry of a wrap that was
+// still being written. The wrap then finished, reported success, and `/pickup`
+// could not find it.
+//
+// So a young entry whose document has not appeared is `pending`: not present,
+// and not evidence of anything either. The window is generous because being
+// wrong in this direction is nearly free. The existing note above says an entry
+// pointing at a file that was never written costs nothing, since every lookup
+// checks the file anyway, so the price of waiting is one dead entry surviving
+// ten minutes longer. The price of not waiting is a lost handoff.
+//
+// An entry with no usable `recorded_at` is not treated as young. Missing
+// evidence is not evidence, and an index written before this field existed
+// would otherwise become unprunable forever.
+const PENDING_MS = 10 * 60 * 1000;
+
+function recentlyRecorded(entry, now = Date.now()) {
+  const stamp = entry && entry.recorded_at;
+  if (!stamp) return false;
+  const at = Date.parse(stamp);
+  if (Number.isNaN(at)) return false;
+  // A stamp a little ahead of this clock is clamped to now. A stamp wildly
+  // ahead is not trusted at all.
+  //
+  // It used to be rejected outright, on the reasoning that a future stamp is a
+  // clock that disagrees rather than a young entry, and that treating it as
+  // young would leave the entry unprunable for as long as the clocks differ.
+  // That failed at the worst possible moment: the stamps most likely to sit
+  // ahead are the newest ones, so the entry it dropped was a wrap that had just
+  // recorded and was still being written, which is the case this window exists
+  // for. Devin round 3 on PR #111.
+  //
+  // Clamping alone does not fix it, which the check for this found. Clamping to
+  // `now` on every read makes a far-future stamp look freshly recorded every
+  // time it is read, so it is spared not for the window but until real time
+  // catches up to it, which for a badly wrong clock is never in any useful
+  // sense. That is the property the old reasoning was protecting, and it was
+  // right to protect it.
+  //
+  // So both, split at the window itself. Inside it, a stamp ahead of this clock
+  // is ordinary skew between two processes and the entry is young. Beyond it,
+  // the clock is wrong rather than early, and an entry that cannot be trusted to
+  // say when it was written does not get to be permanently unprunable on the
+  // strength of it. The cost is that a machine more than ten minutes ahead of
+  // itself loses this protection, and a machine in that state has larger
+  // problems than a swept index entry.
+  if (at > now + PENDING_MS) return false;
+  return now - Math.min(at, now) < PENDING_MS;
 }
 
 function pruneIndex({ home = os.homedir(), dryRun = false } = {}) {
@@ -325,7 +390,11 @@ function pruneIndex({ home = os.homedir(), dryRun = false } = {}) {
     const unreachable = [];
     const kept = {};
 
+    const pending = [];
     for (const [key, entry] of Object.entries(handoffs)) {
+      // entryState stats a file per entry, so this loop is as slow as the disk
+      // too.
+      refreshLock(indexLockPath(home));
       const state = entryState(entry);
       if (state === 'gone') {
         dropped.push({ slug: key, path: entry && entry.path });
@@ -333,6 +402,9 @@ function pruneIndex({ home = os.homedir(), dryRun = false } = {}) {
       }
       kept[key] = entry;
       if (state === 'unreachable') unreachable.push({ slug: key, path: entry.path });
+      // Kept, and reported, because a sweep that silently spares something is
+      // as hard to trust as one that silently drops it.
+      if (state === 'pending') pending.push({ slug: key, path: entry.path });
     }
 
     // Whether the write succeeded, so the caller can say what happened rather
@@ -342,7 +414,7 @@ function pruneIndex({ home = os.homedir(), dryRun = false } = {}) {
     let written = true;
     if (dropped.length && !dryRun) written = save(kept);
 
-    return { dropped, unreachable, written };
+    return { dropped, unreachable, pending, written };
   }, { readOnly: dryRun });
 }
 
@@ -454,29 +526,11 @@ function archiveStale({ days = DEFAULT_STALE_DAYS, home = os.homedir(), now = Da
     // No handoffs directory yet. Nothing to sweep, and creating one here would
     // be a side effect nobody asked for.
     return {
-      moved, root, skipped: true, repointed: [], pruned: [], unreachable: [], indexWritten: true,
+      moved, root, skipped: true, repointed: [], pruned: [], unreachable: [], pending: [], indexWritten: true,
     };
   }
 
   const cutoff = now - days * 86400000;
-
-  for (const name of entries) {
-    if (!name.startsWith('HANDOFF-') || !name.endsWith('.md')) continue;
-    const from = path.join(root, name);
-    const to = path.join(dest, name);
-    try {
-      const stat = fs.statSync(from);
-      if (!stat.isFile() || stat.mtimeMs >= cutoff) continue;
-      if (!dryRun) {
-        fs.mkdirSync(dest, { recursive: true });
-        fs.renameSync(from, to);
-      }
-      moved.push(name.replace(/^HANDOFF-/, '').replace(/\.md$/, ''));
-      relocations.push({ from, to });
-    } catch (_) {
-      // One unreadable file must not stop the sweep.
-    }
-  }
 
   // Follow the files that just moved, before pruning.
   //
@@ -511,7 +565,39 @@ function archiveStale({ days = DEFAULT_STALE_DAYS, home = os.homedir(), now = Da
   // so the two halves cannot end up on opposite sides of the lock. Devin round
   // 1 on PR #109 found that they could, back when the region was recorded only
   // on the acquiring path.
-  const { dropped, unreachable, written } = mutateIndex(home, (handoffs, save) => {
+  //
+  // The moves are inside the region too, and that is the third thing rather
+  // than a tidy-up. They used to run before it, so between renaming a document
+  // and repointing its entry there was a window where the index named a path
+  // nothing was at. A second session pruning in that window read the entry,
+  // found no file and a directory that still existed, called it gone and
+  // deleted it. The sweep then repointed an entry that was no longer there.
+  // Moving, repointing and pruning are one change to one thing, so they are one
+  // region.
+  const { dropped, unreachable, pending, written } = mutateIndex(home, (handoffs, save) => {
+    for (const name of entries) {
+      if (!name.startsWith('HANDOFF-') || !name.endsWith('.md')) continue;
+      const from = path.join(root, name);
+      const to = path.join(dest, name);
+      // Every file, not every rename. A folder where most documents are not
+      // stale renames nothing while statting all of them, and statting is the
+      // slow part on a network home. Cheap to call: only one in every
+      // REFRESH_MS reaches the disk.
+      refreshLock(indexLockPath(home));
+      try {
+        const stat = fs.statSync(from);
+        if (!stat.isFile() || stat.mtimeMs >= cutoff) continue;
+        if (!dryRun) {
+          fs.mkdirSync(dest, { recursive: true });
+          fs.renameSync(from, to);
+        }
+        moved.push(name.replace(/^HANDOFF-/, '').replace(/\.md$/, ''));
+        relocations.push({ from, to });
+      } catch (_) {
+        // One unreadable file must not stop the sweep.
+      }
+    }
+
     if (relocations.length) {
       let touched = false;
       for (const [key, entry] of Object.entries(handoffs)) {
@@ -536,6 +622,10 @@ function archiveStale({ days = DEFAULT_STALE_DAYS, home = os.homedir(), now = Da
     repointed,
     pruned: dropped,
     unreachable,
+    // Entries spared because they name a document that has not been written
+    // yet. Reported rather than silently kept, so a sweep that spares something
+    // is as visible as one that drops it.
+    pending,
     // False when the index could not be written, so the printed summary can
     // say the change did not land instead of reporting it as done.
     indexWritten: repointWritten && written,
@@ -907,6 +997,12 @@ module.exports = {
   indexLockPath,
   indexPath,
   readIndex,
+  // Exported because `staleRecord` already hands its result to callers, so the
+  // states are part of this module's surface rather than an internal detail,
+  // and because the window is a documented behaviour that a check has to be
+  // able to name.
+  entryState,
+  PENDING_MS,
   // `writeIndex` is deliberately not exported. It was, and an exported raw
   // writer is a way to change the index without the lock, which is the bug this
   // module was changed to close. Anything that needs to change the index uses

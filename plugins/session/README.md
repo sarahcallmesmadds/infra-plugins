@@ -332,6 +332,59 @@ one, so a reader gets one whole version or the other. A preview of state another
 session is changing is approximate whatever you do, and waiting five seconds
 does not make it less so.
 
+### Work that is still in flight
+
+Two more ways a handoff could vanish from the index, both closed.
+
+A wrap records where it will write before it writes. Between those two moments
+the index names a document that is not there, and a sweep running in that gap
+used to call the entry dead and delete it. The wrap then finished and reported
+success, and `/pickup` could not find it. So an entry recorded in the last ten
+minutes whose document has not appeared is spared, and the sweep says which ones
+it spared. It is dropped by a later sweep if the document never arrives.
+
+Nothing on disk separates "not written yet" from "written and then deleted", so
+the same ten minutes apply to both. That is the cost, and it is small: a dead
+entry survives ten minutes longer, against a live handoff being lost.
+
+A note stamped slightly ahead of the reading clock counts as young, rather than
+failing the test for being in the future. Two processes rarely agree to the
+millisecond, and the notes most likely to sit ahead are the newest ones, so
+rejecting them dropped exactly the wrap that was still being written. Past the
+window it stops being ordinary disagreement and starts being a clock that is
+wrong, and a note that cannot say when it was written does not get to be
+unprunable forever on the strength of it.
+
+The sweep also used to move documents into `archived/` before taking the lock,
+so between the move and the repoint the index named a path nothing was at, and
+another session pruning in that gap was entitled to drop the entry. Moving,
+repointing and pruning are one change to one thing, so they now happen inside one
+locked region.
+
+That makes the region as long as the sweep, and a lock is judged abandoned after
+30 seconds of an unchanged timestamp. So the sweep pushes that timestamp forward
+as it works. Without it, a sweep slow enough to cross the threshold would have
+its lock taken over while it was still going, which puts two writers in the
+critical section: the failure the lock exists to prevent, arriving through the
+recovery path. On a local disk 2000 documents take about 300ms against a 30
+second threshold, so this is not reachable today. It is not left to that margin,
+because the margin is a fact about one machine and a home directory on a network
+share is a different machine.
+
+The heartbeat is paced by elapsed time rather than by work done, and that
+distinction is the whole of it. Pacing it by documents moved covered the case
+that was being thought about and none of the others: a folder where most
+documents are not stale renames nothing, so it would have refreshed nothing,
+while statting every file is the slow part. It is now called from the scan, the
+repoint and the prune alike, and calls inside the interval cost a lookup rather
+than a disk write.
+
+Belt and braces, the write path also asks whether the lock is still this
+session's before it writes. The heartbeat makes a takeover unlikely rather than
+impossible, and the cost of being wrong is two sessions rewriting the index at
+once, which is the thing all of this exists to prevent. If it has been taken, the
+write still goes ahead, for the reason above, and says so.
+
 A command that changes nothing creates nothing. The lock lives inside
 `~/.planning/handoffs/`, so taking it means creating that folder, which would put
 one on a machine that has never had one on the say-so of a command that did
