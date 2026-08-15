@@ -136,8 +136,24 @@ function depsLine(root, { home, deadline = Infinity } = {}) {
   const targets = deps.targets || deps.skills;
   if (!targets || typeof targets !== 'object') return '';
 
-  let missing = 0;
-  let changed = 0;
+  // Only one question is asked here: is the file this entry points at still
+  // there. A file that is gone is a fact, it is actionable in one command, and
+  // it does not go away by itself.
+  //
+  // What this deliberately no longer counts is an entry whose file has been
+  // edited since somebody last reviewed it. That was two thirds of the line's
+  // output and none of its value. Measured on 2026-08-15: 82 of 127 entries,
+  // and 0 gone. `last_updated` is a human review date that is never bumped by
+  // machine, on purpose, so every reviewed-and-since-edited entry counted as
+  // drift forever and the number only ever grew. A line that is always on tells
+  // a reader nothing, and this one closed by telling them not to rely on a map
+  // that was sound.
+  //
+  // That judgement has a home already. /audit-deps compares `last_updated`
+  // against the file's modification time to decide an entry's edges want
+  // re-inferring, which is the same measurement made where somebody can act on
+  // it, one entry at a time, having asked for it.
+  let gone = 0;
   let incomplete = false;
   let examined = 0;
   for (const target of Object.values(targets)) {
@@ -149,33 +165,26 @@ function depsLine(root, { home, deadline = Infinity } = {}) {
     const targetPath = expandHome(target.path, home);
     if (!targetPath) continue;
     examined += 1;
-    let stat;
-    try { stat = fs.statSync(targetPath); }
-    catch (_) { missing += 1; continue; }
-    // `last_auto_checked` wins when it is present and later. deps-watch writes
-    // it after an edit that added no new dependency, and it is deliberately a
-    // different field from `last_updated`: that one is the human and audit
-    // review date, and /audit-deps compares it against the mtime to decide an
-    // entry needs its edges re-inferred. Reading only `last_updated` here left
-    // this line firing on every ordinary edit, which is what made it noise.
-    const stamps = [target.last_auto_checked, target.last_updated]
-      .map((value) => Date.parse(value || ''))
-      .filter(Number.isFinite);
-    if (!stamps.length) continue;
-    if (stat.mtimeMs > Math.max(...stamps)) changed += 1;
+    try { fs.statSync(targetPath); }
+    catch (_) { gone += 1; }
   }
 
-  if (!missing && !changed) {
-    if (incomplete && examined) {
-      return `DEPS.json check incomplete after ${examined} target${examined === 1 ? '' : 's'}; review it before relying on it.`;
-    }
-    return '';
+  // A scan cut short cannot say "nothing is gone", so it says what it managed
+  // instead of staying quiet. Silence here has to mean the whole map was read
+  // and every file was there.
+  const cutShort = incomplete && examined
+    ? ` Checked ${examined} of them before running out of time, so there may be more.`
+    : '';
+
+  if (gone) {
+    return gone === 1
+      ? `Dependency map: 1 entry points at a file that is gone. Run /audit-deps to drop it.${cutShort}`
+      : `Dependency map: ${gone} entries point at files that are gone. Run /audit-deps to drop them.${cutShort}`;
   }
-  const bits = [];
-  if (missing) bits.push(`${missing} missing`);
-  if (changed) bits.push(`${changed} changed`);
-  const caveat = incomplete ? ` Check incomplete after ${examined} target${examined === 1 ? '' : 's'}.` : '';
-  return `DEPS.json drift warning: ${bits.join(', ')}.${caveat} Review it before relying on it.`;
+  if (incomplete && examined) {
+    return `Dependency map: read ${examined} entr${examined === 1 ? 'y' : 'ies'} before running out of time, so nothing is confirmed either way.`;
+  }
+  return '';
 }
 
 function buildBrief({ home = os.homedir(), deadline = Infinity, includeSummary = true, now = Date.now() } = {}) {

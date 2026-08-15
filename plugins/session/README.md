@@ -41,11 +41,20 @@ inside it edit the same files.
 
 **It opens with the build loop.** When build-loop state exists, the hook includes
 the active bug queue, the number of open to-build items, the newest weekly
-summary when it is no more than 14 days old, and a warning when `DEPS.json`
-points at missing or newer files. Session does not depend on build-loop being
+summary when it is no more than 14 days old, and a line when `DEPS.json` holds
+an entry whose file is gone. Session does not depend on build-loop being
 installed: it reads the state files when they exist and stays quiet when they
 do not. The weekly summary appears only on a new startup, not again on resume or
 compact, and is clipped at 2,000 characters.
+
+**It no longer counts files edited since their entry was reviewed.** That count
+was two thirds of this line's output and none of its value. `last_updated` is a
+human review date and is deliberately never bumped by machine, so an entry
+reviewed once and edited since counted as drifted forever and the number only
+grew. Measured on 2026-08-15: 82 of 127 entries, with nothing actually missing,
+printed as a warning not to rely on a map that was sound. A line that is always
+on tells a reader nothing. `/audit-deps` makes the same comparison, one entry at
+a time, for somebody who asked for it and can act on the answer.
 
 The entire injected context, including the date and parallel-session notices,
 is capped at 10,000 characters. A long weekly summary is clipped before it can
