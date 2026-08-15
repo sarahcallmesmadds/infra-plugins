@@ -74,29 +74,31 @@ const KINDS = new Set(['skill', 'hook', 'command', 'script', 'plugin', 'plugin-r
 // hold in two places cannot be two paragraphs, because prose has no compiler.
 // Add a directory here and both skills have it.
 const PLUGIN_LAYOUT = [
-  { dir: 'skills', list: 'skills/*/SKILL.md', find: 'skills/<slug>/SKILL.md', kind: 'skill' },
-  { dir: 'hooks', list: 'hooks/*', find: 'hooks/<slug>*', kind: 'hook' },
-  { dir: 'commands', list: 'commands/*.md', find: 'commands/<slug>.md', kind: 'command' },
-  { dir: 'scripts', list: 'scripts/*', find: 'scripts/<slug>*', kind: 'script' },
-  { dir: 'statusline', list: 'statusline/*', find: 'statusline/<slug>*', kind: 'script' },
-  { dir: 'bin', list: 'bin/*', find: 'bin/<slug>*', kind: 'script' },
+  { dir: 'skills', list: 'skills/*/SKILL.md', find: ['skills/<slug>/SKILL.md'], kind: 'skill' },
+  { dir: 'hooks', list: 'hooks/*', find: ['hooks/<slug>', 'hooks/<slug>.*'], kind: 'hook' },
+  { dir: 'commands', list: 'commands/*.md', find: ['commands/<slug>.md'], kind: 'command' },
+  { dir: 'scripts', list: 'scripts/*', find: ['scripts/<slug>', 'scripts/<slug>.*'], kind: 'script' },
+  { dir: 'statusline', list: 'statusline/*', find: ['statusline/<slug>', 'statusline/<slug>.*'], kind: 'script' },
+  { dir: 'bin', list: 'bin/*', find: ['bin/<slug>', 'bin/<slug>.*'], kind: 'script' },
 ];
+
+// Finding is the exact name, or the exact name with an extension. Never a
+// prefix. `<slug>*` looks equivalent and is not: asked for `queue` it returns
+// queue-count.test.js, queue-locking.test.js and three more, none of which is
+// queue. /flag-issue records the path it finds into a queue entry and
+// /apply-fix later opens that path and edits it, so a prefix match there is a
+// correction applied to a file nobody was talking about. The looser form came
+// from /built-check, which never needed it either: it claims an item looks
+// built on the strength of the match.
 
 // The two rows that sit outside `plugins/<name>/`, and the two that get
 // forgotten, for opposite reasons. The plugin directory itself is the entry the
 // map carries for a plugin as a whole. `tests/` is at the repository root, so
 // every glob anchored at `plugins/*/` walks straight past it.
 const REPO_LAYOUT = [
-  // Listing wants the directories. Finding wants the manifest, because that is
-  // what a plugin row records: /flag-issue states outright that a plugin
-  // resolves to its plugin.json and never to its directory, since /apply-fix
-  // later opens the path and a directory cannot be opened. /built-check needs
-  // the directory too, to tell a started plugin from a finished one, and it
-  // asks for that separately because it is a judgement rather than a location.
-  { dir: '.', list: 'plugins/*/', find: 'plugins/<slug>/.claude-plugin/plugin.json', kind: 'plugin', dirOnly: true },
-  { dir: 'tests', list: 'tests/*.js', find: 'tests/<slug>*.js', kind: 'script' },
+  { dir: '.', list: 'plugins/*/', find: ['plugins/<slug>/.claude-plugin/plugin.json'], kind: 'plugin', dirOnly: true },
+  { dir: 'tests', list: 'tests/*.js', find: ['tests/<slug>.js', 'tests/<slug>.test.js'], kind: 'script' },
 ];
-
 // Directories inside a plugin that are deliberately not mapped, with the reason.
 // Named rather than left out, so the test that reconciles this list against
 // what is on disk can tell "decided against" from "nobody has looked". An
@@ -381,12 +383,12 @@ function cmdLayout(args) {
   const slug = args.slug;
 
   const rows = [
-    ...PLUGIN_LAYOUT.map((r) => ({ ...r, glob: `plugins/*/${slug ? r.find : r.list}` })),
-    ...REPO_LAYOUT.map((r) => ({ ...r, glob: slug ? r.find : r.list })),
-  ].map((r) => ({
+    ...PLUGIN_LAYOUT.map((r) => ({ ...r, under: 'plugins/*/' })),
+    ...REPO_LAYOUT.map((r) => ({ ...r, under: '' })),
+  ].flatMap((r) => (slug ? r.find : [r.list]).map((pattern) => ({
     kind: r.kind,
-    command: `${r.dirOnly && !slug ? 'ls -1d' : 'ls -1 '} ${root}/${r.glob.replace(/<slug>/g, slug || '')} 2>/dev/null`,
-  }));
+    command: `${r.dirOnly && !slug ? 'ls -1d' : 'ls -1 '} ${root}/${r.under}${pattern.replace(/<slug>/g, slug)} 2>/dev/null`,
+  })));
 
   const width = Math.max(...rows.map((r) => r.command.length));
   process.stdout.write(
@@ -400,9 +402,18 @@ function cmdLayout(args) {
 // Same shape as queue.js on purpose, including refusing an unknown option
 // rather than turning it into a silent boolean. A typo that is ignored is a
 // caller believing it asked for something it did not.
-const VALUE_OPTS = new Set(['kind', 'name', 'root', 'slug']);
+//
+// Scoped per command rather than pooled. Pooled, `check --root X` was accepted
+// and did nothing, which is the same silent-acceptance fault one level up: the
+// option is real, it is simply meaningless to the command it was handed to, and
+// nothing said so.
+const COMMAND_OPTS = {
+  list: new Set(['kind', 'name']),
+  check: new Set(['kind', 'name']),
+  layout: new Set(['root', 'slug']),
+};
 
-function parseArgs(argv) {
+function parseArgs(command, argv) {
   const out = { _: [] };
   for (let i = 0; i < argv.length; i++) {
     const token = argv[i];
@@ -412,8 +423,17 @@ function parseArgs(argv) {
     const name = eq > 2 ? token.slice(2, eq) : token.slice(2);
     let value = eq > 2 ? token.slice(eq + 1) : undefined;
 
-    if (!VALUE_OPTS.has(name)) {
-      fail(`roots.js: unknown option --${name}. Known options: ${[...VALUE_OPTS].map((o) => '--' + o).join(', ')}`);
+    const allowed = COMMAND_OPTS[command] || new Set();
+    if (!allowed.has(name)) {
+      // Two different mistakes, and they want different sentences. A name no
+      // command knows is a typo. A real option handed to the wrong command is
+      // someone who has the right idea and the wrong line, and telling them
+      // which command does take it is the whole of the answer.
+      const elsewhere = Object.keys(COMMAND_OPTS).filter((c) => COMMAND_OPTS[c].has(name));
+      const known = `Options for ${command}: ${[...allowed].map((o) => '--' + o).join(', ') || 'none'}`;
+      fail(elsewhere.length > 0
+        ? `roots.js: ${command} does not take --${name}. It is an option for ${elsewhere.join(' and ')}. ${known}`
+        : `roots.js: unknown option --${name}. ${known}`);
     }
     if (value === undefined) {
       if (i + 1 >= argv.length) fail(`roots.js: --${name} needs a value.`);
@@ -484,7 +504,7 @@ function main(argv) {
   }
   const run = COMMANDS[command];
   if (!run) fail(`roots.js: unknown command ${command}. Try --help.`);
-  return run(parseArgs(argv.slice(1)));
+  return run(parseArgs(command, argv.slice(1)));
 }
 
 if (require.main === module) {

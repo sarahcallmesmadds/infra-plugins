@@ -573,15 +573,42 @@ check('the layout covers bin/, the directory that went missing', () => {
 // `skills/*/` into `skills/<slug>/`. What has to match is the rows themselves:
 // same count, same order, same kinds. A later special case in one mode and not
 // the other is what this catches.
-check('listing and finding emit the same rows in the same order', () => {
+check('listing and finding cover the same rows in the same order', () => {
   const kindsIn = (out) => out.split('\n').filter(Boolean).map((l) => l.match(/# kind: (\S+)/)[1]);
+  // Finding emits one line per pattern and a row may carry two, the bare name
+  // and the name with an extension, so consecutive repeats collapse before the
+  // comparison. What has to hold is that the rows appear, in order, in both.
+  const collapse = (a) => a.filter((k, i) => k !== a[i - 1]);
   const listing = kindsIn(run(makeHome(), ['layout', '--root', REPO]).stdout);
   const finding = kindsIn(run(makeHome(), ['layout', '--root', REPO, '--slug', 'x']).stdout);
-  assert.deepStrictEqual(listing, finding);
+  assert.deepStrictEqual(collapse(finding), collapse(listing));
   assert.strictEqual(
     listing.length, PLUGIN_LAYOUT.length + REPO_LAYOUT.length,
-    'a row in the layout is not reaching the output'
+    'a row in the layout is not reaching the listing'
   );
+});
+
+// A prefix match here reaches files nobody named. /flag-issue records what it
+// finds and /apply-fix opens and edits that path, so `queue` matching
+// queue-locking.test.js is a correction applied to the wrong file. Checked as a
+// property of every pattern rather than by naming the two that were loose.
+check('finding matches an exact name, or that name with an extension, never a prefix', () => {
+  const patterns = [...PLUGIN_LAYOUT, ...REPO_LAYOUT].flatMap((r) => r.find);
+  const loose = patterns.filter((p) => /<slug>\*/.test(p));
+  assert.deepStrictEqual(
+    loose, [],
+    'these match any name beginning with the slug, which reaches files nobody asked about'
+  );
+});
+
+// Each command takes its own options. Pooled, `check --root X` was accepted and
+// did nothing, which is the silent acceptance this file refuses everywhere else.
+check('an option meant for another command is refused rather than ignored', () => {
+  const bad = run(makeHome(), ['check', '--root', '/nonsense']);
+  assert.match(bad.stdout, /check does not take --root/);
+  assert.notStrictEqual(bad.code, 0, 'a refused option still exited 0');
+  const alsoBad = run(makeHome(), ['layout', '--kind', 'skill']);
+  assert.match(alsoBad.stdout, /layout does not take --kind/);
 });
 
 // Every row of the layout reaches the output, named by its own directory, so a
