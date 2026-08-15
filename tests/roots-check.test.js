@@ -680,6 +680,122 @@ check('no skill has gone back to writing its own plugin-repo globs', () => {
   );
 });
 
+// --- covers: could this item have been looked for at all -------------------
+//
+// /built-check reported "no sign of it" for 12 items on 2026-08-14 and had
+// never searched for seven of them, because their destination is a repository
+// that is not a configured root. "Searched and not found" and "not searched"
+// are opposite findings and the report gave them the same words.
+
+{
+  // A real checkout with a real origin, because an owner-qualified destination
+  // is answered by the remote and by nothing else. A fake directory with the
+  // right name is exactly what must NOT satisfy one.
+  const home = makeHome();
+  const checkout = path.join(home, 'Projects', 'infra-plugins');
+  fs.mkdirSync(checkout, { recursive: true });
+  fs.mkdirSync(path.join(home, '.claude', 'skills'), { recursive: true });
+  const git = (...args) => execFileSync('git', ['-C', checkout, ...args], { stdio: 'ignore' });
+  git('init', '-q');
+  git('remote', 'add', 'origin', 'https://github.com/sarahcallmesmadds/infra-plugins.git');
+  fs.writeFileSync(
+    path.join(home, '.claude', 'build-loop.config.json'),
+    JSON.stringify({
+      roots: [
+        { name: 'infra-plugins', path: '~/Projects/infra-plugins', kind: 'plugin-repo' },
+        { name: 'personal', path: '~/.claude/skills', kind: 'skill' },
+      ],
+    }, null, 2)
+  );
+
+  check('a destination inside a configured root is covered, and names it', () => {
+    const { code, stdout } = run(home, ['covers', '--where', 'sarahcallmesmadds/infra-plugins']);
+    assert.strictEqual(code, 0);
+    assert.strictEqual(stdout.trim(), 'covered infra-plugins');
+  });
+
+  check('a bare root name, with no owner, is covered too', () => {
+    assert.strictEqual(
+      run(home, ['covers', '--where', 'infra-plugins']).stdout.trim(), 'covered infra-plugins'
+    );
+  });
+
+  check('a destination in a repository nobody configured is not covered', () => {
+    const { stdout } = run(home, ['covers', '--where', 'sarahcallmesmadds/skills']);
+    assert.strictEqual(stdout.trim(), 'not-covered');
+  });
+
+  check('a repo name is not satisfied by a local directory that shares it', () => {
+    // The case that started this. sarahcallmesmadds/skills is a repository on
+    // GitHub. ~/.claude/skills is a local directory whose last segment happens
+    // to match. Treating them as the same thing reports the five items that
+    // cannot be searched as searched, which is the original bug wearing a
+    // different hat. An owner-qualified name is answered by the remote only.
+    const { stdout } = run(home, ['covers', '--where',
+      'sarahcallmesmadds/skills, moving out of _work-skills-rebuild-ref/v1-source/']);
+    assert.strictEqual(stdout.trim(), 'not-covered');
+  });
+
+  check('but a bare "skills" still means the local root somebody configured', () => {
+    assert.strictEqual(
+      run(home, ['covers', '--where', 'the skills root']).stdout.trim(), 'covered personal'
+    );
+  });
+
+  check('an item that records no destination says so, rather than not-covered', () => {
+    // Two different reasons nothing was searched, and the remedies differ. One
+    // wants a root adding, the other wants the item filling in.
+    assert.strictEqual(run(home, ['covers', '--where', '']).stdout.trim(), 'no-destination');
+  });
+
+  check('omitting --where means the same as passing it empty', () => {
+    // A skill interpolating an empty field produces --where "". Every other
+    // option here refuses an empty value on purpose, and this one must not,
+    // or the caller has to build the argument list conditionally to say the
+    // one thing it most needs to say.
+    assert.strictEqual(run(home, ['covers']).stdout.trim(), 'no-destination');
+  });
+
+  check('matching is on whole segments, so hq-skills is not the skills root', () => {
+    // `where` is free text and routinely a whole sentence. A substring test
+    // would call every one of these covered.
+    for (const where of ['hq-skills', '_work-skills-rebuild-ref/v1-source', 'my-skills-repo']) {
+      assert.strictEqual(
+        run(home, ['covers', '--where', where]).stdout.trim(), 'not-covered',
+        `${where} was treated as the 'personal' root at ~/.claude/skills`
+      );
+    }
+  });
+
+  check('the last segment of a root path counts, not only its name', () => {
+    // Somebody writing `where` by hand types the directory, not the name a
+    // config file gave it. They are usually the same and are allowed not to be.
+    const h = makeHome({ roots: [{ name: 'work', path: '~/Projects/fermat-work-index', kind: 'skill' }] });
+    fs.mkdirSync(path.join(h, 'Projects', 'fermat-work-index'), { recursive: true });
+    assert.strictEqual(
+      run(h, ['covers', '--where', 'fermat-work-index']).stdout.trim(), 'covered work'
+    );
+  });
+
+  check('all three answers exit 0, because none of them is a failure', () => {
+    // A caller loops this over a dozen items. An exit code that varies by
+    // answer makes "this item has no destination" indistinguishable from "the
+    // config is broken" at the call site.
+    for (const args of [['covers', '--where', 'sarahcallmesmadds/infra-plugins'],
+      ['covers', '--where', 'somewhere-else'], ['covers']]) {
+      assert.strictEqual(run(home, args).code, 0, `${args.join(' ')} did not exit 0`);
+    }
+  });
+
+  check('covers still refuses an option that belongs to another command', () => {
+    // Every message this script produces arrives on stdout, refusals included,
+    // because a skill relays what it printed rather than reading a stream.
+    const { code, stdout, stderr } = run(home, ['covers', '--slug', 'x']);
+    assert.notStrictEqual(code, 0);
+    assert.ok(/does not take --slug/.test(stdout + stderr), `output was: ${stdout}${stderr}`);
+  });
+}
+
 for (const home of HOMES) fs.rmSync(home, { recursive: true, force: true });
 
 console.log(`\n${total} checks, ${failed} failed`);

@@ -26,6 +26,9 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+// Read-only, and only for `covers`, which asks a root's origin remote what
+// repository it is. Everything else here stays filesystem-only.
+const { execFileSync } = require('child_process');
 
 const CONFIG = path.join(os.homedir(), '.claude', 'build-loop.config.json');
 
@@ -397,6 +400,89 @@ function cmdLayout(args) {
   return OK;
 }
 
+// Does any configured root cover the destination a to-build item names?
+//
+// `/built-check` asks this before it judges anything. Without it, an item whose
+// home is a repository nobody has checked out is searched in the only places
+// that exist, found nowhere, and reported as "no sign of it", which claims the
+// work is outstanding when the truth is that nothing looked. On 2026-08-14 that
+// answer went out for all 12 open items and was wrong for seven of them.
+//
+// In code rather than in the skill's prose for the reason the plugin layout
+// moved here: a rule the model re-derives on every run is a rule that drifts,
+// and this one decides whether a confident sentence is earned.
+//
+// Whole segments, never a substring. `where` is free text and routinely holds a
+// sentence, so a root called `skills` must not be satisfied by `hq-skills` or by
+// `_work-skills-rebuild-ref`.
+//
+// A root is named by two things and either counts: the `name` on it, which is
+// what a queue entry's `repo` records, and the last segment of its path, which
+// is what somebody writing `where` by hand will actually type. They are usually
+// the same string and are allowed not to be.
+//
+// The hard case, and the one this exists for. `sarahcallmesmadds/skills` names a
+// repository on GitHub. A root at `~/.claude/skills` is a local directory whose
+// last segment is also `skills`. Matching those is a false positive on precisely
+// the five items that started this, and it would report them as searched.
+//
+// So an `owner/name` pair is answered by the root's git remote, not by its
+// directory name, and a bare segment that appears as the tail of an unmatched
+// pair does not get a second chance as a bare name. `sarahcallmesmadds/skills`
+// is then not-covered even beside a root called `skills`, while a bare `skills`
+// still is, because somebody who wrote that meant the local one.
+function remoteOf(dir) {
+  try {
+    const url = execFileSync('git', ['-C', dir, 'remote', 'get-url', 'origin'], {
+      encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+    // Both spellings, https and ssh, reduced to owner/name with any .git dropped.
+    const m = url.match(/[:/]([^/:]+)\/([^/]+?)(?:\.git)?$/);
+    return m ? `${m[1].toLowerCase()}/${m[2].toLowerCase()}` : null;
+  } catch {
+    // Not a git repository, no origin, or no git at all. A root is allowed to be
+    // any of those, so this is an ordinary answer and never an error.
+    return null;
+  }
+}
+
+function coversWhere(where, roots) {
+  const text = String(where || '').trim();
+  if (!text) return { answer: 'no-destination', root: null };
+
+  const lower = text.toLowerCase();
+  const segments = lower.split(/[^a-z0-9._-]+/).filter(Boolean);
+  const pairs = (lower.match(/[a-z0-9._-]+\/[a-z0-9._-]+/g) || []);
+
+  // An owner-qualified reference is answered by the remote and by nothing else.
+  for (const r of roots) {
+    const remote = remoteOf(r.path);
+    if (remote && pairs.includes(remote)) return { answer: 'covered', root: r.name };
+  }
+
+  // Anything that was the tail of a pair has already had its turn. Letting it
+  // match a directory name here is the false positive above.
+  const claimed = new Set(pairs.map((p) => p.slice(p.indexOf('/') + 1)));
+  const bare = new Set(segments.filter((s) => !claimed.has(s)));
+
+  for (const r of roots) {
+    const names = [r.name, path.basename(r.path)].map((n) => String(n).toLowerCase());
+    if (names.some((n) => bare.has(n))) return { answer: 'covered', root: r.name };
+  }
+  return { answer: 'not-covered', root: null };
+}
+
+// One line, always exit 0. The three answers are all ordinary results rather
+// than degrees of failure, and a caller looping over a dozen items should not
+// have to tell an exit code for "this item has no destination" apart from one
+// for "the config is broken". A real fault still throws through fail().
+function cmdCovers(args) {
+  const state = resolve({});
+  const { answer, root } = coversWhere(args.where, state.roots);
+  process.stdout.write((answer === 'covered' ? `covered ${root}` : answer) + '\n');
+  return OK;
+}
+
 // --- argument parsing ----------------------------------------------------
 
 // Same shape as queue.js on purpose, including refusing an unknown option
@@ -411,7 +497,19 @@ const COMMAND_OPTS = {
   list: new Set(['kind', 'name']),
   check: new Set(['kind', 'name']),
   layout: new Set(['root', 'slug']),
+  covers: new Set(['where']),
 };
+
+// Options where an empty value is an answer rather than an accident.
+//
+// The refusal below exists for the scoping options: `--name=` silently widened
+// a question from one root to all of them, which is the inference the option was
+// added to remove. `--where` is not that. A to-build item is allowed to record no
+// destination, that is a real state with its own reported answer, and refusing it
+// would make the caller strip the option conditionally to say the one thing it
+// most needs to say. Omitting `--where` entirely means the same as passing it
+// empty, so both spellings work.
+const EMPTY_MEANS_SOMETHING = new Set(['where']);
 
 function parseArgs(command, argv) {
   const out = { _: [] };
@@ -445,7 +543,7 @@ function parseArgs(command, argv) {
     // it silently widened the question from one root to all of them. Refused,
     // because a caller that asked to be specific and was not told otherwise
     // will believe it was.
-    if (value === '') {
+    if (value === '' && !EMPTY_MEANS_SOMETHING.has(name)) {
       fail(`roots.js: --${name} was given an empty value. Pass a real one, or leave the option off to ask about everything.`);
     }
     if (name === 'kind' && !KINDS.has(value)) {
@@ -456,7 +554,7 @@ function parseArgs(command, argv) {
   return out;
 }
 
-const COMMANDS = { list: cmdList, check: cmdCheck, layout: cmdLayout };
+const COMMANDS = { list: cmdList, check: cmdCheck, layout: cmdLayout, covers: cmdCovers };
 
 function main(argv) {
   const command = argv[0];
@@ -467,6 +565,14 @@ function main(argv) {
       '  check [--kind K] [--name N]   report any root in scope that is missing',
       '  list  [--kind K] [--name N]   the roots as JSON, each with an exists flag',
       '  layout [--root P] [--slug S]  where a plugin repo keeps things, as listings',
+      '  covers [--where TEXT]         is a to-build destination inside a root',
+      '',
+      '  covers answers the question /built-check has to ask before it says an item',
+      '  is not built: could it have looked at all. It prints one of "covered NAME",',
+      '  "not-covered" or "no-destination", and always exits 0, because all three',
+      '  are ordinary answers. Matching is on whole segments of the text, so a root',
+      '  called skills is not satisfied by hq-skills. Leave --where off, or pass it',
+      '  empty, for an item that records no destination.',
       '',
       '  layout answers one question for two callers. Without --slug it lists',
       '  everything under a checkout, which is the scan. With --slug it looks for',

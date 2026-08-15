@@ -194,5 +194,64 @@ check('git reads a bare date as the current time of day, not midnight', () => {
   fs.rmSync(repo, { recursive: true, force: true });
 });
 
-console.log(`\n6 checks, ${failed} failed`);
+// --- searched, versus looked at and not found -----------------------------
+//
+// Run on 2026-08-14, /built-check reported "no sign of it" for all 12 open
+// items. Seven of those were never searched: five name a repository that is not
+// checked out on this machine and two record no destination at all. The output
+// had no slot for "there was nowhere to look", so an unsearched item printed in
+// the same list, in the same words, as one that was searched and genuinely is
+// not built. Those two findings call for opposite responses.
+
+check('there is a fourth verdict for an item nothing could look for', () => {
+  assert.ok(
+    /\*\*not searched\*\*/.test(text),
+    'the verdict table has no row for an item no configured root covers'
+  );
+});
+
+check('the skill asks roots.js rather than deciding it in prose', () => {
+  assert.ok(
+    /roots\.js["'\s]+covers/.test(text),
+    'nothing calls roots.js covers, so the rule is re-derived by reading on every run'
+  );
+});
+
+check('found evidence outranks the unsearched verdict', () => {
+  // A destination goes stale when plans change, so an item can name a
+  // repository nobody has checked out and still turn up in a configured root.
+  // Without this, real evidence is thrown away in favour of a field nobody
+  // updated.
+  assert.ok(
+    /never (move|downgrade) it to "not searched"|Evidence beats 3d/i.test(text),
+    'nothing says that evidence found on disk or in the log wins over 3d'
+  );
+});
+
+check('an all-unsearched run does not read as an all-clean run', () => {
+  // The exact 2026-08-14 output: a flat "no sign that any of them have been
+  // built" for a list that was more than half unsearchable. Both numbers have
+  // to appear, or the sentence is the bug.
+  assert.ok(
+    /could not be searched/.test(text) && /The other \{Q\} were searched/.test(text),
+    'the every-item-fails path still collapses "not searched" into "not built"'
+  );
+});
+
+check('an unsearched item cannot be closed by number', () => {
+  assert.ok(
+    /never numbered and never closeable/i.test(text),
+    'nothing stops the user closing an item that was never looked for'
+  );
+});
+
+check('Step 7 names the repository that would have to be configured', () => {
+  assert.ok(
+    /not a configured root, so they were not searched/.test(text)
+    && /build-loop\.config\.json/.test(text),
+    'the report does not say which repository is missing or where to add it'
+  );
+});
+
+console.log(`\n12 checks, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

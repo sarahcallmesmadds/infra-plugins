@@ -133,6 +133,10 @@ Every one of those messages arrives on stdout, including exit 1.
 Whichever of these applies, do not report "no sign of it" for everything as
 though you had looked, when there was nowhere to look.
 
+That covers the case where a root is missing. Step 3d covers the other half,
+where every root is healthy and the search runs correctly, and the item points
+somewhere no root reaches. Both end in the same wrong sentence.
+
 For each root that is a git repository:
 
 ```bash
@@ -199,29 +203,86 @@ A file that exists but predates the item's `created_at` is NOT evidence that the
 
 Look back over the current session. If something on the list was built in this conversation, that is the strongest evidence available and it will not be in the git log yet if nothing has been committed. Note it as session evidence and say plainly that it is uncommitted.
 
+### 3d — Which items could be looked for at all
+
+The three sweeps above search the configured roots. An item whose home is a
+repository that is not a configured root is searched in the wrong places, finds
+nothing, and comes out looking identical to an item that was searched properly
+and genuinely is not built. Those two findings call for opposite responses, so
+ask the question before judging rather than after:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/roots.js" covers --where "{the item's where field}"
+```
+
+One line comes back, and it always exits 0 because all three are ordinary
+answers:
+
+- `covered {rootname}` — a configured root holds that destination. Judge normally.
+- `not-covered` — the destination names somewhere no configured root reaches.
+- `no-destination` — the item never recorded where it was going.
+
+Pass `--where` empty, or leave it off, for an item whose `where` is empty. That
+is the one option here where an empty value is an answer rather than a mistake.
+
+Record the answer for every item alongside the other evidence. Run it for all of
+them, including ones you already have evidence for, since it costs nothing and
+the count in Step 7 has to be out of the whole list to mean anything.
+
+**Whole segments, not substrings, and that is deliberate.** A root called
+`skills` is not satisfied by `hq-skills` or by `_work-skills-rebuild-ref`. The
+matching lives in `roots.js` rather than in this file for the same reason the
+plugin layout does: a rule re-derived by reading prose on every run is a rule
+that drifts, and this one decides whether a confident sentence is earned.
+
 ---
 
 ## Step 4 — Judge each open item
 
-For each item, land on exactly one of three verdicts. When the evidence is mixed, take the lower verdict. A wrong "looks built" quietly deletes work from the list, and a wrong "no sign of it" costs one line of the user's attention.
+For each item, land on exactly one of four verdicts. When the evidence is mixed, take the lower verdict. A wrong "looks built" quietly deletes work from the list, and a wrong "no sign of it" costs one line of the user's attention.
 
 | Verdict | When |
 |---|---|
 | **looks built** | Something matching the item exists on disk and was created or last changed after the item was added, OR a commit after the item was added clearly does the thing the item describes, OR it was built in this session. |
 | **started** | Partial evidence. A directory exists but is empty or has no manifest, or a commit mentions it as work in progress. |
-| **no sign of it** | Nothing found. |
+| **not searched** | Step 3d came back `not-covered` or `no-destination`, and 3a, 3b and 3c all found nothing. |
+| **no sign of it** | Searched, and nothing found. |
 
-Write one line of evidence for every verdict that is not "no sign of it". Name the actual path or commit. "Looks done" is not evidence, `plugins/git-hygiene/plugin.json, added in a1b2c3d on 2026-08-01` is.
+**Evidence beats 3d, always.** An item can name a destination nobody has checked
+out and still turn up in a configured root, because plans change and the `where`
+field is not updated when they do. If any sweep found something, judge it on
+what was found and never move it to "not searched". This verdict is for the case
+where nothing was found *and* nothing could have been.
+
+**"Not searched" is not a softer "no sign of it", it is a different claim.** One
+says the work is still outstanding. The other says this tool cannot see that
+repository and may be reporting finished work as outstanding. Collapsing them is
+the failure this skill was written to avoid, and on 2026-08-14 it is the failure
+it produced: all 12 open items reported as "no sign of it", seven of which had
+never been looked for.
+
+Write one line of evidence for every verdict that is not "no sign of it". Name the actual path or commit. "Looks done" is not evidence, `plugins/git-hygiene/plugin.json, added in a1b2c3d on 2026-08-01` is. For "not searched" the evidence line is the destination itself, quoted from the item, or "none recorded" where there is none.
 
 ---
 
 ## Step 5 — Show the findings and ask
 
-If every item comes back "no sign of it":
+If every item comes back "no sign of it", with none "not searched":
 
 > "Checked {N} open items against the last {days} days. No sign that any of them have been built yet. Nothing to close."
 
 Stop. Do not ask a question that has only one answer.
+
+If every item is either "no sign of it" or "not searched", give both numbers and
+name the repositories, then stop:
+
+> "Checked {N} open items against the last {days} days. {P} of them could not be searched, because they name a destination no configured root reaches: {repositories}. The other {Q} were searched and show no sign of being built. Nothing to close."
+
+**Both halves of that sentence, every time.** A run where nothing could be
+searched and a run where nothing has been built produce the same silence, and
+the first one is a broken tool reporting on itself. This is the exact output
+that went out on 2026-08-14 as a flat "no sign that any of them have been built",
+for a list that was more than half unsearchable.
 
 Otherwise show this:
 
@@ -239,10 +300,20 @@ No sign of it yet:
   - {title}
   - {title}
 
+Not searched, no configured root covers these:
+  - {title} - destination: {the where field, or "none recorded"}
+  - {title} - destination: {...}
+
 Close the built ones? (all / a list of numbers like "1,3" / none)
 ```
 
-Omit any of the three groups that is empty. Do not print an empty heading.
+Omit any of the four groups that is empty. Do not print an empty heading.
+
+**"Not searched" items are never numbered and never closeable.** Numbers exist so
+the user can close something, and closing an item nobody looked for is how a
+piece of outstanding work disappears off the list on no evidence at all. If they
+ask for one by title anyway, say what it would be closing on and make them say it
+again.
 
 On their response:
 
@@ -302,11 +373,18 @@ Marking something `In Progress` from Step 5 uses the same sequence, setting only
 
 ```
 Closed {K} items: {titles}.
-{M} still open. {J} started but not finished.
+{M} still open. {J} started but not finished. {P} not searched.
 ```
+
+Drop the last sentence when `{P}` is zero, and never fold those items into
+`{M}`. "Still open" is a claim about the work. "Not searched" is a claim about
+this tool, and a reader adding the numbers up should not have to guess which
+they are looking at.
 
 Add these lines only when they apply:
 
+- `Note: {P} of {N} items name a destination that is not a configured root, so they were not searched: {repositories}. Add it to ~/.claude/build-loop.config.json to include them.`
+- `Note: {P} of {N} items record no destination at all, so there was nowhere in particular to look. They were searched across every configured root, which may not be where they were going.`
 - `{P} files failed to parse and were skipped: {filenames}`
 - `Note: {title} was closed on session evidence and is not committed yet.`
 - `Note: something called {slug} already existed before {title} was added. Worth a look, the name may be taken.`
