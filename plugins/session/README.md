@@ -316,6 +316,11 @@ failing the wrap to protect it would cost the handoff itself, which is the thing
 worth keeping. Saying so is equally deliberate, because a skip path quieter than
 the pass path is indistinguishable from success.
 
+That wait and that warning happen once per write, not once per step inside it.
+The archive sweep changes the index twice, repointing what it moved and then
+pruning what has gone, and both run inside one region that asks for the lock
+once. Whatever answer it gets, both halves get the same one.
+
 A directory that cannot hold a lock at all, usually one that is not writable, is a
 different case and stays quiet. The index write is about to fail there too, and
 `indexWritten: false` already reports that properly.

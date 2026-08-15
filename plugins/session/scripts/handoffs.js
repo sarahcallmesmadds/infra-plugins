@@ -477,7 +477,13 @@ function archiveStale({ days = DEFAULT_STALE_DAYS, home = os.homedir(), now = Da
   // record a handoff between them and have it discarded by the prune's write.
   // Locking each half on its own would leave that window exactly where it was,
   // which is why the lock is taken here rather than inside the two blocks.
-  // `pruneIndex` takes the same lock and re-enters it.
+  // `pruneIndex` asks for the same lock and re-enters this region.
+  //
+  // One region means one answer, including when that answer is that the lock
+  // could not be taken. The nested call inherits it rather than asking again,
+  // so the two halves cannot end up on opposite sides of the lock. Devin round
+  // 1 on PR #109 found that they could, back when the region was recorded only
+  // on the acquiring path.
   const { dropped, unreachable, written } = mutateIndex(home, (handoffs, save) => {
     if (relocations.length) {
       let touched = false;

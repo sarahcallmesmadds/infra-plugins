@@ -36,14 +36,29 @@ const POLL_MS = 25;
 // case that matters is the one where the old process is gone.
 const OWNER = `${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}`;
 
-// Re-entrancy, per lock path.
+// The region this process is currently inside, per lock path.
 //
-// `archiveStale` repoints entries and then calls `pruneIndex`, which takes the
-// same lock. Without this the second acquire waits on a lock this very process
-// holds, spends the whole deadline, and then proceeds unlocked. Both of them
-// have to run inside one region anyway: a sweep that repoints under a lock and
-// then prunes under a different one lets another writer in between the two.
-const depth = new Map();
+// `archiveStale` repoints entries and then calls `pruneIndex`, which asks for
+// the same lock. Without this the second request waits on a lock this very
+// process holds, spends the whole deadline, and then proceeds unlocked. Both of
+// them have to run inside one region anyway: a sweep that repoints under a lock
+// and then prunes under a different one lets another writer in between the two.
+//
+// The entry is recorded whether or not the lock was taken, and that is the
+// point rather than an accident. It used to be recorded only on the acquiring
+// path, so a nested call inside a region that had already given up went back
+// through `acquire`, waited out a second full deadline and printed a second
+// warning about the same write. Worse than the delay: it could succeed where
+// the outer call had failed, which put the repoint outside the lock and the
+// prune inside it, and those two being one region is the whole reason this is
+// re-entrant.
+//
+// So a nested call inherits the outer answer exactly, including a failure.
+// Whether this process is inside a region is a different question from whether
+// the region holds the lock, and recording only the second one lost the first.
+//
+// Shape: lock path -> { count, locked, reason }.
+const regions = new Map();
 
 function sleep(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
@@ -200,14 +215,18 @@ function release(lock) {
 // properly. Two messages for one failure, one of them speculative, is worse
 // than one.
 function withIndexLock(lock, fn) {
-  const held = depth.get(lock) || 0;
-  if (held > 0) {
-    // Already inside this lock on this process. Run directly.
-    depth.set(lock, held + 1);
+  // Already inside a region for this lock on this process, so run directly and
+  // inherit its answer. Inherited whether or not that region holds the lock: a
+  // nested call that goes looking again can wait a second deadline, warn twice
+  // about one write, and end up on the other side of the lock from the call
+  // that contains it.
+  const outer = regions.get(lock);
+  if (outer) {
+    outer.count += 1;
     try {
-      return { value: fn(), locked: true, reason: 'reentrant' };
+      return { value: fn(), locked: outer.locked, reason: 'reentrant' };
     } finally {
-      depth.set(lock, (depth.get(lock) || 1) - 1);
+      outer.count -= 1;
     }
   }
 
@@ -220,19 +239,24 @@ function withIndexLock(lock, fn) {
   }
 
   const locked = reason === 'acquired';
-  if (locked) depth.set(lock, 1);
   if (reason === 'busy') {
     process.stderr.write(
       `session: wrote the handoff index without the lock at ${lock}, after waiting ${WAIT_MS}ms. `
       + 'Another session was writing at the same time, so an entry may have been lost.\n',
     );
   }
+
+  const region = { count: 1, locked, reason };
+  regions.set(lock, region);
   try {
     return { value: fn(), locked, reason };
   } finally {
-    if (locked) {
-      depth.set(lock, (depth.get(lock) || 1) - 1);
-      release(lock);
+    region.count -= 1;
+    // Deleted rather than left at zero, so a later independent call starts from
+    // nothing instead of reading a spent region's answer.
+    if (region.count === 0) {
+      regions.delete(lock);
+      if (locked) release(lock);
     }
   }
 }

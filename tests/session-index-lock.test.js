@@ -324,6 +324,81 @@ check('an unprotected write says so on stderr rather than passing quietly', () =
     'and it names the consequence, not just the fact that something was skipped');
 });
 
+check('a sweep that lost the lock does not wait or warn a second time', () => {
+  // Devin round 1 on PR #109. The region was recorded only when the lock was
+  // acquired, so a nested call inside a region that had already given up went
+  // back through `acquire`: another full deadline, and a second warning about
+  // one write. The delay was the visible half. The other half is that the
+  // nested call could succeed where its caller had failed, which puts the
+  // repoint outside the lock and the prune inside it, and those two being one
+  // region is the whole reason this is re-entrant.
+  //
+  // Driven through `archiveStale`, which is the real nesting: it repoints and
+  // then calls `pruneIndex`, and both go through the gate.
+  const home = tmpHome();
+  const lock = handoffs.indexLockPath(home);
+
+  const child = spawnSync(process.execPath, ['-e', `
+    const fs = require('fs'), path = require('path');
+    const h = require(${JSON.stringify(HANDOFFS)});
+    const lock = ${JSON.stringify(lock)};
+    fs.mkdirSync(path.dirname(lock), { recursive: true });
+    fs.mkdirSync(lock);                                    // held, and fresh, so never judged stale
+    fs.writeFileSync(path.join(lock, 'owner'), 'another-session');
+    const started = Date.now();
+    h.archiveStale({ home: ${JSON.stringify(home)}, days: 30 });
+    process.stdout.write(String(Date.now() - started));
+  `], { encoding: 'utf8' });
+
+  const elapsed = Number(child.stdout);
+  const warnings = (child.stderr.match(/without the lock/g) || []).length;
+
+  assert.ok(elapsed < WAIT_MS * 2,
+    `one contended sweep waits one deadline, not one per nested call. Took ${elapsed}ms `
+    + `against a ${WAIT_MS}ms deadline, so it waited more than once.`);
+  assert.strictEqual(warnings, 1,
+    `one write gets one warning, not one per nested call. Printed ${warnings}.`);
+});
+
+check('a nested call never lands on the other side of the lock from its caller', () => {
+  // The correctness half of the finding above, asserted directly rather than
+  // inferred from the timing.
+  const home = tmpHome();
+  const lock = handoffs.indexLockPath(home);
+  fs.mkdirSync(path.dirname(lock), { recursive: true });
+  fs.mkdirSync(lock);
+  fs.writeFileSync(path.join(lock, 'owner'), 'another-session');
+
+  let inner = null;
+  const outer = withIndexLock(lock, () => {
+    inner = withIndexLock(lock, () => 'nested');
+    return 'outer';
+  });
+
+  assert.strictEqual(outer.locked, false, 'setup: the outer call could not take the held lock');
+  assert.strictEqual(inner.locked, outer.locked,
+    'a nested call reports the lock state of the region containing it, so the two halves of a '
+    + 'sweep are never split across the lock boundary');
+  assert.strictEqual(inner.reason, 'reentrant');
+
+  fs.rmSync(lock, { recursive: true, force: true });
+});
+
+check('a region is cleared once it ends, so the next call starts fresh', () => {
+  const home = tmpHome();
+  const lock = handoffs.indexLockPath(home);
+
+  const first = withIndexLock(lock, () => 'one');
+  assert.strictEqual(first.locked, true);
+
+  // If the ended region were left behind, this would inherit its answer instead
+  // of taking the lock itself.
+  const second = withIndexLock(lock, () => 'two');
+  assert.strictEqual(second.locked, true);
+  assert.strictEqual(second.reason, 'acquired', 'a fresh call acquires rather than inheriting');
+  assert.ok(!fs.existsSync(lock), 'and the lock is released when the region ends');
+});
+
 check('release leaves a lock belonging to someone else alone', () => {
   const home = tmpHome();
   const lock = handoffs.indexLockPath(home);
