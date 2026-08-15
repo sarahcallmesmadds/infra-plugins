@@ -6,6 +6,7 @@
 //   cli.js today                 the date line the session hook injects
 //   cli.js archive [--days N] [--dry-run]
 //                                sweep stale handoffs into archived/
+//   cli.js reconcile [--fix]     what the folder holds against what the index says
 //   cli.js find <slug>           locate the handoff a slug refers to
 //   cli.js forget <slug>         drop an index entry, leaving the document
 //   cli.js recent                the newest handoffs, for the pickup menu
@@ -38,7 +39,7 @@ const memoryMod = require(path.join(__dirname, 'memory.js'));
 
 function parseArgs(argv) {
   const out = {
-    command: null, rest: [], json: false, dryRun: false, self: null, noRecord: false,
+    command: null, rest: [], json: false, dryRun: false, self: null, noRecord: false, fix: false,
     days: handoffs.DEFAULT_STALE_DAYS, cwd: process.cwd(), home: os.homedir(),
   };
   for (let i = 0; i < argv.length; i += 1) {
@@ -50,6 +51,7 @@ function parseArgs(argv) {
     else if (a === '--home') out.home = argv[++i];
     else if (a === '--self') out.self = argv[++i];
     else if (a === '--no-record') out.noRecord = true;
+    else if (a === '--fix') out.fix = true;
     else if (!out.command) out.command = a;
     else out.rest.push(a);
   }
@@ -225,6 +227,118 @@ const COMMANDS = {
       ? `The handoff itself is untouched at ${result.entry.path}`
       : `It pointed at ${result.entry.path}, which is not there.`);
     emit(opts, {}, lines);
+  },
+
+  // What the handoffs folder holds, against what the index says about it.
+  //
+  // The index was only ever written forwards, so nothing checked it back
+  // against the disk. Two sessions wrapping at once was one way it drifted and
+  // is now locked; a hand repair is another, and the hand repair that fixed the
+  // first drift left a duplicate entry behind on the same day.
+  //
+  // Leads with the findings that produce a wrong answer and ends with the one
+  // that merely looks untidy, because the filed version of this bug had those
+  // the other way round.
+  reconcile(opts) {
+    const result = opts.fix
+      ? handoffs.applyReconcile({ home: opts.home })
+      : handoffs.reconcileIndex({ home: opts.home });
+
+    if (opts.json) return emit(opts, result, []);
+
+    const plural = (n, one, many) => (n === 1 ? one : many);
+    const lines = [];
+
+    // First, and the only finding here that makes a lookup lie. Everything
+    // else on this report is untidiness.
+    if (result.shadowed.length) {
+      const n = result.shadowed.length;
+      lines.push(`${n} ${plural(n, 'slug returns', 'slugs return')} the wrong handoff:`, '');
+      for (const s of result.shadowed) {
+        lines.push(`  ${s.slug}`);
+        lines.push(`    /pickup opens ${s.recorded}`);
+        lines.push(`    but ${s.doc} is the document named for that slug`);
+        // The remedy has to work when it is run. Dropping the entry leaves the
+        // search order to find the document beside it, which is what it was
+        // doing before something recorded the other path.
+        lines.push(`    If the second one is the one you want: cli.js forget ${s.slug}`);
+        lines.push('');
+      }
+    }
+
+    if (result.duplicates.length) {
+      const n = result.duplicates.length;
+      lines.push(`${n} ${plural(n, 'document has', 'documents have')} more than one slug recorded against ${plural(n, 'it', 'them')}:`, '');
+      for (const d of result.duplicates) {
+        lines.push(`  ${d.path}`);
+        lines.push(`    ${d.slugs.join(', ')}`);
+        lines.push(`    Drop whichever you do not want with cli.js forget <slug>`);
+        lines.push('');
+      }
+    }
+
+    if (result.superseded.length) {
+      const n = result.superseded.length;
+      lines.push(`${n} index ${plural(n, 'entry points', 'entries point')} at a document that is not there, `
+        + `while the ${plural(n, 'one', 'ones')} named for that slug ${plural(n, 'is', 'are')} in this folder:`, '');
+      for (const s of result.superseded) {
+        // Not grouped with `shadowed` because the lookup already gives the right
+        // answer: a recorded path that resolves to nothing is skipped and the
+        // search order reaches the document. Only the entry is wrong.
+        lines.push(`  ${s.slug}  (recorded ${s.recorded})`);
+      }
+      lines.push('', '  Lookups already reach the right document. Clear the dead entry with cli.js forget <slug>.', '');
+    }
+
+    // Last, and deliberately understated. A central document with no entry is
+    // still found by name, because the search order looks in this folder before
+    // it needs the index. This was filed as the headline symptom and measuring
+    // it showed it is the mildest thing on the report.
+    if (result.unlisted.length) {
+      const n = result.unlisted.length;
+      if (opts.fix) {
+        const r = result.recorded.length;
+        lines.push(`Recorded ${r} ${plural(r, 'entry', 'entries')} for ${plural(r, 'a document', 'documents')} that had none:`);
+        for (const d of result.recorded) lines.push(`  ${d.slug}`);
+        const skipped = n - r;
+        if (skipped > 0) {
+          lines.push(`  ${skipped} ${plural(skipped, 'was', 'were')} recorded by something else while this ran, and left alone.`);
+        }
+        lines.push('');
+      } else {
+        lines.push(`${n} ${plural(n, 'document has', 'documents have')} no index entry:`, '');
+        for (const d of result.unlisted) lines.push(`  ${d.slug}${d.archived ? '  (archived)' : ''}`);
+        lines.push('', `  These are still found by name, because /pickup looks in this folder before it`,
+          '  needs the index. Recording them costs nothing: cli.js reconcile --fix', '');
+      }
+    }
+
+    const clean = !result.shadowed.length && !result.duplicates.length
+      && !result.superseded.length && !result.unlisted.length;
+    if (clean) lines.push('The index and the folder agree.', '');
+
+    // What was looked at, said on every run rather than only when something is
+    // wrong. A clean result above means nothing without it: the shapes this
+    // does not scan would look exactly this clean.
+    lines.push(`Checked ${result.scanned} HANDOFF-*.md ${plural(result.scanned, 'document', 'documents')} in ${result.root} `
+      + `and its archive, against ${result.entries} index ${plural(result.entries, 'entry', 'entries')}.`);
+    lines.push('Not checked: pause documents, which are never indexed, and handoffs kept beside their');
+    lines.push('work, which this cannot enumerate because the index is the only record of where they are.');
+    // The count above is what the check ran against, which is the count before
+    // anything was recorded. Left as the count checked rather than updated,
+    // because that is what the sentence claims, and said plainly here so it
+    // cannot be read as the current total.
+    if (opts.fix && result.recorded.length) {
+      lines.push(`The index now holds ${result.entries + result.recorded.length}.`);
+    }
+
+    // Last line, and unmissable, for the same reason the sweep prints one.
+    // Everything above says what was worked out. This says whether it landed.
+    if (opts.fix && !result.written) {
+      process.exitCode = 1;
+      lines.push('', 'The index could not be written, so nothing above was actually recorded.');
+    }
+    emit(opts, result, lines);
   },
 
   find(opts) {
