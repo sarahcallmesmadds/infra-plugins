@@ -481,10 +481,19 @@ function coversWhere(where, roots) {
     // contain a configured root and falsely answer covered for stray prose.
     if (trimmed === '' || trimmed === '~' || trimmed === '.' || trimmed === '..') continue;
     hasSpecificPath = true;
-    const abs = path.resolve(expand(trimmed)).toLowerCase();
-    for (const r of roots) {
-      const rp = path.resolve(r.path).toLowerCase();
-      if (abs === rp || abs.startsWith(rp + path.sep) || rp.startsWith(abs + path.sep)) return hit(r);
+    // Try the exact path first, because Unix permits punctuation at the end of
+    // a real directory name. Then try the form with ordinary sentence-ending
+    // punctuation removed, so "put it in ~/Projects/x." still names x.
+    const withoutSentenceEnd = trimmed.replace(/[.:;!?]+$/, '');
+    const candidates = withoutSentenceEnd && withoutSentenceEnd !== trimmed
+      ? [trimmed, withoutSentenceEnd]
+      : [trimmed];
+    for (const candidate of candidates) {
+      const abs = path.resolve(expand(candidate)).toLowerCase();
+      for (const r of roots) {
+        const rp = path.resolve(r.path).toLowerCase();
+        if (abs === rp || abs.startsWith(rp + path.sep) || rp.startsWith(abs + path.sep)) return hit(r);
+      }
     }
   }
 
@@ -676,6 +685,8 @@ function main(argv) {
       '  not satisfied by hq-skills. root-missing is the configured-but-moved case,',
       '  which check also reports; covered would contradict it in the same run.',
       '  A bare /, ~/, ./ or ../ names no particular destination and is ignored.',
+      '  Sentence punctuation after a path is ignored only after the exact path is',
+      '  tried, so a real directory whose name ends in punctuation still wins.',
       '  Free prose with no resolvable root is unqualified, because it does not prove',
       '  the destination lies outside the configured roots that were searched.',
       '',

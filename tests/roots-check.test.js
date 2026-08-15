@@ -833,12 +833,27 @@ check('no skill has gone back to writing its own plugin-repo globs', () => {
       'Projects/infra-plugins',
       '~/Projects/infra-plugins/plugins/build-loop',
       'somewhere under ~/Projects/infra-plugins/, probably',
+      'It goes in ~/Projects/infra-plugins.',
+      'It goes in ~/Projects/infra-plugins:',
+      'It goes in ~/Projects/infra-plugins!',
+      'It goes in ~/Projects/infra-plugins?',
     ]) {
       assert.strictEqual(
         run(home, ['covers', '--where', where]).stdout.trim(), 'covered infra-plugins',
         `${where} was reported as outside every configured root`
       );
     }
+  });
+
+  check('an exact configured path ending in punctuation wins before prose trimming', () => {
+    const h = makeHome({ roots: [
+      { name: 'punctuated', path: '~/Projects/infra-plugins.', kind: 'plugin-repo' },
+    ] });
+    fs.mkdirSync(path.join(h, 'Projects', 'infra-plugins.'), { recursive: true });
+    assert.strictEqual(
+      run(h, ['covers', '--where', '~/Projects/infra-plugins.']).stdout.trim(),
+      'covered punctuated'
+    );
   });
 
   check('a path outside every root is still not covered', () => {
