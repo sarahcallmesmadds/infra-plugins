@@ -1,0 +1,77 @@
+# Run the suite on every change, instead of when somebody remembers.
+#
+# The argument for this is 2026-08-15. Two rounds of environment-dependent
+# tests were found by hand that day: #103, where a check passed on one machine
+# and failed on another because of where node was installed, and #104, where
+# four suites failed under the bare PATH a GUI-launched host gets. Both were
+# found because somebody went looking. Neither had to be.
+#
+# CONTRIBUTING.md already makes running the full suite part of the release
+# checklist. A checklist step is a promise somebody keeps by remembering, and
+# this is the same step kept by the machine.
+
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Read-only. Nothing here needs to write to the repository, and a token that
+# cannot write is one that cannot be talked into writing.
+permissions:
+  contents: read
+
+# A second push to the same branch makes the first run's answer irrelevant, so
+# it is cancelled rather than left to finish. main is exempt: every commit there
+# is a state somebody may later ask about, and a cancelled run cannot answer.
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  suite:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # Both finish and both report. The whole point is to see a difference
+      # between two machines, and stopping the second the moment the first
+      # fails is how you get told about one of them.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history, deliberately, and not a default worth accepting.
+          # tests/plugin-version-drift.test.js compares this branch against
+          # origin/main to decide whether a changed plugin moved its version. In
+          # a shallow checkout it finds no base branch, says so, and does not
+          # fail. That is the correct behaviour for the test and the wrong
+          # outcome here: the row goes green having verified nothing, which is
+          # the one result worse than a red one.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          # One version rather than a matrix of them. Every environment fault
+          # this repository has actually had was about where node lives or what
+          # PATH the host supplies, not about which node it is. A version matrix
+          # would multiply the runs without testing the thing that breaks.
+          node-version: 22
+
+      - name: Report where node actually is
+        # Not decoration. The bug fixed in #103 was that the launcher searches
+        # four absolute paths, and whether one of them holds a node is a
+        # property of the machine. On ubuntu it usually does and on this
+        # author's mac it does not, which is the difference the suite was
+        # blind to. When a future run disagrees across the two rows below, this
+        # line is the first thing worth reading.
+        run: |
+          echo "node:    $(command -v node)"
+          echo "version: $(node --version)"
+          echo "PATH:    ${PATH}"
+
+      - name: Run the suite
+        run: node tests/run-all.js

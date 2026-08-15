@@ -93,7 +93,11 @@ When setup is required:
 - Add a focused regression test for executable behavior and important written
   contracts. Test outcomes, not just the presence of reassuring words.
 - Run the skill validator and plugin validator.
-- Run `node tests/run-all.js` and `git diff --check`.
+- Run `node tests/run-all.js` and `git diff --check`. GitHub Actions also runs
+  the suite on every pull request and every push to `main`, on Linux and macOS,
+  so a result that depends on the machine shows up as one row passing and the
+  other failing. Running it locally first is still worth it: it is faster, and
+  CI is a second opinion rather than a substitute for having looked.
 - Install the built version and verify it in a clean chat. Confirm that the
   skill is discoverable by the language a user would naturally type.
 - Review the final diff for credentials, machine-specific paths, stale model or
