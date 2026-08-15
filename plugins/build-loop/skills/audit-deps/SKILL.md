@@ -71,22 +71,26 @@ ls -1 <root.path>/* 2>/dev/null
 # kind: command
 ls -1 <root.path>/*.md 2>/dev/null
 
-# kind: plugin-repo — a checkout of a marketplace repository
-ls -1  <root.path>/plugins/*/skills/*/SKILL.md 2>/dev/null   # kind: skill
-ls -1  <root.path>/plugins/*/hooks/*           2>/dev/null   # kind: hook
-ls -1  <root.path>/plugins/*/commands/*.md     2>/dev/null   # kind: command
-ls -1  <root.path>/plugins/*/scripts/*         2>/dev/null   # kind: script
-ls -1  <root.path>/plugins/*/statusline/*      2>/dev/null   # kind: script
-ls -1d <root.path>/plugins/*/                  2>/dev/null   # kind: plugin
-ls -1  <root.path>/tests/*.js                  2>/dev/null   # kind: script
+# kind: plugin-repo, a checkout of a marketplace repository.
+# The listings are generated, not written here. Run this and use what it prints:
+node "${CLAUDE_PLUGIN_ROOT}/scripts/roots.js" layout --root <root.path>
 ```
 
-The last two listings are the ones that get forgotten, and they are forgotten
-for opposite reasons. `statusline/` is a fourth place a plugin keeps executable
-code, alongside `hooks/`, `commands/` and `scripts/`, and a search written from
-the plugin template will not know it exists. `tests/` is at the **root of the
-repository and not inside any plugin**, so every glob anchored at `plugins/*/`
-walks straight past it however many directories it lists.
+Each line it prints carries the `kind` to record for whatever that line finds.
+Use those rather than deriving a kind from the path yourself.
+
+**The list is generated because it used to be written out twice.**
+`/built-check` needs the same set to search for one name, so the two skills each
+carried a copy in prose. `bin/` was added to the repository on 2026-08-14 and to
+neither copy, and `bin/hook-node` is the file every hook in every plugin starts
+through, so the map recorded nothing depending on the most depended-on file in
+the repository. The two listings that get forgotten are still the last two, and
+still for opposite reasons: `statusline/` is another place a plugin keeps
+executable code and a search written from the plugin template will not know it
+exists, and `tests/` is at the **root of the repository and not inside any
+plugin**, so every glob anchored at `plugins/*/` walks straight past it. Neither
+is your problem now. Add a directory to `PLUGIN_LAYOUT` in `roots.js` and both
+skills have it.
 
 A test is a dependent like any other, and usually the most useful one in the
 map: the answer to "what does this fix put at risk" is very often a file that

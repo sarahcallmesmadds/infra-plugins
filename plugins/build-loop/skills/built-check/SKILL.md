@@ -165,20 +165,23 @@ Then, for each open item, check whether something with its name exists in a plau
 Also search every root of kind `plugin-repo`, whatever the item's `kind`, since that layout nests one level deeper:
 
 ```bash
-ls  <root.path>/plugins/*/skills/<slug>/SKILL.md 2>/dev/null
-ls  <root.path>/plugins/*/hooks/<slug>*          2>/dev/null
-ls  <root.path>/plugins/*/commands/<slug>.md     2>/dev/null
-ls  <root.path>/plugins/*/scripts/<slug>*        2>/dev/null
-ls  <root.path>/plugins/*/statusline/<slug>*     2>/dev/null
-ls -d <root.path>/plugins/<slug>                 2>/dev/null
-ls  <root.path>/tests/<slug>*.js                 2>/dev/null
+node "${CLAUDE_PLUGIN_ROOT}/scripts/roots.js" layout --root <root.path> --slug <slug>
+
+# The plugin row above resolves to the manifest, which is what a plugin row
+# records everywhere else. This skill also needs the bare directory, because
+# a directory with no manifest is the difference between started and built.
+ls -1d <root.path>/plugins/<slug> 2>/dev/null
 ```
 
-The last two are easy to leave out and both hide real evidence. `statusline/` is
-a fourth place a plugin keeps executable code, and `tests/` sits at the root of
-the repository rather than inside a plugin, so a glob anchored at `plugins/*/`
-never reaches it. A to-build item satisfied by a test suite looks unbuilt
-without that line.
+**The listings are generated rather than written here**, and `/audit-deps` reads
+the same list for its own scan. They used to be a copy each, in prose, and `bin/`
+was added to the repository on 2026-08-14 and to neither copy. The two that are
+easy to leave out are still the last two: `statusline/` is another place a plugin
+keeps executable code, and `tests/` sits at the root of the repository rather
+than inside a plugin, so a glob anchored at `plugins/*/` never reaches it. A
+to-build item satisfied by a test suite looks unbuilt without that line, and a
+directory nobody remembered looks unbuilt for the same reason. Add a directory to
+`PLUGIN_LAYOUT` in `roots.js` and both skills have it.
 
 A plugin counts as built only when its directory holds a `.claude-plugin/plugin.json`. An empty directory with the right name is a `started`, not a `looks built`.
 

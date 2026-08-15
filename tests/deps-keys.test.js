@@ -53,7 +53,7 @@ const SKILLS = {
 // should be noticed. So the count is derived AND compared, and this constant
 // has to move when a check is added or removed. Forgetting now fails the suite
 // instead of printing a smaller number nobody reads.
-const EXPECTED_CHECKS = 29;
+const EXPECTED_CHECKS = 30;
 
 let failed = 0;
 let ran = 0;
@@ -68,50 +68,60 @@ function check(what, fn) {
   }
 }
 
-// --- the scripts/ gap ------------------------------------------------------
+// --- where the plugin-repo search looks -------------------------------------
 
-check('every skill that searches a plugin-repo root also searches scripts/', () => {
-  // These three each carry their own copy of the search. A line added to one
-  // and not the others is how they drifted apart in the first place.
+// These three rules have not changed. Their evidence has. The skills used to
+// carry a glob block each, three copies in prose, and the rules below read
+// those copies. `bin/` was added to the repository on 2026-08-14 and to none of
+// the three, which is exactly the drift these were written to catch and exactly
+// what they could not catch, because a rule that names one directory only ever
+// finds that directory missing.
+//
+// The list now lives once in roots.js and the skills call it, so these ask what
+// it generates. roots-check.test.js holds the complementary half: that the list
+// covers every directory a plugin actually has, and that no skill has gone back
+// to writing its own.
+const { execFileSync: exec } = require('child_process');
+const ROOTS = path.join(BUILD_LOOP, 'scripts', 'roots.js');
+const LAYOUT = exec(process.execPath, [ROOTS, 'layout', '--root', '<root.path>'], { encoding: 'utf8' });
+const LAYOUT_FIND = exec(process.execPath, [ROOTS, 'layout', '--root', '<root.path>', '--slug', '{target}'], { encoding: 'utf8' });
+
+// Every skill that searches a plugin-repo root has to reach the generated list
+// rather than spell one out, which is what makes the three rules below hold for
+// all of them at once instead of one copy at a time.
+check('every skill that searches a plugin-repo root calls the shared listing', () => {
   for (const [name, text] of Object.entries(SKILLS)) {
     if (!/plugins\/\*\//.test(text)) continue;
     assert.ok(
-      /plugins\/\*\/scripts\//.test(text),
-      `${name} searches a plugin-repo root but never looks in scripts/, `
-      + 'where the logic lives'
+      /roots\.js" layout/.test(text),
+      `${name} searches a plugin-repo root without calling roots.js layout, so it `
+      + 'has a copy of the list that can drift'
     );
   }
+});
+
+check('the shared listing reaches scripts/, where the logic lives', () => {
+  assert.match(LAYOUT, /plugins\/\*\/scripts\//);
+  assert.match(LAYOUT_FIND, /plugins\/\*\/scripts\//);
 });
 
 // --- the statusline/ and tests/ gaps ---------------------------------------
 
-// Same drift as scripts/, found by diffing the repository against DEPS.json on
-// 2026-07-28: 19 test files and 2 statusline files, none of them reachable by
-// any search. The statusline pair was in the map only because someone added it
-// by hand, which is the state that looks fixed and is not.
-check('every skill that searches a plugin-repo root also searches statusline/', () => {
-  for (const [name, text] of Object.entries(SKILLS)) {
-    if (!/plugins\/\*\//.test(text)) continue;
-    assert.ok(
-      /plugins\/\*\/statusline\//.test(text),
-      `${name} searches a plugin-repo root but never looks in statusline/, `
-      + 'a fourth place a plugin keeps executable code'
-    );
-  }
+// Found by diffing the repository against DEPS.json on 2026-07-28: 19 test
+// files and 2 statusline files, none of them reachable by any search. The
+// statusline pair was in the map only because someone added it by hand, which
+// is the state that looks fixed and is not.
+check('the shared listing reaches statusline/', () => {
+  assert.match(LAYOUT, /plugins\/\*\/statusline\//);
+  assert.match(LAYOUT_FIND, /plugins\/\*\/statusline\//);
 });
 
-check('every skill that searches a plugin-repo root also searches tests/', () => {
-  // This one cannot be fixed by adding another subdirectory to the plugins/*/
-  // glob. tests/ is a sibling of plugins/, not a child, so the search has to
-  // reach outside the pattern that finds everything else.
-  for (const [name, text] of Object.entries(SKILLS)) {
-    if (!/plugins\/\*\//.test(text)) continue;
-    assert.ok(
-      /<root\.path>\/tests\//.test(text),
-      `${name} searches a plugin-repo root but never looks in tests/, which `
-      + 'sits at the repository root and inside no plugin'
-    );
-  }
+check('the shared listing reaches tests/, which is a sibling of plugins/', () => {
+  // This one was never fixable by adding a subdirectory to the plugins/*/ glob.
+  // tests/ is a sibling of plugins/, not a child, so the search has to reach
+  // outside the pattern that finds everything else.
+  assert.match(LAYOUT, /<root\.path>\/tests\//);
+  assert.match(LAYOUT_FIND, /<root\.path>\/tests\//);
 });
 
 check('a test target keeps a key that cannot collide with a plugin target', () => {
@@ -489,15 +499,18 @@ check('audit-deps does not stamp a review that did not happen', () => {
   );
 });
 
-check('flag-issue resolves a plugin to a file rather than a directory', () => {
-  assert.ok(
-    /plugins\/\{target\}\/\.claude-plugin\/plugin\.json/.test(SKILLS['flag-issue']),
-    'flag-issue resolves a plugin target to its directory, and /apply-fix '
-    + 'cannot open a directory'
+check('finding a plugin resolves to a file rather than a directory', () => {
+  // /apply-fix opens the path a queue entry records, and a directory cannot be
+  // opened. The rule used to be checked in flag-issue's own prose; the lookup is
+  // generated now, so it is checked where it is produced and holds for every
+  // caller rather than for the one that was audited.
+  assert.match(
+    LAYOUT_FIND, /plugins\/\{target\}\/\.claude-plugin\/plugin\.json/,
+    'finding a plugin resolves to its directory, and /apply-fix cannot open one'
   );
   assert.ok(
-    !/ls -d <root\.path>\/plugins\/\{target\}\s/.test(SKILLS['flag-issue']),
-    'the old directory-only lookup is still there beside the new one'
+    !/ls -1d <root\.path>\/plugins\/\{target\} 2/.test(LAYOUT_FIND),
+    'the directory-only lookup is still there beside the manifest'
   );
 });
 

@@ -545,6 +545,141 @@ check('nothing in the plugin still describes the check it now delegates', () => 
   );
 });
 
+
+// --- the shared layout ------------------------------------------------------
+//
+// The bug this pins: PR #101 added `bin/` on 2026-08-14 as a new place a plugin
+// keeps executable code. /audit-deps and /built-check each carried their own
+// glob block, in prose, and neither was updated. `bin/hook-node` is the file
+// every hook in every plugin starts through, and it appeared in DEPS.json zero
+// times, so a change to it reported nothing at risk.
+//
+// Adding bin/ to the list is the small half. The half that lasts is the row
+// below that reconciles the list against what is actually on disk, so the next
+// directory somebody adds fails here instead of going missing for a month.
+
+const REPO = path.join(__dirname, '..');
+const { PLUGIN_LAYOUT, REPO_LAYOUT, NOT_MAPPED } = require(SCRIPT);
+
+check('the layout covers bin/, the directory that went missing', () => {
+  const out = run(makeHome(), ['layout', '--root', REPO]).stdout;
+  assert.match(out, /plugins\/\*\/bin\/\*/, 'listing mode does not reach bin/');
+  const found = run(makeHome(), ['layout', '--root', REPO, '--slug', 'hook-node']).stdout;
+  assert.match(found, /plugins\/\*\/bin\/hook-node/, 'find mode does not reach bin/');
+});
+
+// The two skills asking the same question have to get the same set back. Paths
+// cannot be compared directly, because find mode interpolates the slug and turns
+// `skills/*/` into `skills/<slug>/`. What has to match is the rows themselves:
+// same count, same order, same kinds. A later special case in one mode and not
+// the other is what this catches.
+check('listing and finding cover the same rows in the same order', () => {
+  const kindsIn = (out) => out.split('\n').filter(Boolean).map((l) => l.match(/# kind: (\S+)/)[1]);
+  // Finding emits one line per pattern and a row may carry two, the bare name
+  // and the name with an extension, so consecutive repeats collapse before the
+  // comparison. What has to hold is that the rows appear, in order, in both.
+  const collapse = (a) => a.filter((k, i) => k !== a[i - 1]);
+  const listing = kindsIn(run(makeHome(), ['layout', '--root', REPO]).stdout);
+  const finding = kindsIn(run(makeHome(), ['layout', '--root', REPO, '--slug', 'x']).stdout);
+  assert.deepStrictEqual(collapse(finding), collapse(listing));
+  assert.strictEqual(
+    listing.length, PLUGIN_LAYOUT.length + REPO_LAYOUT.length,
+    'a row in the layout is not reaching the listing'
+  );
+});
+
+// A prefix match here reaches files nobody named. /flag-issue records what it
+// finds and /apply-fix opens and edits that path, so `queue` matching
+// queue-locking.test.js is a correction applied to the wrong file. Checked as a
+// property of every pattern rather than by naming the two that were loose.
+check('finding matches an exact name, or that name with an extension, never a prefix', () => {
+  const patterns = [...PLUGIN_LAYOUT, ...REPO_LAYOUT].flatMap((r) => r.find);
+  const loose = patterns.filter((p) => /<slug>\*/.test(p));
+  assert.deepStrictEqual(
+    loose, [],
+    'these match any name beginning with the slug, which reaches files nobody asked about'
+  );
+});
+
+// Each command takes its own options. Pooled, `check --root X` was accepted and
+// did nothing, which is the silent acceptance this file refuses everywhere else.
+check('an option meant for another command is refused rather than ignored', () => {
+  const bad = run(makeHome(), ['check', '--root', '/nonsense']);
+  assert.match(bad.stdout, /check does not take --root/);
+  assert.notStrictEqual(bad.code, 0, 'a refused option still exited 0');
+  const alsoBad = run(makeHome(), ['layout', '--kind', 'skill']);
+  assert.match(alsoBad.stdout, /layout does not take --kind/);
+});
+
+// Every row of the layout reaches the output, named by its own directory, so a
+// row cannot be silently dropped while the count still adds up.
+check('every directory in the layout appears in the listing', () => {
+  const out = run(makeHome(), ['layout', '--root', REPO]).stdout;
+  const missing = PLUGIN_LAYOUT.filter((r) => !out.includes(`/plugins/*/${r.dir}/`)).map((r) => r.dir);
+  assert.deepStrictEqual(missing, [], 'these rows are in roots.js but not in what it prints');
+});
+
+// The guard. Every directory a plugin actually has is either mapped or named as
+// deliberately unmapped. A new one is neither, so it fails here.
+check('every directory a plugin has is mapped or explicitly excluded', () => {
+  const mapped = new Set(PLUGIN_LAYOUT.map((r) => r.dir));
+  const excluded = new Set(Object.keys(NOT_MAPPED));
+  const unaccounted = new Set();
+  const pluginsDir = path.join(REPO, 'plugins');
+  for (const plugin of fs.readdirSync(pluginsDir)) {
+    const dir = path.join(pluginsDir, plugin);
+    if (!fs.statSync(dir).isDirectory()) continue;
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      if (mapped.has(entry.name) || excluded.has(entry.name)) continue;
+      unaccounted.add(`${plugin}/${entry.name}`);
+    }
+  }
+  assert.deepStrictEqual(
+    [...unaccounted].sort(), [],
+    'these exist in a plugin and are in neither PLUGIN_LAYOUT nor NOT_MAPPED in roots.js. '
+    + 'Add the directory to the layout so both skills scan it, or to NOT_MAPPED with the reason'
+  );
+});
+
+// A glob that matches nothing is indistinguishable from a directory that holds
+// nothing, which is the failure mode this whole file exists for. Checked only
+// where the directory is present, since `commands/` is a legal place no plugin
+// currently uses.
+check('every listing that names a present directory actually matches something', () => {
+  const empty = [];
+  for (const row of PLUGIN_LAYOUT) {
+    const present = fs.readdirSync(path.join(REPO, 'plugins'))
+      .filter((p) => fs.existsSync(path.join(REPO, 'plugins', p, row.dir)));
+    if (present.length === 0) continue;
+    const hits = execFileSync('sh', ['-c', `ls -1 ${REPO}/plugins/*/${row.list} 2>/dev/null | wc -l`], { encoding: 'utf8' });
+    if (Number(hits.trim()) === 0) empty.push(row.dir);
+  }
+  assert.deepStrictEqual(empty, [], 'these directories exist but their glob finds nothing in them');
+});
+
+// Anti-drift, and the reason the list moved at all. A skill writing its own copy
+// again is how this recurs, and calling roots.js does not excuse a copy sitting
+// beside the call: `bin/` went missing while every skill involved looked correct.
+//
+// Matched on the command rather than on the path, because all three files
+// discuss `plugins/*/` in prose on purpose, explaining why `tests/` cannot be
+// reached from it. An earlier version of this row wanted a dash flag and so
+// missed a bare `ls <root.path>/plugins/*/hooks/{target}` entirely, which is the
+// exact line it exists to catch.
+check('no skill has gone back to writing its own plugin-repo globs', () => {
+  const dirs = PLUGIN_LAYOUT.map((r) => r.dir).join('|');
+  const pattern = new RegExp(String.raw`^\s*ls\b[^\n]*plugins/\*/(${dirs})/`, 'm');
+  const offending = ['audit-deps', 'built-check', 'flag-issue']
+    .map((name) => path.join(REPO, 'plugins', 'build-loop', 'skills', name, 'SKILL.md'))
+    .filter((f) => pattern.test(fs.readFileSync(f, 'utf8')))
+    .map((f) => path.relative(REPO, f));
+  assert.deepStrictEqual(
+    offending, [],
+    `these spell out plugin-repo globs instead of calling roots.js layout: ${offending.join(', ')}`
+  );
+});
+
 for (const home of HOMES) fs.rmSync(home, { recursive: true, force: true });
 
 console.log(`\n${total} checks, ${failed} failed`);
