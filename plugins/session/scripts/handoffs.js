@@ -148,10 +148,13 @@ function readIndex(home = os.homedir()) {
 // already cover this.
 function recordHandoff({ slug, target, kind, home = os.homedir(), now = Date.now() }) {
   if (!slug || !target) return null;
+  // The one caller that always writes, so it is the one allowed to create the
+  // handoffs folder. Recording a handoff on a machine that has never had one is
+  // the whole job, not a side effect of looking.
   return mutateIndex(home, (handoffs, save) => {
     handoffs[slugify(slug)] = { path: target, kind: kind || 'project', recorded_at: new Date(now).toISOString() };
     return save(handoffs) ? handoffs : null;
-  });
+  }, { mayCreate: true });
 }
 
 // Write the index the only way it is ever written: to a temporary file, then
@@ -214,7 +217,11 @@ function writeIndexUnlocked(handoffs, home = os.homedir()) {
 // pass it on a path that might call `save`: the point of this gate is that the
 // read and the write are one region, and a write from an unlocked read is that
 // guarantee gone.
-function mutateIndex(home, change, { readOnly = false } = {}) {
+// `mayCreate` says this caller always writes, so the handoffs folder existing
+// afterwards is the point rather than a side effect. Only `recordHandoff` sets
+// it. Everything else leaves a machine with no handoffs folder exactly as it
+// found it, which is what it did before this gate existed.
+function mutateIndex(home, change, { readOnly = false, mayCreate = false } = {}) {
   const lock = indexLockPath(home);
   return withIndexLock(lock, () => {
     const save = (handoffs) => {
@@ -222,7 +229,7 @@ function mutateIndex(home, change, { readOnly = false } = {}) {
       return writeIndexUnlocked(handoffs, home) !== null;
     };
     return change(readIndex(home), save);
-  }, { readOnly }).value;
+  }, { readOnly, mayCreate }).value;
 }
 
 // Drop one entry by slug, without touching the handoff it names.

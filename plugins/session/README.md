@@ -332,6 +332,13 @@ one, so a reader gets one whole version or the other. A preview of state another
 session is changing is approximate whatever you do, and waiting five seconds
 does not make it less so.
 
+A command that changes nothing creates nothing. The lock lives inside
+`~/.planning/handoffs/`, so taking it means creating that folder, which would put
+one on a machine that has never had one on the say-so of a command that did
+nothing. Forgetting a slug that is not listed, and pruning an index that is not
+there, both leave the disk as they found it. Recording a handoff does create the
+folder, because that is what recording a handoff means.
+
 A directory that cannot hold a lock at all, usually one that is not writable, is a
 different case and stays quiet. The index write is about to fail there too, and
 `indexWritten: false` already reports that properly.

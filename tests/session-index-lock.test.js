@@ -236,6 +236,9 @@ check('the sweep leaves an entry recorded by another session alone', () => {
 check('the lock is released after the body throws', () => {
   const home = tmpHome();
   const lock = handoffs.indexLockPath(home);
+  // The folder has to be there, or this takes the no-index path and never
+  // acquires anything, which would make the assertions below vacuous.
+  fs.mkdirSync(path.dirname(lock), { recursive: true });
 
   assert.throws(() => withIndexLock(lock, () => { throw new Error('boom'); }), /boom/);
   assert.ok(!fs.existsSync(lock),
@@ -429,6 +432,7 @@ check('a nested call never lands on the other side of the lock from its caller',
 check('a region is cleared once it ends, so the next call starts fresh', () => {
   const home = tmpHome();
   const lock = handoffs.indexLockPath(home);
+  fs.mkdirSync(path.dirname(lock), { recursive: true });
 
   const first = withIndexLock(lock, () => 'one');
   assert.strictEqual(first.locked, true);
@@ -505,6 +509,64 @@ check('a real unprotected write still warns, exactly once', () => {
   const warnings = (r.err.match(/may have been lost/g) || []).length;
   assert.strictEqual(warnings, 1,
     `a write that went ahead without the lock says so once. stderr was: ${r.err}`);
+});
+
+// Devin round 3 on PR #109. The lock lives inside the handoffs folder, so taking
+// it means creating that folder, and the gate took it on every mutation
+// including the ones that turn out to change nothing. A command that reported
+// doing nothing put `~/.planning/handoffs` on a machine that had never had one.
+//
+// `archiveStale` refuses that exact side effect a few lines away, in as many
+// words, which is what makes this an inconsistency rather than a preference.
+const handoffsDir = (home) => path.join(home, '.planning', 'handoffs');
+
+check('a command that changes nothing creates nothing', () => {
+  const forget = tmpHome();
+  const result = handoffs.forgetHandoff('nope', forget);
+  assert.strictEqual(result.removed, false, 'setup: nothing to forget');
+  assert.ok(!fs.existsSync(handoffsDir(forget)),
+    'forgetting a slug that is not listed must leave the disk as it found it');
+
+  const prune = tmpHome();
+  handoffs.pruneIndex({ home: prune });
+  assert.ok(!fs.existsSync(handoffsDir(prune)),
+    'a prune with no index to prune must leave the disk as it found it');
+
+  const sweep = tmpHome();
+  handoffs.archiveStale({ home: sweep });
+  assert.ok(!fs.existsSync(handoffsDir(sweep)),
+    'the sweep already said creating one here would be a side effect nobody asked for');
+});
+
+check('recording a handoff does create the folder, because that is the job', () => {
+  const home = tmpHome();
+  handoffs.recordHandoff({ slug: 'a', target: '/tmp/a.md', kind: 'central', home });
+  assert.ok(fs.existsSync(handoffsDir(home)),
+    'the one caller that always writes is the one allowed to create the folder');
+  assert.ok(handoffs.readIndex(home).a, 'and the entry is actually there');
+});
+
+check('a first wrap on a fresh machine is still protected from a concurrent one', () => {
+  // The reason this fix is not "skip the lock when the index file is absent".
+  // That would leave two sessions wrapping for the first time on a fresh machine
+  // both reading an empty index and both writing, which is the race this whole
+  // file exists to close, surviving in the one case nobody would think to test.
+  const home = tmpHome();
+  const N = 12;
+  assert.ok(!fs.existsSync(handoffsDir(home)), 'setup: nothing on disk yet');
+
+  const snippets = [];
+  for (let i = 0; i < N; i += 1) {
+    snippets.push(`const h = require(${JSON.stringify(HANDOFFS)});`
+      + `h.recordHandoff({ slug: 'first-${i}', target: '/tmp/f-${i}.md', kind: 'central', home: ${JSON.stringify(home)} });`);
+  }
+  runConcurrently(snippets);
+
+  const index = readIndexFile(home);
+  const missing = [];
+  for (let i = 0; i < N; i += 1) if (!index[`first-${i}`]) missing.push(`first-${i}`);
+  assert.deepStrictEqual(missing, [],
+    'the folder not existing yet is not a reason to skip the lock, because these writers create it');
 });
 
 check('release leaves a lock belonging to someone else alone', () => {

@@ -219,7 +219,25 @@ function release(lock) {
 // A caller that knows it cannot write says so with `readOnly`, and then no lock
 // is taken and nothing waits. That is what stops a preview stalling five
 // seconds behind another session's write.
-function withIndexLock(lock, fn, { readOnly = false } = {}) {
+function exists(dir) {
+  try { return fs.existsSync(dir); } catch (_) { return false; }
+}
+
+// A region that runs without the lock, for the two cases where there is nothing
+// to protect. Still recorded, so a nested call inherits the answer rather than
+// going off to take a lock its caller decided against.
+function unlockedRegion(lock, fn, reason) {
+  const region = { count: 1, locked: false, reason };
+  regions.set(lock, region);
+  try {
+    return { value: fn(), locked: false, reason };
+  } finally {
+    region.count -= 1;
+    if (region.count === 0) regions.delete(lock);
+  }
+}
+
+function withIndexLock(lock, fn, { readOnly = false, mayCreate = false } = {}) {
   // Already inside a region for this lock on this process, so run directly and
   // inherit its answer. Inherited whether or not that region holds the lock: a
   // nested call that goes looking again can wait a second deadline, warn twice
@@ -243,15 +261,33 @@ function withIndexLock(lock, fn, { readOnly = false } = {}) {
   // one, so a reader gets one whole version or the other and never a torn one.
   // A preview of state that another session is changing is approximate by
   // nature, and waiting five seconds does not make it less so.
-  if (readOnly) {
-    const region = { count: 1, locked: false, reason: 'read-only' };
-    regions.set(lock, region);
-    try {
-      return { value: fn(), locked: false, reason: 'read-only' };
-    } finally {
-      region.count -= 1;
-      if (region.count === 0) regions.delete(lock);
-    }
+  if (readOnly) return unlockedRegion(lock, fn, 'read-only');
+
+  // Nothing on disk yet, and this caller cannot put anything there.
+  //
+  // The lock lives inside the handoffs folder, so taking it means creating that
+  // folder. This gate is entered by every mutation, including the ones that turn
+  // out to change nothing, so creating it up front put `~/.planning/handoffs` on
+  // machines that had never had one, from commands that reported doing nothing.
+  // `archiveStale` refuses that exact side effect a few lines away, in as many
+  // words. Devin round 3 on PR #109.
+  //
+  // Safe to skip the lock here rather than merely convenient: with no folder
+  // there is no index, `readIndex` gives back an empty map, and a caller that
+  // cannot create the folder has nothing it could write. There is no
+  // read-then-write pair to protect, because there is no write.
+  //
+  // `mayCreate` is for the one caller that always writes. It creates the folder
+  // because that is what recording a handoff means, not as a side effect of
+  // looking.
+  //
+  // Not "skip the lock when the index file is absent", which is the same idea
+  // one step too far: two sessions wrapping for the first time on a fresh
+  // machine would both read an empty index and both write, which is the race
+  // this whole file exists to close, surviving in the one case nobody would
+  // think to test.
+  if (!mayCreate && !exists(path.dirname(lock))) {
+    return unlockedRegion(lock, fn, 'no-index');
   }
 
   let reason;
