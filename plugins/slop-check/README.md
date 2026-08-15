@@ -16,6 +16,17 @@ short sentences are blocked in the assistant's output, so it has to rewrite
 before the turn ends. These are enforced rather than suggested, because a rule
 you have to restate every session is not a rule.
 
+It checks the closing message of each turn, which is what the Stop event hands
+it. A turn that pauses to run a tool and writes a paragraph before doing so is
+checked from the tool call onwards, and that opening paragraph is not read. On
+the sessions this was measured against, 4.7 per cent of turns carried a hard
+rule break that sat only in the unread part. The reason for the limit is that
+the alternative was worse: the hook used to take the turn from the session log,
+which is written a beat behind the conversation, so it read the message before
+the one it was blocking. It was wrong about which text it was looking at in 70
+of 116 real blocks. Narrower and correct beats wider and misdirected, and
+closing the gap is a known piece of work rather than a decision to live with.
+
 **A hook that catches a markdown file contradicting itself**, the moment it is
 written. It warns and never blocks. Three checks, all of them about the file
 and nothing outside it:
