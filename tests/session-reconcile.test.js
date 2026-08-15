@@ -316,5 +316,59 @@ check('a wrap recording beside --fix loses neither entry', () => {
   assert.deepStrictEqual(missingDocs, [], 'and every document the repair recorded survived the wraps');
 });
 
+// The check above proves no wrap is lost. It does not prove anything about the
+// re-check inside the region, because the documents it repairs and the slugs the
+// wraps record never collide, so the line that skips an already-recorded slug is
+// never reached. Removing that line left it passing, which is the exact shape
+// this repository keeps catching in itself: a check that cannot fail against the
+// broken version.
+//
+// The collision has to be arranged rather than hoped for. One process takes the
+// lock, writes the contested slug and holds the region open; `reconcile --fix`
+// starts just after, does its scan unlocked and so still sees the document as
+// unlisted, then blocks on the lock. By the time it gets in, the slug it was
+// about to record belongs to somebody else, and the re-check is the only thing
+// that stops it being overwritten.
+check('--fix does not overwrite a slug that was recorded while it was waiting', () => {
+  const home = tmpHome();
+  fixture(home, { docs: ['contested'], entries: {} });
+  const theirs = path.join(home, 'code', 'contested', 'HANDOFF.md');
+  fs.mkdirSync(path.dirname(theirs), { recursive: true });
+  fs.writeFileSync(theirs, '# theirs\n');
+  const out = path.join(home, 'fix-output.json');
+
+  const sleep = (ms) => `Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ${ms});`;
+
+  const holder = `
+    const h = require(${JSON.stringify(path.join(ROOT, 'scripts', 'handoffs.js'))});
+    h.mutateIndex(${JSON.stringify(home)}, (map, save) => {
+      map['contested'] = { path: ${JSON.stringify(theirs)}, kind: 'project',
+        recorded_at: new Date().toISOString() };
+      ${sleep(1500)}
+      return save(map);
+    });
+  `;
+  const repairer = `
+    ${sleep(200)}
+    const r = require('child_process').spawnSync(process.execPath,
+      [${JSON.stringify(CLI)}, 'reconcile', '--fix', '--home', ${JSON.stringify(home)}, '--json'],
+      { encoding: 'utf8' });
+    require('fs').writeFileSync(${JSON.stringify(out)}, r.stdout);
+  `;
+
+  execFileSync(process.execPath, ['-e', LAUNCHER, JSON.stringify([holder, repairer])],
+    { stdio: ['ignore', 'pipe', 'pipe'] });
+
+  const result = JSON.parse(fs.readFileSync(out, 'utf8'));
+  assert.ok(result.unlisted.some((u) => u.slug === 'contested'),
+    'the scan saw the document as unlisted, so the window this check needs was open');
+  assert.ok(!result.recorded.some((r) => r.slug === 'contested'),
+    'and it did not record it anyway, because somebody else got there first');
+
+  const index = JSON.parse(fs.readFileSync(indexFile(home), 'utf8')).handoffs;
+  assert.strictEqual(index.contested.path, theirs,
+    'the entry that was already there is the one that survived');
+});
+
 process.stdout.write(failures ? `\n${failures} failed\n` : '\nall passed\n');
 process.exit(failures ? 1 : 0);
