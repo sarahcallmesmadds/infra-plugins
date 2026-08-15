@@ -64,7 +64,7 @@
       "name": "slop-check",
       "source": "./plugins/slop-check",
       "description": "Catch the habits that mean nobody edited it. Blocks em dashes and choppy sentence runs in the assistant's own writing, and checks any draft, document, pull request, chart or spec for the signs it shipped unreviewed.",
-      "version": "0.4.0",
+      "version": "0.4.1",
       "author": {
         "name": "Sarah Madden"
       },

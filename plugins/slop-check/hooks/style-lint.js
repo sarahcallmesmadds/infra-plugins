@@ -50,26 +50,19 @@ function remedyFor(violations) {
   return parts.join(' ');
 }
 
-readEvent((payload) => {
-  // Already inside a forced continuation. Blocking again would loop forever.
-  if (payload.stop_hook_active) return;
-
-  const config = loadConfig();
-  if (config.enforce === false) return;
-
-  const transcript = payload.transcript_path;
-  if (!transcript || !fs.existsSync(transcript)) return;
+// The fallback, and formerly the only path. Walk back to the most recent
+// assistant message that actually said something. Tool calls and empty turns
+// are not prose.
+function fromTranscript(transcript) {
+  if (!transcript || !fs.existsSync(transcript)) return '';
 
   let lines;
   try {
     lines = fs.readFileSync(transcript, 'utf8').trim().split('\n');
   } catch {
-    return;
+    return '';
   }
 
-  // Walk back to the most recent assistant message that actually said
-  // something. Tool calls and empty turns are not prose.
-  let latest = '';
   for (let i = lines.length - 1; i >= 0; i--) {
     let entry;
     try {
@@ -83,12 +76,44 @@ readEvent((payload) => {
     const text = Array.isArray(content)
       ? content.filter((c) => c.type === 'text').map((c) => c.text).join('\n')
       : String(content);
-    if (text.trim()) {
-      latest = text.trim();
-      break;
-    }
+    if (text.trim()) return text.trim();
   }
+  return '';
+}
 
+// The turn that just ended.
+//
+// The event carries it directly as `last_assistant_message`. The transcript
+// does not, and asking the transcript was the bug: the file is written a beat
+// behind the conversation, so at Stop time the finished turn is usually not in
+// it yet and the walk lands on the message before. The guard then blocked a
+// clean turn for the previous one's count, while the turn that really broke the
+// rule went out unchecked.
+//
+// Measured on 2026-08-15 over 116 real blocks in the saved sessions: 70 linted
+// the wrong text. A live probe over five firings found the event correct every
+// time and the transcript short every time. On one firing the hook saw 11 lines
+// and 66794 bytes of a file that ends at 14 lines and 68998 bytes, with the
+// reply stamped 60ms before the read and still not written.
+//
+// The walk stays as a fallback. `last_assistant_message` is captured in
+// tests/fixtures/hook-events/Stop.json and hook-event-shape.test.js checks this
+// read against it, but it is not a contract anyone published, so if it goes
+// away the guard degrades to its old behaviour rather than to nothing.
+function finishedTurn(payload) {
+  const direct = payload.last_assistant_message;
+  if (typeof direct === 'string' && direct.trim()) return direct.trim();
+  return fromTranscript(payload.transcript_path);
+}
+
+readEvent((payload) => {
+  // Already inside a forced continuation. Blocking again would loop forever.
+  if (payload.stop_hook_active) return;
+
+  const config = loadConfig();
+  if (config.enforce === false) return;
+
+  const latest = finishedTurn(payload);
   if (!latest) return;
 
   // Guarded: this is pure string work, but a guard that is supposed to never
