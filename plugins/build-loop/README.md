@@ -256,7 +256,9 @@ documents true about today; it does not pre-empt that decision.
 > that was always the more useful half. See "Upgrading to 0.9.9" above.
 
 The dependency map now keeps itself current for ordinary edits, and the drift
-warning finally means something.
+warning finally means something. **The second half of that no longer applies.**
+Session 0.8.7 removed the warning rather than sharpening it further, so what
+survives from this release is the first half, the map keeping itself current.
 
 **What was wrong.** The session brief called a target drifted when its file had
 been modified more recently than the date its entry was confirmed. Any edit
@@ -272,8 +274,8 @@ the recorded edges.
 
 | Outcome | What happens |
 |---|---|
-| Nothing new appeared | `last_auto_checked` is stamped, silently. No warning accumulates. |
-| The file calls a mapped target with no recorded edge | It says so in the conversation and does **not** stamp, so the drift stays visible until `/audit-deps` records the edge. |
+| Nothing new appeared | `last_auto_checked` is stamped, silently. No warning accumulates. **No longer the point: the warning meant here was removed in session 0.8.7. The stamp still happens and nothing reads it.** |
+| The file calls a mapped target with no recorded edge | It says so in the conversation and does **not** stamp, so the drift stays visible until `/audit-deps` records the edge. **"Stays visible" meant the brief's drift line, which is gone. What stays visible is the report in the conversation, which is the half that still works.** |
 
 **Two dates, kept apart.** The hook writes `last_auto_checked` and never
 `last_updated`. `last_updated` is the review date, and `/audit-deps` compares it
