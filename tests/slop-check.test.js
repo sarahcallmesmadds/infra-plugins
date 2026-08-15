@@ -451,6 +451,87 @@ const emDashMessage = runStyleHook(`a sentence ${EM} with a dash in it`);
 check('the em dash remedy names the fault once',
   emDashMessage.split('em dash').length - 1 <= 2, true);
 
+// --- the hook lints the turn that just ended ---------------------------------
+//
+// The hook used to walk the transcript for the finished turn. The transcript is
+// written a beat behind the conversation, so at Stop time the finished turn is
+// usually not in the file and the walk landed on the message before it. Across
+// 116 real blocks in the saved sessions, 70 named the wrong text: a clean turn
+// was stopped and told to fix the previous turn's em dashes, while the turn
+// that actually broke the rule was never checked.
+//
+// The event carries the finished turn as `last_assistant_message`, so that is
+// what gets linted now. The rows below are written so that the second one fails
+// against the old walk, which was confirmed by running them against it before
+// the fix went in.
+
+console.log('\nthe Stop hook lints the turn that just ended');
+
+// Payload fields and transcript contents are set independently on purpose. The
+// bug only shows when the two disagree, which is every real firing.
+function runStyleHookOn({ ended, transcriptTurns = [] }) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'slop-ended-'));
+  const transcript = path.join(dir, 'transcript.jsonl');
+  fs.writeFileSync(transcript, transcriptTurns.map((text) => JSON.stringify({
+    type: 'assistant',
+    message: { content: [{ type: 'text', text }] },
+  })).join('\n') + (transcriptTurns.length ? '\n' : ''));
+
+  const payload = { transcript_path: transcript, stop_hook_active: false };
+  if (ended !== undefined) payload.last_assistant_message = ended;
+
+  const stdout = execFileSync(process.execPath, [STYLE_HOOK], {
+    input: JSON.stringify(payload),
+    encoding: 'utf8',
+    env: { ...process.env, HOME: dir },
+  });
+  return stdout.trim() ? JSON.parse(stdout).reason : '';
+}
+
+const clean = 'This sentence is written plainly and holds nothing to complain about.';
+
+check('the finished turn is what gets linted, not the transcript',
+  runStyleHookOn({ ended: `one ${EM} dash`, transcriptTurns: [clean] })
+    .includes('1 em dash'), true);
+
+// The bug itself, and the fixture has to be the real situation to catch it.
+// The finished turn is absent from the transcript, because that is the whole
+// point: at Stop time it has not been written yet. Writing it into the file as
+// the last entry makes the old walk find it and the row passes against the very
+// code it is meant to fail against.
+check('a clean turn is not blocked for an earlier turn\'s em dashes',
+  runStyleHookOn({
+    ended: clean,
+    transcriptTurns: [`a ${EM} b ${EM} c ${EM} d`],
+  }), '');
+
+check('the count named is the count in the turn that ended',
+  runStyleHookOn({
+    ended: `two ${EM} dashes ${EM} here`,
+    transcriptTurns: [`a ${EM} b ${EM} c ${EM} d ${EM} e ${EM} f`],
+  }).includes('2 em dashes'), true);
+
+// The fallback. `last_assistant_message` is captured in the Stop fixture and
+// checked by hook-event-shape.test.js, but nobody published it as a contract,
+// so its absence has to degrade to the old behaviour rather than to silence.
+check('with the field absent the transcript is still read',
+  runStyleHookOn({ transcriptTurns: [clean, `a ${EM} dash`] })
+    .includes('1 em dash'), true);
+
+// Absent and empty are different answers to different questions, and the first
+// version of this file got it wrong in a way that reopened the bug. An empty
+// field is a turn that ended without prose, a turn whose last act was a tool
+// call being the ordinary case. Falling back there lints an older message and
+// calls it the response just written, which is the whole fault.
+check('a turn that ended without prose is not linted against an older one',
+  runStyleHookOn({ ended: '', transcriptTurns: [`a ${EM} b ${EM} c ${EM} d`] }), '');
+
+check('whitespace alone counts as ended without prose, not as absent',
+  runStyleHookOn({ ended: '   ', transcriptTurns: [`a ${EM} b ${EM} c ${EM} d`] }), '');
+
+check('nothing readable anywhere stays silent rather than throwing',
+  runStyleHookOn({ transcriptTurns: [] }), '');
+
 // --- whose document is this ---------------------------------------------------
 //
 // Found by review. checkAll delegates to checkHard, so the house-rule check
