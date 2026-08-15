@@ -473,7 +473,13 @@ function coversWhere(where, roots) {
   //    directions, so a path inside a root and a root inside a path both count.
   for (const token of text.split(/[\s,;"'()]+/).filter(Boolean)) {
     if (!/^(~|\.{1,2})?\//.test(token)) continue;
-    const abs = path.resolve(expand(token.replace(/\/+$/, ''))).toLowerCase();
+    const trimmed = token.replace(/\/+$/, '');
+    // An anchor with no path after it names no particular destination. More
+    // importantly, resolving one turns '' into cwd, '~' into the whole home,
+    // and '.'/'..' into broad process-relative directories. Any of those can
+    // contain a configured root and falsely answer covered for stray prose.
+    if (trimmed === '' || trimmed === '~' || trimmed === '.' || trimmed === '..') continue;
+    const abs = path.resolve(expand(trimmed)).toLowerCase();
     for (const r of roots) {
       const rp = path.resolve(r.path).toLowerCase();
       if (abs === rp || abs.startsWith(rp + path.sep) || rp.startsWith(abs + path.sep)) return hit(r);
@@ -503,7 +509,25 @@ function coversWhere(where, roots) {
     }
   }
 
-  // 4. Bare names. A tail that was owner-qualified has already had its turn and
+  // 4. A missing checkout cannot answer `git remote get-url`, but its config
+  //    still says which repository-shaped root moved. After the stronger
+  //    remote and filesystem checks above, let an owner/repo tail match only a
+  //    missing root's exact configured name or path basename. Ignore pairs
+  //    whose head looks like a host; URL extraction already added owner/repo,
+  //    and github.com/owner must not make a root named owner look relevant.
+  for (const pair of pairs) {
+    const slash = pair.indexOf('/');
+    const head = pair.slice(0, slash);
+    const tail = pair.slice(slash + 1);
+    if (head.includes('.')) continue;
+    for (const r of roots) {
+      if (r.exists || r.kind !== 'plugin-repo') continue;
+      const names = [r.name, path.basename(r.path)].map((n) => String(n).toLowerCase());
+      if (names.includes(tail)) return hit(r);
+    }
+  }
+
+  // 5. Bare names. A tail that was owner-qualified has already had its turn and
   //    does not get a second one as a directory name, which is what stops
   //    `sarahcallmesmadds/skills` being answered by a local `~/.claude/skills`.
   //    A tail that turned out to be part of a path is not suppressed, because
@@ -640,6 +664,7 @@ function main(argv) {
       '  as a name otherwise, matched on whole segments so a root called skills is',
       '  not satisfied by hq-skills. root-missing is the configured-but-moved case,',
       '  which check also reports; covered would contradict it in the same run.',
+      '  A bare /, ~/, ./ or ../ names no particular destination and is ignored.',
       '',
       '  layout answers one question for two callers. Without --slug it lists',
       '  everything under a checkout, which is the scan. With --slug it looks for',

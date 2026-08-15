@@ -46,12 +46,13 @@ function makeHome(config) {
 // the parent's stderr, and run-all.js takes the last non-empty line of a
 // suite's output as its summary. A passing suite then reports itself with an
 // error string. queue-locking.test.js has the same symptom for the same reason.
-function run(home, args) {
+function run(home, args, cwd) {
   const opts = {
     encoding: 'utf8',
     env: { ...process.env, HOME: home },
     stdio: ['ignore', 'pipe', 'pipe'],
   };
+  if (cwd) opts.cwd = cwd;
   try {
     return { code: 0, stdout: execFileSync(process.execPath, [SCRIPT, ...args], opts), stderr: '' };
   } catch (error) {
@@ -838,6 +839,25 @@ check('no skill has gone back to writing its own plugin-repo globs', () => {
     );
   });
 
+  check('bare path anchors in free text do not resolve to process directories', () => {
+    // Review round 3. Resolving a stripped '/' produces cwd, while '~/', './'
+    // and '../' produce other broad directories that can contain every root.
+    // None names a particular destination, so none earns covered.
+    const cwd = path.join(home, 'Projects');
+    for (const where of [
+      'the repo / the hooks dir',
+      'somewhere under ~/',
+      'maybe ./',
+      'perhaps ../',
+    ]) {
+      assert.strictEqual(
+        run(home, ['covers', '--where', where], cwd).stdout.trim(),
+        'not-covered',
+        `${where} resolved a bare anchor into a configured root`
+      );
+    }
+  });
+
   check('a configured root that has moved says so, rather than covered', () => {
     // Review round 1, raised as a flag. covers matched every configured root
     // whether or not it was on disk, so it answered "covered" for the exact
@@ -846,6 +866,26 @@ check('no skill has gone back to writing its own plugin-repo globs', () => {
     const h = makeHome({ roots: [{ name: 'gone', path: '/nonexistent/gone', kind: 'plugin-repo' }] });
     assert.strictEqual(run(h, ['covers', '--where', 'gone']).stdout.trim(), 'root-missing gone');
     assert.notStrictEqual(run(h, ['check']).code, 0, 'check and covers disagree about the same root');
+  });
+
+  check('an owner-qualified destination still identifies a moved configured root', () => {
+    // Review round 3. The missing checkout cannot reveal its git remote, so the
+    // exact configured root name/path basename is the remaining durable clue.
+    const h = makeHome({ roots: [
+      { name: 'infra-plugins', path: '~/Projects/infra-plugins', kind: 'plugin-repo' },
+      { name: 'personal', path: '~/.claude/skills', kind: 'skill' },
+    ] });
+    fs.mkdirSync(path.join(h, '.claude', 'skills'), { recursive: true });
+    for (const where of [
+      'sarahcallmesmadds/infra-plugins',
+      'https://github.com/sarahcallmesmadds/infra-plugins',
+    ]) {
+      assert.strictEqual(
+        run(h, ['covers', '--where', where]).stdout.trim(),
+        'root-missing infra-plugins',
+        `${where} was mistaken for a repository nobody configured`
+      );
+    }
   });
 
   check('covers still refuses an option that belongs to another command', () => {
