@@ -306,6 +306,75 @@ check('every JavaScript hook is invoked through the launcher, not directly', () 
     + `${direct.join('\n        ')}\n        Use: "\${CLAUDE_PLUGIN_ROOT}"/bin/hook-node "\${CLAUDE_PLUGIN_ROOT}"/hooks/<file>`);
 });
 
+// Spawn calls, wherever the first argument sits. Written to run over the whole
+// source rather than line by line, because a call whose arguments are wrapped
+// onto separate lines is still a call, and a detector that only sees one-liners
+// teaches people the wrong lesson about where the rule applies.
+const SPAWN_CALL = /\b(?:exec|execFile|execFileSync|spawn|spawnSync)\(\s*([^,)]+?)\s*,/g;
+
+check('no test suite depends on node being on PATH either', () => {
+  // The same rule as the two checks above, applied to the suites rather than to
+  // the hooks, and it lives here so there is one statement of it rather than
+  // two that can disagree.
+  //
+  // Measured on 2026-08-15 by running all 42 suites under BARE_PATH: four
+  // failed, at 22 sites. Nineteen in stale-branches, one each in slop-check and
+  // skill-md-check, all spawning the interpreter by the name `node`, and one in
+  // resource-ownership executing a hook file so the kernel read its
+  // `#!/usr/bin/env node` and searched PATH. Seventeen suites already used
+  // process.execPath and were unaffected, so the rule was being followed by
+  // most of the repository and written down nowhere.
+  //
+  // This is the fourth instance of a suite answering by machine rather than by
+  // the work, after the bash-guard suite in #102, built-check, and the probe
+  // suite in #103. The first three were each found by accident, one at a time,
+  // which is the argument for a check rather than another fix.
+  //
+  // process.execPath is the interpreter already running this suite, so it needs
+  // no search and cannot be a different node from the one under test. It is
+  // also what bin/hook-node arranges in production: find an interpreter, then
+  // exec it with the script.
+  //
+  // The limit, stated rather than left to be discovered: this reads the text,
+  // so it sees a call written the way every call in this repository is written
+  // and would miss one made through a renamed binding or a name built at run
+  // time. That is worth knowing before trusting a pass here as proof of
+  // absence. The check that cannot be fooled is running the suite under
+  // BARE_PATH, which is slow enough that it is not done on every run.
+  const dir = path.join(ROOT, 'tests');
+  const offenders = [];
+
+  for (const file of fs.readdirSync(dir).filter((f) => f.endsWith('.test.js')).sort()) {
+    const source = fs.readFileSync(path.join(dir, file), 'utf8');
+
+    // Constants naming a JavaScript file in this repository. Passing one as the
+    // command means executing it, which hands the interpreter question to the
+    // shebang and so to PATH. A .sh file is deliberately allowed: /bin/sh is on
+    // every machine that can run a hook at all, which is why the probe is
+    // written in it.
+    const jsFileConsts = new Set();
+    for (const line of source.split('\n')) {
+      const declared = /^\s*const\s+([A-Za-z_$][\w$]*)\s*=.*\.js['"]/.exec(line);
+      if (declared) jsFileConsts.add(declared[1]);
+    }
+
+    for (const call of source.matchAll(SPAWN_CALL)) {
+      const command = call[1].trim();
+      const line = source.slice(0, call.index).split('\n').length;
+      if (/^['"]node['"]$/.test(command)) {
+        offenders.push(`${file}:${line} starts the interpreter as "node", which has to be found on PATH`);
+      } else if (jsFileConsts.has(command)) {
+        offenders.push(`${file}:${line} executes ${command}, so its shebang resolves node from PATH`);
+      }
+    }
+  }
+
+  assert.deepStrictEqual(offenders, [],
+    'a suite resolves node from PATH, so it passes or fails by where node is '
+    + `installed rather than by the work:\n        ${offenders.join('\n        ')}\n`
+    + '        Use process.execPath as the command and pass the script in the argument array.');
+});
+
 check('every launcher copy is identical', () => {
   // Five copies, because plugins install independently and one cannot reach
   // into another, so a single shared copy at the repository root would be

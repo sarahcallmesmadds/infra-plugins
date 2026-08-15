@@ -195,7 +195,7 @@ console.log('\nevery finding renders a real detail');
   const os = require('os'), fsx = require('fs');
   const tmp = path.join(os.tmpdir(), 'wg-render-check.md');
   fsx.writeFileSync(tmp, 'Split: 30% one, 30% two, 25% three. Owner: nobody.\n');
-  const out = execFileSync('node',
+  const out = execFileSync(process.execPath,
     [path.join(__dirname, '..', 'plugins', 'slop-check', 'scripts', 'cli.js'),
      'check', '--file', tmp, '--technical'], { encoding: 'utf8' });
   fsx.unlinkSync(tmp);

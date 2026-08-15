@@ -402,7 +402,7 @@ check('the listing shows recently merged branches, whatever the threshold', () =
   };
   const f = path.join(os.tmpdir(), `stale-filter-${process.pid}.json`);
   fs.writeFileSync(f, JSON.stringify(snap));
-  const out = execFileSync('node', [CLI, '--input', f, '--now', '2026-07-27', '--stale-after', '365'], { encoding: 'utf8' });
+  const out = execFileSync(process.execPath, [CLI, '--input', f, '--now', '2026-07-27', '--stale-after', '365'], { encoding: 'utf8' });
   assert.ok(/Safe to delete \(1\)/.test(out),
     `a branch merged yesterday must still be listed and offered:\n${out}`);
   assert.ok(/merged-yesterday/.test(out));
@@ -433,7 +433,7 @@ check('the notice stays silent on resume and on compact', () => {
     g('checkout', '-qb', `m-${b}`); g('commit', '-q', '--allow-empty', '-m', b);
     g('checkout', '-q', 'main'); g('merge', '-q', '--no-ff', `m-${b}`, '-m', `merge ${b}`);
   }
-  const fire = (source) => execFileSync('node', [HOOK], {
+  const fire = (source) => execFileSync(process.execPath, [HOOK], {
     input: JSON.stringify({ cwd: repo, source }), encoding: 'utf8',
   });
   assert.strictEqual(fire('resume').trim(), '', 'resume must not re-inject the notice');
@@ -461,7 +461,7 @@ const fixture = path.join(os.tmpdir(), `stale-branches-fixture-${process.pid}.js
 fs.writeFileSync(fixture, JSON.stringify(snapshot));
 
 function runCli(args) {
-  return execFileSync('node', [CLI, ...args], { encoding: 'utf8' });
+  return execFileSync(process.execPath, [CLI, ...args], { encoding: 'utf8' });
 }
 
 check('text output names the safe branch and no other', () => {
@@ -505,7 +505,7 @@ check('--json emits parseable output with the same split', () => {
 check('outside a repo with no --repo, it explains rather than reporting nothing', () => {
   let stderr = '';
   try {
-    execFileSync('node', [CLI], { cwd: os.tmpdir(), encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    execFileSync(process.execPath, [CLI], { cwd: os.tmpdir(), encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
   } catch (e) {
     stderr = e.stderr || '';
   }
@@ -684,7 +684,7 @@ checkWriteTree('--verify clears a squash-merged branch and asks for the delete t
 
   const verify = (name) => {
     try {
-      return { code: 0, out: execFileSync('node', [CLI, '--cwd', dir, '--verify', name], { encoding: 'utf8' }) };
+      return { code: 0, out: execFileSync(process.execPath, [CLI, '--cwd', dir, '--verify', name], { encoding: 'utf8' }) };
     } catch (e) {
       return { code: e.status, out: (e.stdout || '') + (e.stderr || '') };
     }
@@ -873,15 +873,15 @@ checkWriteTree('the delete command is the last line of verify output, whatever e
   g('commit', '-qm', 'squashed (#3)');
 
   for (const name of ['plain', 'squashed']) {
-    const out = execFileSync('node', [CLI, '--cwd', dir, '--verify', name], { encoding: 'utf8' });
+    const out = execFileSync(process.execPath, [CLI, '--cwd', dir, '--verify', name], { encoding: 'utf8' });
     const lines = out.split('\n').filter(Boolean);
     assert.ok(/^git branch -d /.test(lines[lines.length - 1]),
       `the last line must be the command for ${name}, got:\n${out}`);
   }
 
   // And the two really do print a different number of lines, or this proves nothing.
-  const a = execFileSync('node', [CLI, '--cwd', dir, '--verify', 'plain'], { encoding: 'utf8' }).split('\n').filter(Boolean).length;
-  const b = execFileSync('node', [CLI, '--cwd', dir, '--verify', 'squashed'], { encoding: 'utf8' }).split('\n').filter(Boolean).length;
+  const a = execFileSync(process.execPath, [CLI, '--cwd', dir, '--verify', 'plain'], { encoding: 'utf8' }).split('\n').filter(Boolean).length;
+  const b = execFileSync(process.execPath, [CLI, '--cwd', dir, '--verify', 'squashed'], { encoding: 'utf8' }).split('\n').filter(Boolean).length;
   assert.notStrictEqual(a, b, 'the line count must vary, which is why counting from the top is wrong');
 
   // The skill must say so rather than naming a line number.
@@ -1056,7 +1056,7 @@ check('a remote that has moved since the last fetch is reported, not hidden', ()
       'the whole point is that the merge is invisible against a stale copy');
     assert.ok(feature.aheadBy > 0, 'so it carries a commit count like unmerged work does');
 
-    const out = execFileSync('node', [CLI, '--cwd', local], { encoding: 'utf8' });
+    const out = execFileSync(process.execPath, [CLI, '--cwd', local], { encoding: 'utf8' });
     assert.ok(/the remote has moved past it/.test(out), 'the note must be printed, not just returned');
     assert.ok(/git fetch` and try again/.test(out), 'and must say what to do about it');
     assert.ok(out.indexOf('feature') > out.indexOf('Keep'),
@@ -1070,7 +1070,7 @@ check('a fetched copy prints no note, and the branch is cleared', () => {
     const r = collect.localBranches(local);
     assert.strictEqual(r.remoteStale, false, 'up to date is up to date');
 
-    const out = execFileSync('node', [CLI, '--cwd', local], { encoding: 'utf8' });
+    const out = execFileSync(process.execPath, [CLI, '--cwd', local], { encoding: 'utf8' });
     assert.ok(!/the remote has moved past it/.test(out), 'no caveat when there is nothing to caveat');
 
     // Only meaningful on a git that can see a squash merge at all. Elsewhere the
@@ -1134,7 +1134,7 @@ check('a branch whose last segment matches the default does not fake staleness',
 
   assert.strictEqual(collect.localBranches(local).remoteStale, false,
     'the copy of main is current, whatever else on the remote ends in "main"');
-  const out = execFileSync('node', [CLI, '--cwd', local], { encoding: 'utf8' });
+  const out = execFileSync(process.execPath, [CLI, '--cwd', local], { encoding: 'utf8' });
   assert.ok(!/the remote has moved past it/.test(out), 'so no note, on this run or any other');
 
   fs.rmSync(dir, { recursive: true, force: true });
@@ -1144,13 +1144,13 @@ check('a branch whose last segment matches the default does not fake staleness',
 // the reasons to distrust it stripped off.
 check('--json carries the caveats, present whether or not they are set', () => {
   withOriginAndSquashMerge(({ local, g }) => {
-    const stale = JSON.parse(execFileSync('node', [CLI, '--cwd', local, '--json'], { encoding: 'utf8' }));
+    const stale = JSON.parse(execFileSync(process.execPath, [CLI, '--cwd', local, '--json'], { encoding: 'utf8' }));
     assert.strictEqual(stale.remoteStale, true, 'the caveat has to survive the format');
     assert.strictEqual(typeof stale.mergeCheckUnavailable, 'boolean');
     assert.strictEqual(typeof stale.mergedPRCheckUnavailable, 'boolean');
 
     g(local, 'fetch', '-q', 'origin');
-    const fresh = JSON.parse(execFileSync('node', [CLI, '--cwd', local, '--json'], { encoding: 'utf8' }));
+    const fresh = JSON.parse(execFileSync(process.execPath, [CLI, '--cwd', local, '--json'], { encoding: 'utf8' }));
     assert.strictEqual(fresh.remoteStale, false,
       'and must be present as false rather than absent, which is what an older '
       + 'version without the key looks like');
@@ -1233,7 +1233,7 @@ check('staleness is still reported when there is no remote-tracking ref', () => 
   assert.strictEqual(r.remoteStaleRef, 'main',
     'and the note must name the ref actually compared against, which is not origin/main here');
 
-  const out = execFileSync('node', [CLI, '--cwd', local], { encoding: 'utf8' });
+  const out = execFileSync(process.execPath, [CLI, '--cwd', local], { encoding: 'utf8' });
   assert.ok(/compared against `main`/.test(out), 'the printed note must name it too');
   assert.ok(!/origin\/main/.test(out), 'and must not name a ref this checkout does not have');
 
@@ -1254,7 +1254,7 @@ check('no remote means no note', () => {
 
   const r = collect.localBranches(dir);
   assert.strictEqual(r.remoteStale, false, 'nothing to be out of date with');
-  const out = execFileSync('node', [CLI, '--cwd', dir], { encoding: 'utf8' });
+  const out = execFileSync(process.execPath, [CLI, '--cwd', dir], { encoding: 'utf8' });
   assert.ok(!/the remote has moved past it/.test(out), 'and nothing said about one');
 
   fs.rmSync(dir, { recursive: true, force: true });
@@ -1420,7 +1420,7 @@ check('the direct pre-delete check says nobody could look, rather than inventing
 
     let message = '';
     try {
-      execFileSync('node', [CLI, '--repo', 'example/repo', '--verify', 'feature'],
+      execFileSync(process.execPath, [CLI, '--repo', 'example/repo', '--verify', 'feature'],
         { encoding: 'utf8' });
     } catch (error) {
       message = `${error.stdout || ''}${error.stderr || ''}`;
@@ -1466,7 +1466,7 @@ check('a direct repository check reports an unreadable open list, in the JSON to
     assert.strictEqual(r.openPRCheckUnavailable, true,
       'the remote path has to report an open list it could not read');
 
-    const out = execFileSync('node', [CLI, '--repo', 'example/repo', '--json'], { encoding: 'utf8' });
+    const out = execFileSync(process.execPath, [CLI, '--repo', 'example/repo', '--json'], { encoding: 'utf8' });
     const json = JSON.parse(out);
     assert.strictEqual(json.openPRCheckUnavailable, true,
       'and it has to survive into the JSON, which is what a sweep reads');
@@ -1476,7 +1476,7 @@ check('a direct repository check reports an unreadable open list, in the JSON to
     // The note has to match this path. Locally an unreadable list costs the
     // check and nothing else; here it holds every branch back, so the local
     // sentence would be wrong in both directions at once.
-    const text = execFileSync('node', [CLI, '--repo', 'example/repo'], { encoding: 'utf8' });
+    const text = execFileSync(process.execPath, [CLI, '--repo', 'example/repo'], { encoding: 'utf8' });
     assert.ok(/every branch is being held\s+back/.test(text.replace(/\n/g, ' ')),
       `the remote wording has to say what an unknown costs here: ${text}`);
     assert.ok(!/Everything else is unaffected/.test(text),
@@ -1533,7 +1533,7 @@ check('local collection has no pull-request lookup state', () => {
     'local collection must not imply that it attempted a GitHub lookup');
   assert.strictEqual(r.openPRCheckUnavailable, undefined,
     'open pull requests are not part of local collection');
-  const out = execFileSync('node', [CLI, '--cwd', dir], { encoding: 'utf8' });
+  const out = execFileSync(process.execPath, [CLI, '--cwd', dir], { encoding: 'utf8' });
   assert.ok(!/merged pull requests for this repository could not be read/.test(out),
     'and nothing is said about it');
 

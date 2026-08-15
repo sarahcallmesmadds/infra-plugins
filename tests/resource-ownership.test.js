@@ -95,7 +95,13 @@ function withGuardHome(fn) {
       path.join(home, '.claude', 'guardrails.resources.json'),
       JSON.stringify({ resources })
     );
-    return spawnSync(GUARD_HOOK, {
+    // Started through this process's own node rather than by executing the
+    // file, which would let the kernel read `#!/usr/bin/env node` and resolve
+    // the interpreter from PATH. That is the 127 #101 was about, and it made
+    // these two cases pass or fail by where node happens to be installed. The
+    // launcher does the same thing in production: it finds an interpreter and
+    // execs it with the script, so nothing here depends on PATH either.
+    return spawnSync(process.execPath, [GUARD_HOOK], {
       env: { ...process.env, HOME: home },
       input: JSON.stringify({
         hook_event_name: 'PreToolUse', session_id: 'no-lease-anywhere', cwd: '/tmp',
