@@ -234,6 +234,13 @@ check('no-destination items remain searched and closeable', () => {
     'the no-close report path hides that destinationless items were searched');
 });
 
+check('unqualified prose remains searched and closeable', () => {
+  assert.ok(/`unqualified`[\s\S]{0,240}judge it normally/.test(text),
+    'unqualified destination prose is still treated as unsearched');
+  assert.ok(/Do not claim the prose names an\s+unconfigured repository/.test(text),
+    'the skill can still print the add-a-root remedy for unqualified prose');
+});
+
 check('found evidence outranks the unsearched verdict', () => {
   // A destination goes stale when plans change, so an item can name a
   // repository nobody has checked out and still turn up in a configured root.
@@ -297,5 +304,5 @@ check('a root that has moved is kept apart from one nobody configured', () => {
   );
 });
 
-console.log(`\n16 checks, ${failed} failed`);
+console.log(`\n17 checks, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

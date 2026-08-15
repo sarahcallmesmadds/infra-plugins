@@ -726,6 +726,15 @@ check('no skill has gone back to writing its own plugin-repo globs', () => {
     assert.strictEqual(stdout.trim(), 'not-covered');
   });
 
+  check('ordinary destination prose is unqualified, not outside every root', () => {
+    for (const where of ['smadds marketplace', 'the company marketplace', 'somewhere-else']) {
+      assert.strictEqual(
+        run(home, ['covers', '--where', where]).stdout.trim(), 'unqualified',
+        `${where} was treated as proof that no configured root could hold it`
+      );
+    }
+  });
+
   check('GitHub URL spellings preserve the owner/repository pair', () => {
     for (const where of [
       'https://github.com/sarahcallmesmadds/skills',
@@ -781,12 +790,13 @@ check('no skill has gone back to writing its own plugin-repo globs', () => {
     assert.strictEqual(run(home, ['covers']).stdout.trim(), 'no-destination');
   });
 
-  check('matching is on whole segments, so hq-skills is not the skills root', () => {
+  check('matching is on whole segments, so prose containing skills is unqualified', () => {
     // `where` is free text and routinely a whole sentence. A substring test
     // would call every one of these covered.
     for (const where of ['hq-skills', '_work-skills-rebuild-ref/v1-source', 'my-skills-repo']) {
       assert.strictEqual(
-        run(home, ['covers', '--where', where]).stdout.trim(), 'not-covered',
+        run(home, ['covers', '--where', where]).stdout.trim(),
+        where.includes('/') ? 'not-covered' : 'unqualified',
         `${where} was treated as the 'personal' root at ~/.claude/skills`
       );
     }
@@ -802,7 +812,7 @@ check('no skill has gone back to writing its own plugin-repo globs', () => {
     );
   });
 
-  check('all three answers exit 0, because none of them is a failure', () => {
+  check('all five answers exit 0, because none of them is a failure', () => {
     // A caller loops this over a dozen items. An exit code that varies by
     // answer makes "this item has no destination" indistinguishable from "the
     // config is broken" at the call site.
@@ -852,7 +862,7 @@ check('no skill has gone back to writing its own plugin-repo globs', () => {
     ]) {
       assert.strictEqual(
         run(home, ['covers', '--where', where], cwd).stdout.trim(),
-        'not-covered',
+        'unqualified',
         `${where} resolved a bare anchor into a configured root`
       );
     }

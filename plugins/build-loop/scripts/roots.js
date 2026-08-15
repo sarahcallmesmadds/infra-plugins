@@ -460,6 +460,7 @@ function coversWhere(where, roots) {
   const lower = text.toLowerCase();
   const segments = lower.split(/[^a-z0-9._-]+/).filter(Boolean);
   const pairs = (lower.match(/[a-z0-9._-]+\/[a-z0-9._-]+/g) || []);
+  let hasSpecificPath = false;
   // A global pair regex is non-overlapping. In github.com/owner/repo it first
   // consumes github.com/owner and would never expose owner/repo, so the repo
   // tail could later masquerade as a bare local root name. Pull ordinary
@@ -479,6 +480,7 @@ function coversWhere(where, roots) {
     // and '.'/'..' into broad process-relative directories. Any of those can
     // contain a configured root and falsely answer covered for stray prose.
     if (trimmed === '' || trimmed === '~' || trimmed === '.' || trimmed === '..') continue;
+    hasSpecificPath = true;
     const abs = path.resolve(expand(trimmed)).toLowerCase();
     for (const r of roots) {
       const rp = path.resolve(r.path).toLowerCase();
@@ -541,10 +543,18 @@ function coversWhere(where, roots) {
     const names = [r.name, path.basename(r.path)].map((n) => String(n).toLowerCase());
     if (names.some((n) => bare.has(n))) return hit(r);
   }
+
+  // Free prose such as "smadds marketplace" records an intended home without
+  // identifying a machine-resolvable root. That is not evidence that the home
+  // lies outside the configured roots: all of them were still searched. Keep
+  // `not-covered` for explicit paths and owner/repo pairs that missed.
+  if (!hasSpecificPath && pairs.length === 0) {
+    return { answer: 'unqualified', root: null };
+  }
   return { answer: 'not-covered', root: null };
 }
 
-// One line, always exit 0. The three answers are all ordinary results rather
+// One line, always exit 0. The five answers are all ordinary results rather
 // than degrees of failure, and a caller looping over a dozen items should not
 // have to tell an exit code for "this item has no destination" apart from one
 // for "the config is broken". A real fault still throws through fail().
@@ -654,8 +664,9 @@ function main(argv) {
       '',
       '  covers answers the question /built-check has to ask before it says an item',
       '  is not built: could it have looked at all. It prints one of "covered NAME",',
-      '  "root-missing NAME", "not-covered" or "no-destination", and always exits 0,',
-      '  because all four are ordinary answers. Leave --where off, pass it empty,',
+      '  "root-missing NAME", "not-covered", "unqualified" or "no-destination",',
+      '  and always exits 0, because all five are ordinary answers. Leave --where',
+      '  off, pass it empty,',
       '  or pass an empty --where-file for an item that records no destination.',
       '  Use --where-file for free text from a file; it is never parsed by a shell.',
       '',
@@ -665,6 +676,8 @@ function main(argv) {
       '  not satisfied by hq-skills. root-missing is the configured-but-moved case,',
       '  which check also reports; covered would contradict it in the same run.',
       '  A bare /, ~/, ./ or ../ names no particular destination and is ignored.',
+      '  Free prose with no resolvable root is unqualified, because it does not prove',
+      '  the destination lies outside the configured roots that were searched.',
       '',
       '  layout answers one question for two callers. Without --slug it lists',
       '  everything under a checkout, which is the scan. With --slug it looks for',

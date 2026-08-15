@@ -222,7 +222,7 @@ it into a shell command: a double quote, backtick, `$(...)` or newline would end
 or extend the argument in a context where `Bash(node:*)` is allowed. An empty
 field is an empty file and produces the ordinary `no-destination` answer.
 
-One line comes back, and it always exits 0 because all four are ordinary
+One line comes back, and it always exits 0 because all five are ordinary
 answers:
 
 - `covered {rootname}` — a configured root holds that destination. Judge normally.
@@ -230,6 +230,10 @@ answers:
 - `no-destination` — the item never recorded where it was going. The configured
   roots were still searched, so judge it normally and carry this answer only
   for the informational count in Step 7.
+- `unqualified` — the field contains prose but no path, owner/repository pair or
+  configured root name that the tool can resolve. The configured roots were
+  still searched, so judge it normally. Do not claim the prose names an
+  unconfigured repository.
 - `root-missing {rootname}` — the right root is configured and is not on disk.
 
 The last one is the case Step 3a already reported, arriving per item. Keep them
@@ -237,12 +241,12 @@ apart in the report: `not-covered` wants a root adding to the config, and
 `root-missing` wants a path repairing, and telling somebody to add a root they
 already configured sends them to change the one thing that is not wrong.
 
-A destination is read three ways, in this order: as a path when it is anchored
+A destination is read four ways, in this order: as a path when it is anchored
 at `~/`, `/` or `./`; as an owner-qualified repository when a root's git remote
-answers to it; and as a name otherwise. All three are ordinary things to find in
-this field, because `where` is free text. A bare `/`, `~/`, `./` or `../` is
-ignored: it names no particular destination and must not resolve to the process
-working directory, home, or parent directory.
+answers to it; as a configured root name; or as unqualified prose. All four are
+ordinary things to find in this field, because `where` is free text. A bare
+`/`, `~/`, `./` or `../` is ignored: it names no particular destination and
+must not resolve to the process working directory, home, or parent directory.
 
 Pass an empty file for an item whose `where` is empty. An empty value is an
 answer rather than a mistake.
