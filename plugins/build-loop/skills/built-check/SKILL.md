@@ -209,18 +209,27 @@ The three sweeps above search the configured roots. An item whose home is a
 repository that is not a configured root is searched in the wrong places, finds
 nothing, and comes out looking identical to an item that was searched properly
 and genuinely is not built. Those two findings call for opposite responses, so
-ask the question before judging rather than after:
+ask the question before judging rather than after. For each item, write the
+`where` field verbatim with the Write tool to `{scratch}/where-{number}.txt`,
+where `{number}` is its position in this run, then pass the file:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/roots.js" covers --where "{the item's where field}"
+node "${CLAUDE_PLUGIN_ROOT}/scripts/roots.js" covers --where-file "{scratch}/where-{number}.txt"
 ```
+
+The file hand-off is required because `where` is free text. Never interpolate
+it into a shell command: a double quote, backtick, `$(...)` or newline would end
+or extend the argument in a context where `Bash(node:*)` is allowed. An empty
+field is an empty file and produces the ordinary `no-destination` answer.
 
 One line comes back, and it always exits 0 because all four are ordinary
 answers:
 
 - `covered {rootname}` — a configured root holds that destination. Judge normally.
 - `not-covered` — the destination names somewhere no configured root reaches.
-- `no-destination` — the item never recorded where it was going.
+- `no-destination` — the item never recorded where it was going. The configured
+  roots were still searched, so judge it normally and carry this answer only
+  for the informational count in Step 7.
 - `root-missing {rootname}` — the right root is configured and is not on disk.
 
 The last one is the case Step 3a already reported, arriving per item. Keep them
@@ -233,8 +242,8 @@ at `~/`, `/` or `./`; as an owner-qualified repository when a root's git remote
 answers to it; and as a name otherwise. All three are ordinary things to find in
 this field, because `where` is free text.
 
-Pass `--where` empty, or leave it off, for an item whose `where` is empty. That
-is the one option here where an empty value is an answer rather than a mistake.
+Pass an empty file for an item whose `where` is empty. An empty value is an
+answer rather than a mistake.
 
 Record the answer for every item alongside the other evidence. Run it for all of
 them, including ones you already have evidence for, since it costs nothing and
@@ -256,7 +265,7 @@ For each item, land on exactly one of four verdicts. When the evidence is mixed,
 |---|---|
 | **looks built** | Something matching the item exists on disk and was created or last changed after the item was added, OR a commit after the item was added clearly does the thing the item describes, OR it was built in this session. |
 | **started** | Partial evidence. A directory exists but is empty or has no manifest, or a commit mentions it as work in progress. |
-| **not searched** | Step 3d came back `not-covered`, `no-destination` or `root-missing`, and 3a, 3b and 3c all found nothing. Carry which of the three it was, since the report separates them. |
+| **not searched** | Step 3d came back `not-covered` or `root-missing`, and 3a, 3b and 3c all found nothing. Carry which of the two it was, since the report separates them. |
 | **no sign of it** | Searched, and nothing found. |
 
 **Evidence beats 3d, always.** An item can name a destination nobody has checked
@@ -282,12 +291,16 @@ If every item comes back "no sign of it", with none "not searched":
 
 > "Checked {N} open items against the last {days} days. No sign that any of them have been built yet. Nothing to close."
 
+When `{D}` of those items returned `no-destination`, append: "{D} record no
+destination, but they were searched across every configured root." They are
+ordinary searched items here, not a reason to switch to the unsearched branch.
+
 Stop. Do not ask a question that has only one answer.
 
 If every item is either "no sign of it" or "not searched", give both numbers and
 name the repositories, then stop:
 
-> "Checked {N} open items against the last {days} days. {U} of them could not be searched: {X} name a destination no configured root reaches ({repositories}), {G} name a root that has moved, and {D} record no destination at all. The other {Q} were searched and show no sign of being built. Nothing to close."
+> "Checked {N} open items against the last {days} days. {U} of them could not be searched: {X} name a destination no configured root reaches ({repositories}), and {G} name a root that has moved. The other {Q} were searched and show no sign of being built. {D} of those record no destination. Nothing to close."
 
 **Both halves of that sentence, every time.** A run where nothing could be
 searched and a run where nothing has been built produce the same silence, and
@@ -406,9 +419,11 @@ Add these lines only when they apply:
 That last line matters more than it looks. Every way this step fails, a malformed cutoff or the wrong `date` flag or a root that is not a repository, ends at the same place: no commits, and a confident "no sign of it". Saying the log came back empty costs one line and is the only signal that separates "nothing was built" from "nothing was looked at".
 
 **Every count in this step has its own letter, and they are not interchangeable.**
-`{U}` is every item that was not searched, and `{X}`, `{G}` and `{D}` are the
-three reasons, which add up to it. `{F}` is files that could not be read, which
-is not one of those reasons and never joins that total. This is spelled out
+`{U}` is every item that was not searched, and `{X}` and `{G}` are the two
+reasons, which add up to it. `{D}` is the separately counted group with no
+destination: they were searched, remain in `{M}` when still open, and stay
+numbered and closeable. `{F}` is files that could not be read and never joins
+either total. This is spelled out
 because `{P}` briefly stood for all four at once, and the templates here are
 filled in by reading them, so a symbol standing for more than one quantity
 prints one of them where another was meant, with nothing to catch it.

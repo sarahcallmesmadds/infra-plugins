@@ -217,6 +217,23 @@ check('the skill asks roots.js rather than deciding it in prose', () => {
   );
 });
 
+check('free-text destinations are passed by file, not interpolated into shell', () => {
+  assert.ok(/covers --where-file/.test(text), 'Step 3d does not use --where-file');
+  assert.ok(!/covers --where \"\{the item's where field\}\"/.test(text),
+    'Step 3d still interpolates the destination into a shell command');
+});
+
+check('no-destination items remain searched and closeable', () => {
+  assert.ok(/no-destination[^\n]*[\s\S]{0,180}judge it normally/.test(text),
+    'no-destination is still treated as an unsearched verdict');
+  assert.ok(/stay\s+numbered and closeable/.test(text),
+    'the final count contract does not keep no-destination items closeable');
+  assert.ok(/`\{X\}` and `\{G\}` are the two\s+reasons, which add up to it/.test(text),
+    'the unsearched total still includes no-destination');
+  assert.ok(/no-destination[\s\S]{0,220}searched across every configured root/.test(text),
+    'the no-close report path hides that destinationless items were searched');
+});
+
 check('found evidence outranks the unsearched verdict', () => {
   // A destination goes stale when plans change, so an item can name a
   // repository nobody has checked out and still turn up in a configured root.
@@ -280,5 +297,5 @@ check('a root that has moved is kept apart from one nobody configured', () => {
   );
 });
 
-console.log(`\n14 checks, ${failed} failed`);
+console.log(`\n16 checks, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

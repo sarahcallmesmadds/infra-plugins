@@ -725,6 +725,30 @@ check('no skill has gone back to writing its own plugin-repo globs', () => {
     assert.strictEqual(stdout.trim(), 'not-covered');
   });
 
+  check('GitHub URL spellings preserve the owner/repository pair', () => {
+    for (const where of [
+      'https://github.com/sarahcallmesmadds/skills',
+      'github.com/sarahcallmesmadds/skills',
+    ]) {
+      assert.strictEqual(
+        run(home, ['covers', '--where', where]).stdout.trim(), 'not-covered',
+        `${where} let its repo tail masquerade as the local skills root`
+      );
+    }
+  });
+
+  check('--where-file reads free text without shell interpolation', () => {
+    const whereFile = path.join(home, 'where.txt');
+    fs.writeFileSync(whereFile, 'the skills root with "quotes", `ticks`, and $(commands)\n');
+    assert.strictEqual(
+      run(home, ['covers', '--where-file', whereFile]).stdout.trim(), 'covered personal'
+    );
+    assert.strictEqual(
+      run(home, ['covers', '--where', 'skills', '--where-file', whereFile]).code, 1,
+      'ambiguous inline and file inputs were silently accepted'
+    );
+  });
+
   check('a repo name is not satisfied by a local directory that shares it', () => {
     // The case that started this. sarahcallmesmadds/skills is a repository on
     // GitHub. ~/.claude/skills is a local directory whose last segment happens

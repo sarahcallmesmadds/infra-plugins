@@ -460,6 +460,13 @@ function coversWhere(where, roots) {
   const lower = text.toLowerCase();
   const segments = lower.split(/[^a-z0-9._-]+/).filter(Boolean);
   const pairs = (lower.match(/[a-z0-9._-]+\/[a-z0-9._-]+/g) || []);
+  // A global pair regex is non-overlapping. In github.com/owner/repo it first
+  // consumes github.com/owner and would never expose owner/repo, so the repo
+  // tail could later masquerade as a bare local root name. Pull ordinary
+  // GitHub URL and host-qualified spellings out explicitly.
+  for (const match of lower.matchAll(/(?:https?:\/\/)?github\.com\/([a-z0-9._-]+)\/([a-z0-9._-]+)/g)) {
+    pairs.push(`${match[1]}/${match[2]}`);
+  }
 
   // 1. A destination written as a path, which `where` being free text makes
   //    ordinary. Anchored forms only: `~/`, `/` and `./`. Compared in both
@@ -519,7 +526,18 @@ function coversWhere(where, roots) {
 // for "the config is broken". A real fault still throws through fail().
 function cmdCovers(args) {
   const state = resolve({});
-  const { answer, root } = coversWhere(args.where, state.roots);
+  if (args.where !== undefined && args.whereFile !== undefined) {
+    fail('roots.js: covers takes either --where or --where-file, not both.');
+  }
+  let where = args.where;
+  if (args.whereFile !== undefined) {
+    try {
+      where = fs.readFileSync(expand(args.whereFile), 'utf8');
+    } catch (error) {
+      fail(`roots.js: could not read --where-file ${JSON.stringify(args.whereFile)} (${error.message}).`);
+    }
+  }
+  const { answer, root } = coversWhere(where, state.roots);
   const named = answer === 'covered' || answer === 'root-missing';
   process.stdout.write((named ? `${answer} ${root}` : answer) + '\n');
   return OK;
@@ -539,7 +557,7 @@ const COMMAND_OPTS = {
   list: new Set(['kind', 'name']),
   check: new Set(['kind', 'name']),
   layout: new Set(['root', 'slug']),
-  covers: new Set(['where']),
+  covers: new Set(['where', 'where-file']),
 };
 
 // Options where an empty value is an answer rather than an accident.
@@ -591,7 +609,7 @@ function parseArgs(command, argv) {
     if (name === 'kind' && !KINDS.has(value)) {
       fail(`roots.js: unknown kind ${JSON.stringify(value)}. Known kinds: ${[...KINDS].join(', ')}`);
     }
-    out[name] = value;
+    out[name.replace(/-([a-z])/g, (_, letter) => letter.toUpperCase())] = value;
   }
   return out;
 }
@@ -607,13 +625,15 @@ function main(argv) {
       '  check [--kind K] [--name N]   report any root in scope that is missing',
       '  list  [--kind K] [--name N]   the roots as JSON, each with an exists flag',
       '  layout [--root P] [--slug S]  where a plugin repo keeps things, as listings',
-      '  covers [--where TEXT]         is a to-build destination inside a root',
+      '  covers [--where TEXT | --where-file P]',
+      '                                is a to-build destination inside a root',
       '',
       '  covers answers the question /built-check has to ask before it says an item',
       '  is not built: could it have looked at all. It prints one of "covered NAME",',
       '  "root-missing NAME", "not-covered" or "no-destination", and always exits 0,',
-      '  because all four are ordinary answers. Leave --where off, or pass it empty,',
-      '  for an item that records no destination.',
+      '  because all four are ordinary answers. Leave --where off, pass it empty,',
+      '  or pass an empty --where-file for an item that records no destination.',
+      '  Use --where-file for free text from a file; it is never parsed by a shell.',
       '',
       '  A destination is read as a path when it is anchored at ~/, / or ./, as an',
       '  owner-qualified repository when it is a pair answered by a root remote, and',
