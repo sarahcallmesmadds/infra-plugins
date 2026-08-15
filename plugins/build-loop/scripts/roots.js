@@ -57,6 +57,57 @@ const DEFAULTS_ABSENT = 5;
 // scan", which every caller treats as a reason to stop.
 const KINDS = new Set(['skill', 'hook', 'command', 'script', 'plugin', 'plugin-repo']);
 
+// --- where a plugin repository keeps things -------------------------------
+
+// The one list. /audit-deps lists everything in a checkout and /built-check
+// looks for one name in it, and both need the same answer to the same question:
+// where does a plugin keep something worth mapping.
+//
+// They used to carry a glob block each, written out in prose. On 2026-08-14 PR
+// #101 added `bin/` as a new place a plugin keeps executable code and neither
+// block was updated, so `bin/hook-node` appeared in DEPS.json zero times across
+// the five plugins that ship it, while being the file every hook in the
+// repository starts through. The map said nothing depended on the most
+// depended-on file there is, so a change to it would have reported no risk.
+//
+// Same move as the root check above, for the same reason: a rule that has to
+// hold in two places cannot be two paragraphs, because prose has no compiler.
+// Add a directory here and both skills have it.
+const PLUGIN_LAYOUT = [
+  { dir: 'skills', list: 'skills/*/SKILL.md', find: 'skills/<slug>/SKILL.md', kind: 'skill' },
+  { dir: 'hooks', list: 'hooks/*', find: 'hooks/<slug>*', kind: 'hook' },
+  { dir: 'commands', list: 'commands/*.md', find: 'commands/<slug>.md', kind: 'command' },
+  { dir: 'scripts', list: 'scripts/*', find: 'scripts/<slug>*', kind: 'script' },
+  { dir: 'statusline', list: 'statusline/*', find: 'statusline/<slug>*', kind: 'script' },
+  { dir: 'bin', list: 'bin/*', find: 'bin/<slug>*', kind: 'script' },
+];
+
+// The two rows that sit outside `plugins/<name>/`, and the two that get
+// forgotten, for opposite reasons. The plugin directory itself is the entry the
+// map carries for a plugin as a whole. `tests/` is at the repository root, so
+// every glob anchored at `plugins/*/` walks straight past it.
+const REPO_LAYOUT = [
+  // Listing wants the directories. Finding wants the manifest, because that is
+  // what a plugin row records: /flag-issue states outright that a plugin
+  // resolves to its plugin.json and never to its directory, since /apply-fix
+  // later opens the path and a directory cannot be opened. /built-check needs
+  // the directory too, to tell a started plugin from a finished one, and it
+  // asks for that separately because it is a judgement rather than a location.
+  { dir: '.', list: 'plugins/*/', find: 'plugins/<slug>/.claude-plugin/plugin.json', kind: 'plugin', dirOnly: true },
+  { dir: 'tests', list: 'tests/*.js', find: 'tests/<slug>*.js', kind: 'script' },
+];
+
+// Directories inside a plugin that are deliberately not mapped, with the reason.
+// Named rather than left out, so the test that reconciles this list against
+// what is on disk can tell "decided against" from "nobody has looked". An
+// unlisted directory appearing in a plugin is how bin/ went missing, and it
+// fails that test rather than passing silently.
+const NOT_MAPPED = {
+  reference: 'prose a skill loads on demand, not code anything can depend on',
+  '.claude-plugin': 'the manifest, carried by the plugin row itself',
+  '.codex-plugin': 'the manifest, carried by the plugin row itself',
+};
+
 class RootsError extends Error {}
 
 function fail(message) {
@@ -320,12 +371,36 @@ function cmdCheck(args) {
   return codeFor(state);
 }
 
+// Ready-to-run listings for a plugin-repo root, generated from the one list
+// above so the two skills cannot answer differently. Without --slug it lists
+// everything, which is what /audit-deps needs. With --slug it looks for one
+// name, which is what /built-check needs. Both modes walk the same rows, so a
+// directory added for one is present in the other by construction.
+function cmdLayout(args) {
+  const root = args.root ? expand(args.root) : '<root.path>';
+  const slug = args.slug;
+
+  const rows = [
+    ...PLUGIN_LAYOUT.map((r) => ({ ...r, glob: `plugins/*/${slug ? r.find : r.list}` })),
+    ...REPO_LAYOUT.map((r) => ({ ...r, glob: slug ? r.find : r.list })),
+  ].map((r) => ({
+    kind: r.kind,
+    command: `${r.dirOnly && !slug ? 'ls -1d' : 'ls -1 '} ${root}/${r.glob.replace(/<slug>/g, slug || '')} 2>/dev/null`,
+  }));
+
+  const width = Math.max(...rows.map((r) => r.command.length));
+  process.stdout.write(
+    rows.map((r) => `${r.command.padEnd(width + 3)}# kind: ${r.kind}`).join('\n') + '\n',
+  );
+  return OK;
+}
+
 // --- argument parsing ----------------------------------------------------
 
 // Same shape as queue.js on purpose, including refusing an unknown option
 // rather than turning it into a silent boolean. A typo that is ignored is a
 // caller believing it asked for something it did not.
-const VALUE_OPTS = new Set(['kind', 'name']);
+const VALUE_OPTS = new Set(['kind', 'name', 'root', 'slug']);
 
 function parseArgs(argv) {
   const out = { _: [] };
@@ -361,7 +436,7 @@ function parseArgs(argv) {
   return out;
 }
 
-const COMMANDS = { list: cmdList, check: cmdCheck };
+const COMMANDS = { list: cmdList, check: cmdCheck, layout: cmdLayout };
 
 function main(argv) {
   const command = argv[0];
@@ -371,6 +446,15 @@ function main(argv) {
       '',
       '  check [--kind K] [--name N]   report any root in scope that is missing',
       '  list  [--kind K] [--name N]   the roots as JSON, each with an exists flag',
+      '  layout [--root P] [--slug S]  where a plugin repo keeps things, as listings',
+      '',
+      '  layout answers one question for two callers. Without --slug it lists',
+      '  everything under a checkout, which is the scan. With --slug it looks for',
+      '  one name. Both are generated from a single list in this file, so a new',
+      '  place a plugin keeps code is added once and both skills have it. bin/ was',
+      '  added to the repository and to neither of the two prose copies this',
+      '  replaced, and the launcher every hook starts through was absent from the',
+      '  map entirely.',
       '',
       '  --kind and --name scope everything: which roots are looked at, which are',
       '  reported missing, and the exit code. Ask about skill roots and a missing',
@@ -431,4 +515,8 @@ if (require.main === module) {
 module.exports = {
   main, resolve, expand, CONFIG, DEFAULT_ROOTS, KINDS,
   OK, SOME_MISSING, ALL_MISSING, DEFAULTS_ABSENT,
+  // Exported so the test can reconcile the list against what is on disk. That
+  // reconciliation is the guard: a directory that exists in a plugin and is in
+  // neither list fails, which is exactly how bin/ would have been caught.
+  PLUGIN_LAYOUT, REPO_LAYOUT, NOT_MAPPED,
 };

@@ -114,16 +114,7 @@ You show this in the draft at Step 2, so a wrong guess costs nothing. Asking abo
 3. **Also search every root of kind `plugin-repo`, whatever the `target_kind` is.** These hold things nested one level deeper, and the subdirectory that matches is what tells you the kind:
 
    ```bash
-   ls <root.path>/plugins/*/skills/{target}/SKILL.md    # -> target_kind: skill
-   ls <root.path>/plugins/*/hooks/{target}              # -> target_kind: hook
-   ls <root.path>/plugins/*/hooks/{target}.*            # -> target_kind: hook
-   ls <root.path>/plugins/*/commands/{target}.md        # -> target_kind: command
-   ls <root.path>/plugins/*/scripts/{target}            # -> target_kind: script
-   ls <root.path>/plugins/*/scripts/{target}.*          # -> target_kind: script
-   ls <root.path>/plugins/*/statusline/{target}.*       # -> target_kind: script
-   ls <root.path>/plugins/{target}/.claude-plugin/plugin.json  # -> target_kind: plugin
-   ls <root.path>/tests/{target}.js                     # -> target_kind: script
-   ls <root.path>/tests/{target}.test.js                # -> target_kind: script
+   node "${CLAUDE_PLUGIN_ROOT}/scripts/roots.js" layout --root <root.path> --slug {target}
    ```
 
    A hit here **overrides the kind you guessed in step 2 of this list**, because the directory it was found in is evidence and your guess was not.
@@ -134,13 +125,17 @@ You show this in the draft at Step 2, so a wrong guess costs nothing. Asking abo
    way, so recording a directory also makes the queue entry and the map disagree
    about the same plugin.
 
-   **`statusline/` and `tests/` are searched for opposite reasons.** `statusline/`
-   is a fourth place a plugin keeps executable code and a search written from the
-   plugin template will not know it is there. `tests/` is at the root of the
-   repository and inside no plugin, so a glob anchored at `plugins/*/` cannot
-   reach it however many subdirectories it lists. Try both the bare name and the
-   `.test.js` form, since a correction is far more likely to arrive as
-   "session-skills" than as "session-skills.test".
+   **The listings are generated, and `/audit-deps` and `/built-check` read the
+   same list.** They used to be a copy each, in prose, in three skills. `bin/` was
+   added to the repository on 2026-08-14 and to none of the three, so
+   `bin/hook-node` resolved nowhere here and appeared in `DEPS.json` zero times,
+   while being the file every hook in every plugin starts through. `statusline/`
+   and `tests/` are in the list for opposite reasons and both used to be
+   forgotten: `statusline/` is another place a plugin keeps executable code, and
+   `tests/` sits at the root of the repository inside no plugin, so a glob
+   anchored at `plugins/*/` cannot reach it. The test row matches the bare name
+   and the `.test.js` form together, since a correction is far more likely to
+   arrive as "session-skills" than as "session-skills.test".
 
    **`scripts/` is not optional and it is where the logic usually lives.** A hook or a skill in a well-built plugin is a thin wrapper over a module in `scripts/`, so that is the file a fix edits. Leaving it out meant `hook-io`, `config`, `command`, `scan` and `patterns` all failed to resolve and fell through to asking the user for a path. Two of the four `guardrails` bugs fixed on 2026-07-27 were in `scripts/`, so this was the common case rather than the edge.
 
