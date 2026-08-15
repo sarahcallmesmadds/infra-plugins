@@ -446,28 +446,69 @@ function remoteOf(dir) {
   }
 }
 
+// A configured root that is not on disk answers differently from one that was
+// never configured. Both mean the item was not searched, and the remedies are
+// opposite: one is a path to repair, the other a repository to add. Reporting
+// `covered` for a root that has moved is also the one way this command can
+// contradict `check`, which exits 3 for the same root in the same run.
 function coversWhere(where, roots) {
   const text = String(where || '').trim();
   if (!text) return { answer: 'no-destination', root: null };
+
+  const hit = (r) => ({ answer: r.exists ? 'covered' : 'root-missing', root: r.name });
 
   const lower = text.toLowerCase();
   const segments = lower.split(/[^a-z0-9._-]+/).filter(Boolean);
   const pairs = (lower.match(/[a-z0-9._-]+\/[a-z0-9._-]+/g) || []);
 
-  // An owner-qualified reference is answered by the remote and by nothing else.
-  for (const r of roots) {
-    const remote = remoteOf(r.path);
-    if (remote && pairs.includes(remote)) return { answer: 'covered', root: r.name };
+  // 1. A destination written as a path, which `where` being free text makes
+  //    ordinary. Anchored forms only: `~/`, `/` and `./`. Compared in both
+  //    directions, so a path inside a root and a root inside a path both count.
+  for (const token of text.split(/[\s,;"'()]+/).filter(Boolean)) {
+    if (!/^(~|\.{1,2})?\//.test(token)) continue;
+    const abs = path.resolve(expand(token.replace(/\/+$/, ''))).toLowerCase();
+    for (const r of roots) {
+      const rp = path.resolve(r.path).toLowerCase();
+      if (abs === rp || abs.startsWith(rp + path.sep) || rp.startsWith(abs + path.sep)) return hit(r);
+    }
   }
 
-  // Anything that was the tail of a pair has already had its turn. Letting it
-  // match a directory name here is the false positive above.
-  const claimed = new Set(pairs.map((p) => p.slice(p.indexOf('/') + 1)));
+  // 2. An owner-qualified reference is answered by the remote and by nothing else.
+  for (const r of roots) {
+    const remote = remoteOf(r.path);
+    if (remote && pairs.includes(remote)) return hit(r);
+  }
+
+  // 3. A pair that is a fragment of a path rather than an `owner/repo`
+  //    reference: its head names the directory a root sits in and its tail
+  //    names the root. `Projects/infra-plugins` reaches here, and without it
+  //    step 4 discards the half that carries the meaning.
+  const pathLike = new Set();
+  for (const pair of pairs) {
+    const slash = pair.indexOf('/');
+    const head = pair.slice(0, slash);
+    const tail = pair.slice(slash + 1);
+    for (const r of roots) {
+      if (tail !== path.basename(r.path).toLowerCase()) continue;
+      if (head !== path.basename(path.dirname(r.path)).toLowerCase()) continue;
+      pathLike.add(pair);
+      return hit(r);
+    }
+  }
+
+  // 4. Bare names. A tail that was owner-qualified has already had its turn and
+  //    does not get a second one as a directory name, which is what stops
+  //    `sarahcallmesmadds/skills` being answered by a local `~/.claude/skills`.
+  //    A tail that turned out to be part of a path is not suppressed, because
+  //    there was no owner to disagree with.
+  const claimed = new Set(
+    pairs.filter((p) => !pathLike.has(p)).map((p) => p.slice(p.indexOf('/') + 1))
+  );
   const bare = new Set(segments.filter((s) => !claimed.has(s)));
 
   for (const r of roots) {
     const names = [r.name, path.basename(r.path)].map((n) => String(n).toLowerCase());
-    if (names.some((n) => bare.has(n))) return { answer: 'covered', root: r.name };
+    if (names.some((n) => bare.has(n))) return hit(r);
   }
   return { answer: 'not-covered', root: null };
 }
@@ -479,7 +520,8 @@ function coversWhere(where, roots) {
 function cmdCovers(args) {
   const state = resolve({});
   const { answer, root } = coversWhere(args.where, state.roots);
-  process.stdout.write((answer === 'covered' ? `covered ${root}` : answer) + '\n');
+  const named = answer === 'covered' || answer === 'root-missing';
+  process.stdout.write((named ? `${answer} ${root}` : answer) + '\n');
   return OK;
 }
 
@@ -569,10 +611,15 @@ function main(argv) {
       '',
       '  covers answers the question /built-check has to ask before it says an item',
       '  is not built: could it have looked at all. It prints one of "covered NAME",',
-      '  "not-covered" or "no-destination", and always exits 0, because all three',
-      '  are ordinary answers. Matching is on whole segments of the text, so a root',
-      '  called skills is not satisfied by hq-skills. Leave --where off, or pass it',
-      '  empty, for an item that records no destination.',
+      '  "root-missing NAME", "not-covered" or "no-destination", and always exits 0,',
+      '  because all four are ordinary answers. Leave --where off, or pass it empty,',
+      '  for an item that records no destination.',
+      '',
+      '  A destination is read as a path when it is anchored at ~/, / or ./, as an',
+      '  owner-qualified repository when it is a pair answered by a root remote, and',
+      '  as a name otherwise, matched on whole segments so a root called skills is',
+      '  not satisfied by hq-skills. root-missing is the configured-but-moved case,',
+      '  which check also reports; covered would contradict it in the same run.',
       '',
       '  layout answers one question for two callers. Without --slug it lists',
       '  everything under a checkout, which is the scan. With --slug it looks for',

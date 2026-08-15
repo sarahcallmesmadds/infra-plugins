@@ -253,5 +253,32 @@ check('Step 7 names the repository that would have to be configured', () => {
   );
 });
 
-console.log(`\n12 checks, ${failed} failed`);
+check('every count in the report has its own placeholder', () => {
+  // Review round 1. {P} meant "files that failed to parse", and three new lines
+  // reused it for the not-searched total, the unreachable-destination count and
+  // the no-destination count. These are literal templates filled in by reading
+  // them, so a symbol standing for four quantities prints one of them where
+  // another was meant, with nothing to catch it.
+  const notes = text.match(/^- `(?:Note: )?\{[A-Z]\}[^`]*`$/gm) || [];
+  assert.ok(notes.length >= 4, `expected the four counted notes, found ${notes.length}`);
+  const letters = notes.map((n) => n.match(/\{([A-Z])\}/)[1]);
+  assert.strictEqual(
+    new Set(letters).size, letters.length,
+    `two notes share a placeholder: ${letters.join(', ')}`
+  );
+  assert.ok(/\{F\} files failed to parse/.test(text), 'the parse-failure count lost its own letter');
+});
+
+check('a root that has moved is kept apart from one nobody configured', () => {
+  // Different remedies. One wants a path repaired, the other a root added, and
+  // sending somebody to add a root they already configured points them at the
+  // one thing that is not wrong.
+  assert.ok(/root-missing/.test(text), 'the skill does not handle the root-missing answer');
+  assert.ok(
+    /fix the path rather than adding one/i.test(text),
+    'nothing tells the reader the remedy differs from the not-covered case'
+  );
+});
+
+console.log(`\n14 checks, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

@@ -787,6 +787,43 @@ check('no skill has gone back to writing its own plugin-repo globs', () => {
     }
   });
 
+  check('a destination written as a path is covered, in every anchored form', () => {
+    // Review round 1. The pair rule was written for owner/repo and any
+    // filesystem `where` matches the same shape, so the final folder name was
+    // discarded before the comparison and a destination genuinely inside a
+    // configured root came back not-covered. `where` is documented as free
+    // text, so a path form is ordinary rather than exotic.
+    for (const where of [
+      '~/Projects/infra-plugins',
+      'Projects/infra-plugins',
+      '~/Projects/infra-plugins/plugins/build-loop',
+      'somewhere under ~/Projects/infra-plugins/, probably',
+    ]) {
+      assert.strictEqual(
+        run(home, ['covers', '--where', where]).stdout.trim(), 'covered infra-plugins',
+        `${where} was reported as outside every configured root`
+      );
+    }
+  });
+
+  check('a path outside every root is still not covered', () => {
+    // The negative half. Without it the fix above passes by calling everything
+    // with a slash in it covered.
+    assert.strictEqual(
+      run(home, ['covers', '--where', '~/Projects/something-else']).stdout.trim(), 'not-covered'
+    );
+  });
+
+  check('a configured root that has moved says so, rather than covered', () => {
+    // Review round 1, raised as a flag. covers matched every configured root
+    // whether or not it was on disk, so it answered "covered" for the exact
+    // 2026-08-01 failure this script exists for, in the same run where check
+    // exits non-zero about the same root. The two cannot contradict each other.
+    const h = makeHome({ roots: [{ name: 'gone', path: '/nonexistent/gone', kind: 'plugin-repo' }] });
+    assert.strictEqual(run(h, ['covers', '--where', 'gone']).stdout.trim(), 'root-missing gone');
+    assert.notStrictEqual(run(h, ['check']).code, 0, 'check and covers disagree about the same root');
+  });
+
   check('covers still refuses an option that belongs to another command', () => {
     // Every message this script produces arrives on stdout, refusals included,
     // because a skill relays what it printed rather than reading a stream.

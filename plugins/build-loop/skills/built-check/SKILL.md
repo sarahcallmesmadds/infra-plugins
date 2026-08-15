@@ -215,12 +215,23 @@ ask the question before judging rather than after:
 node "${CLAUDE_PLUGIN_ROOT}/scripts/roots.js" covers --where "{the item's where field}"
 ```
 
-One line comes back, and it always exits 0 because all three are ordinary
+One line comes back, and it always exits 0 because all four are ordinary
 answers:
 
 - `covered {rootname}` — a configured root holds that destination. Judge normally.
 - `not-covered` — the destination names somewhere no configured root reaches.
 - `no-destination` — the item never recorded where it was going.
+- `root-missing {rootname}` — the right root is configured and is not on disk.
+
+The last one is the case Step 3a already reported, arriving per item. Keep them
+apart in the report: `not-covered` wants a root adding to the config, and
+`root-missing` wants a path repairing, and telling somebody to add a root they
+already configured sends them to change the one thing that is not wrong.
+
+A destination is read three ways, in this order: as a path when it is anchored
+at `~/`, `/` or `./`; as an owner-qualified repository when a root's git remote
+answers to it; and as a name otherwise. All three are ordinary things to find in
+this field, because `where` is free text.
 
 Pass `--where` empty, or leave it off, for an item whose `where` is empty. That
 is the one option here where an empty value is an answer rather than a mistake.
@@ -245,7 +256,7 @@ For each item, land on exactly one of four verdicts. When the evidence is mixed,
 |---|---|
 | **looks built** | Something matching the item exists on disk and was created or last changed after the item was added, OR a commit after the item was added clearly does the thing the item describes, OR it was built in this session. |
 | **started** | Partial evidence. A directory exists but is empty or has no manifest, or a commit mentions it as work in progress. |
-| **not searched** | Step 3d came back `not-covered` or `no-destination`, and 3a, 3b and 3c all found nothing. |
+| **not searched** | Step 3d came back `not-covered`, `no-destination` or `root-missing`, and 3a, 3b and 3c all found nothing. Carry which of the three it was, since the report separates them. |
 | **no sign of it** | Searched, and nothing found. |
 
 **Evidence beats 3d, always.** An item can name a destination nobody has checked
@@ -276,7 +287,7 @@ Stop. Do not ask a question that has only one answer.
 If every item is either "no sign of it" or "not searched", give both numbers and
 name the repositories, then stop:
 
-> "Checked {N} open items against the last {days} days. {P} of them could not be searched, because they name a destination no configured root reaches: {repositories}. The other {Q} were searched and show no sign of being built. Nothing to close."
+> "Checked {N} open items against the last {days} days. {U} of them could not be searched: {X} name a destination no configured root reaches ({repositories}), {G} name a root that has moved, and {D} record no destination at all. The other {Q} were searched and show no sign of being built. Nothing to close."
 
 **Both halves of that sentence, every time.** A run where nothing could be
 searched and a run where nothing has been built produce the same silence, and
@@ -300,8 +311,8 @@ No sign of it yet:
   - {title}
   - {title}
 
-Not searched, no configured root covers these:
-  - {title} - destination: {the where field, or "none recorded"}
+Not searched, nothing could look for these:
+  - {title} - destination: {the where field, or "none recorded"} ({the 3d answer})
   - {title} - destination: {...}
 
 Close the built ones? (all / a list of numbers like "1,3" / none)
@@ -373,24 +384,34 @@ Marking something `In Progress` from Step 5 uses the same sequence, setting only
 
 ```
 Closed {K} items: {titles}.
-{M} still open. {J} started but not finished. {P} not searched.
+{M} still open. {J} started but not finished. {U} not searched.
 ```
 
-Drop the last sentence when `{P}` is zero, and never fold those items into
+Drop the last sentence when `{U}` is zero, and never fold those items into
 `{M}`. "Still open" is a claim about the work. "Not searched" is a claim about
 this tool, and a reader adding the numbers up should not have to guess which
 they are looking at.
 
 Add these lines only when they apply:
 
-- `Note: {P} of {N} items name a destination that is not a configured root, so they were not searched: {repositories}. Add it to ~/.claude/build-loop.config.json to include them.`
-- `Note: {P} of {N} items record no destination at all, so there was nowhere in particular to look. They were searched across every configured root, which may not be where they were going.`
-- `{P} files failed to parse and were skipped: {filenames}`
+- `Note: {X} of {N} items name a destination that is not a configured root, so they were not searched: {repositories}. Add it to ~/.claude/build-loop.config.json to include them.`
+- `Note: {G} of {N} items name a root that is configured but not on disk, so they were not searched: {roots}. That is the same fault Step 3a reported; fix the path rather than adding one.`
+- `Note: {D} of {N} items record no destination at all, so there was nowhere in particular to look. They were searched across every configured root, which may not be where they were going.`
+- `{F} files failed to parse and were skipped: {filenames}`
+
 - `Note: {title} was closed on session evidence and is not committed yet.`
 - `Note: something called {slug} already existed before {title} was added. Worth a look, the name may be taken.`
 - `Note: the git log returned nothing for any root in this window. If that looks wrong, the window may be the problem rather than the work.`
 
 That last line matters more than it looks. Every way this step fails, a malformed cutoff or the wrong `date` flag or a root that is not a repository, ends at the same place: no commits, and a confident "no sign of it". Saying the log came back empty costs one line and is the only signal that separates "nothing was built" from "nothing was looked at".
+
+**Every count in this step has its own letter, and they are not interchangeable.**
+`{U}` is every item that was not searched, and `{X}`, `{G}` and `{D}` are the
+three reasons, which add up to it. `{F}` is files that could not be read, which
+is not one of those reasons and never joins that total. This is spelled out
+because `{P}` briefly stood for all four at once, and the templates here are
+filled in by reading them, so a symbol standing for more than one quantity
+prints one of them where another was meant, with nothing to catch it.
 
 End with:
 
