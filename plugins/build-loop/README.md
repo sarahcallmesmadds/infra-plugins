@@ -345,9 +345,18 @@ explains why that costs a Codex user nothing rather than leaving them worse off.
 
 **`DEPS.json` moves to schema v4.** The only change is the new
 `last_auto_checked` field, which is simply absent on an older map, so nothing
-needs migrating and older readers are unaffected. This release also needs
-Session 0.8.1, which is what teaches the brief to read the new field. Installing
-build-loop 0.9.0 without it leaves the drift line firing exactly as before.
+needs migrating and older readers are unaffected.
+
+This release originally also required Session 0.8.1, which was what taught the
+brief to read the new field. **That requirement is void.** Session 0.8.7 removed
+the reading altogether, so no version of Session does anything with
+`last_auto_checked` and there is no drift line left to fire. Pinning Session on
+account of this paragraph buys nothing.
+
+Corrected here rather than left to the banner at the top of this section. That
+banner gives context, and this was an instruction: a reader following it acts,
+and context above the fold does not undo a sentence telling somebody to install
+something.
 
 Nothing else to do on upgrade. The hook registers itself and stays quiet.
 
