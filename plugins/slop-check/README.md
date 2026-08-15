@@ -61,6 +61,14 @@ hit is the whole threshold. A phrase you have decided never to use does not
 become a violation on the second use, which is what separates these from the
 graded signals below. Add your own with `bannedPhrases` in the config.
 
+A phrase inside quotation marks, a code span or a fenced block does not count.
+Quoting a rule is mentioning it rather than using it, and without that exception
+the tool blocks any document that writes its own rules down, which is what
+happened to a session handoff that printed them verbatim. Bullets, headings and
+table rows are still checked. Narrowing on Markdown structure instead was the
+simpler repair and would have stopped checking posts written in bullets, which
+is most of them, so it is deliberately not what this does.
+
 They are checked alongside the hard rules and reported apart from them, because
 the two answer to different people. The Stop hook and `--hard-only` are looking
 at writing that is yours, so a hit there is an instruction you gave being

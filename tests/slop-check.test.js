@@ -325,6 +325,35 @@ check('configuring one phrase does not drop the built-in ones',
 check('a non-array bannedPhrases is ignored rather than crashing',
   checkHard('a clean sentence with nothing wrong in it', { bannedPhrases: 'circle back' }).ok, true);
 
+console.log('\nquoting a house rule is not the same as breaking it');
+// The Stop hook blocked a /pickup that printed, verbatim and in a bullet, the
+// constraint forbidding the phrase. A rule quoted is a rule mentioned, not one
+// used. Queue entry 2026-08-15T22-18-30-tells.
+//
+// Asserted on the house-rule violation by name rather than on `ok`, so a row
+// cannot pass because some unrelated tell fired on the same line.
+const houseRuleHit = (t, c) => checkHard(t, c).violations.some((v) => v.name === 'house-rule');
+check('a quoted mention in a bullet is not a hit',
+  houseRuleHit('- Never write "worth stealing" or any steal framing, in chat or as her.'), false);
+check('a quoted mention in running prose is not a hit',
+  houseRuleHit('The rule is that "worth stealing" is never written.'), false);
+check('a phrase in a code span is not a hit',
+  houseRuleHit('The list starts with `worth stealing` and three others.'), false);
+check('a phrase in a fenced block is not a hit',
+  houseRuleHit('```\nworth stealing\n```'), false);
+check('a configured phrase is narrowed the same way',
+  houseRuleHit('The rule is that "circle back" is never written.', { bannedPhrases: ['circle back'] }), false);
+// The negative controls, and they are the point. Narrowing on Markdown
+// structure instead of on quotation, which is the obvious repair and what the
+// bug report first proposed, passes the first of these. That is the shape the
+// house rules were added for on 2026-08-11: four drafts, all reported clean.
+check('a plain use in a bullet is still a hit',
+  houseRuleHit('- worth stealing: the three-column layout.'), true);
+check('a plain use after a quoted mention is still a hit',
+  houseRuleHit('She said "never say it". This one is worth stealing.'), true);
+check('an unbalanced quote does not swallow the rest of the line',
+  houseRuleHit('He said "hello and then worth stealing happened'), true);
+
 console.log('\nantithesis is caught in both word orders');
 const softNames = (t) => checkAll(t).soft.map((s) => s.name);
 check('negation-first order still counts',
