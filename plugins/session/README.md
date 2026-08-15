@@ -355,13 +355,27 @@ locked region.
 
 That makes the region as long as the sweep, and a lock is judged abandoned after
 30 seconds of an unchanged timestamp. So the sweep pushes that timestamp forward
-after each document it moves. Without it, a sweep slow enough to cross the
-threshold would have its lock taken over while it was still working, which puts
-two writers in the critical section: the failure the lock exists to prevent,
-arriving through the recovery path. On a local disk 2000 documents take about
-300ms against a 30 second threshold, so this is not reachable today. It is not
-left to that margin, because the margin is a fact about one machine and a home
-directory on a network share is a different machine.
+as it works. Without it, a sweep slow enough to cross the threshold would have
+its lock taken over while it was still going, which puts two writers in the
+critical section: the failure the lock exists to prevent, arriving through the
+recovery path. On a local disk 2000 documents take about 300ms against a 30
+second threshold, so this is not reachable today. It is not left to that margin,
+because the margin is a fact about one machine and a home directory on a network
+share is a different machine.
+
+The heartbeat is paced by elapsed time rather than by work done, and that
+distinction is the whole of it. Pacing it by documents moved covered the case
+that was being thought about and none of the others: a folder where most
+documents are not stale renames nothing, so it would have refreshed nothing,
+while statting every file is the slow part. It is now called from the scan, the
+repoint and the prune alike, and calls inside the interval cost a lookup rather
+than a disk write.
+
+Belt and braces, the write path also asks whether the lock is still this
+session's before it writes. The heartbeat makes a takeover unlikely rather than
+impossible, and the cost of being wrong is two sessions rewriting the index at
+once, which is the thing all of this exists to prevent. If it has been taken, the
+write still goes ahead, for the reason above, and says so.
 
 A command that changes nothing creates nothing. The lock lives inside
 `~/.planning/handoffs/`, so taking it means creating that folder, which would put

@@ -33,7 +33,7 @@ const ROOT = path.join(__dirname, '..', 'plugins', 'session');
 const HANDOFFS = path.join(ROOT, 'scripts', 'handoffs.js');
 const handoffs = require(HANDOFFS);
 const {
-  withIndexLock, acquire, release, refreshLock, WAIT_MS, STALE_MS,
+  withIndexLock, acquire, release, refreshLock, lockLost, WAIT_MS, STALE_MS, REFRESH_MS,
 } = require(path.join(ROOT, 'scripts', 'index-lock.js'));
 
 let failures = 0;
@@ -760,16 +760,74 @@ check('a long sweep keeps its lock alive rather than being taken over', () => {
     fs.utimesSync(lock, old, old);
     const before = fs.statSync(lock).mtimeMs;
 
-    const refreshed = refreshLock(lock);
+    // Paced by elapsed time, so a call inside the interval is a deliberate
+    // no-op and only the later one reaches the disk. An injected clock rather
+    // than a real wait: the pacing is the thing under test, and sleeping five
+    // seconds in a suite to observe it would test the clock instead.
+    const tooSoon = refreshLock(lock, Date.now());
+    const later = refreshLock(lock, Date.now() + REFRESH_MS + 1);
     const after = fs.statSync(lock).mtimeMs;
-    return { refreshed, before, after };
+    return { tooSoon, later, before, after };
   });
 
-  assert.strictEqual(seen.value.refreshed, true, 'the region holds the lock, so it may refresh it');
+  assert.strictEqual(seen.value.tooSoon, false,
+    'a call inside the interval costs a lookup and does not touch the disk');
+  assert.strictEqual(seen.value.later, true, 'the region holds the lock, so it may refresh it');
   assert.ok(seen.value.after > seen.value.before,
     'the staleness clock moved forward, so a sweep still working is not judged abandoned');
-  assert.ok(Date.now() - seen.value.after < STALE_MS,
-    'and it is now inside the window rather than outside it');
+});
+
+check('the heartbeat is paced by time, not by documents moved', () => {
+  // Devin round 2. The first version fired once per document actually moved, so
+  // a folder where nothing is stale renamed nothing, refreshed nothing, and
+  // could still be taken over while statting every file. Measured then: 300
+  // documents, zero stale, zero refreshes.
+  //
+  // Asserted where the sweep spends its time, rather than on the rename path.
+  const home = tmpHome();
+  const root = path.join(home, '.planning', 'handoffs');
+  fs.mkdirSync(root, { recursive: true });
+  for (let i = 0; i < 40; i += 1) fs.writeFileSync(path.join(root, `HANDOFF-fresh-${i}.md`), '# x');
+
+  // A clock that advances on every read, so the pacing interval is crossed
+  // during the scan without the suite waiting real seconds. Driven in a child
+  // process so the fake clock cannot leak into the rest of the run, and with no
+  // hook added to the sweep for the test's benefit: this counts the writes the
+  // real code makes to the real lock.
+  const out = JSON.parse(spawnSync(process.execPath, ['-e', `
+    const fs = require('fs');
+    let t = Date.now();
+    Date.now = () => { t += 2000; return t; };
+    const lock = ${JSON.stringify(path.join(root, '.index.lock'))};
+    let touches = 0;
+    const realUtimes = fs.utimesSync;
+    fs.utimesSync = (...a) => { if (String(a[0]) === lock) touches += 1; return realUtimes(...a); };
+    const h = require(${JSON.stringify(HANDOFFS)});
+    const r = h.archiveStale({ home: ${JSON.stringify(home)}, days: 30, now: t });
+    process.stdout.write(JSON.stringify({ touches, moved: r.moved.length }));
+  `], { encoding: 'utf8' }).stdout);
+
+  assert.strictEqual(out.moved, 0, 'setup: nothing is stale, so nothing moves');
+  assert.ok(out.touches > 0,
+    'the scan has to keep the lock alive on the path where nothing moves. Before this change the '
+    + `sweep refreshed once per document moved, so this count was 0. It is ${out.touches}.`);
+});
+
+check('lockLost notices the lock being taken from under a region', () => {
+  const home = tmpHome();
+  const lock = handoffs.indexLockPath(home);
+  fs.mkdirSync(path.dirname(lock), { recursive: true });
+
+  const seen = withIndexLock(lock, () => {
+    const held = lockLost(lock);
+    // Somebody else takes it over while this region is still working.
+    fs.writeFileSync(path.join(lock, 'owner'), 'another-session');
+    return { held, afterTakeover: lockLost(lock) };
+  });
+
+  assert.strictEqual(seen.value.held, false, 'nothing was lost while we held it');
+  assert.strictEqual(seen.value.afterTakeover, true,
+    'the write path asks before it writes, so a takeover is not silent');
 });
 
 check('refresh will not extend a lock this process does not own', () => {

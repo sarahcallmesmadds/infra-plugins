@@ -19,7 +19,7 @@ const os = require('os');
 const path = require('path');
 
 const config = require('./config');
-const { withIndexLock, warnUnprotectedWrite, refreshLock } = require('./index-lock');
+const { withIndexLock, warnUnprotectedWrite, refreshLock, lockLost } = require('./index-lock');
 
 const DEFAULT_STALE_DAYS = 30;
 
@@ -226,6 +226,17 @@ function mutateIndex(home, change, { readOnly = false, mayCreate = false } = {})
   return withIndexLock(lock, () => {
     const save = (handoffs) => {
       warnUnprotectedWrite(lock);
+      // Asked before the write, not after, so the clock is fresh for it and so
+      // a lock lost during a long region is caught at the one place every write
+      // passes through rather than at each caller.
+      refreshLock(lock);
+      if (lockLost(lock)) {
+        process.stderr.write(
+          `session: the handoff index lock at ${lock} was taken over while this run was still `
+          + 'working, so this write went ahead beside another session and an entry may have been '
+          + 'lost.\n',
+        );
+      }
       return writeIndexUnlocked(handoffs, home) !== null;
     };
     return change(readIndex(home), save);
@@ -358,6 +369,9 @@ function pruneIndex({ home = os.homedir(), dryRun = false } = {}) {
 
     const pending = [];
     for (const [key, entry] of Object.entries(handoffs)) {
+      // entryState stats a file per entry, so this loop is as slow as the disk
+      // too.
+      refreshLock(indexLockPath(home));
       const state = entryState(entry);
       if (state === 'gone') {
         dropped.push({ slug: key, path: entry && entry.path });
@@ -542,6 +556,11 @@ function archiveStale({ days = DEFAULT_STALE_DAYS, home = os.homedir(), now = Da
       if (!name.startsWith('HANDOFF-') || !name.endsWith('.md')) continue;
       const from = path.join(root, name);
       const to = path.join(dest, name);
+      // Every file, not every rename. A folder where most documents are not
+      // stale renames nothing while statting all of them, and statting is the
+      // slow part on a network home. Cheap to call: only one in every
+      // REFRESH_MS reaches the disk.
+      refreshLock(indexLockPath(home));
       try {
         const stat = fs.statSync(from);
         if (!stat.isFile() || stat.mtimeMs >= cutoff) continue;
@@ -551,11 +570,6 @@ function archiveStale({ days = DEFAULT_STALE_DAYS, home = os.homedir(), now = Da
         }
         moved.push(name.replace(/^HANDOFF-/, '').replace(/\.md$/, ''));
         relocations.push({ from, to });
-        // The region's length now depends on how many documents are moving and
-        // how fast the disk is, and the lock is judged abandoned on its mtime
-        // alone. Say we are still here after each one, so a slow sweep cannot
-        // be taken over mid-flight and put a second writer beside itself.
-        refreshLock(indexLockPath(home));
       } catch (_) {
         // One unreadable file must not stop the sweep.
       }
