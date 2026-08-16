@@ -17,6 +17,7 @@ const { execFileSync } = require('child_process');
 const base = path.join(__dirname, '..', 'plugins', 'slop-check', 'scripts');
 const { checkHard, checkAll } = require(path.join(base, 'tells.js'));
 const { checkCode, checkData, checkSpec, checkTechnical, checkOverbuilt, checkOverplanned } = require(path.join(base, 'technical.js'));
+const simpleSkill = fs.readFileSync(path.join(__dirname, '..', 'plugins', 'slop-check', 'skills', 'say-it-simply', 'SKILL.md'), 'utf8');
 
 const EM = String.fromCharCode(0x2014);
 let failed = 0;
@@ -27,7 +28,13 @@ function check(label, actual, expected) {
   console.log(`  ${ok ? 'ok  ' : 'FAIL'}  ${label}${ok ? '' : ` (got ${actual}, wanted ${expected})`}`);
 }
 
-console.log('hard rules');
+console.log('shipped writing guidance is installer-neutral');
+check('say-it-simply does not encode a woman as the default user',
+  /\b(?:she|her|hers)\b/i.test(simpleSkill), false);
+check('say-it-simply does not ship dated transcript findings',
+  /\b20\d{2}-\d{2}-\d{2}\b|\btranscripts? (?:were |was )?(?:read|measured)\b/i.test(simpleSkill), false);
+
+console.log('\nhard rules');
 check('em dash is caught', checkHard(`a sentence ${EM} with a dash`).ok, false);
 check('hyphen is not an em dash', checkHard('a plain-English compound word').ok, true);
 check('three short sentences run', checkHard('Yes. It works. All done.').ok, false);

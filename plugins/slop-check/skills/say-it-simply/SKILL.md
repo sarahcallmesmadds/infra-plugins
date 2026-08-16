@@ -1,211 +1,136 @@
 ---
 name: say-it-simply
-description: Rewrite an answer that did not land, using the five reply shapes the user approved. The failure is almost always order rather than length, so this reorders the answer around what she has to do and replaces jargon with her own words instead of defining it. Use when the user pushes back on an answer, and before writing any answer that carries a decision, a finding or a status. Triggers on "say it simply", "in plain english", "i dont understand", "idu", "huh", "what does that mean", "too much text", "im getting lost", "sorry what", "can you say that again".
+description: Rewrite an answer that did not land. Reorder it around what the user needs to do, replace jargon with plain language, and choose a clear shape for a decision, status, finding, explanation, or draft. Use when the user pushes back on an answer, asks for plain language, or says they are lost or do not understand.
 ---
 
 # say-it-simply
 
-Rewrite an answer so she can repeat it back and knows what she has to do.
+Rewrite an answer so the user can repeat the main point and knows what to do.
 This shapes writing as it is produced. Its sibling `slop-check` reports on
 writing that already exists, and the two are not the same job.
 
-## The finding this is built on
+## The core test
 
-Ten days of transcripts were read on 2026-08-04, every message where she said
-some version of "I don't understand". There were 27 of them out of 2,349
-messages, and the answer that drew each one was pulled and read.
+The failure is often order rather than length. Cutting words does not fix an
+answer whose ask is buried, whose status replaces a next action, or whose
+decisions run together without a recommendation.
 
-**The failure is order, not length.** One answer that drew "confusing" was 212
-characters. Cutting words does not fix an answer whose ask is in the wrong
-place, which is why "be short" had been given many times and had changed
-nothing.
+Before returning the rewrite, ask:
 
-Four causes appear in nearly every failing answer:
+1. Can the user repeat the main point in one sentence?
+2. Do they know what they need to do, decide, or stop worrying about?
 
-1. The ask sits at the bottom, after a long run of reasoning
-2. A status report arrives where she wanted a next action
-3. Jargon goes undefined, or worse, gets defined and left in
-4. Two or three decisions share one paragraph with no recommendation
+## Pick the shape
 
-**Her acceptance test, in her own words on 2026-08-01:** "i get the words but
-idk what this means really i couldnt repeat any of it back." Could she repeat
-it back, and does she know what she has to do. Everything below serves those
-two questions.
-
-## The five shapes
-
-She was shown all five and approved all five, so these are settled rather than
-proposed. Pick by what kind of reply it is, then follow the shape.
+Choose the shape that matches the reply:
 
 | Kind | Shape |
 |---|---|
 | Decision | Numbered options, recommendation marked, context underneath |
-| Status | "Nothing needed from you", then what happens next |
+| Status | What the user needs to do, then what happens next |
 | Finding | The problem, then what it has cost so far |
-| Explanation | The one sentence to walk away with, then why it matters |
-| Draft | The ask, then one line of what the draft says |
+| Explanation | The one sentence to remember, then why it matters |
+| Draft | The ask, then one line describing the draft |
 
-Two of these she called out by name.
+A finding always says what it has cost, including "nothing yet" when true. A
+decision always carries a marked recommendation. Options without a recommendation
+hand the analysis back to the user.
 
-**A finding always says what it has cost**, including "nothing yet" when that
-is true. That is the line that tells her whether to care this week, and without
-it a finding is just a fact she now has to weigh on her own.
+## Replace jargon rather than defining it
 
-**A decision always carries a marked recommendation.** Options handed over
-without one have decided nothing, and she has said the same thing about specs.
-Mark it in the option itself, not in a paragraph underneath.
+Defining a specialist term still makes the user carry it. Prefer the effect in
+plain language:
 
-## Replace jargon, do not define it
-
-Defining a term still leaves her carrying it. Name a thing by what it does for
-her instead.
-
-| Do not write | Write |
+| Instead of | Write |
 |---|---|
-| the handoff index, `index.json` | the list of where your notes are kept |
 | a shadowed entry | the name points at the wrong document |
-| `cli.js reconcile --fix` | I ran the check and fixed it |
-| commit `7019baf`, PR #114 | it is fixed and saved |
-| a dep-review entry | a reminder to check the things that depend on it |
-| mutation testing, fault injection | I broke it on purpose to check the tests would notice |
-| publishing, when it means a private backup | saving a copy only you can see |
+| reconcile | check the saved records and repair disagreements |
+| dependency review | check the things that rely on this change |
+| mutation testing | break it on purpose to confirm the tests notice |
+| publish, when nothing becomes public | save a private copy |
 
-The words that have actually failed, recorded as they happened: dep-review,
-fails open, superseded, watching, tier, arrow, shadowed, mutation testing.
+Use the user's own vocabulary when it is available in the conversation or in a
+documented user-owned configuration file. Do not infer personal preferences from
+the plugin author's examples, repository, or identity. Give exact commands only
+when the user needs to run them.
 
-**Never illustrate a point with syntax she would not type.** She writes in
-plain language, so an example built out of flags and switches carries nothing.
-Her own words: "Don't show me examples of what I would write with code. I write
-in plain language, so the `--` means nothing to me." Describe what the thing
-does for her, and give the exact command only when she is about to run it
-herself.
+## Distinguish related things
 
-**Use her vocabulary for her own things, not the vocabulary of the tool.** A
-private backup is not publishing. Sharing is not publishing. If she has never
-used a word about her own work, it is the wrong word.
+When two related tools or actions appear, say which one the user reaches for and
+what the other one does. Name the action first, explain its effect, then explain
+the related report or summary.
 
-## Say which thing does what, when two are close
+For example: logging records a problem; a weekly summary only gathers problems
+that were already logged.
 
-An answer that names two related things has to say which one she would reach
-for and what the other is. This is where the recording of a problem gets
-confused with the report about problems, and she is left knowing neither.
+## Keep names; remove addresses unless needed
 
-The shape that works: name the action, say what it does, then name the report
-and say it only summarises what the action already recorded.
+A name helps the user locate the subject. An address is useful only when they
+need to navigate to it.
 
-> Logging it is what records the problem. The weekly summary only gathers up
-> what was already recorded, so nothing reaches it unless you log it first.
+| Kind | Include it? |
+|---|---|
+| Product, plugin, skill, or feature name | Yes; add a short plain-language description if needed |
+| File path, commit hash, pull request number, or internal record ID | Only when the user is going there or needs to verify it |
 
-## An address is not the same as a name
+Do not strip every identifier in the name of simplicity. A report without the
+name of the thing that changed is clear but unusable.
 
-This rule was over-applied on 2026-08-16. A report of finished work described
-the behaviour that changed and never said which of her plugins it was in,
-because every name read as an identifier to strip. She asked twice before
-getting them, and cutting the names did not make the report plainer, it made
-it unlocatable.
+## End on the user's position
 
-| Kind | Example | Include it? |
-|---|---|---|
-| Address | a file path, a commit hash, a pull request number, a queue entry id | Only when she is going there |
-| Name of a thing she owns | build-loop, the audit-deps skill, the deps-watch hook | Yes, in any report of what changed |
+The last line states what the user does, decides, or can stop worrying about.
+Put process, caveats, and unresolved detail above it. End with one of:
 
-She built these things and refers to them by name herself. Say the name, then
-say what it does: "the audit-deps skill, the one that checks the dependency
-map".
+- the action to take;
+- the decision to make; or
+- a direct statement that nothing is needed from the user.
 
-## The last line is hers
+## Do not narrate unrelated process
 
-End on what she does, decides, or can stop worrying about. Nothing after it.
+Do not include self-corrections, method notes, failed attempts, or a history of
+how the answer was produced unless they change what the user should trust. If a
+process detail matters, give it one line and connect it to the decision.
 
-Measured on 2026-08-16 across 36 hours of real sessions: of the answers she
-pushed back on, 54 per cent ended without anything for her to do, against 32
-per cent of every other answer. Six of the eight times she replied "ok so now
-what", the answer had ended on a caveat, a self-correction, or a warning about
-something unrelated. She had to ask for the next step because the last thing
-she read was about the work rather than about her.
+## Make claims checkable
 
-Process, caveats and anything unresolved go above that line. The line itself is
-one of: the thing to do, the thing to decide, or "nothing needed from you".
+- Give the most useful checkable fact, not a sales pitch about diligence.
+- Name any gap plainly in one line.
+- Distinguish facts proved by running something from facts learned by reading.
+- If the user questions a claim, say what evidence would settle it and obtain
+  that evidence when the request authorizes doing so.
 
-## Do not narrate your own work inside an answer about something else
+## Cuts that apply to every shape
 
-The same measurement: 35 per cent of the answers she pushed back on talked
-about how the answer was produced, against 12 per cent of the rest. Three times
-the rate.
-
-A self-correction, a method note, a first pass that was wrong, an explanation of
-why something took four attempts. All of it is honest and none of it is what
-she asked. If it changes what she should trust, it gets one line. Otherwise it
-goes to the bug queue, which is the thing built to hold it.
-
-## Claim less, and make the claim checkable
-
-This is the pattern that gets worse when you try harder at it.
-
-Across the same 36 hours she said, in order, "i cant rely on you", "are you
-sure, you've been wrong a few times today", "are you sure you did all these
-tests, this sounds like a lot and you are prone to lying", and "are you sure of
-EVERYTHING and all of this is fact". Every one of those followed an answer that
-was more careful than usual, averaging around 2,400 characters, listing what had
-been run and what had only been read. One of them listed five separate things
-proved by running them, and she replied that it sounded like a lot.
-
-**A long account of your own checking reads as a sales pitch rather than as
-evidence.** Self-certification does not accumulate into trust, it spends it.
-What settles a question for her is a third party, or a number she can re-run
-herself.
-
-So:
-
-- Give the one fact she could check, not the list of everything that was done.
-- Name the gap plainly and in one line. "The tests pass. I have not run it
-  against your real settings" beats a paragraph on methodology.
-- Never answer "are you sure" with more of the same detail. That is what she
-  already did not believe. Say what would actually settle it, and offer to go
-  and do that.
-- Keep saying which claims came from running and which from reading. That rule
-  stands. It is a label on a short claim, not a licence to write a long one.
-
-## The cuts that apply to all five shapes
-
-- **Lead with the answer.** One line, before any reasoning.
-- **Put detail in a table** when she is likely to want it, since a table can be
-  skimmed and prose cannot.
-- **Number proposed actions in the order they would be done**, never by
-  priority. A ranked list she has to re-sort into a sequence is work handed
-  back to her.
-- **Once numbered options are on screen, those numbers are frozen.** She
-  answers by number, often with one character. If the options change, keep
-  every existing number where it is and append, or say plainly that the list is
-  being replaced and repeat all of it.
-- **Give each item its own verdict word.** Never write a sentence that refers
-  to another item by its position. One heading per item, the claim quoted, then
-  a single labelled line, then what happens about it.
-- **Drop counts she did not ask for.** A bare number reads as alarming and
-  means nothing on its own. If a count is worth giving, say what it is a count
-  of and whether it is normal.
-- **Say whether a claim came from running something or from reading something.**
-  "The manifest says 0.2.6" and "I ran it and it printed X" are different
-  claims and she wants them labelled.
-- **If the detail genuinely matters, offer it rather than supplying it.** "The
-  full version is a paragraph of jargon, want it?"
+- Lead with the answer before the reasoning.
+- Use a table when several exact mappings or comparisons need to be scanned.
+- Number proposed actions in execution order.
+- Once numbered options are shown, keep their numbers stable. Append new options
+  or explicitly replace and repeat the whole list.
+- Give each reviewed item its own verdict rather than referring to another item
+  only by position.
+- Explain what a count measures and whether it is expected; omit decorative counts.
+- Offer secondary detail when it is optional instead of front-loading it.
 
 ## How to use this
 
-When she pushes back, take the answer that drew the pushback, work out which of
-the five kinds it was, and rewrite it in that shape. Do not apologise, do not
-explain what went wrong with the first version, and do not produce both. Give
-her the rewritten answer on its own.
+When the user pushes back, take the answer that drew the pushback, identify its
+kind, and rewrite it in the matching shape. Do not apologise, explain the first
+failure, or provide both versions. Return only the improved answer.
 
-When invoked with nothing to rewrite, say what it does and ask for the text.
-Never invent an example answer to demonstrate on.
+When invoked without text to rewrite, briefly state what the skill does and ask
+for the text. Do not invent an example answer.
+
+## User-owned preferences
+
+Personal vocabulary, formatting choices, prohibited terms, and standing examples
+belong outside this shipped skill. If a user supplies them, follow the connected
+product's documented user-owned configuration or memory mechanism. The reusable
+rules in this file remain neutral for every installer.
 
 ## What this is not
 
-It is not a length limit. An answer can be long if the order is right, and a
-212 character answer failed this test.
+It is not a fixed length limit. A short answer can still hide the point, and a
+long answer can work when its order is clear.
 
-It is not a hook, and must not become one without her asking. She was offered a
-Stop hook on 2026-08-04, the same mechanism as the em dash lint that ships in
-this plugin, and said "i dont think i want this as a hook yet at all". Do not
-re-propose it unprompted.
+It is not an automatic hook. Do not turn it into one without explicit user
+approval.
