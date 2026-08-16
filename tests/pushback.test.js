@@ -229,6 +229,29 @@ check('scan refuses a missing or non-directory transcript root', () => {
   assert.throws(() => P.scan(0, file), /not a directory/);
 });
 
+check('scan skips one unreadable nested folder and reports its real path', () => {
+  const unreadable = path.join(tmp, 'unreadable-project');
+  fs.mkdirSync(unreadable);
+  const original = fs.readdirSync;
+  fs.readdirSync = function patched(dir, options) {
+    if (dir === unreadable) {
+      const error = new Error('permission denied for test');
+      error.code = 'EACCES';
+      throw error;
+    }
+    return original.call(fs, dir, options);
+  };
+  try {
+    const r = P.scan(0, tmp);
+    assert.strictEqual(r.typed.length, 2, 'readable conversations were discarded');
+    assert.strictEqual(r.skipped.length, 1);
+    assert.strictEqual(r.skipped[0].path, unreadable);
+    assert.match(P.report(r, {}), /Incomplete scan: skipped 1/);
+  } finally {
+    fs.readdirSync = original;
+  }
+});
+
 check('the CLI reports a bad transcript root without a stack trace or clean zero', () => {
   const script = path.join(__dirname, '..', 'plugins', 'build-loop', 'scripts', 'pushback.js');
   const missing = path.join(tmp, 'still-does-not-exist');

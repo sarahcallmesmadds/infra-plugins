@@ -156,11 +156,18 @@ function userText(record) {
   return trimmed;
 }
 
-function collect(dir, out) {
-  const entries = fs.readdirSync(dir, { withFileTypes: true });
+function collect(dir, out, skipped, strict) {
+  let entries;
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch (error) {
+    if (strict) throw error;
+    skipped.push({ path: dir, reason: error.message });
+    return out;
+  }
   for (const entry of entries) {
     const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) collect(full, out);
+    if (entry.isDirectory()) collect(full, out, skipped, false);
     else if (entry.name.endsWith('.jsonl')) out.push(full);
   }
   return out;
@@ -171,10 +178,11 @@ function collect(dir, out) {
 function scan(since, root) {
   const transcriptRoot = root === null || root === undefined ? PROJECTS : root;
   let files;
+  const skipped = [];
   try {
     const stat = fs.statSync(transcriptRoot);
     if (!stat.isDirectory()) throw new Error('it is not a directory');
-    files = collect(transcriptRoot, []);
+    files = collect(transcriptRoot, [], skipped, true);
   } catch (error) {
     throw new Error(`could not read transcript folder "${transcriptRoot}": ${error.message}`);
   }
@@ -183,7 +191,10 @@ function scan(since, root) {
 
   for (const file of files) {
     let lines;
-    try { lines = fs.readFileSync(file, 'utf8').split('\n'); } catch (e) { continue; }
+    try { lines = fs.readFileSync(file, 'utf8').split('\n'); } catch (error) {
+      skipped.push({ path: file, reason: error.message });
+      continue;
+    }
     let previousAnswer = null;
 
     for (const line of lines) {
@@ -225,7 +236,7 @@ function scan(since, root) {
   for (const k of KINDS) byKind[k.kind] = 0;
   for (const p of pushbacks) byKind[p.kind] += 1;
 
-  return { typed, pushbacks, byKind, files: files.length };
+  return { typed, pushbacks, byKind, files: files.length, skipped };
 }
 
 function rate(pushbacks, typed) {
@@ -273,6 +284,10 @@ function report(result, options) {
   const lines = [];
 
   lines.push(`Pushback rate: ${rate(hits, total)} per hundred messages (${hits} of ${total} typed).`);
+  if (result.skipped && result.skipped.length) {
+    lines.push(`Incomplete scan: skipped ${result.skipped.length} unreadable transcript path(s).`);
+    for (const item of result.skipped.slice(0, 3)) lines.push(`  ${item.path}: ${item.reason}`);
+  }
   lines.push('');
 
   if (!total) {
@@ -534,6 +549,7 @@ function main(argv) {
       days,
       since: sinceIso,
       files: result.files,
+      skipped: result.skipped,
       typed: result.typed.length,
       pushbacks: result.pushbacks.length,
       rate: rate(result.pushbacks.length, result.typed.length),

@@ -374,6 +374,13 @@ It prints one headline number, pushbacks per hundred messages the user actually
 typed, then a breakdown by kind and the answer-level signal comparison. It does
 not print example messages unless `--quotes` is explicitly added.
 
+If the command says the transcript folder does not exist or cannot be read,
+write `Pushback rate unavailable: this runtime has no readable Claude Code
+transcripts.` in the section and continue building the rest of the weekly
+report. This is expected in Codex and on a fresh machine. Never turn absence of
+input into a zero. If the command instead reports an incomplete scan, keep its
+warning in the report; the readable conversations still produce a useful rate.
+
 The saved report carries counts, not quotes. If the user wants the examples,
 run the same command with `--quotes` and show that output only in the current
 local session. Do not copy those examples into the summary file: the session
