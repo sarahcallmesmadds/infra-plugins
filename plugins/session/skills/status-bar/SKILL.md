@@ -1,15 +1,10 @@
 ---
 name: status-bar
 description: Set up the native Codex footer and task-progress title, or the richer Claude Code status line with model, folder, current task, spend, context, and connected-tool health. Use when the user says "set up the status bar", "install the status line", "show me my context usage", "show the current Codex task", "add the usage bar", or invokes /status-bar. Also use when a status line has stopped rendering or is showing an old version.
-allowed-tools: Read, Write, Bash(*/bin/hook-node:*), Bash(node:*)
+allowed-tools: Read, Write, Bash(ls:*), Bash(node:*)
 ---
 
 # Status bar
-
-The leading wildcard in `Bash(*/bin/hook-node:*)` is deliberate. Claude Code's
-[Bash permission rules](https://code.claude.com/docs/en/permissions#wildcard-patterns)
-support wildcards at the beginning, middle, or end of a command, so this grants
-the launcher at its versioned plugin path without granting unrelated commands.
 
 Set up the persistent terminal UI that answers "which model, which folder, how
 full is the context, and what is this session doing". Codex and Claude Code
@@ -119,9 +114,16 @@ skill writes everything else and shows the line for approval.
 
 Run:
 
+<!-- bash-approval-required -->
 ```bash
 "${CLAUDE_PLUGIN_ROOT}"/bin/hook-node "${CLAUDE_PLUGIN_ROOT}"/statusline/install.js
 ```
+
+This launcher needs one normal Bash approval. Its first token is a dynamic,
+versioned absolute path. Claude Code 2.1.233 does not match that token through a
+portable scoped permission rule, and granting a shell broadly to suppress one
+prompt would authorize unrelated commands. The installer prints the only
+manual settings change after that approval.
 
 Through `bin/hook-node`, not directly. The installer is a Node script starting
 `#!/usr/bin/env node`, so running it directly needs `node` on `PATH`, and the

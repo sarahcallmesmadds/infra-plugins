@@ -1,7 +1,7 @@
 ---
 name: devin-review-response
 description: Resolve a complete Devin code-review round without point fixes. Use when Devin posts PR findings, the user asks to address or fix a Devin review, or a branch needs a final Devin-response pass before push or merge. Maps dependencies before editing, audits paired and adjacent files, classifies every finding, validates the round record, and produces one atomic commit per review round.
-allowed-tools: Read, Write, Grep, Glob, Bash(mktemp:*), Bash(node:*), Bash(git:*), Bash(gh:*)
+allowed-tools: Read, Write, Grep, Glob, Bash(mktemp:*), Bash(node:*), Bash(git branch --show-current:*), Bash(git diff:*), Bash(git log:*), Bash(git remote -v:*), Bash(git rev-parse:*), Bash(git status:*), Bash(gh auth status:*), Bash(gh pr view:*)
 ---
 
 # Devin review response
@@ -69,9 +69,11 @@ Sweep tests, fixtures, docs, examples, manifests, generated surfaces, and counts
 
 Run the repository's complete relevant test, typecheck, lint, and formatting gates. Record each command and outcome in `verification`.
 The frontmatter pre-approves repository search, private scratch-directory
-creation, and the `node`, `git`, and `gh` commands this procedure names. A
-repository-specific gate using another command remains available through the
-host's normal permission prompt; do not broaden the Bash grant to suppress it.
+creation, validation, and read-only Git and GitHub inspection. Commands that
+change repository or GitHub state, including `git add`, `git commit`, `git
+push`, and any `gh` write, deliberately remain behind the host's normal
+permission prompt. Repository-specific gates using other commands do too. Do
+not broaden the Bash grants to suppress those prompts.
 
 Validate the record:
 

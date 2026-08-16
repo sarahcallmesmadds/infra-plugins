@@ -52,6 +52,16 @@ check('skill can search and create its private round directory without broad Bas
   assert.match(frontmatter, /allowed-tools:.*\bGlob\b/);
   assert.match(frontmatter, /Bash\(mktemp:\*\)/);
   assert.doesNotMatch(frontmatter, /\bBash\b(?!\s*\()/);
+  assert.doesNotMatch(frontmatter, /Bash\((?:git|gh):\*\)/);
+  for (const grant of [
+    'git branch --show-current', 'git diff', 'git log', 'git remote -v',
+    'git rev-parse', 'git status', 'gh auth status', 'gh pr view',
+  ]) {
+    assert.match(frontmatter, new RegExp(`Bash\\(${grant.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}:\\*\\)`));
+  }
+  for (const mutation of ['git add', 'git commit', 'git push', 'git reset', 'gh pr merge']) {
+    assert.doesNotMatch(frontmatter, new RegExp(`Bash\\(${mutation.replace(/ /g, '\\s')}`));
+  }
 });
 
 check('validator uses the plugin-level scripts convention', () => {

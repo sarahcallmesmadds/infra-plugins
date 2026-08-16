@@ -252,6 +252,11 @@ check('no skill names a shell command its allowed-tools does not grant', () => {
 
     const used = new Set();
     for (const block of text.matchAll(/```bash\n([\s\S]*?)```/g)) {
+      const lead = text.slice(Math.max(0, block.index - 80), block.index);
+      // Some dynamic absolute paths cannot be expressed as a portable scoped
+      // permission. They must say explicitly that normal approval is expected
+      // instead of widening allowed-tools or silently bypassing this audit.
+      if (/<!-- bash-approval-required -->\s*$/.test(lead)) continue;
       // Strip quoted strings first, or the contents of a `node -e '...'`
       // program read as commands. `const` is not a shell command.
       // Heredoc bodies go first, for the reason the quote stripping below
@@ -274,7 +279,7 @@ check('no skill names a shell command its allowed-tools does not grant', () => {
   assert.deepStrictEqual(offenders, [], `\n  ${offenders.join('\n  ')}`);
 });
 
-check('leading-wildcard Bash grants cover quoted path commands', () => {
+check('quoted path commands remain visible to the grant check', () => {
   const parsed = commandForGrantCheck(
     '"${CLAUDE_PLUGIN_ROOT}"/bin/hook-node "${CLAUDE_PLUGIN_ROOT}"/statusline/install.js'
   );
@@ -282,8 +287,18 @@ check('leading-wildcard Bash grants cover quoted path commands', () => {
     command: '""/bin/hook-node ""/statusline/install.js',
     executable: 'hook-node',
   });
-  assert.ok(commandIsGranted(parsed.command, ['*/bin/hook-node']));
   assert.ok(!commandIsGranted(parsed.command, ['node']));
+});
+
+check('status-bar scopes ls and marks its dynamic launcher as approval-required', () => {
+  const statusBar = fs.readFileSync(
+    path.join(__dirname, '..', 'plugins', 'session', 'skills', 'status-bar', 'SKILL.md'),
+    'utf8'
+  );
+  const frontmatter = statusBar.slice(0, statusBar.indexOf('---', 4));
+  assert.match(frontmatter, /Bash\(ls:\*\)/);
+  assert.doesNotMatch(frontmatter, /Bash\(\*\/bin\/hook-node:\*\)/);
+  assert.match(statusBar, /<!-- bash-approval-required -->\s*```bash\n"\$\{CLAUDE_PLUGIN_ROOT\}"\/bin\/hook-node/);
 });
 
 check('quoted separators do not invent shell commands', () => {
