@@ -241,6 +241,15 @@ It also checks the index in both directions: files nothing points at, and
 entries pointing at files that are not there. That is the failure that makes an
 inventory useless, and it happens silently.
 
+The per-file caps are the only ones that produce a finding. `totalWords` sizes
+the directory in the summary line and is not enforced, because enforcing it
+produced a warning nobody could clear: a directory of small, compliant files can
+exceed any fixed total, so the flag stayed up whatever anyone edited, and a check
+that complains about something the reader cannot act on gets switched off. The
+`over-budget` finding instead reports how far the oversize files are over their
+own caps, added up, which falls as each one is cut and disappears when none are
+left.
+
 ```json
 {
   "memoryBudget": { "liveFileWords": 900, "durableFileWords": 2500, "totalWords": 10000 }
