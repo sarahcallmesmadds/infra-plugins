@@ -1,6 +1,7 @@
 ---
 name: pickup
 description: Load a previous session's handoff and start where it left off. Takes a slug produced by /wrap, finds the matching handoff, and surfaces what was happening, what was decided and what is next. Use when the user says "/pickup <slug>", "pickup <slug>", "resume <slug>", "let's pick up <slug>", or "where was I on <slug>".
+allowed-tools: Read, Write, Bash(node:*)
 ---
 
 # Pickup

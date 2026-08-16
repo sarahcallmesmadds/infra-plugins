@@ -2,6 +2,7 @@
 name: find-skill
 type: human
 description: Skill discovery — tells you which skill to use for what you're trying to do. Invoke when you're not sure which command to reach for. Builds the routing table at runtime by reading every SKILL.md frontmatter, so newly-installed skills auto-appear.
+allowed-tools: Read, Write, Bash(node:*), Bash(python3:*)
 ---
 
 # /find-skill — skill discovery

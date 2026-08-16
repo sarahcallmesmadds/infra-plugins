@@ -1,6 +1,7 @@
 ---
 name: wrap
 description: End-of-session wrap. Writes down what was decided, what was built and what is next, into a handoff document the next session can load. Use at the end of a working session, or when the user says "wrap", "let's wrap", "wrap up", "wrap this session", "close out", or invokes /wrap. Pairs with /pickup, which reads what this writes.
+allowed-tools: Read, Write, Bash(node:*)
 ---
 
 # Wrap

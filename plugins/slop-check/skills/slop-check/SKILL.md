@@ -1,6 +1,7 @@
 ---
 name: slop-check
 description: Check any work, writing or technical, for the habits that mean nobody edited or reviewed it before shipping. Names the specific lines and says why each one is a problem, so the finding can be acted on or sent back to whoever produced it. Read-only, changes nothing unless asked. Works on drafts, documents, code, charts and data, and scope or spec documents. Triggers on "slop-check this", "does this read like AI", "how AI is this", "did anyone review this", "check this before I send it", "check this PR/doc/deck".
+allowed-tools: Read, Bash(node:*)
 ---
 
 # slop-check

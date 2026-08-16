@@ -196,6 +196,12 @@ check('no skill names a shell command its allowed-tools does not grant', () => {
   const BUILTIN = new Set([
     'for', 'do', 'done', 'if', 'then', 'fi', 'else', 'elif', 'while', 'case',
     'esac', 'echo', 'cd', 'exit', 'set', 'local', 'read', 'printf', 'return',
+    // Assignment-shaped builtins. The comment above says builtins are not
+    // commands a permission list names, and these are builtins, so their
+    // absence was an oversight rather than a decision. `export FOO=1` in
+    // status-bar read as a command called export and would have forced a
+    // grant for it.
+    'export', 'unset', 'shift', 'trap', 'eval', 'source', 'true', 'false',
   ]);
 
   const offenders = [];
@@ -214,7 +220,14 @@ check('no skill names a shell command its allowed-tools does not grant', () => {
     for (const block of text.matchAll(/```bash\n([\s\S]*?)```/g)) {
       // Strip quoted strings first, or the contents of a `node -e '...'`
       // program read as commands. `const` is not a shell command.
-      const body = block[1].replace(/'[^']*'/g, "''").replace(/"[^"]*"/g, '""');
+      // Heredoc bodies go first, for the reason the quote stripping below
+      // already gives: a program handed to another interpreter is not shell.
+      // `python3 - <<'PY'` in find-skill put `import`, `CONFIG` and `rel` into
+      // the used set, and stripping quotes cannot reach them because a heredoc
+      // is not quoted.
+      const body = block[1]
+        .replace(/<<-?\s*'?([A-Za-z_][A-Za-z0-9_]*)'?\n[\s\S]*?\n\1\n?/g, '\n')
+        .replace(/'[^']*'/g, "''").replace(/"[^"]*"/g, '""');
       for (const raw of body.split('\n')) {
         const stripped = raw.trim();
         if (!stripped || stripped.startsWith('#')) continue;

@@ -1,6 +1,7 @@
 ---
 name: core-tools-monitor
 description: Run the transition-only core-tools health probe used by a Claude Desktop scheduled task. Alerts once when a configured tool drops, stays silent while the same failure continues, and reports once when it recovers. Use when the user asks to run, test, or schedule the core-tools monitor.
+allowed-tools: Read, Write, Bash(node:*)
 ---
 
 # Core tools monitor
