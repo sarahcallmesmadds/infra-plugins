@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/bin/hook-node \"${CLAUDE_PLUGIN_ROOT}\"/hooks/resource-owner-guard.js"
+            "command": "[ -d \"${CLAUDE_PLUGIN_ROOT}\" ] || { echo \"Plugin hooks are off in this session because a plugin was updated after it started. Restart to switch them back on.\" >&2; exit 0; }; \"${CLAUDE_PLUGIN_ROOT}\"/bin/hook-node \"${CLAUDE_PLUGIN_ROOT}\"/hooks/resource-owner-guard.js"
           }
         ]
       },
@@ -15,7 +15,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/bin/hook-node \"${CLAUDE_PLUGIN_ROOT}\"/hooks/bash-guard.js"
+            "command": "[ -d \"${CLAUDE_PLUGIN_ROOT}\" ] || { echo \"Plugin hooks are off in this session because a plugin was updated after it started. Restart to switch them back on.\" >&2; exit 0; }; \"${CLAUDE_PLUGIN_ROOT}\"/bin/hook-node \"${CLAUDE_PLUGIN_ROOT}\"/hooks/bash-guard.js"
           }
         ]
       },
@@ -24,7 +24,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/bin/hook-node \"${CLAUDE_PLUGIN_ROOT}\"/hooks/write-scan.js"
+            "command": "[ -d \"${CLAUDE_PLUGIN_ROOT}\" ] || { echo \"Plugin hooks are off in this session because a plugin was updated after it started. Restart to switch them back on.\" >&2; exit 0; }; \"${CLAUDE_PLUGIN_ROOT}\"/bin/hook-node \"${CLAUDE_PLUGIN_ROOT}\"/hooks/write-scan.js"
           }
         ]
       }
@@ -35,7 +35,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/bin/hook-node \"${CLAUDE_PLUGIN_ROOT}\"/hooks/read-scan.js"
+            "command": "[ -d \"${CLAUDE_PLUGIN_ROOT}\" ] || { echo \"Plugin hooks are off in this session because a plugin was updated after it started. Restart to switch them back on.\" >&2; exit 0; }; \"${CLAUDE_PLUGIN_ROOT}\"/bin/hook-node \"${CLAUDE_PLUGIN_ROOT}\"/hooks/read-scan.js"
           }
         ]
       }

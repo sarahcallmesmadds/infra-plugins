@@ -1,6 +1,6 @@
 {
   "name": "guardrails",
-  "version": "0.5.4",
+  "version": "0.5.5",
   "description": "Safety rails for people building with AI who aren't systems engineers. Blocks commits to protected branches, asks before commands that cannot be undone, flags prompt injection, and can require a governing document be read before a directory is written.",
   "author": {
     "name": "Sarah Madden",

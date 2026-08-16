@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/bin/hook-node \"${CLAUDE_PLUGIN_ROOT}\"/hooks/session-start.js"
+            "command": "[ -d \"${CLAUDE_PLUGIN_ROOT}\" ] || { echo \"Plugin hooks are off in this session because a plugin was updated after it started. Restart to switch them back on.\" >&2; exit 0; }; \"${CLAUDE_PLUGIN_ROOT}\"/bin/hook-node \"${CLAUDE_PLUGIN_ROOT}\"/hooks/session-start.js"
           }
         ]
       }
@@ -15,7 +15,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/bin/hook-node \"${CLAUDE_PLUGIN_ROOT}\"/hooks/context-monitor.js"
+            "command": "[ -d \"${CLAUDE_PLUGIN_ROOT}\" ] || { echo \"Plugin hooks are off in this session because a plugin was updated after it started. Restart to switch them back on.\" >&2; exit 0; }; \"${CLAUDE_PLUGIN_ROOT}\"/bin/hook-node \"${CLAUDE_PLUGIN_ROOT}\"/hooks/context-monitor.js"
           }
         ]
       }

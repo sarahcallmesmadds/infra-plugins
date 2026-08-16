@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/bin/hook-node \"${CLAUDE_PLUGIN_ROOT}\"/hooks/style-lint.js"
+            "command": "[ -d \"${CLAUDE_PLUGIN_ROOT}\" ] || { echo \"Plugin hooks are off in this session because a plugin was updated after it started. Restart to switch them back on.\" >&2; exit 0; }; \"${CLAUDE_PLUGIN_ROOT}\"/bin/hook-node \"${CLAUDE_PLUGIN_ROOT}\"/hooks/style-lint.js"
           }
         ]
       }
@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/bin/hook-node \"${CLAUDE_PLUGIN_ROOT}\"/hooks/consistency-lint.js"
+            "command": "[ -d \"${CLAUDE_PLUGIN_ROOT}\" ] || { echo \"Plugin hooks are off in this session because a plugin was updated after it started. Restart to switch them back on.\" >&2; exit 0; }; \"${CLAUDE_PLUGIN_ROOT}\"/bin/hook-node \"${CLAUDE_PLUGIN_ROOT}\"/hooks/consistency-lint.js"
           }
         ]
       }

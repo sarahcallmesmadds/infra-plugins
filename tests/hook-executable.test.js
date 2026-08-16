@@ -61,6 +61,35 @@ function indexMode(file) {
   return out ? out.split(/\s+/)[0] : null;
 }
 
+// The guard every hook command carries in front of the work it does.
+//
+// The bug, on 2026-08-16: updating a plugin while a session is open kills every
+// hook in that session until the host restarts. CLAUDE_PLUGIN_ROOT is resolved
+// once at startup and carries the version, so it names .../build-loop/0.10.0.
+// Codex deletes the old version directory on update rather than keeping it, the
+// running session still holds the old path, and from then on the shell answers
+// 127 for every hook. Claude Code is not exposed because it keeps every old
+// version, which is the same fact failing in the opposite direction: there a
+// running session quietly goes on using code that has been replaced.
+//
+// The guard cannot live in bin/hook-node, which is the obvious place for it.
+// The launcher is inside the directory that vanished, so it is not there to
+// run. It has to be in the command string, which the host builds from an
+// environment variable it still holds.
+//
+// Exit 0 rather than non-zero: the hooks really are off, and there is nothing
+// the session can do about it, so failing every prompt on top of saying so adds
+// noise without adding a remedy. This does not keep the guardrails working. It
+// replaces a bare 127, which reads identically to bin/hook-node's own
+// interpreter-not-found exit, with a line that says what happened and what
+// fixes it. Telling those two apart is what made the original diagnosis take
+// four rounds.
+//
+// One wording for all five plugins, checked byte-for-byte below. Naming the
+// plugin that tripped first was considered and dropped: the remedy is a restart
+// whichever one it is, and a restart fixes all of them at once.
+const GUARD = '[ -d "${CLAUDE_PLUGIN_ROOT}" ] || { echo "Plugin hooks are off in this session because a plugin was updated after it started. Restart to switch them back on." >&2; exit 0; }; ';
+
 // What a hooks.json command actually asks the shell to do.
 //
 // The shell executes the first token. Everything after it is an argument, and
@@ -75,7 +104,16 @@ function indexMode(file) {
 // with itself and proves nothing about the form nobody has written yet, which
 // is where the next instance of this bug will arrive.
 function parseCommand(command, pluginDir) {
-  const tokens = command
+  // Step over the guard before tokenising. Without this the first token is `[`,
+  // which resolves to no file in the repository, so `executed` comes back null
+  // and every check built on it passes by having nothing to look at. That is
+  // not hypothetical: adding the guard turned eight of these checks green while
+  // they examined an empty list, and only the launcher check, which asserts it
+  // found at least five, noticed. Checks that pass by finding nothing are the
+  // failure this suite exists to prevent, so the parser has to see through the
+  // guard rather than be defeated by it.
+  const work = command.startsWith(GUARD) ? command.slice(GUARD.length) : command;
+  const tokens = work
     .replace(/"?\$\{CLAUDE_PLUGIN_ROOT\}"?/g, '<ROOT>')
     .split(/\s+/).filter(Boolean);
   const first = tokens[0] || '';
@@ -116,6 +154,7 @@ function declaredHooks() {
           found.push({
             manifest,
             pluginDir,
+            command,
             file: path.posix.join(pluginDir, 'hooks', named[1]),
             ...parseCommand(command, pluginDir),
           });
@@ -375,6 +414,61 @@ check('no test suite depends on node being on PATH either', () => {
     + '        Use process.execPath as the command and pass the script in the argument array.');
 });
 
+check('every hook command says so when its plugin directory has gone', () => {
+  // Without this, the guard is thirteen copies of a string with nothing holding
+  // them together, and the next hook somebody adds gets none. The suite already
+  // walks every manifest, so a hook added tomorrow is covered without anyone
+  // remembering this exists.
+  //
+  // Byte-for-byte against one constant, not a loose match on some of the words.
+  // A guard that drifted into thirteen wordings would still pass a fuzzy check
+  // while telling the reader thirteen different things, and a guard with a typo
+  // in the test that a shell reads differently would pass one that only looked
+  // for `-d`.
+  const hooks = declaredHooks();
+  assert.ok(hooks.length >= 13,
+    `only ${hooks.length} hook commands found, so this is checking almost nothing`);
+
+  const unguarded = hooks
+    .filter((h) => !h.command.startsWith(GUARD))
+    .map((h) => `${h.file} in ${h.manifest}`);
+
+  assert.deepStrictEqual(unguarded, [],
+    'a hook command does not say what happened when its plugin directory has gone, so it '
+    + `exits 127 with nothing and reads as an interpreter failure:\n        ${unguarded.join('\n        ')}\n`
+    + `        Prefix the command with: ${GUARD}`);
+});
+
+check('the guard actually fires, and only when it should', () => {
+  // The assertion above passes on a healthy tree whether the guard works or
+  // not: it compares two strings and never asks a shell what they do. This runs
+  // the real thing under the three states that matter. sh and zsh both, because
+  // Codex runs a hook through `$SHELL -lc` and this machine's shell is zsh,
+  // while bin/hook-node's own shebang is #!/bin/sh.
+  const probe = `${GUARD}echo RAN`;
+
+  for (const shell of ['/bin/sh', '/bin/zsh']) {
+    const run = (env) => {
+      try {
+        return execFileSync(shell, ['-lc', probe], { env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+      } catch (error) {
+        throw new Error(`${shell} exited non-zero, so a host would report the hook as failed: ${error.message}`);
+      }
+    };
+
+    assert.strictEqual(run({ ...process.env, CLAUDE_PLUGIN_ROOT: path.join(os.tmpdir(), 'no-such-plugin-0.0.0') }), '',
+      `${shell}: the hook body ran even though the plugin directory has gone`);
+
+    const withoutRoot = { ...process.env };
+    delete withoutRoot.CLAUDE_PLUGIN_ROOT;
+    assert.strictEqual(run(withoutRoot), '',
+      `${shell}: the hook body ran with CLAUDE_PLUGIN_ROOT unset, which expands the path to nothing`);
+
+    assert.strictEqual(run({ ...process.env, CLAUDE_PLUGIN_ROOT: ROOT }).trim(), 'RAN',
+      `${shell}: the guard blocked a hook whose plugin directory is present, so it would switch every hook off`);
+  }
+});
+
 check('every launcher copy is identical', () => {
   // Five copies, because plugins install independently and one cannot reach
   // into another, so a single shared copy at the repository root would be
@@ -444,6 +538,26 @@ check('the three command forms are told apart', () => {
   assert.strictEqual(bare.viaInterpreter, true,
     'the bare-interpreter form was not recognised, so it escapes the launcher check '
     + 'while resolving node from PATH, which is the defect this file exists to keep out');
+
+  // Each form again behind the guard, which is how all thirteen are written. A
+  // parser that stopped seeing through it would report `executed: null` for
+  // everything, and the checks built on that would go green over an empty list
+  // rather than fail. The bare-interpreter case matters most: it is the one the
+  // guard could hide, because it is caught by recognising the first token
+  // rather than by finding a file that is missing.
+  const guardedLaunch = parseCommand(`${GUARD}"\${CLAUDE_PLUGIN_ROOT}"/bin/hook-node "\${CLAUDE_PLUGIN_ROOT}"/hooks/x.js`, dir);
+  assert.strictEqual(guardedLaunch.executed, 'plugins/example/bin/hook-node',
+    'the guard hid the launcher from the parser, so every check built on it examines nothing');
+  assert.strictEqual(guardedLaunch.viaInterpreter, false);
+
+  const guardedDirect = parseCommand(`${GUARD}"\${CLAUDE_PLUGIN_ROOT}"/hooks/x.js`, dir);
+  assert.strictEqual(guardedDirect.executed, 'plugins/example/hooks/x.js',
+    'a guarded directly-invoked hook escaped the shebang and permission checks');
+
+  const guardedBare = parseCommand(`${GUARD}node "\${CLAUDE_PLUGIN_ROOT}"/hooks/x.js`, dir);
+  assert.strictEqual(guardedBare.viaInterpreter, true,
+    'a guarded bare interpreter was not recognised, so adding the guard would have '
+    + 'reopened the PATH defect while every check reported clean');
 });
 
 check('an unfindable interpreter is actually caught', () => {
