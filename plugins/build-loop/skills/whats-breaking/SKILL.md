@@ -390,7 +390,8 @@ hundred across the 2,445 messages before that window.
 as one.** The detector's patterns were written from the 36-hour window, so it
 finds more there by construction. What is comparable is one ISO week against
 another from now on, because the detector no longer changes between them and
-each report starts at Monday 00:00 UTC. Say so if you quote both.
+each report starts at Monday 00:00 in the machine's local timezone. Say so if
+you quote both.
 
 **State the floor.** The count only includes times the user said something. Giving
 up and working around an answer leaves no trace, so every figure is a lower bound.
