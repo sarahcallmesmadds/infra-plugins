@@ -9,7 +9,7 @@
 // comparison against history and cannot be answered from one file alone.
 //
 // ---------------------------------------------------------------------------
-// The six surfaces.
+// The seven surfaces.
 //
 //   1  plugins/<name>/.claude-plugin/plugin.json   description
 //   2  plugins/<name>/.codex-plugin/plugin.json    description
@@ -17,8 +17,9 @@
 //   4  plugins/<name>/.codex-plugin/plugin.json    interface.longDescription
 //   5  .claude-plugin/marketplace.json             the entry for this plugin
 //   6  README.md                                   the row in the plugin table
+//   7  plugins/<name>/README.md                    the opening tagline
 //
-// Six sentences about one product, written for six readers. When the product
+// Seven sentences about one product, written for seven readers. When the product
 // changes they all become wrong together, and they are edited one at a time.
 //
 // ---------------------------------------------------------------------------
@@ -40,13 +41,13 @@
 // So the rule is now symmetric rather than one-directional: a change to any
 // surface requires a change to all of them. Triggering off one nominated file
 // means every other file can drift alone, and there is no reason to nominate
-// one, because all six make the same claim.
+// one, because all seven make the same claim.
 //
 // ---------------------------------------------------------------------------
 // The tradeoff, stated rather than hidden.
 //
 // This fires on any change to any surface, including fixing a typo, and then
-// asks for five edits that a typo does not need. That is the same asymmetry
+// asks for six edits that a typo does not need. That is the same asymmetry
 // plugin-version-drift.test.js settles the same way: an unnecessary edit costs a
 // minute, and a missed one ships a description of a product that no longer
 // exists to everyone deciding whether to install it.
@@ -152,6 +153,17 @@ function readmeRow(ref, name) {
   return null;
 }
 
+function pluginReadmeTagline(ref, name) {
+  const raw = fileAt(ref, `plugins/${name}/README.md`);
+  if (raw === null) return null;
+  const lines = raw.split('\n');
+  const heading = lines.findIndex((line) => /^#\s+/.test(line));
+  for (const line of lines.slice(heading + 1)) {
+    if (line.trim()) return line.trim();
+  }
+  return null;
+}
+
 // Every surface reads through here, so adding one is a single entry and it is
 // then covered in both directions automatically. A reader that cannot find its
 // value returns null, and null on both sides means the surface does not exist
@@ -203,6 +215,11 @@ const SURFACES = [
     label: 'the root README table row',
     where: () => 'README.md',
     read: (ref, n) => readmeRow(ref, n),
+  },
+  {
+    label: 'the plugin README opening tagline',
+    where: (n) => `plugins/${n}/README.md`,
+    read: (ref, n) => pluginReadmeTagline(ref, n),
   },
 ];
 
