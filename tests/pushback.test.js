@@ -211,13 +211,90 @@ check('the signal check reads the tail for a handover, not the whole answer', ()
 
 // --- the report keeps the user's words off any external surface ------------
 
-check('the slack format carries counts and no quotes', () => {
+check('quoting is off unless it is asked for, in every shape of not asking', () => {
+  // The defect this replaces: quoting was the default and one string comparison
+  // against "slack" was the only thing keeping private messages out of a channel.
+  // Three spellings got past it. The control now fails closed, so the test is
+  // that every way of not asking produces counts.
   const r = P.scan(0, tmp);
-  const slack = P.report(r, { format: 'slack' });
-  assert.ok(slack.includes('Pushback rate'), 'no rate in the slack report');
-  assert.ok(!slack.includes('too much jargon'), 'the slack report quoted the user');
-  const local = P.report(r, {});
-  assert.ok(local.includes('too much jargon'), 'the local report should quote, so a pattern can be acted on');
+  const waysOfNotAsking = [
+    {},
+    { quotes: false },
+    { quotes: 'yes' },
+    { quotes: 1 },
+    { format: 'local' },
+    { format: 'slack' },
+    { quote: true },
+    undefined,
+  ];
+  for (const opts of waysOfNotAsking) {
+    const out = P.report(r, opts);
+    assert.ok(out.includes('Pushback rate'), `no rate for ${JSON.stringify(opts)}`);
+    assert.ok(!out.includes('too much jargon'),
+      `quoted the user for ${JSON.stringify(opts)}, which must never happen without quotes: true`);
+  }
+});
+
+check('quoting happens when it is asked for, so the local report is still useful', () => {
+  const r = P.scan(0, tmp);
+  const out = P.report(r, { quotes: true });
+  assert.ok(out.includes('too much jargon'),
+    'with quotes: true the report should quote, so a pattern can be acted on');
+});
+
+// --- argument parsing refuses what it does not understand ------------------
+
+check('a valid command line parses to the values it names', () => {
+  const a = P.parseArgs(['--days', '14', '--quotes', '--json']);
+  assert.strictEqual(a.days, 14);
+  assert.strictEqual(a.quotes, true);
+  assert.strictEqual(a.json, true);
+});
+
+check('the defaults are the safe ones', () => {
+  const a = P.parseArgs([]);
+  assert.strictEqual(a.quotes, false, 'quoting must be off by default');
+  assert.strictEqual(a.days, 7);
+  assert.strictEqual(a.json, false);
+});
+
+check('every shape that used to leak quotes is now a hard error', () => {
+  // Each of these produced the full quoting report before, while looking like
+  // the safe command. None of them may be silently accepted again.
+  const leaks = [
+    ['--format=slack'],
+    ['--format', 'Slack'],
+    ['--format', 'slack'],
+    ['--format'],
+    ['--quiet'],
+    ['--quotes=false'],
+  ];
+  for (const argv of leaks) {
+    assert.throws(() => P.parseArgs(argv), /unknown argument|takes no value|takes its value/,
+      `silently accepted ${JSON.stringify(argv)}`);
+  }
+});
+
+check('a days value that is not a positive number is refused', () => {
+  for (const bad of ['seven', '0', '-3', 'NaN', 'Infinity', '']) {
+    assert.throws(() => P.parseArgs(['--days', bad]),
+      /needs a positive number|needs a value/,
+      `accepted --days ${JSON.stringify(bad)}, which would report every conversation ever recorded`);
+  }
+});
+
+check('a flag given as another flag value is refused rather than swallowed', () => {
+  assert.throws(() => P.parseArgs(['--days', '--json']), /needs a value/);
+  assert.throws(() => P.parseArgs(['--days']), /needs a value/);
+  assert.throws(() => P.parseArgs(['--root']), /needs a value/);
+});
+
+check('an unrecognised flag is refused even in the value position', () => {
+  // A known flag in the value position is caught by the flag table. An unknown
+  // one is not, so without the leading-dashes check `--root --bogus` would take
+  // "--bogus" as a directory path and scan nothing, reporting a clean zero.
+  assert.throws(() => P.parseArgs(['--root', '--bogus']), /needs a value/);
+  assert.throws(() => P.parseArgs(['--fixture', '--bogus']), /needs a value/);
 });
 
 check('a report over an empty window says so rather than dividing by zero', () => {

@@ -14,11 +14,28 @@
 // instead of saying so. Those leave no trace in a transcript, so every number
 // here is a floor rather than a measurement, and the report says so out loud.
 //
-// Privacy. Transcripts are the user's own words, including the ones they would
-// not want quoted. The quotes exist so a pattern can be acted on, and they stay
-// local: `--format slack` drops every quote and emits counts only. The public
-// test fixtures for this file are written for the test and contain nobody's
-// real messages. See tests/pushback.test.js.
+// Privacy, and why quoting is opt-in rather than opt-out.
+//
+// Transcripts are the user's own words, including the ones they would not want
+// quoted anywhere. The quotes exist so a pattern can be acted on when they read
+// it themselves, and they must never reach a channel.
+//
+// The first version of this got that backwards. Quoting was the default and a
+// single string comparison, `format !== 'slack'`, was the only thing standing
+// between a private message and a Slack post. Devin found three ways past it in
+// one pass: `--format=slack` in the equals form, `--format Slack` with a capital
+// letter, and `--format` given as the last argument with nothing after it. Each
+// produced the full quoting report while looking like the safe command, and the
+// skill tells you to paste that output into a channel.
+//
+// A control whose failure mode is publishing somebody's private messages has to
+// fail closed. So there is no format string to get wrong: quoting is off unless
+// `--quotes` is passed, and every unrecognised argument is a hard error rather
+// than a silently ignored one. Getting it wrong now produces counts, or an
+// error, and never the quotes.
+//
+// The public test fixtures for this file are written for the test and contain
+// nobody's real messages. See tests/pushback.test.js.
 
 const fs = require('fs');
 const path = require('path');
@@ -225,7 +242,10 @@ function signals(entries) {
 
 function report(result, options) {
   const opts = options || {};
-  const quotes = opts.format !== 'slack';
+  // Explicitly true, not merely truthy and not the absence of something. A
+  // caller that passes nothing, passes the wrong key, or passes a value this
+  // does not understand gets counts. The only way to the quotes is to ask.
+  const quotes = opts.quotes === true;
   const total = result.typed.length;
   const hits = result.pushbacks.length;
   const lines = [];
@@ -305,15 +325,102 @@ function selftest(fixturePath) {
   };
 }
 
-function main(argv) {
-  const args = argv.slice(2);
-  const get = (flag) => {
-    const i = args.indexOf(flag);
-    return i === -1 ? null : args[i + 1];
-  };
+// Parses the whole command line up front and refuses anything it does not
+// recognise. The original version read flags positionally and ignored the rest,
+// which is how `--format=slack` looked accepted and did nothing, and how
+// `--days` could swallow the flag that followed it. CONTRIBUTING asks scripts to
+// validate inputs at the boundary and make failures visible; this is that.
+const FLAGS = {
+  '--days': 'value',
+  '--root': 'value',
+  '--fixture': 'value',
+  '--quotes': 'switch',
+  '--json': 'switch',
+  '--selftest': 'switch',
+  '--help': 'switch',
+};
 
-  if (args.includes('--selftest')) {
-    const r = selftest(get('--fixture'));
+const USAGE = [
+  'Usage: pushback.js [--days N] [--quotes] [--json] [--root DIR]',
+  '       pushback.js --selftest [--fixture FILE]',
+  '',
+  '  --days N    how far back to look, a positive number of days. Default 7.',
+  '  --quotes    include the user\'s own messages in the output. Off by default,',
+  '              because this output is pasted into channels and those messages',
+  '              are private. Never pass it for anything leaving the machine.',
+  '  --json      counts only, machine readable. Never carries quotes.',
+].join('\n');
+
+function parseArgs(args) {
+  const out = { days: 7, quotes: false, json: false, selftest: false, root: null, fixture: null, help: false };
+
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    const kind = FLAGS[arg];
+
+    if (!kind) {
+      // Named separately because it is the exact shape that failed before: it
+      // looks like it was understood and was silently dropped.
+      const equals = arg.indexOf('=');
+      const base = equals === -1 ? null : arg.slice(0, equals);
+      if (arg.startsWith('--') && base && FLAGS[base]) {
+        throw new Error(FLAGS[base] === 'switch'
+          ? `${base} takes no value. Write "${base}" on its own rather than "${arg}".`
+          : `${base} takes its value as a separate word. `
+            + `Write "${base} ${arg.slice(equals + 1)}" rather than "${arg}".`);
+      }
+      throw new Error(`unknown argument "${arg}".`);
+    }
+
+    if (kind === 'switch') {
+      out[arg.slice(2)] = true;
+      continue;
+    }
+
+    const value = args[i + 1];
+    if (value === undefined || FLAGS[value] || value.startsWith('--')) {
+      throw new Error(`${arg} needs a value after it.`);
+    }
+    i += 1;
+
+    if (arg === '--days') {
+      const days = Number(value);
+      // Number("seven") is NaN, and every comparison against NaN is false, so
+      // an unchecked value here does not narrow the window: it removes it, and
+      // a weekly figure silently becomes an all-time one under a header that
+      // reads "last NaN days".
+      if (!Number.isFinite(days) || days <= 0) {
+        throw new Error(`--days needs a positive number, not "${value}". `
+          + 'An unusable value here would report every conversation ever recorded '
+          + 'as though it were the window you asked for.');
+      }
+      out.days = days;
+    } else {
+      out[arg.slice(2)] = value;
+    }
+  }
+
+  return out;
+}
+
+function main(argv) {
+  let args;
+  try {
+    args = parseArgs(argv.slice(2));
+  } catch (error) {
+    console.error(`pushback: ${error.message}\n`);
+    console.error(USAGE);
+    process.exit(2);
+    return;
+  }
+
+  if (args.help) {
+    console.log(USAGE);
+    return;
+  }
+
+  if (args.selftest) {
+    const r = selftest(args.fixture);
     if (!r.ok) {
       console.log(r.reason);
       console.log('Build one with --label to measure this properly.');
@@ -333,11 +440,11 @@ function main(argv) {
     process.exit(0);
   }
 
-  const days = Number(get('--days') || 7);
+  const days = args.days;
   const since = Date.now() - days * 24 * 3600 * 1000;
-  const result = scan(since, get('--root'));
+  const result = scan(since, args.root);
 
-  if (args.includes('--json')) {
+  if (args.json) {
     console.log(JSON.stringify({
       days,
       files: result.files,
@@ -350,9 +457,16 @@ function main(argv) {
   }
 
   console.log(`Window: last ${days} days, ${result.files} transcript files.\n`);
-  console.log(report(result, { format: get('--format') }));
+  console.log(report(result, { quotes: args.quotes }));
+
+  if (args.quotes) {
+    console.log('');
+    console.log('This report quotes your own messages because --quotes was passed.');
+    console.log('Do not paste it anywhere but here. Run it without that flag for a');
+    console.log('version that carries the counts and none of the words.');
+  }
 }
 
 if (require.main === module) main(process.argv);
 
-module.exports = { classify, userText, scan, report, signals, selftest, rate, KINDS };
+module.exports = { classify, userText, scan, report, signals, selftest, rate, KINDS, parseArgs };

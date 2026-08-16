@@ -363,11 +363,16 @@ Claude Code transcripts are already on disk.
 Run:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/pushback.js" --days 7
+node "${CLAUDE_PLUGIN_ROOT}/scripts/pushback.js" --days 7 --quotes
 ```
 
 It prints one headline number, pushbacks per hundred messages the user actually
 typed, then a breakdown by kind and the most recent examples.
+
+`--quotes` is what includes the examples, and it is off by default because this
+output gets pasted into channels. Add it here, where the report is being written
+to a file on the user's own machine, and nowhere else. Step 9 covers what to run
+instead when any of this is going to Slack.
 
 **The rate is the whole point.** A writing rule that does not move it is not
 working, and adding more rules to the skill will not change a flat line. Report
@@ -516,19 +521,27 @@ Confirm: `Summary saved locally. Not posted to Slack.`
 **Channel safety:** the user's DM is the safe default per 04-DESIGN.md Section 9. For a public channel, confirm the channel name back to them before posting — "Posting to #{channel-name}, correct?" — and wait for confirmation.
 
 **Pushback quotes never go to Slack.** The Step 6b section of the local report
-quotes the user's own messages, which is what makes a pattern actionable when
-they read it themselves. Those same lines are somebody's unguarded words about
-being confused and frustrated, and a channel is a different audience from a file
-on their own Mac, whatever the channel is. Regenerate that section for the post
-with:
+quotes the user's own messages when it is asked to, which is what makes a
+pattern actionable when they read it themselves. Those same lines are somebody's
+unguarded words about being confused and frustrated, and a channel is a
+different audience from a file on their own Mac, whatever the channel is.
+Regenerate that section for the post with the plain command:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/pushback.js" --days 7 --format slack
+node "${CLAUDE_PLUGIN_ROOT}/scripts/pushback.js" --days 7
 ```
 
-which emits the rate and the counts and drops every quote. Substitute it for the
-local Step 6b section before posting. This applies to the DM too: the rule is
-about the surface, not about who can see it.
+which emits the rate and the counts and no quotes. Substitute it for the local
+Step 6b section before posting. This applies to the direct message too: the rule
+is about the surface, not about who can see it.
+
+**Quoting is opt-in, and there is no flag to get wrong.** The script only quotes
+when `--quotes` is passed, and refuses any argument it does not recognise rather
+than ignoring it. So a typo, a wrong flag, or a half-remembered option produces
+counts or an error, never the quotes. An earlier version had this the other way
+round, with quoting on by default and one string comparison guarding it, and
+three different spellings got past it in a single review. **Never add `--quotes`
+to a command whose output is going anywhere but the user's own screen.**
 
 ---
 

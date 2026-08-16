@@ -92,10 +92,18 @@ somebody's unguarded messages. A catch rate under about 90 per cent means the
 patterns have drifted from how you write and the weekly number is understating
 things.
 
-**Your quotes stay on your machine.** The local report quotes you, which is what
-makes a pattern worth acting on. `--format slack` drops every quote and emits
-counts only, and the skill uses that form for anything it posts, the direct
-message included.
+**Your quotes stay on your machine, and getting that wrong takes effort.** Add
+`--quotes` and the report includes your own messages, which is what makes a
+pattern worth acting on when you are the one reading it. Leave it off, which is
+the default, and you get the rate and the counts and none of the words. The
+skill uses the plain form for anything it posts, the direct message included.
+
+The first version had this backwards. Quoting was on by default and one string
+comparison stood between a private message and a Slack post, and review found
+three ways past it in a single pass. A control that fails by publishing somebody's
+messages has to fail closed, so now there is no format string to misspell: a typo,
+a wrong flag or a half-remembered option gets you counts or an error, never the
+quotes.
 
 ## Why a dependency map
 
