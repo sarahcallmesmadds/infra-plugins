@@ -1,6 +1,6 @@
 # slop-check
 
-Catch the habits that mean nobody edited it.
+Catch what nobody edited, and rewrite what did not land.
 
 The useful question about a piece of work is not whether a machine touched it.
 Almost everything has been touched by one, and no tool can honestly tell you
@@ -9,7 +9,7 @@ it afterwards, because that is the part that actually went missing.
 
 This looks for the evidence that nobody did.
 
-## Three things
+## Four things
 
 **A hook that holds the line on your own writing.** Em dashes and runs of very
 short sentences are blocked in the assistant's output, so it has to rewrite
@@ -46,6 +46,26 @@ text was.
 sent you, a pull request, a chart, a scope doc. It names the specific lines and
 says why each is a problem, so the result is something you can act on yourself
 or send back to whoever produced it.
+
+**A skill, `say-it-simply`, that rewrites an answer that did not land.** The
+other three report on writing that already exists. This one shapes an answer as
+it is being produced, which is a different job.
+
+It comes out of reading every message across ten days where the answer drew "I
+don't understand", 27 of them out of 2,349. The finding was that the failure is
+order rather than length: one answer that drew "confusing" was 212 characters.
+So it reorders the answer around what you have to do, using five approved
+shapes keyed to the kind of reply. A decision leads with numbered options and a
+marked recommendation. A finding leads with the problem and then what it has
+cost, including "nothing yet" when that is true.
+
+It also replaces jargon instead of defining it, because a defined term is still
+a term you are carrying.
+
+Type `/say-it-simply`, or just push back in your own words. It answers to "in
+plain english", "i dont understand", "too much text" and the rest.
+
+There is deliberately no hook on this one. It runs when you ask.
 
 ## What it looks for
 

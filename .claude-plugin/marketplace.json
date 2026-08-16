@@ -45,7 +45,7 @@
       "name": "build-loop",
       "source": "./plugins/build-loop",
       "description": "Keep everything you build honest. Log what a skill, hook, command, plugin or script got wrong the moment it happens, fix it from the queue with an approval gate, know what else the fix puts at risk, and keep a to-build list that closes itself when the work actually ships.",
-      "version": "0.10.1",
+      "version": "0.10.2",
       "author": {
         "name": "Sarah Madden"
       },
@@ -63,8 +63,8 @@
     {
       "name": "slop-check",
       "source": "./plugins/slop-check",
-      "description": "Catch the habits that mean nobody edited it. Blocks em dashes and choppy sentence runs in the assistant's own writing, and checks any draft, document, pull request, chart or spec for the signs it shipped unreviewed.",
-      "version": "0.4.3",
+      "description": "Catch the habits that mean nobody edited it, and rewrite an answer that did not land. Blocks em dashes and choppy sentence runs in the assistant's own writing, checks any draft, document, pull request, chart or spec for the signs it shipped unreviewed, and reshapes a confusing answer around what you have to do.",
+      "version": "0.5.0",
       "author": {
         "name": "Sarah Madden"
       },
@@ -74,7 +74,8 @@
         "editing",
         "style",
         "review",
-        "quality"
+        "quality",
+        "clarity"
       ]
     },
     {
