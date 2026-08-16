@@ -197,10 +197,33 @@ function audit({ dir, config = {} } = {}) {
     }
   }
 
-  if (total > limits.totalWords) {
+  // Over-budget used to compare `total` against `totalWords`, and that flag
+  // could not be cleared by following the rules this check enforces. Measured
+  // 2026-08-04 on a directory of 25 files where every single one obeyed its own
+  // per-file cap: the four largest came to the entire budget between them, so
+  // there was no set of compliant edits that cleared it and it reported
+  // over-budget on every wrap forever. A check that complains about the wrong
+  // thing gets switched off, which is the same argument `declaredType` above
+  // makes against guessing an undeclared type.
+  //
+  // What is reportable is the excess the per-file caps already name. It shrinks
+  // as each oversize file is cut and it disappears when none are left, so the
+  // number moves when the reader acts on it.
+  const oversize = findings.filter(
+    (f) => f.kind === 'oversize-live' || f.kind === 'oversize-durable',
+  );
+  if (oversize.length) {
+    const excess = oversize.reduce((n, f) => n + (f.words - f.limit), 0);
     findings.push({
-      kind: 'over-budget', words: total, limit: limits.totalWords,
-      note: 'Every one of these is pulled into a session whenever it looks relevant.',
+      // No `words` or `limit` here, deliberately. The caller prints
+      // "N words, over M" whenever `words` is set, and the directory total
+      // against `totalWords` is exactly the unactionable pair this stopped
+      // reporting. `totalWords` still describes the directory in the summary
+      // line, where it is context rather than a complaint.
+      kind: 'over-budget', files: oversize.length, excess,
+      note: `${oversize.length} file${oversize.length === 1 ? ' is' : 's are'} over `
+        + `${oversize.length === 1 ? 'its' : 'their'} per-file cap by ${excess} words in `
+        + 'total. Every one of these is pulled into a session whenever it looks relevant.',
     });
   }
 

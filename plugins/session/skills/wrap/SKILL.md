@@ -311,7 +311,7 @@ It changes nothing and deletes nothing. Surface whatever it reports in the Step
 |---|---|
 | `oversize-live` | A file meant to be replaced has been grown instead. Something in it already happened and can go |
 | `oversize-durable` | Long enough to be worth splitting, though length here is allowed |
-| `over-budget` | The directory as a whole. Each file is pulled in whenever it looks relevant, so the cost is paid repeatedly |
+| `over-budget` | How far the oversize files above are over their own caps, added up. It is silent when every file is within its cap, whatever the directory totals |
 | `unlisted` | Nothing in the index points at it, so it may never be recalled |
 | `dangling-index` | The index points at a file that is not there |
 | `broken-link` | A `[[link]]` resolves to nothing |
