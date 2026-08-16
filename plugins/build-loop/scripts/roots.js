@@ -406,6 +406,9 @@ function cmdCoverage(args) {
   if (args._.length > 0) {
     fail('roots.js: coverage takes --name-file, not a positional destination.');
   }
+  if (args['name-file'] === undefined) {
+    fail('roots.js: coverage requires --name-file with a file containing the exact destination root name.');
+  }
   let name;
   try {
     name = fs.readFileSync(expand(args['name-file']), 'utf8').trim();
@@ -522,6 +525,10 @@ function main(argv) {
       '  3 and 5 are separated so a caller can have one rule for each instead of',
       '  re-deriving the difference from the wording. Both mean a directory is',
       '  not there. Only one of them means somebody should go and fix a path.',
+      '',
+      '  coverage is the exception to the graded exit codes above. Its four',
+      '  ordinary answers are carried in the JSON answer field and all exit 0.',
+      '  Exit 1 still means the invocation or configuration could not be read.',
       '',
       '  Everything addressed to a person goes to stdout, including the exit-1',
       '  explanation, because the skills relay what was printed. stderr carries',

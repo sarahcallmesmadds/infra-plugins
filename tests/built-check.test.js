@@ -223,5 +223,11 @@ check('a run with no closeable item does not ask the close question', () => {
   assert.match(text, /every item is either "no sign of it" or "not searched"[\s\S]{0,260}Do not print the close question/);
 });
 
-console.log(`\n12 checks, ${failed} failed`);
+check('coverage failures become an explicit unknown state', () => {
+  assert.match(text, /Exit 1, or output that is not that JSON shape[\s\S]{0,260}coverage \*\*unknown\*\*/);
+  assert.match(text, /Unknown coverage can never produce\s+the "not searched" verdict/);
+  assert.match(text, /not a string or contains only whitespace[\s\S]{0,220}mark its coverage unknown/);
+});
+
+console.log(`\n13 checks, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

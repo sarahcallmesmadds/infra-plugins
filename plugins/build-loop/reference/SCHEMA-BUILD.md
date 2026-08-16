@@ -157,7 +157,7 @@ does the read, the change and the write in one process holding a lock.
 |---------|------|--------|
 | v1 | 2026-07-27 | Initial schema. |
 | v1 | 2026-08-03 | Added the optional `source` field. `$schema_version` stays at 1: the field is optional, an item without it is valid, and every reader treats a missing `source` the same as an empty one. |
-| v1 | 2026-08-15 | Added optional `destination_root`. The version stays at 1 because missing and empty both retain the legacy all-roots search scope. |
+| v1 | 2026-08-15 | Added optional `destination_root` for the `/built-check` consumer. The version stays at 1 because missing and empty both retain the legacy all-roots search scope. `/to-build` authoring and migration are deliberately separate follow-up work; this entry documents the accepted consumer contract, not a claim that writers populate it yet. |
 
 ### Why `source` is its own field rather than a scan of the text
 

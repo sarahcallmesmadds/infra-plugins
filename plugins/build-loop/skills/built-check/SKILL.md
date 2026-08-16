@@ -206,7 +206,8 @@ Those forms overlap with ordinary sentences and cannot support a reliable
 machine verdict.
 
 An item may instead carry `destination_root`, an exact configured root name.
-When that field is a non-empty string, write its value verbatim to
+When that field is a string containing at least one non-whitespace character,
+write its value verbatim to
 `{scratch}/destination-{id}.txt`, then run:
 
 ```bash
@@ -224,6 +225,17 @@ The command prints one JSON object with `answer` and `root`. Interpret `answer`:
 - `root-missing` — the root is configured but its directory is absent.
 - `default-missing` — it names an absent built-in fallback on a machine with no
   config file.
+
+Check both the exit code and the output before interpreting that object:
+
+- Exit 0 with a JSON object carrying one of those four answers: use it.
+- Exit 1, or output that is not that JSON shape: relay the tool's text, mark
+  destination coverage **unknown** for this item, and continue gathering and
+  judging 3a, 3b and 3c evidence normally. Unknown coverage can never produce
+  the "not searched" verdict.
+- A present `destination_root` that is not a string or contains only whitespace
+  is malformed. Do not call `coverage`; say which item has the malformed field,
+  mark its coverage unknown, and judge its other evidence normally.
 
 When `destination_root` is missing or empty, do not run this command. The item
 uses the legacy contract: all available roots are its search scope, so judge it
@@ -362,6 +374,7 @@ Add these lines only when they apply:
 - `Note: {X} items name roots that are not configured: {roots}. Add those exact root names to ~/.claude/build-loop.config.json to search them.`
 - `Note: {G} items name configured roots whose paths are missing: {roots}. Fix those paths rather than adding duplicate roots.`
 - `Note: {A} items name absent built-in defaults: {roots}. No configuration entry is broken; add a root only if you want that location searched.`
+- `Note: destination coverage could not be determined for {Y} items: {titles}. Their disk, commit and session evidence was still checked.`
 
 That last line matters more than it looks. Every way this step fails, a malformed cutoff or the wrong `date` flag or a root that is not a repository, ends at the same place: no commits, and a confident "no sign of it". Saying the log came back empty costs one line and is the only signal that separates "nothing was built" from "nothing was looked at".
 

@@ -719,12 +719,36 @@ check('no skill has gone back to writing its own plugin-repo globs', () => {
     assert.match(positional.stdout, /not a positional destination/);
   });
 
+  check('coverage clearly requires --name-file when it is omitted', () => {
+    const out = run(home, ['coverage']);
+    assert.notStrictEqual(out.code, 0);
+    assert.match(out.stdout, /coverage requires --name-file/);
+    assert.doesNotMatch(out.stdout, /undefined|path.*argument/i);
+  });
+
   check('coverage refuses an empty destination-root file', () => {
     const file = path.join(home, 'empty-destination.txt');
     fs.writeFileSync(file, '');
     const out = run(home, ['coverage', '--name-file', file]);
     assert.notStrictEqual(out.code, 0);
     assert.match(out.stdout, /must contain a root name/);
+  });
+
+  check('coverage reports configuration failures as exit 1 prose', () => {
+    const h = makeHome('{ broken json');
+    const file = path.join(h, 'destination.txt');
+    fs.writeFileSync(file, 'live');
+    const out = run(h, ['coverage', '--name-file', file]);
+    assert.strictEqual(out.code, 1);
+    assert.match(out.stdout, /not valid JSON/);
+    assert.throws(() => JSON.parse(out.stdout));
+  });
+
+  check('help documents that ordinary coverage answers exit zero', () => {
+    const out = run(home, ['--help']);
+    assert.strictEqual(out.code, 0);
+    assert.match(out.stdout, /coverage is the exception[\s\S]*four[\s\S]*answers[\s\S]*exit 0/);
+    assert.match(out.stdout, /Exit 1 still means the invocation or configuration could not be read/);
   });
 }
 
