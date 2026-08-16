@@ -157,8 +157,7 @@ function userText(record) {
 }
 
 function collect(dir, out) {
-  let entries;
-  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch (e) { return out; }
+  const entries = fs.readdirSync(dir, { withFileTypes: true });
   for (const entry of entries) {
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) collect(full, out);
@@ -170,7 +169,15 @@ function collect(dir, out) {
 // Returns { typed, pushbacks, byKind, files } for everything at or after `since`.
 // `since` is a millisecond timestamp; pass 0 for all of history.
 function scan(since, root) {
-  const files = collect(root || PROJECTS, []);
+  const transcriptRoot = root === null || root === undefined ? PROJECTS : root;
+  let files;
+  try {
+    const stat = fs.statSync(transcriptRoot);
+    if (!stat.isDirectory()) throw new Error('it is not a directory');
+    files = collect(transcriptRoot, []);
+  } catch (error) {
+    throw new Error(`could not read transcript folder "${transcriptRoot}": ${error.message}`);
+  }
   const typed = [];
   const pushbacks = [];
 
@@ -446,6 +453,8 @@ function parseArgs(args) {
         throw new Error(`--since needs an ISO-8601 timestamp that is not in the future, not "${value}".`);
       }
       out.since = new Date(since).toISOString();
+    } else if ((arg === '--root' || arg === '--fixture') && !value.trim()) {
+      throw new Error(`${arg} needs a non-empty path.`);
     } else {
       out[arg.slice(2)] = value;
     }
@@ -511,7 +520,14 @@ function main(argv) {
     : args.thisWeek ? localWeekStart()
       : Date.now() - days * 24 * 3600 * 1000;
   const sinceIso = fixedWindow ? new Date(since).toISOString() : null;
-  const result = scan(since, args.root);
+  let result;
+  try {
+    result = scan(since, args.root);
+  } catch (error) {
+    console.error(`pushback: ${error.message}`);
+    process.exit(2);
+    return;
+  }
 
   if (args.json) {
     console.log(JSON.stringify({

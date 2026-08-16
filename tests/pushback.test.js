@@ -13,6 +13,7 @@ const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { spawnSync } = require('child_process');
 
 const P = require('../plugins/build-loop/scripts/pushback.js');
 
@@ -221,6 +222,23 @@ check('the window cutoff excludes older messages', () => {
   assert.strictEqual(r.typed.length, 0);
 });
 
+check('scan refuses a missing or non-directory transcript root', () => {
+  assert.throws(() => P.scan(0, path.join(tmp, 'does-not-exist')), /could not read transcript folder/);
+  const file = path.join(tmp, 'not-a-directory');
+  fs.writeFileSync(file, 'x');
+  assert.throws(() => P.scan(0, file), /not a directory/);
+});
+
+check('the CLI reports a bad transcript root without a stack trace or clean zero', () => {
+  const script = path.join(__dirname, '..', 'plugins', 'build-loop', 'scripts', 'pushback.js');
+  const missing = path.join(tmp, 'still-does-not-exist');
+  const r = spawnSync(process.execPath, [script, '--root', missing], { encoding: 'utf8' });
+  assert.strictEqual(r.status, 2);
+  assert.match(r.stderr, /could not read transcript folder/);
+  assert.doesNotMatch(r.stderr, /\n\s+at /);
+  assert.doesNotMatch(r.stdout, /0 per hundred/);
+});
+
 check('the rate is per hundred typed messages', () => {
   assert.strictEqual(P.rate(1, 2), 50);
   assert.strictEqual(P.rate(0, 0), 0, 'an empty window must not divide by zero');
@@ -365,6 +383,11 @@ check('an unrecognised flag is refused even in the value position', () => {
   // "--bogus" as a directory path and scan nothing, reporting a clean zero.
   assert.throws(() => P.parseArgs(['--root', '--bogus']), /needs a value/);
   assert.throws(() => P.parseArgs(['--fixture', '--bogus']), /needs a value/);
+});
+
+check('empty paths are refused rather than falling back to defaults', () => {
+  assert.throws(() => P.parseArgs(['--root', '']), /non-empty path/);
+  assert.throws(() => P.parseArgs(['--fixture', '   ']), /non-empty path/);
 });
 
 check('object prototype names are not recognised as command-line flags', () => {
