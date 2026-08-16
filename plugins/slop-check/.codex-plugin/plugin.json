@@ -20,7 +20,7 @@
   "skills": "./skills/",
   "interface": {
     "displayName": "Slop Check",
-    "shortDescription": "Catch the habits that mean nobody edited it",
+    "shortDescription": "Catch what nobody edited, and rewrite what did not land",
     "longDescription": "The question worth asking about a piece of work is not whether a machine touched it, it is whether a person with judgement went through it afterwards. This checks for the habits that say nobody did: filler and machine vocabulary in prose, placeholders and swallowed errors in code, numbers too round to be measured in a chart, and options laid out with no recommendation in a spec. It names the specific lines, so a finding is something to act on or to send back. In Claude Code it also installs a hook that blocks em dashes and choppy sentence runs in the assistant's own writing; Codex plugins cannot register hooks, so there it runs on request. It also carries a second skill, say-it-simply, which rewrites an answer that confused the reader. That one comes from reading every message across ten days where the answer drew \"I don't understand\", and the finding that the failure is order rather than length. It reorders an answer around what the reader has to do, and replaces jargon rather than defining it.",
     "developerName": "Sarah Madden",
     "category": "Productivity",
