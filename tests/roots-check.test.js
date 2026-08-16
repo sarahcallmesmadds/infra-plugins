@@ -460,9 +460,11 @@ check('every caller has a rule for a config that cannot be read', () => {
   // 4, so a corrupt config had no rule at all and they carried on against
   // guessed locations. An unhandled exit code in prose is not a crash, it is a
   // skill quietly doing the wrong thing.
-  const offending = skillDirs().filter((name) => {
+  const callers = skillDirs().filter((name) =>
+    /roots\.js"? (?:check|list)/.test(skillText(name)));
+  assert.ok(callers.includes('to-build'), 'the caller audit did not discover the roots.js list call in to-build');
+  const offending = callers.filter((name) => {
     const text = skillText(name);
-    if (!/roots\.js"? check/.test(text)) return false;
     return !/Exit 1|Anything else/.test(text);
   });
   assert.deepStrictEqual(
@@ -476,10 +478,12 @@ check('every broad caller has a rule for an absent default', () => {
   // location was never created". A skill that only handles 3 either treats a
   // normal machine as broken or ignores a real absence, and both readings have
   // already shipped once each.
-  const offending = skillDirs().filter((name) => {
+  const callers = skillDirs().filter((name) =>
+    /roots\.js"? (?:check|list)/.test(skillText(name)));
+  assert.ok(callers.includes('to-build'), 'the absent-default audit did not discover the roots.js list call in to-build');
+  const offending = callers.filter((name) => {
     const text = skillText(name);
-    if (!/roots\.js"? check/.test(text)) return false;
-    if (/roots\.js"? check --name/.test(text)) return false;  // --name can never return 5
+    if (/roots\.js"? (?:check|list) --name/.test(text)) return false;  // --name can never return 5
     return !/Exit 5/.test(text);
   });
   assert.deepStrictEqual(
@@ -507,7 +511,7 @@ check('every skill that reads the config checks the roots exist', () => {
   const offending = skillDirs().filter((name) => {
     const text = skillText(name);
     if (!/build-loop\.config\.json/.test(text)) return false;
-    return !/roots\.js"? check/.test(text);
+    return !/roots\.js"? (?:check|list)/.test(text);
   });
   assert.deepStrictEqual(
     offending, [],

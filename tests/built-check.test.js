@@ -196,7 +196,8 @@ check('git reads a bare date as the current time of day, not midnight', () => {
 
 check('coverage uses only the structured destination root, never where prose', () => {
   assert.match(text, /`where` is human prose\. Never parse it/);
-  assert.match(text, /`destination_root`, an exact configured root name/);
+  assert.match(text, /`destination_root`, an exact build-loop root name/);
+  assert.match(text, /root already in the config or one the user expects to add later/);
   assert.doesNotMatch(text, /covers\s+--where/);
 });
 
