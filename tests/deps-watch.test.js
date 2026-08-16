@@ -21,11 +21,12 @@ const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { spawnSync } = require('child_process');
 
 const REFS = path.join(__dirname, '..', 'plugins', 'build-loop', 'scripts', 'deps-refs.js');
 const HOOK = path.join(__dirname, '..', 'plugins', 'build-loop', 'hooks', 'deps-watch.js');
 const {
-  bump, codeBlocks, entryByPath, expandHome, extractRefs, pluginRootFor, unrecorded,
+  codeBlocks, entryByPath, expandHome, extractRefs, pluginRootFor, unrecorded,
 } = require(REFS);
 
 let failed = 0;
@@ -85,8 +86,9 @@ check('a file does not depend on itself', () => {
 // A test suite spawns its subject rather than importing it, so there is no
 // require() to read and the dependency is written only as a path constant.
 // Reading require() alone left 12 of the 98 mapped entries with nothing to
-// find, and nothing found is stamped as confirmed, so the suites reaching
-// across the most plugins were the ones the hook did nothing for.
+// find, and nothing found means nothing reported, so the suites reaching across
+// the most plugins were the ones the hook did nothing for. It used to also be
+// stamped as confirmed; the stamp went in schema v5.
 
 check('a path built from __dirname and literals is a reference', () => {
   const f = path.join(plugin, 'hooks', 'joined.js');
@@ -360,10 +362,13 @@ check('a readable file with no references returns an empty list, not null', () =
   assert.deepStrictEqual(extractRefs(f, fs.readFileSync(f, 'utf8')), []);
 });
 
-check('the hook only stamps a file it could actually read', () => {
+check('the hook only reports on a file it could actually read', () => {
+  // It stamped once, and the distinction mattered for that. It still matters:
+  // an unreadable file has had nothing checked, so reporting missing edges from
+  // it would name edges nobody looked for.
   const src = fs.readFileSync(HOOK, 'utf8');
   assert.ok(/=== null|refs === null|!refs/.test(src),
-    'deps-watch does not distinguish an unreadable file from a clean one before stamping');
+    'deps-watch does not distinguish an unreadable file from a clean one');
 });
 
 // --- comparison against the map ------------------------------------------
@@ -432,160 +437,109 @@ check('expandHome leaves an absolute path alone', () => {
   assert.strictEqual(expandHome('~'), os.homedir());
 });
 
-// --- writing -------------------------------------------------------------
-
-check('bump records a machine check without touching the review date', () => {
-  // last_updated is the human/audit review date. /audit-deps compares it
-  // against the file mtime to decide an entry is STALE and may need its edges
-  // re-inferred, and its own failure handling says never to rewrite it unless
-  // content actually changed. Stamping it here silently emptied that bucket:
-  // the extraction cannot see semantic edges, so an edit that added one left
-  // the entry looking freshly reviewed and it never came up again.
-  const p = path.join(tmp, 'DEPS.json');
-  fs.writeFileSync(p, JSON.stringify(depsFor(), null, 2));
-  const now = '2026-08-07T12:00:00.000Z';
-  assert.strictEqual(bump('demo:demo/roots', now, p), 'bumped');
-  const after = JSON.parse(fs.readFileSync(p, 'utf8'));
-  const entry = after.targets['demo:demo/roots'];
-  assert.strictEqual(entry.last_auto_checked, now, 'the machine check was not recorded');
-  assert.strictEqual(entry.last_updated, '2026-08-01T00:00:00.000Z',
-    'the review date was overwritten, which is what blinds the audit');
-  assert.strictEqual(after.last_updated, '2026-08-01T00:00:00.000Z',
-    'the map-level review date was overwritten by an unattended write');
-  assert.deepStrictEqual(entry.depends_on, [], 'edges must never be rewritten here');
-  assert.strictEqual(after.targets['demo:demo/demo-hook'].last_auto_checked, undefined,
-    'a bump touched an entry it was not given');
-});
-
-check('an entry stays STALE to the audit after a bump', () => {
-  // The end the previous test is protecting, stated as the audit sees it.
-  const p = path.join(tmp, 'DEPS-stale.json');
-  fs.writeFileSync(p, JSON.stringify(depsFor(), null, 2));
-  bump('demo:demo/roots', '2026-08-07T12:00:00.000Z', p);
-  const entry = JSON.parse(fs.readFileSync(p, 'utf8')).targets['demo:demo/roots'];
-  const mtime = fs.statSync(rootsJs).mtimeMs;
-  assert.ok(mtime > Date.parse(entry.last_updated),
-    'the file is newer than its review date, so /audit-deps must still see it as STALE');
-});
-
-check('bump refuses to overwrite a write that landed after its read', () => {
-  // /audit-deps rewrites the whole map with the Write tool and takes no lock,
-  // so the hook cannot rely on the lock alone. If an approved edge change
-  // lands between this read and its rename, the stamp is the expendable one.
-  const p = path.join(tmp, 'DEPS-race.json');
-  fs.writeFileSync(p, JSON.stringify(depsFor(), null, 2));
-  const approved = depsFor();
-  approved.targets['demo:demo/roots'].depends_on = [
-    { target: 'demo-hook', plugin: 'demo', kind: 'hook', repo: 'demo', reason: 'approved by the user mid-bump' },
-  ];
-  const result = bump('demo:demo/roots', '2026-08-07T12:00:00.000Z', p, {
-    // Fires after bump has read the file and before it renames its replacement.
-    onBeforeWrite: () => fs.writeFileSync(p, JSON.stringify(approved, null, 2)),
-  });
-  assert.strictEqual(result, 'superseded', 'a concurrent write was clobbered instead of yielding to it');
-  const after = JSON.parse(fs.readFileSync(p, 'utf8'));
-  assert.strictEqual(after.targets['demo:demo/roots'].depends_on.length, 1,
-    'the approved edge was destroyed by the hook');
-});
-
-check('bump on an unknown key changes nothing', () => {
-  const p = path.join(tmp, 'DEPS-2.json');
-  fs.writeFileSync(p, JSON.stringify(depsFor(), null, 2));
-  assert.strictEqual(bump('demo:demo/nope', '2026-08-07T12:00:00.000Z', p), 'unchanged');
-  assert.strictEqual(JSON.parse(fs.readFileSync(p, 'utf8')).last_updated, '2026-08-01T00:00:00.000Z');
-});
-
-check('bump gives up rather than waiting out a held lock', () => {
-  const p = path.join(tmp, 'DEPS-3.json');
-  fs.writeFileSync(p, JSON.stringify(depsFor(), null, 2));
-  const lock = path.join(path.dirname(p), '.deps.lock');
-  fs.mkdirSync(lock);
-  try {
-    assert.strictEqual(bump('demo:demo/roots', '2026-08-07T12:00:00.000Z', p), 'locked');
-    assert.strictEqual(JSON.parse(fs.readFileSync(p, 'utf8')).last_updated, '2026-08-01T00:00:00.000Z');
-  } finally {
-    fs.rmSync(lock, { recursive: true, force: true });
-  }
-});
-
-check('waiting out a held lock costs almost no CPU', () => {
-  // The previous helper waited by looping on the clock, which holds a core at
-  // full load for the whole 2000ms deadline. deps-watch runs on every Write and
-  // Edit and the map is contended by design, so that landed on ordinary saves.
-  //
-  // Asserting on the code shape would not have caught it, since the spin was
-  // inside a helper whose name and comment both said it paused. This measures
-  // the thing that was actually wrong: a spin burns CPU time roughly equal to
-  // the wall time it waits, a real sleep burns almost none. The bar is set well
-  // clear of both so a slow or loaded machine cannot fail it.
-  const p = path.join(tmp, 'DEPS-5.json');
-  fs.writeFileSync(p, JSON.stringify(depsFor(), null, 2));
-  const lock = path.join(path.dirname(p), '.deps.lock');
-  fs.mkdirSync(lock);
-  try {
-    const cpuBefore = process.cpuUsage();
-    const wallBefore = Date.now();
-    assert.strictEqual(bump('demo:demo/roots', '2026-08-07T12:00:00.000Z', p), 'locked');
-    const wallMs = Date.now() - wallBefore;
-    const cpu = process.cpuUsage(cpuBefore);
-    const cpuMs = (cpu.user + cpu.system) / 1000;
-    assert.ok(wallMs > 500, `gave up after ${wallMs}ms, so it never really waited and the measurement means nothing`);
-    assert.ok(cpuMs < wallMs / 4, `waiting burned ${Math.round(cpuMs)}ms of CPU over ${wallMs}ms of waiting, which is a spin`);
-  } finally {
-    fs.rmSync(lock, { recursive: true, force: true });
-  }
-});
-
-check('bump leaves no lock behind', () => {
-  const p = path.join(tmp, 'DEPS-4.json');
-  fs.writeFileSync(p, JSON.stringify(depsFor(), null, 2));
-  bump('demo:demo/roots', '2026-08-07T12:00:00.000Z', p);
-  assert.ok(!fs.existsSync(path.join(path.dirname(p), '.deps.lock')), 'lock survived the write');
-});
-
-check('a corrupt map is survived rather than thrown on', () => {
-  const p = path.join(tmp, 'DEPS-5.json');
-  fs.writeFileSync(p, '{ not json');
-  assert.strictEqual(bump('demo:demo/roots', '2026-08-07T12:00:00.000Z', p), 'unchanged');
-});
-
-// --- lock retries always terminate ---------------------------------------
+// --- it does not write ----------------------------------------------------
 //
-// queue.js already carries this exact bug and its fix, documented at length:
-// a retry path that skipped both the deadline check and the sleep spun at full
-// CPU with no exit. This file reintroduced it on two branches. The symptom is
-// worse here than in queue.js, because readEvent clears its stdin timeout
-// before calling the handler, so nothing else stops the process either.
+// There used to be a `bump` here and about 150 lines of tests for it: it
+// stamped `last_auto_checked` onto an entry after an ordinary edit, behind a
+// lock, with a tempfile-and-rename and a superseded check so it could not
+// clobber an approved edge change. All of that was correct and none of it was
+// needed. The field's only reader, the session brief's drift line, went in
+// session 0.8.7, so the write went nowhere. Schema v5 removed the field, the
+// writer and the lock together.
+//
+// What replaces those tests is the invariant, which is stronger and much
+// cheaper to keep: this hook does not write DEPS.json. Not the review date, not
+// a machine date, not an edge, not anything. Tested end to end by running the
+// real hook over both of its branches and comparing the file byte for byte,
+// rather than by asserting the absence of a function, because the failure worth
+// catching is a future stamp added somewhere new.
 
-check('bump gives up when the lock cannot be removed, rather than spinning', () => {
-  const dir = fs.mkdtempSync(path.join(tmp, 'unremovable-'));
-  const p = path.join(dir, 'DEPS.json');
-  fs.writeFileSync(p, JSON.stringify(depsFor(), null, 2));
-  const lock = path.join(dir, '.deps.lock');
-  fs.mkdirSync(lock);
-  // Backdate the lock past LOCK_STALE_MS so takeover is attempted, then make
-  // the parent read-only so the rmSync that takeover needs always fails.
-  const old = new Date(Date.now() - 120_000);
-  fs.utimesSync(lock, old, old);
-  fs.chmodSync(dir, 0o555);
-  try {
-    const started = Date.now();
-    const result = bump('demo:demo/roots', '2026-08-07T12:00:00.000Z', p);
-    const elapsed = Date.now() - started;
-    assert.strictEqual(result, 'locked', 'a lock it cannot clear must be reported, not retried forever');
-    assert.ok(elapsed < 10_000, `acquire ran for ${elapsed}ms, which means it is spinning`);
-  } finally {
-    fs.chmodSync(dir, 0o755);
-    fs.rmSync(lock, { recursive: true, force: true });
+// Drives the real hook the way the harness does. Nothing here mocks the write
+// path, because there is not supposed to be one.
+//
+// deps-refs.js resolves the map as $HOME/.claude/build-loop/DEPS.json, so the
+// hook is pointed at a fixture by giving it a fake home. `deps` is written
+// there and returned, and the caller compares it before and after. If the
+// override ever stopped working the hook would read the real map instead, so
+// the fixture path is asserted to exist and to be the one that changed.
+function fakeHome(name, deps) {
+  const home = path.join(tmp, 'home-' + name);
+  const dir = path.join(home, '.claude', 'build-loop');
+  fs.mkdirSync(dir, { recursive: true });
+  const depsPath = path.join(dir, 'DEPS.json');
+  fs.writeFileSync(depsPath, JSON.stringify(deps, null, 2));
+  return { home, depsPath };
+}
+
+function runHook(filePath, home) {
+  const res = spawnSync(process.execPath, [HOOK], {
+    input: JSON.stringify({
+      hook_event_name: 'PostToolUse',
+      tool_name: 'Edit',
+      tool_input: { file_path: filePath },
+    }),
+    encoding: 'utf8',
+    env: { ...process.env, HOME: home },
+  });
+  return { stdout: res.stdout || '', status: res.status };
+}
+
+check('the quiet branch leaves the map byte for byte unchanged', () => {
+  // The branch that used to stamp. This is the whole point of the removal: an
+  // ordinary edit of a mapped file now costs no write at all.
+  const deps = depsFor();
+  deps.targets['demo:demo/roots'].depends_on = [];
+  const { home, depsPath } = fakeHome('quiet', deps);
+  const before = fs.readFileSync(depsPath);
+  runHook(rootsJs, home);
+  assert.deepStrictEqual(fs.readFileSync(depsPath), before,
+    'the hook wrote to DEPS.json on an edit that added no dependency');
+});
+
+check('the reporting branch leaves the map byte for byte unchanged too', () => {
+  // demo-hook calls roots with no recorded edge, so this is the branch that
+  // advises. It never wrote before and must not start.
+  const { home, depsPath } = fakeHome('report', depsFor());
+  const before = fs.readFileSync(depsPath);
+  const out = runHook(hookJs, home);
+  assert.ok(/demo:demo\/roots/.test(out.stdout),
+    'the hook reported nothing, so the fake home did not take effect and this '
+    + 'test is comparing a file the hook never opened');
+  assert.deepStrictEqual(fs.readFileSync(depsPath), before,
+    'the hook wrote to DEPS.json while reporting a missing edge');
+});
+
+check('the hook leaves no lock behind, because it takes none', () => {
+  const { home, depsPath } = fakeHome('lock', depsFor());
+  runHook(rootsJs, home);
+  assert.ok(!fs.existsSync(path.join(path.dirname(depsPath), '.deps.lock')),
+    'a lock directory appeared, so something in the hook is writing again');
+});
+
+check('deps-refs exports no writer and calls no write', () => {
+  // The module-level half. A stamp reintroduced inside deps-refs.js would be
+  // invisible to the end-to-end tests above if it were guarded by a condition
+  // they happen not to hit.
+  const refs = require(REFS);
+  for (const name of Object.keys(refs)) {
+    assert.notStrictEqual(name, 'bump', 'bump is exported again');
+  }
+  const src = fs.readFileSync(REFS, 'utf8');
+  const code = src.split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');
+  for (const call of ['writeFileSync', 'renameSync', 'mkdirSync', 'rmSync', 'appendFileSync']) {
+    assert.ok(!code.includes(`fs.${call}`),
+      `deps-refs.js calls fs.${call}, so it is writing again; it is supposed to only read`);
   }
 });
 
-check('every retry path in acquire checks the deadline', () => {
-  const src = fs.readFileSync(REFS, 'utf8');
-  const body = src.slice(src.indexOf('function acquire'), src.indexOf('function bump'));
-  const bare = body.match(/continue;/g) || [];
-  assert.strictEqual(bare.length, 0,
-    'a bare `continue` in the retry loop skips the deadline check; route every retry through one helper');
+check('the field the hook used to write is gone from the schema', () => {
+  const schema = fs.readFileSync(path.join(
+    __dirname, '..', 'plugins', 'build-loop', 'reference', 'SCHEMA-DEPS.md'), 'utf8');
+  const table = schema.slice(schema.indexOf('| Field |'), schema.indexOf('## Changelog'));
+  assert.ok(!/^\| `last_auto_checked` \|/m.test(table),
+    'last_auto_checked is defined as a field again');
+  assert.ok(/Currently 5/.test(schema),
+    'the schema version was not moved when the field was removed');
 });
 
 // --- identity uses the whole key -----------------------------------------

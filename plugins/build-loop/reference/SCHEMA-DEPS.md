@@ -22,7 +22,7 @@ There is exactly ONE `DEPS.json` for the whole build loop, not one per repositor
 
 ```json
 {
-  "$schema_version": 4,
+  "$schema_version": 5,
   "last_updated": "2026-07-27T14:30:00.000Z",
   "targets": {
     "personal:capture": {  },
@@ -36,7 +36,7 @@ Top-level fields:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `$schema_version` | int | Currently 4. Increment whenever a field is added, renamed, or removed. |
+| `$schema_version` | int | Currently 5. Increment whenever a field is added, renamed, or removed. |
 | `last_updated` | string | ISO-8601 UTC timestamp of the last write to this file. |
 | `targets` | object | Keyed by composite key, see below. One entry per thing found in any configured root. Called `skills` before v2. |
 
@@ -163,8 +163,7 @@ The general shape, outside a `plugin-repo` root:
 | `depends_on` | array | yes | Things this one depends on. Empty array if none. | See Dependency Edge Format below. |
 | `dependents` | array | yes | Things that depend on this one. Empty array if none. | See Dependency Edge Format below. |
 | `confidence` | string | yes | Overall confidence in the accuracy of this entry's map. | `high`, `medium`, or `low`. See Confidence Levels below. |
-| `last_updated` | string | yes | ISO-8601 UTC timestamp of the last time this entry was **reviewed by a person or by `/audit-deps`**. | Never written by an automatic check. See `last_auto_checked`. |
-| `last_auto_checked` | string | no | ISO-8601 UTC timestamp of the last time `deps-watch` read the file and found every reference it makes already recorded. | Added in v4. Absent until the file is next edited. |
+| `last_updated` | string | yes | ISO-8601 UTC timestamp of the last time this entry was **reviewed by a person or by `/audit-deps`**. | Never written by an automatic check. The only date an entry carries. |
 | `notes` | string | no | Free-text authoring quirks. | Use when the disk name differs from the frontmatter name, or when a dependency was uncertain. Not a structured field. |
 
 ---
@@ -226,7 +225,13 @@ A dependency exists between A and B when any of these is true:
 
 Crossing kinds is normal and is the case most often missed. A hook that writes a file a skill later reads is a real edge in both directions, and nothing about either file mentions the other.
 
-**Transitive dependencies ARE tracked.** If A depends on B and B depends on C, then A appears in C's `dependents`. Do not stop at direct relationships.
+**`dependents` is generated from direct edges only.** If A depends on B, A appears in B's `dependents`. If A depends on B and B depends on C, A does **not** get written into C's `dependents`. Reachability through a chain is derived when somebody needs it, not stored.
+
+This used to say the opposite, that transitive dependents are tracked and not to stop at direct relationships. Nothing ever implemented it, so it was a rule the map did not honour for as long as it existed. Settled on 2026-08-15 in favour of direct-only, per queue entry `2026-08-11T18-28-39-audit-deps`, on cost: `/flag-issue` writes one dep-review per dependent, so storing the closure would fan reviews across most of a repository every time a shared module was corrected. Six near-identical dep-reviews had already been called too many.
+
+**A `dependents` row that is explained only by a chain is still valid, and is never one-sided.** The two rules are separate and it matters. Generation is direct-only; acceptance is not. Somebody may write a chain-explained row by hand, and treating it as broken would invite `/audit-deps` to "repair" it by inventing a direct edge that the map does not intend. `/audit-deps` Step 3 walks forward edges transitively before calling anything one-sided, and that is deliberate.
+
+Measured against the live map on 2026-08-15: 271 `dependents` rows, all 271 explained by a direct edge, none transitive-only and none one-sided. So the change reclassifies nothing today. An earlier count on 2026-08-11 found 3 transitive-only and 99 one-sided; those were resolved by the audit run on 2026-08-15, not by this change.
 
 ---
 
@@ -246,32 +251,36 @@ When something depends on infrastructure, record it in `notes` as free text. Nev
 
 ---
 
-## Two Dates, and Why They Are Not One
+## One Date, and the Second One That Was Removed
 
-`last_updated` is a review date. `last_auto_checked` is a machine check. They
-answer different questions and a reader that conflates them goes wrong in a way
-nothing reports.
+`last_updated` is a review date, and it is the only date an entry carries. It
+means a person or `/audit-deps` judged these edges correct. `/audit-deps` reads
+it, comparing against the file's modification time to decide an entry is STALE
+and may need `depends_on` re-inferred.
 
-| | `last_updated` | `last_auto_checked` |
-|---|---|---|
-| Written by | a person, or `/audit-deps` | `deps-watch`, unattended |
-| Means | these edges were judged correct | every reference this file makes is already recorded |
-| Read by | `/audit-deps`, to decide an entry is STALE and may need `depends_on` re-inferred | nothing, since session 0.8.7 |
+**Nothing automatic may write it.** An unattended check reads what a file
+mechanically calls. That cannot see a semantic edge, one thing reading a file
+another writes, so an edit that added one would leave the entry looking freshly
+reviewed and it would never come up for review again. This is not hypothetical:
+`deps-watch` stamped `last_updated` until v4 and emptied the stale bucket
+silently.
 
-**`last_auto_checked` currently has no reader, and that row is not a mistake.**
-The session brief was its only one. It compared the field against the file's
-modification time and raised a drift warning, and session 0.8.7 removed that
-warning: on 2026-08-15 it was reporting 82 of 127 entries as changed with
-nothing actually missing, because `last_updated` is never bumped by machine, so
-a reviewed-and-since-edited entry counted as drifted forever. `/audit-deps`
-compares against `last_updated` and its skill says explicitly never to compare
-against this one, so the field is now written and read by nothing.
+**There used to be a second date, `last_auto_checked`, and it was removed in
+v5.** v4 added it so that an unattended check had somewhere to write that was
+not the review date, which fixed the problem above. Its only reader was the
+session brief's drift warning, and session 0.8.7 removed that warning: it was
+reporting 82 of 127 entries as changed with nothing actually missing, because
+`last_updated` is never bumped by machine, so a reviewed-and-since-edited entry
+counted as drifted forever. That left the field written by one hook and read by
+nothing.
 
-Whether `deps-watch` should go on writing it is an open question, filed as queue
-entry `2026-08-15T19-17-34-deps-watch`. It is recorded here rather than quietly
-left, because a field with a writer and no reader looks like an oversight to the
-next person and they will either delete it or start reading it, and both are
-decisions worth making deliberately.
+Removed rather than kept, on 2026-08-15, per queue entry
+`2026-08-15T19-17-34-deps-watch`. The field, its writer, and the second lock
+implementation that existed only to guard that one write all came out together.
+`deps-watch` is now read-only and warns in the conversation instead.
+
+**A map written before v5 may still carry the field.** It is ignored. The next
+`/audit-deps` run drops it, and nothing reads it in the meantime.
 
 The distinction is not stylistic. `deps-watch` can only see mechanical
 references: a `require()`, a fenced `scripts/<name>.js`, a `hooks.json`
@@ -309,6 +318,7 @@ Everything found in a configured root gets an entry, including standalone things
 
 | Version | Date | Change |
 |---------|------|--------|
+| v5 | 2026-08-15 | `last_auto_checked` removed: field, writer and the second lock implementation that guarded its one write. Its only reader, the session brief's drift line, was removed in session 0.8.7, leaving it written by `deps-watch` and read by nothing. `deps-watch` is now read-only. In the same change, `dependents` became direct-only by definition rather than by accident, after the transitive rule sat unimplemented since v1. A pre-v5 map needs no migration: the extra field is ignored and dropped on the next `/audit-deps` write, and no `dependents` row changes meaning, since a chain-explained row is still valid. |
 | v1 | 2026-04-23 | Initial schema. One map across all repositories, composite keys. |
 | v2 | 2026-07-27 | The map covers anything you build, not only skills. Top-level `skills` becomes `targets`, entry and edge field `skill` becomes `target`, and `kind` is added to both. Readers map the v1 names at read time, so a v1 file keeps working until `/audit-deps` next writes. |
 | v4 | 2026-08-08 | `last_auto_checked` added, so an unattended check stops overwriting a review date. `deps-watch` was stamping `last_updated` after any edit that added no new dependency, and that is the field `/audit-deps` compares against the file mtime to decide an entry is STALE. Since extraction cannot see a semantic edge, an edit that added one left the entry looking freshly reviewed and it never came up for review again. Readers of older maps need no change: the field is simply absent. |

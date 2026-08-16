@@ -41,9 +41,11 @@
 //          importing it, so `const HOOK = path.join(__dirname, '..', 'plugins',
 //          'guardrails', 'hooks', 'bash-guard.js')` is the only place the
 //          dependency is written down. Reading only require() left 12 of the 98
-//          mapped entries with nothing to find, and an empty result is stamped
-//          as confirmed, so the suites that reach across the most plugins were
-//          the ones this hook silently did nothing for.
+//          mapped entries with nothing to find, and nothing found means nothing
+//          reported, so the suites that reach across the most plugins were the
+//          ones this hook silently did nothing for. That used to be worse: an
+//          empty result was also stamped as confirmed. The stamp went in schema
+//          v5, so the cost now is a missing report rather than a false record.
 //   .md    scripts/<name>.js appearing inside a fenced code block, which is how
 //          a skill invokes one. Prose is excluded on purpose. queue.js mentions
 //          roots.js in a line comment and does not call it; matching that would
@@ -385,133 +387,37 @@ function unrecorded(deps, entry, refPaths, home = os.homedir()) {
   return out;
 }
 
-// --- writing -------------------------------------------------------------
+// --- no writing ------------------------------------------------------------
 //
-// Three sessions run against this machine at once, and /audit-deps rewrites the
-// whole file while this bumps one field of it. A lock directory is the same
-// primitive queue.js uses and is atomic on every filesystem that matters; a
-// stale one is taken over rather than deadlocked on, because a map that cannot
-// be written is worse than one written a second late.
-
-const LOCK_STALE_MS = 30_000;
-const LOCK_WAIT_MS = 2_000;
-const LOCK_POLL_MS = 25;
-
-// Blocking sleep, the same one queue.js uses and for the same reason: this
-// process has nothing else to do while it waits, and the alternative is an
-// async rewrite of a hook whose whole job is a short critical section.
+// THIS FILE NEVER WRITES DEPS.json. It reads the map and reports; recording an
+// edge is /audit-deps's job, behind its approval gate.
 //
-// It has to be a real sleep rather than a loop on the clock. A loop holds a
-// core at full load for the entire wait, and this runs on every Write and Edit
-// with three sessions contending for the same map, so the cost lands on
-// ordinary saves. An earlier version of this helper span, and the comment below
-// claimed parity with queue.js while queue.js was already parking the thread.
-function sleep(ms) {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-}
-
-function acquire(lockPath) {
-  const deadline = Date.now() + LOCK_WAIT_MS;
-
-  // Every path that goes round again comes through here, so there is no way to
-  // retry without both checking the deadline and pausing first.
-  //
-  // queue.js carries the same helper, down to the blocking sleep, because it
-  // hit this exact fault first: a retry that jumped back to the top skipped
-  // both checks and the loop spun at full CPU with no exit. This file
-  // reproduced it on two branches, and a lock directory that cannot be removed,
-  // one owned by another user or sitting under a read-only parent, is enough to
-  // trigger it.
-  //
-  // It is worse here than in queue.js. hook-io.js clears its stdin timeout
-  // before calling the handler, so a spinning hook has nothing else to stop it:
-  // every file edit would leave a runaway process behind.
-  const waitOrGiveUp = () => {
-    if (Date.now() > deadline) return false;
-    sleep(LOCK_POLL_MS);
-    return true;
-  };
-
-  for (;;) {
-    try {
-      fs.mkdirSync(lockPath);
-      return true;
-    } catch (err) {
-      if (err.code !== 'EEXIST') return false;
-      let age = null;
-      try { age = Date.now() - fs.statSync(lockPath).mtimeMs; } catch (_) { /* unreadable; treat as fresh */ }
-      if (age !== null && age > LOCK_STALE_MS) {
-        try { fs.rmSync(lockPath, { recursive: true, force: true }); }
-        catch (_) { /* cannot clear it, so fall through and let the deadline end this */ }
-      }
-      if (!waitOrGiveUp()) return false;
-    }
-  }
-}
-
-// Records that this entry was confirmed against the file as it now stands.
-// Returns 'bumped', 'unchanged', 'locked', or 'superseded'.
+// There used to be a `bump` here, stamping `last_auto_checked` onto an entry
+// after an ordinary edit, plus a second lock implementation to guard that one
+// write. The field had no reader: the session brief was its only consumer and
+// that comparison was removed in session 0.8.7, while /audit-deps reads
+// `last_updated` and its skill says explicitly never to compare against the
+// other one. Removed 2026-08-15 rather than kept and re-justified, because a
+// field with a writer and no reader is read by the next person as either an
+// oversight to delete or a signal to start consuming, and both guesses are
+// wrong. Recorded on queue entry 2026-08-15T19-17-34-deps-watch.
 //
-// IT WRITES `last_auto_checked`, NEVER `last_updated`. Those are two different
-// dates and conflating them broke a second reader. `last_updated` is the human
-// and audit review date: /audit-deps compares it against the file's mtime to
-// decide an entry is STALE and may need its edges re-inferred, and that skill's
-// own failure handling says never to rewrite it unless content actually
-// changed. Stamping it here emptied that bucket silently. Extraction cannot see
-// a semantic edge, one thing reading a file another writes, so an edit that
-// added one left the entry looking freshly reviewed and it never came up again.
-// The map-level `last_updated` is left alone for the same reason: an unattended
-// machine check is not a revision of the map.
+// Two things went with it and neither is a loss. The lock directory here was a
+// second copy of queue.js's, which is the duplication queue entry
+// 2026-08-08T02-20-54-deps-refs was raised about; one implementation is left
+// rather than two that can drift. And the hook no longer touches the map on
+// every Write and Edit, so ordinary saves stop contending with /audit-deps for
+// the same file.
 //
-// NOTHING READS `last_auto_checked` AS OF SESSION 0.8.7. The session brief was
-// its only reader and that comparison is gone, while /audit-deps reads
-// `last_updated` and its skill says explicitly never to compare against this
-// one. So this stamp currently goes nowhere. Whether to keep writing it is a
-// real decision rather than a tidy-up, and it is filed as queue entry
-// 2026-08-15T19-17-34-deps-watch. Recorded at the write itself, because a field
-// with a writer and no reader reads as an oversight to the next person, and
-// they will either delete it or start reading it without knowing either was a
-// choice. Everything above about never touching `last_updated` still applies
-// whichever way that goes.
-//
-// `onBeforeWrite` exists for the race test below and is not used in production.
-function bump(key, nowIso, depsPath = DEPS_PATH, { onBeforeWrite } = {}) {
-  const lockPath = path.join(path.dirname(depsPath), '.deps.lock');
-  if (!acquire(lockPath)) return 'locked';
-  try {
-    // The lock only stops another hook. /audit-deps rewrites the whole map
-    // through the Write tool and takes no lock at all, so if an approved edge
-    // change lands between this read and the rename below, renaming would
-    // destroy it. Between a machine stamp and the edges a user just approved,
-    // the stamp is the expendable one, so compare and yield rather than write.
-    const before = fs.statSync(depsPath);
-    const raw = fs.readFileSync(depsPath, 'utf8');
-    const deps = JSON.parse(raw);
-    const targets = deps.targets || deps.skills;
-    const entry = targets && targets[key];
-    if (!entry) return 'unchanged';
-    if (entry.last_auto_checked === nowIso) return 'unchanged';
-    entry.last_auto_checked = nowIso;
-
-    if (onBeforeWrite) onBeforeWrite();
-
-    const after = fs.statSync(depsPath);
-    if (after.mtimeMs !== before.mtimeMs || after.size !== before.size) return 'superseded';
-
-    const tmp = `${depsPath}.${process.pid}.tmp`;
-    fs.writeFileSync(tmp, `${JSON.stringify(deps, null, 2)}\n`);
-    fs.renameSync(tmp, depsPath);       // atomic replace, never a partial file
-    return 'bumped';
-  } catch (_) {
-    return 'unchanged';
-  } finally {
-    try { fs.rmSync(lockPath, { recursive: true, force: true }); } catch (_) { /* nothing to undo */ }
-  }
-}
+// `last_updated` was never written here and that reasoning still stands
+// wherever a write is next considered: it is the date a person or /audit-deps
+// judged the edges correct, and /audit-deps compares it against the file's
+// mtime to decide an entry is stale. Extraction cannot see a semantic edge, one
+// thing reading a file another writes, so stamping it from an unattended check
+// leaves an entry looking freshly reviewed and it never comes up again.
 
 module.exports = {
   DEPS_PATH,
-  bump,
   codeBlocks,
   entryByPath,
   expandHome,

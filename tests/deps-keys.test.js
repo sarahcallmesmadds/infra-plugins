@@ -53,7 +53,7 @@ const SKILLS = {
 // should be noticed. So the count is derived AND compared, and this constant
 // has to move when a check is added or removed. Forgetting now fails the suite
 // instead of printing a smaller number nobody reads.
-const EXPECTED_CHECKS = 30;
+const EXPECTED_CHECKS = 31;
 
 let failed = 0;
 let ran = 0;
@@ -403,16 +403,20 @@ check('audit-deps does not prune back-edges without being told to', () => {
 // The bucket is found in Step 3 and put to the user in Step 5, with everything
 // else. Asking in Step 6 would be a second approval for a write they already
 // approved, which is the shape Step 5 exists to prevent.
-// The schema tracks transitive dependents on purpose, so A's depends_on names B
-// and not C while A still appears in C's dependents. Testing for a missing
-// DIRECT edge therefore flags every healthy transitive row, and `add-missing`
-// would then invent a direct A -> C edge the schema does not intend.
+// Schema v5 made `dependents` generated from direct edges only, and the obvious
+// next simplification is to make the one-sided test direct-only to match. It is
+// wrong. Generation and acceptance are separate: a person can hand-write a row
+// that a chain explains, A's depends_on naming B and not C while A sits in C's
+// dependents. A direct-edge test flags that healthy row, and `add-missing` then
+// invents a direct A -> C edge the schema does not intend. The last assertion
+// pins the sentence that says the two rules are separate, because without it
+// the walk reads as leftovers from the transitive era and gets deleted.
 check('one-sided means no path at all, not no direct edge', () => {
   const skill = SKILLS['audit-deps'];
   assert.ok(
     /no `depends_on` path to T at all/.test(skill),
     'audit-deps defines one-sided by a missing direct edge, which flags every '
-    + 'legitimate transitive back-edge as broken'
+    + 'legitimate chain-explained back-edge as broken'
   );
   assert.ok(
     /walk its `depends_on` transitively/.test(skill),
@@ -420,9 +424,29 @@ check('one-sided means no path at all, not no direct edge', () => {
     + 'direct edges and inflates the bucket'
   );
   assert.ok(
-    /SCHEMA-DEPS\.md tracks transitive dependencies on purpose/.test(skill),
-    'the reason the direct-edge test is wrong is not written down, so it reads '
-    + 'as an arbitrary refinement and gets simplified back'
+    /Generation is direct-only\. Acceptance is not\./.test(skill),
+    'the reason the direct-edge test is still wrong after v5 is not written '
+    + 'down, so the walk reads as dead weight and gets simplified back'
+  );
+});
+
+// v5 settled that dependents are generated direct-only. The schema said the
+// opposite from v1 and nothing ever implemented it, so the risk being pinned
+// here is the rule drifting back into the schema and quietly re-authorising a
+// closure that would fan one dep-review per reachable dependent.
+check('the schema says dependents are generated from direct edges only', () => {
+  assert.ok(
+    /`dependents` is generated from direct edges only/.test(SCHEMA),
+    'SCHEMA-DEPS.md no longer states the direct-only generation rule'
+  );
+  assert.ok(
+    !/Transitive dependencies ARE tracked/.test(SCHEMA),
+    'the retracted transitive-generation rule is back in SCHEMA-DEPS.md'
+  );
+  assert.ok(
+    /explained only by a chain is still valid, and is never one-sided/.test(SCHEMA),
+    'the schema drops the direct-only rule without saying a chain-explained row '
+    + 'is still valid, which is what stops /audit-deps fabricating an edge'
   );
 });
 
