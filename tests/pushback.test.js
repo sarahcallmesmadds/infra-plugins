@@ -93,6 +93,7 @@ check('every injected wrapper is excluded', () => {
     '<command-message>session:wrap</command-message>',
     '<command-name>/wrap</command-name>',
     '<local-command-stdout>done</local-command-stdout>',
+    '<local-command-stderr>failed</local-command-stderr>',
     '<local-command-caveat>Caveat: ...</local-command-caveat>',
     '<bash-input> git status</bash-input>',
     '<bash-stdout>clean</bash-stdout>',
@@ -379,6 +380,24 @@ check('selftest reports that nothing was measured when the labelled set is absen
   const r = P.selftest(path.join(tmp, 'does-not-exist.json'));
   assert.strictEqual(r.ok, false);
   assert.match(r.reason, /Nothing was measured/);
+});
+
+check('selftest reports malformed JSON without throwing a stack trace', () => {
+  const f = path.join(tmp, 'malformed-fixture.json');
+  fs.writeFileSync(f, '[{"text":"yes",]');
+  const r = P.selftest(f);
+  assert.strictEqual(r.ok, false);
+  assert.match(r.reason, /could not read labelled set/);
+});
+
+check('selftest names the invalid entry and required fixture fields', () => {
+  const f = path.join(tmp, 'invalid-fixture.json');
+  fs.writeFileSync(f, JSON.stringify([{ pushback: true }]));
+  const r = P.selftest(f);
+  assert.strictEqual(r.ok, false);
+  assert.match(r.reason, /entry 1/);
+  assert.match(r.reason, /"text"/);
+  assert.match(r.reason, /"pushback"/);
 });
 
 check('selftest counts catches and false positives against a labelled set', () => {

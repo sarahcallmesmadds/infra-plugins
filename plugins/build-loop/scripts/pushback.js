@@ -118,7 +118,7 @@ function userText(record) {
 
   const content = record.message && record.message.content;
   const injected = [
-    '<command-message>', '<command-name>', '<local-command-stdout>',
+    '<command-message>', '<command-name>', '<local-command-stdout>', '<local-command-stderr>',
     '<local-command-caveat>', '<bash-input>', '<bash-stdout>', '<bash-stderr>',
     '<system-reminder>', '[Request interrupted', 'Caveat:', 'Stop hook feedback:',
     'Base directory for this skill:',
@@ -313,7 +313,27 @@ function selftest(fixturePath) {
   if (!fs.existsSync(file)) {
     return { ok: false, reason: `no labelled set at ${file}. Nothing was measured.` };
   }
-  const cases = JSON.parse(fs.readFileSync(file, 'utf8'));
+  let cases;
+  try {
+    cases = JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch (error) {
+    return { ok: false, reason: `could not read labelled set at ${file}: ${error.message}` };
+  }
+  if (!Array.isArray(cases)) {
+    return { ok: false, reason: `labelled set at ${file} must be a JSON array.` };
+  }
+  for (let i = 0; i < cases.length; i += 1) {
+    const c = cases[i];
+    if (!c || typeof c !== 'object' || Array.isArray(c)
+      || typeof c.text !== 'string' || !c.text.trim()
+      || typeof c.pushback !== 'boolean') {
+      return {
+        ok: false,
+        reason: `labelled set entry ${i + 1} must be an object with non-empty "text" `
+          + 'and boolean "pushback" fields.',
+      };
+    }
+  }
   let caught = 0;
   let missed = [];
   let wrong = [];
