@@ -500,6 +500,17 @@ often carries prose after the path. A trailing parenthetical is stripped only
 when the whole string is not a directory that exists, so a project whose folder
 name genuinely contains a bracket is not truncated into its parent.
 
+**A constraint holds nothing that changes between sessions.** No running count,
+no session number, no date. Matching is on the whole text, so a value that moves
+makes each session's copy a different constraint: carrying it verbatim preserves
+a stale figure, correcting it forks a near duplicate, and there is no third
+option. Measured on 2026-08-15, one rule about where handoffs file was live in
+five numbered wordings at once, from "Sixth" to "Tenth session running", with
+five retirement lines written chasing four of them, because retiring one exact
+quote leaves the rest in force. Where the recurrence is itself the point, count
+how many handoffs carry the constraint rather than storing that number inside
+it.
+
 **Retiring one has to be written down.** A constraint that vanishes with no line
 explaining why is indistinguishable from one that was forgotten, so removal is
 recorded rather than implied:

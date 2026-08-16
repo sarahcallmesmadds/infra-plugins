@@ -104,6 +104,24 @@ inherits from its main checkout.
   nothing.** Both mean the list is not trustworthy as given. Resolve it before
   writing rather than carrying a list you have been told is wrong.
 
+**Nothing inside a constraint may change between sessions.** No running count,
+no session number, no date, no "third time this has come up". This governs
+every route a constraint reaches the handoff by: carried from the command,
+proposed out of an older handoff, or written for the first time in this
+session. Matching is on the whole text, so a value that moves makes every
+session's copy a different constraint: carrying it verbatim preserves a stale
+figure, correcting it forks a near duplicate, and there is no third option.
+Measured on 2026-08-15, one rule about where handoffs file was live in five
+numbered wordings at once, ending "Sixth" through "Tenth session running", and
+five retirement lines had been written chasing four of them. Retiring one
+leaves the rest in force, because an exact quote is exact.
+
+Where the recurrence is itself the point, count it rather than storing it. How
+many handoffs carry a constraint is a search anyone can run, and what a rising
+count is really reporting, a tool that keeps proposing the wrong answer,
+belongs in the bug queue where it can be fixed rather than in a number that
+records it being tolerated.
+
 **Dropping one requires saying so.** If this session retired a constraint,
 record it as retired with the reason:
 

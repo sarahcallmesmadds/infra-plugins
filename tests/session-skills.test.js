@@ -176,6 +176,34 @@ check('the template does not tell the writer to annotate a constraint', () => {
     'wrap no longer says the bullet carries the constraint alone');
 });
 
+check('wrap forbids a value inside a constraint that changes between sessions', () => {
+  // A running count inside the text forks a new constraint at every increment,
+  // because matching is on the whole text. Measured on 2026-08-15: five
+  // numbered wordings of one rule live at once, from "Sixth" to "Tenth session
+  // running", with five retirement lines chasing four of them. Carrying it
+  // verbatim preserves a stale figure and correcting it produces a near
+  // duplicate, and there is no third option.
+  const text = skill('wrap');
+  assert.match(
+    text,
+    /^\*\*Nothing inside a constraint may change between sessions\.\*\*/m,
+    'wrap no longer forbids a changing value inside constraint text, so a running count goes back in and forks the constraint every session'
+  );
+  // Top level, not indented under the "It lists constraints" bullet. This is
+  // authoring guidance, so it has to reach a constraint written for the first
+  // time and one proposed out of an older handoff, not only one carried
+  // forward. Nested under that bullet it reads as carry-forward only. The
+  // anchored match above is what proves it is unindented; this pins that it is
+  // still inside the constraints step rather than adrift elsewhere.
+  const ruleAt = text.indexOf('**Nothing inside a constraint may change between sessions.**');
+  const dropAt = text.indexOf('**Dropping one requires saying so.**');
+  assert.ok(dropAt !== -1, 'the retirement rule is gone, so this check cannot locate the constraints step');
+  assert.ok(
+    ruleAt < dropAt,
+    'the changing-value rule moved out of the constraints step, where a writer looking up how to word one will not meet it'
+  );
+});
+
 check('no line of the template parses as real content', () => {
   // The live placeholder was excluded from the start. The retirement placeholder
   // beside it was not, and parsed as a retirement targeting "[the constraint,
