@@ -477,6 +477,23 @@ const COMMANDS = {
         '',
       );
     }
+    // Said before the list for the same reason as the others: two wordings of
+    // one rule make the list below longer than the number of rules in it, and a
+    // caveat printed underneath is one nobody reads.
+    //
+    // It names what differs rather than printing both constraints in full. The
+    // pair is nearly identical by definition, so two near-identical paragraphs
+    // is the least readable way to show a difference of one word.
+    for (const p of r.nearDuplicates || []) {
+      warnings.push(
+        'Two constraints look like one rule in two wordings, differing only here:',
+        `  "${p.a.differs}"  (from ${p.a.from})`,
+        `  "${p.b.differs}"  (from ${p.b.from})`,
+        '  Both are live, so retiring one by quoting it leaves the other in force.',
+        '  A constraint holds nothing that changes between sessions: no count, no date.',
+        '',
+      );
+    }
 
     if (!r.constraints.length) {
       const matched = r.scanned.filter((s) => s.matched);
