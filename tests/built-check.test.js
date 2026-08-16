@@ -229,5 +229,20 @@ check('coverage failures become an explicit unknown state', () => {
   assert.match(text, /not a string or contains only whitespace[\s\S]{0,220}mark its coverage unknown/);
 });
 
-console.log(`\n13 checks, ${failed} failed`);
+check('Step 3 requires all four evidence sources', () => {
+  assert.match(text, /Collect from four places\. Gather all four before judging/);
+  for (const label of ['3a', '3b', '3c', '3d']) {
+    assert.match(text, new RegExp(`### ${label}\\b`), `Step ${label} is missing`);
+  }
+});
+
+check('an explicit destination root overrides generic kind scoping', () => {
+  assert.match(text, /An explicit `destination_root`\s+overrides that filter/);
+  assert.match(text, /also search that root using the item's convention even when the root's configured\s+kind differs/);
+  assert.match(text, /`covered` answer mean the destination was actually searched/);
+  assert.match(text, /For kind `other`[\s\S]{0,180}exact `<slug>` or `<slug>\.\*` name/);
+  assert.match(text, /Do not infer this override from `where`/);
+});
+
+console.log(`\n15 checks, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

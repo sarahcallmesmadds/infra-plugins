@@ -105,7 +105,7 @@ Both faults land on the same result: an empty window that reads exactly like a c
 
 ## Step 3 — Gather evidence
 
-Collect from three places. Gather all three before judging anything, because the strongest evidence for a given item is often not in the first place you look.
+Collect from four places. Gather all four before judging anything, because the strongest evidence for a given item is often not in the first place you look.
 
 ### 3a — The git log of every configured root
 
@@ -161,6 +161,18 @@ Then, for each open item, check whether something with its name exists in a plau
 - `plugin`: `<root>/plugins/<slug>/` containing a `.claude-plugin` directory
 - `script`: `<root>/<slug>` and `<root>/<slug>.*`, in roots of kind `hook` or `script`, plus the `plugin-repo` search below. A script inside a plugin lives in `scripts/` and is findable, so this is not a "no convention" case.
 - `other`: no convention to guess from, so the explicit-path rule above is the only disk evidence there is. When the text names no path, say that disk evidence is not available and rely on 3a and 3c.
+
+The kind filters above choose the generic roots. An explicit `destination_root`
+overrides that filter: when it exactly names a configured root that exists,
+also search that root using the item's convention even when the root's configured
+kind differs. For example, a `command` item naming a root of kind `skill` still
+gets the `<root>/<slug>.md` command check there. This is what makes Step 3d's
+`covered` answer mean the destination was actually searched rather than merely
+that its directory exists. For kind `other`, which has no generic convention,
+search the explicit root recursively for an exact `<slug>` or `<slug>.*` name;
+the structured root makes that bounded search possible without guessing across
+every configured location. Do not infer this override from `where`; only the
+structured field can select it.
 
 Also search every root of kind `plugin-repo`, whatever the item's `kind`, since that layout nests one level deeper:
 
