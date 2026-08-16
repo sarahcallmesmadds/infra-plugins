@@ -36,7 +36,64 @@ function bashGrantPrefixes(line) {
 }
 
 function commandIsGranted(command, grants) {
-  return grants.some((grant) => command === grant || command.startsWith(`${grant} `));
+  return grants.some((grant) => {
+    const pattern = grant.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
+    return new RegExp(`^${pattern}(?:$| )`).test(command);
+  });
+}
+
+function commandForGrantCheck(command) {
+  const token = (command.match(/^(?:"[^"]*"|'[^']*'|[^\s"'])+/) || [])[0];
+  if (!token) return null;
+  // Preserve the path around an environment expansion. Blanking the complete
+  // quoted token turns "${ROOT}/scripts/cli.js" into "" and drops the command
+  // from the audit, while removing only the expansion leaves /scripts/cli.js.
+  const normalizedToken = token
+    .replace(/\$\{[A-Za-z_][A-Za-z0-9_]*\}/g, '')
+    .replace(/\$[A-Za-z_][A-Za-z0-9_]*/g, '');
+  const executable = normalizedToken.replace(/["']/g, '').split('/').pop();
+  if (!/^[a-zA-Z][a-zA-Z0-9_.-]*$/.test(executable)) return null;
+  const args = command.slice(token.length)
+    .replace(/'[^']*'/g, "''")
+    .replace(/"[^"]*"/g, '""');
+  return {
+    command: `${normalizedToken}${args}`,
+    executable,
+  };
+}
+
+function shellSegments(block) {
+  // Remove heredocs first, then split only on shell operators outside quotes.
+  // Keeping quoted text intact lets commandForGrantCheck recover a fully
+  // quoted executable path without treating separators in arguments as shell.
+  const body = block
+    .replace(/<<-?\s*'?([A-Za-z_][A-Za-z0-9_]*)'?\n[\s\S]*?\n\1\n?/g, '\n');
+  return body.split('\n').flatMap((raw) => {
+    const stripped = raw.trim();
+    if (!stripped || stripped.startsWith('#')) return [];
+    const segments = [];
+    let start = 0;
+    let quote = null;
+    for (let i = 0; i < stripped.length; i += 1) {
+      const char = stripped[i];
+      if (quote) {
+        if (char === quote && stripped[i - 1] !== '\\') quote = null;
+        continue;
+      }
+      if (char === '"' || char === "'") {
+        quote = char;
+        continue;
+      }
+      const width = stripped.startsWith('&&', i) || stripped.startsWith('||', i) ? 2
+        : (char === '|' || char === ';' ? 1 : 0);
+      if (!width) continue;
+      segments.push(stripped.slice(start, i).trim());
+      i += width - 1;
+      start = i + 1;
+    }
+    segments.push(stripped.slice(start).trim());
+    return segments.filter(Boolean);
+  });
 }
 
 let failed = 0;
@@ -196,6 +253,12 @@ check('no skill names a shell command its allowed-tools does not grant', () => {
   const BUILTIN = new Set([
     'for', 'do', 'done', 'if', 'then', 'fi', 'else', 'elif', 'while', 'case',
     'esac', 'echo', 'cd', 'exit', 'set', 'local', 'read', 'printf', 'return',
+    // Assignment-shaped builtins. The comment above says builtins are not
+    // commands a permission list names, and these are builtins, so their
+    // absence was an oversight rather than a decision. `export FOO=1` in
+    // status-bar read as a command called export and would have forced a
+    // grant for it.
+    'export', 'unset', 'shift', 'trap', 'eval', 'source', 'true', 'false',
   ]);
 
   const offenders = [];
@@ -212,25 +275,82 @@ check('no skill names a shell command its allowed-tools does not grant', () => {
 
     const used = new Set();
     for (const block of text.matchAll(/```bash\n([\s\S]*?)```/g)) {
+      const lead = text.slice(Math.max(0, block.index - 80), block.index);
+      // Some dynamic absolute paths cannot be expressed as a portable scoped
+      // permission. They must say explicitly that normal approval is expected
+      // instead of widening allowed-tools or silently bypassing this audit.
+      if (/<!-- bash-approval-required -->\s*$/.test(lead)) continue;
       // Strip quoted strings first, or the contents of a `node -e '...'`
       // program read as commands. `const` is not a shell command.
-      const body = block[1].replace(/'[^']*'/g, "''").replace(/"[^"]*"/g, '""');
-      for (const raw of body.split('\n')) {
-        const stripped = raw.trim();
-        if (!stripped || stripped.startsWith('#')) continue;
-        for (const seg of stripped.split(/\|\||&&|\||;/)) {
-          const command = seg.trim();
-          const word = command.split(/\s/)[0];
-          if (!word || BUILTIN.has(word)) continue;
-          if (!/^[a-zA-Z][a-zA-Z0-9_.-]*$/.test(word)) continue;
-          used.add(command);
-        }
+      // Heredoc bodies go first, for the reason the quote stripping below
+      // already gives: a program handed to another interpreter is not shell.
+      // `python3 - <<'PY'` in find-skill put `import`, `CONFIG` and `rel` into
+      // the used set, and stripping quotes cannot reach them because a heredoc
+      // is not quoted.
+      for (const command of shellSegments(block[1])) {
+        const parsed = commandForGrantCheck(command);
+        if (!parsed || BUILTIN.has(parsed.executable)) continue;
+        used.add(parsed);
       }
     }
-    const missing = [...used].filter((command) => !commandIsGranted(command, granted)).sort();
+    const missing = [...used]
+      .filter(({ command }) => !commandIsGranted(command, granted))
+      .map(({ command, executable }) => command.startsWith(executable) ? command : `${executable} (${command})`)
+      .sort();
     if (missing.length) offenders.push(`${name}: runs ${missing.join(', ')} but grants ${granted.sort().join(', ') || '(nothing)'}`);
   }
   assert.deepStrictEqual(offenders, [], `\n  ${offenders.join('\n  ')}`);
+});
+
+check('quoted path commands remain visible to the grant check', () => {
+  const parsed = commandForGrantCheck(
+    '"${CLAUDE_PLUGIN_ROOT}"/bin/hook-node "${CLAUDE_PLUGIN_ROOT}"/statusline/install.js'
+  );
+  assert.deepStrictEqual(parsed, {
+    command: '""/bin/hook-node ""/statusline/install.js',
+    executable: 'hook-node',
+  });
+  assert.ok(!commandIsGranted(parsed.command, ['node']));
+
+  const fullyQuoted = commandForGrantCheck(
+    '"${CLAUDE_PLUGIN_ROOT}/scripts/cli.js" archive'
+  );
+  assert.deepStrictEqual(fullyQuoted, {
+    command: '"/scripts/cli.js" archive',
+    executable: 'cli.js',
+  });
+});
+
+check('status-bar scopes ls and marks its dynamic launcher as approval-required', () => {
+  const statusBar = fs.readFileSync(
+    path.join(__dirname, '..', 'plugins', 'session', 'skills', 'status-bar', 'SKILL.md'),
+    'utf8'
+  );
+  const frontmatter = statusBar.slice(0, statusBar.indexOf('---', 4));
+  assert.match(frontmatter, /Bash\(ls:\*\)/);
+  assert.doesNotMatch(frontmatter, /Bash\(\*\/bin\/hook-node:\*\)/);
+  assert.match(statusBar, /<!-- bash-approval-required -->\s*```bash\n"\$\{CLAUDE_PLUGIN_ROOT\}"\/bin\/hook-node/);
+});
+
+check('quoted separators do not invent shell commands', () => {
+  assert.deepStrictEqual(shellSegments('git commit -m "add; stuff | more"\n'), [
+    'git commit -m "add; stuff | more"',
+  ]);
+});
+
+check('skills that require in-place edits pre-approve Edit', () => {
+  const files = [
+    'plugins/session/skills/core-tools/SKILL.md',
+    'plugins/session/skills/status-bar/SKILL.md',
+    'plugins/session/skills/wrap/SKILL.md',
+    'plugins/slop-check/skills/slop-check/SKILL.md',
+    'plugins/build-loop/skills/devin-review-response/SKILL.md',
+  ];
+  for (const relative of files) {
+    const body = fs.readFileSync(path.join(__dirname, '..', relative), 'utf8');
+    const frontmatter = body.slice(0, body.indexOf('---', 4));
+    assert.match(frontmatter, /allowed-tools:.*\bEdit\b/, `${relative} does not grant Edit`);
+  }
 });
 
 check('restricted Bash grants retain their full prefix and stop at delimiters', () => {

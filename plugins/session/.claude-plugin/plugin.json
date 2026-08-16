@@ -1,6 +1,6 @@
 {
   "name": "session",
-  "version": "0.8.16",
+  "version": "0.8.17",
   "description": "Make sessions continuous. Wrap one up into a handoff the next one loads, start with today's date and a compact build-loop brief, warn when another session is already working here, and put cost, context and connected tool health in the status line.",
   "author": {
     "name": "Sarah Madden",

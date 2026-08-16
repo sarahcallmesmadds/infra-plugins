@@ -1,6 +1,7 @@
 ---
 name: devin-review-response
 description: Resolve a complete Devin code-review round without point fixes. Use when Devin posts PR findings, the user asks to address or fix a Devin review, or a branch needs a final Devin-response pass before push or merge. Maps dependencies before editing, audits paired and adjacent files, classifies every finding, validates the round record, and produces one atomic commit per review round.
+allowed-tools: Read, Write, Edit, Grep, Glob, Bash(mktemp:*), Bash(node:*), Bash(git branch --show-current:*), Bash(git diff:*), Bash(git log:*), Bash(git remote -v:*), Bash(git rev-parse:*), Bash(git status:*), Bash(gh auth status:*), Bash(gh pr view:*), Bash(gh api --method GET:*)
 ---
 
 # Devin review response
@@ -11,9 +12,26 @@ Treat one Devin review as one bounded change set. Do not edit until every findin
 
 Resolve the repository, PR, branch, head SHA, and review round. Confirm the checked-out branch is the PR head and the local head matches the remote head.
 
-Fetch every inline and top-level finding. If Devin reports additional findings behind its web interface, stop and ask the user to provide them. An incomplete finding set cannot produce a clean round.
+Fetch every inline and top-level finding. Prefer the connected GitHub app. When
+it cannot return inline review comments, use `gh api --method GET` against the
+pull request's `reviews` and `comments` endpoints; the method must be explicit
+so the scoped grant cannot authorize a GitHub write. If Devin reports additional
+findings behind its web interface, stop and ask the user to provide them. An
+incomplete finding set cannot produce a clean round.
 
-Create a JSON round record from [references/round-record.example.json](references/round-record.example.json). Set `review_outcome` to `findings` when the review contains findings, or `clean` only when the authoritative review completed with none. An empty array without that explicit clean outcome must fail validation. Keep the record in a private temporary directory until the round is complete.
+Create one private temporary directory for the round:
+
+```bash
+mktemp -d "${TMPDIR:-/tmp}/devin-review.XXXXXX"
+```
+
+Use the path it prints as `{scratch}`. Create a JSON round record at
+`{scratch}/round.json` from
+[references/round-record.example.json](references/round-record.example.json).
+Set `review_outcome` to `findings` when the review contains findings, or `clean`
+only when the authoritative review completed with none. An empty array without
+that explicit clean outcome must fail validation. Keep the record there until
+the round is complete.
 
 ## 2. Classify every finding
 
@@ -55,6 +73,12 @@ Sweep tests, fixtures, docs, examples, manifests, generated surfaces, and counts
 ## 5. Verify and ship one round
 
 Run the repository's complete relevant test, typecheck, lint, and formatting gates. Record each command and outcome in `verification`.
+The frontmatter pre-approves repository search, private scratch-directory
+creation, validation, and read-only Git and GitHub inspection. Commands that
+change repository or GitHub state, including `git add`, `git commit`, `git
+push`, and any `gh` write, deliberately remain behind the host's normal
+permission prompt. Repository-specific gates using other commands do too. Do
+not broaden the Bash grants to suppress those prompts.
 
 Validate the record:
 
