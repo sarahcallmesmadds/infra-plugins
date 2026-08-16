@@ -222,7 +222,7 @@ it into a shell command: a double quote, backtick, `$(...)` or newline would end
 or extend the argument in a context where `Bash(node:*)` is allowed. An empty
 field is an empty file and produces the ordinary `no-destination` answer.
 
-One line comes back, and it always exits 0 because all five are ordinary
+One line comes back, and it always exits 0 because all six are ordinary
 answers:
 
 - `covered {rootname}` — a configured root holds that destination. Judge normally.
@@ -235,11 +235,16 @@ answers:
   still searched, so judge it normally. Do not claim the prose names an
   unconfigured repository.
 - `root-missing {rootname}` — the right root is configured and is not on disk.
+- `default-missing {rootname}` — the destination names a built-in fallback
+  location that is absent on a machine with no config file. It was not searched,
+  but there is no configured path to repair.
 
-The last one is the case Step 3a already reported, arriving per item. Keep them
-apart in the report: `not-covered` wants a root adding to the config, and
-`root-missing` wants a path repairing, and telling somebody to add a root they
-already configured sends them to change the one thing that is not wrong.
+The last two are different missing-root cases arriving per item. Keep all three
+unsearchable answers apart in the report: `not-covered` wants a root adding to
+the config, `root-missing` wants a configured path repairing, and
+`default-missing` means no setting is broken at all. Telling somebody to repair
+or add a root in the wrong case sends them to change the one thing that is not
+wrong.
 
 A destination is read four ways, in this order: as a path when it is anchored
 at `~/`, `/` or `./`; as an owner-qualified repository when a root's git remote
@@ -271,7 +276,7 @@ For each item, land on exactly one of four verdicts. When the evidence is mixed,
 |---|---|
 | **looks built** | Something matching the item exists on disk and was created or last changed after the item was added, OR a commit after the item was added clearly does the thing the item describes, OR it was built in this session. |
 | **started** | Partial evidence. A directory exists but is empty or has no manifest, or a commit mentions it as work in progress. |
-| **not searched** | Step 3d came back `not-covered` or `root-missing`, and 3a, 3b and 3c all found nothing. Carry which of the two it was, since the report separates them. |
+| **not searched** | Step 3d came back `not-covered`, `root-missing` or `default-missing`, and 3a, 3b and 3c all found nothing. Carry which of the three it was, since the report separates them. |
 | **no sign of it** | Searched, and nothing found. |
 
 **Evidence beats 3d, always.** An item can name a destination nobody has checked
@@ -306,7 +311,7 @@ Stop. Do not ask a question that has only one answer.
 If every item is either "no sign of it" or "not searched", give both numbers and
 name the repositories, then stop:
 
-> "Checked {N} open items against the last {days} days. {U} of them could not be searched: {X} name a destination no configured root reaches ({repositories}), and {G} name a root that has moved. The other {Q} were searched and show no sign of being built. {D} of those record no destination. Nothing to close."
+> "Checked {N} open items against the last {days} days. {U} of them could not be searched: {X} name a destination no configured root reaches ({repositories}), {G} name a configured root that has moved, and {A} name an absent built-in default nobody configured. The other {Q} were searched and show no sign of being built. {D} of those record no destination. Nothing to close."
 
 **Both halves of that sentence, every time.** A run where nothing could be
 searched and a run where nothing has been built produce the same silence, and
@@ -415,6 +420,7 @@ Add these lines only when they apply:
 
 - `Note: {X} of {N} items name a destination that is not a configured root, so they were not searched: {repositories}. Add it to ~/.claude/build-loop.config.json to include them.`
 - `Note: {G} of {N} items name a root that is configured but not on disk, so they were not searched: {roots}. That is the same fault Step 3a reported; fix the path rather than adding one.`
+- `Note: {A} of {N} items name a built-in default location that is absent, so they were not searched: {roots}. No configuration entry is broken; add a root only if you want that location included.`
 - `Note: {D} of {N} items record no destination at all, so there was nowhere in particular to look. They were searched across every configured root, which may not be where they were going.`
 - `{F} files failed to parse and were skipped: {filenames}`
 
@@ -425,8 +431,8 @@ Add these lines only when they apply:
 That last line matters more than it looks. Every way this step fails, a malformed cutoff or the wrong `date` flag or a root that is not a repository, ends at the same place: no commits, and a confident "no sign of it". Saying the log came back empty costs one line and is the only signal that separates "nothing was built" from "nothing was looked at".
 
 **Every count in this step has its own letter, and they are not interchangeable.**
-`{U}` is every item that was not searched, and `{X}` and `{G}` are the two
-reasons, which add up to it. `{D}` is the separately counted group with no
+`{U}` is every item that was not searched, and `{X}`, `{G}` and `{A}` are the
+three reasons, which add up to it. `{D}` is the separately counted group with no
 destination: they were searched, remain in `{M}` when still open, and stay
 numbered and closeable. `{F}` is files that could not be read and never joins
 either total. This is spelled out

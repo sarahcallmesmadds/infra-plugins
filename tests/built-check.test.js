@@ -228,7 +228,7 @@ check('no-destination items remain searched and closeable', () => {
     'no-destination is still treated as an unsearched verdict');
   assert.ok(/stay\s+numbered and closeable/.test(text),
     'the final count contract does not keep no-destination items closeable');
-  assert.ok(/`\{X\}` and `\{G\}` are the two\s+reasons, which add up to it/.test(text),
+  assert.ok(/`\{X\}`, `\{G\}` and `\{A\}` are the\s+three reasons, which add up to it/.test(text),
     'the unsearched total still includes no-destination');
   assert.ok(/no-destination[\s\S]{0,220}searched across every configured root/.test(text),
     'the no-close report path hides that destinationless items were searched');
@@ -304,5 +304,17 @@ check('a root that has moved is kept apart from one nobody configured', () => {
   );
 });
 
-console.log(`\n17 checks, ${failed} failed`);
+check('an absent built-in default has its own answer and remedy', () => {
+  assert.ok(/default-missing/.test(text), 'the skill does not handle the default-missing answer');
+  assert.ok(
+    /No configuration entry is broken/.test(text),
+    'the report still tells the reader to repair a default path they never configured'
+  );
+  assert.ok(
+    /\{X\}`, `\{G\}` and `\{A\}` are the\s+three reasons/.test(text),
+    'the not-searched total does not include all three distinct reasons'
+  );
+});
+
+console.log(`\n18 checks, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

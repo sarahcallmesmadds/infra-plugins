@@ -812,7 +812,7 @@ check('no skill has gone back to writing its own plugin-repo globs', () => {
     );
   });
 
-  check('all five answers exit 0, because none of them is a failure', () => {
+  check('all six answers exit 0, because none of them is a failure', () => {
     // A caller loops this over a dozen items. An exit code that varies by
     // answer makes "this item has no destination" indistinguishable from "the
     // config is broken" at the call site.
@@ -843,6 +843,24 @@ check('no skill has gone back to writing its own plugin-repo globs', () => {
         `${where} was reported as outside every configured root`
       );
     }
+  });
+
+  check('a relative folder path can identify a configured plugin repository by its tail', () => {
+    const h = makeHome({ roots: [
+      { name: 'infra-plugins', path: '~/dev/infra-plugins', kind: 'plugin-repo' },
+      { name: 'personal', path: '~/.claude/skills', kind: 'skill' },
+    ] });
+    fs.mkdirSync(path.join(h, 'dev', 'infra-plugins'), { recursive: true });
+    fs.mkdirSync(path.join(h, '.claude', 'skills'), { recursive: true });
+    assert.strictEqual(
+      run(h, ['covers', '--where', 'Projects/infra-plugins']).stdout.trim(),
+      'covered infra-plugins'
+    );
+    assert.strictEqual(
+      run(h, ['covers', '--where', 'sarahcallmesmadds/skills']).stdout.trim(),
+      'not-covered',
+      'an owner-qualified pair fell through to a generic skill root by its tail'
+    );
   });
 
   check('an exact configured path ending in punctuation wins before prose trimming', () => {
@@ -891,6 +909,17 @@ check('no skill has gone back to writing its own plugin-repo globs', () => {
     const h = makeHome({ roots: [{ name: 'gone', path: '/nonexistent/gone', kind: 'plugin-repo' }] });
     assert.strictEqual(run(h, ['covers', '--where', 'gone']).stdout.trim(), 'root-missing gone');
     assert.notStrictEqual(run(h, ['check']).code, 0, 'check and covers disagree about the same root');
+  });
+
+  check('an absent built-in default is not described as a moved configured root', () => {
+    const h = makeHome();
+    assert.strictEqual(
+      run(h, ['covers', '--where', 'skills']).stdout.trim(),
+      'default-missing personal'
+    );
+    const checked = run(h, ['check']);
+    assert.notStrictEqual(checked.code, 0);
+    assert.ok(/There is no config file/.test(checked.stdout + checked.stderr));
   });
 
   check('an owner-qualified destination still identifies a moved configured root', () => {

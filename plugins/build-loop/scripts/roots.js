@@ -451,11 +451,14 @@ function remoteOf(dir) {
 // opposite: one is a path to repair, the other a repository to add. Reporting
 // `covered` for a root that has moved is also the one way this command can
 // contradict `check`, which exits 3 for the same root in the same run.
-function coversWhere(where, roots) {
+function coversWhere(where, roots, usedDefaults = false) {
   const text = String(where || '').trim();
   if (!text) return { answer: 'no-destination', root: null };
 
-  const hit = (r) => ({ answer: r.exists ? 'covered' : 'root-missing', root: r.name });
+  const hit = (r) => ({
+    answer: r.exists ? 'covered' : (usedDefaults ? 'default-missing' : 'root-missing'),
+    root: r.name,
+  });
 
   const lower = text.toLowerCase();
   const segments = lower.split(/[^a-z0-9._-]+/).filter(Boolean);
@@ -507,7 +510,6 @@ function coversWhere(where, roots) {
   //    reference: its head names the directory a root sits in and its tail
   //    names the root. `Projects/infra-plugins` reaches here, and without it
   //    step 4 discards the half that carries the meaning.
-  const pathLike = new Set();
   for (const pair of pairs) {
     const slash = pair.indexOf('/');
     const head = pair.slice(0, slash);
@@ -515,15 +517,17 @@ function coversWhere(where, roots) {
     for (const r of roots) {
       if (tail !== path.basename(r.path).toLowerCase()) continue;
       if (head !== path.basename(path.dirname(r.path)).toLowerCase()) continue;
-      pathLike.add(pair);
       return hit(r);
     }
   }
 
-  // 4. A missing checkout cannot answer `git remote get-url`, but its config
-  //    still says which repository-shaped root moved. After the stronger
-  //    remote and filesystem checks above, let an owner/repo tail match only a
-  //    missing root's exact configured name or path basename. Ignore pairs
+  // 4. A repository-shaped configured root is still a place the sweep looked,
+  //    even when free text names it through a different parent folder, such as
+  //    `Projects/infra-plugins` for a checkout at `~/dev/infra-plugins`. A
+  //    missing checkout also cannot answer `git remote get-url`, so its durable
+  //    configured name is the only clue left. After the stronger remote and
+  //    exact filesystem checks above, let a pair tail match only a plugin-repo
+  //    root's exact configured name or path basename. Ignore pairs
   //    whose head looks like a host; URL extraction already added owner/repo,
   //    and github.com/owner must not make a root named owner look relevant.
   for (const pair of pairs) {
@@ -532,7 +536,7 @@ function coversWhere(where, roots) {
     const tail = pair.slice(slash + 1);
     if (head.includes('.')) continue;
     for (const r of roots) {
-      if (r.exists || r.kind !== 'plugin-repo') continue;
+      if (r.kind !== 'plugin-repo') continue;
       const names = [r.name, path.basename(r.path)].map((n) => String(n).toLowerCase());
       if (names.includes(tail)) return hit(r);
     }
@@ -541,11 +545,7 @@ function coversWhere(where, roots) {
   // 5. Bare names. A tail that was owner-qualified has already had its turn and
   //    does not get a second one as a directory name, which is what stops
   //    `sarahcallmesmadds/skills` being answered by a local `~/.claude/skills`.
-  //    A tail that turned out to be part of a path is not suppressed, because
-  //    there was no owner to disagree with.
-  const claimed = new Set(
-    pairs.filter((p) => !pathLike.has(p)).map((p) => p.slice(p.indexOf('/') + 1))
-  );
+  const claimed = new Set(pairs.map((p) => p.slice(p.indexOf('/') + 1)));
   const bare = new Set(segments.filter((s) => !claimed.has(s)));
 
   for (const r of roots) {
@@ -563,7 +563,7 @@ function coversWhere(where, roots) {
   return { answer: 'not-covered', root: null };
 }
 
-// One line, always exit 0. The five answers are all ordinary results rather
+// One line, always exit 0. The six answers are all ordinary results rather
 // than degrees of failure, and a caller looping over a dozen items should not
 // have to tell an exit code for "this item has no destination" apart from one
 // for "the config is broken". A real fault still throws through fail().
@@ -580,8 +580,8 @@ function cmdCovers(args) {
       fail(`roots.js: could not read --where-file ${JSON.stringify(args.whereFile)} (${error.message}).`);
     }
   }
-  const { answer, root } = coversWhere(where, state.roots);
-  const named = answer === 'covered' || answer === 'root-missing';
+  const { answer, root } = coversWhere(where, state.roots, state.usedDefaults);
+  const named = answer === 'covered' || answer === 'root-missing' || answer === 'default-missing';
   process.stdout.write((named ? `${answer} ${root}` : answer) + '\n');
   return OK;
 }
@@ -673,8 +673,9 @@ function main(argv) {
       '',
       '  covers answers the question /built-check has to ask before it says an item',
       '  is not built: could it have looked at all. It prints one of "covered NAME",',
-      '  "root-missing NAME", "not-covered", "unqualified" or "no-destination",',
-      '  and always exits 0, because all five are ordinary answers. Leave --where',
+      '  "root-missing NAME", "default-missing NAME", "not-covered",',
+      '  "unqualified" or "no-destination", and always exits 0, because all six',
+      '  are ordinary answers. Leave --where',
       '  off, pass it empty,',
       '  or pass an empty --where-file for an item that records no destination.',
       '  Use --where-file for free text from a file; it is never parsed by a shell.',
@@ -683,7 +684,8 @@ function main(argv) {
       '  owner-qualified repository when it is a pair answered by a root remote, and',
       '  as a name otherwise, matched on whole segments so a root called skills is',
       '  not satisfied by hq-skills. root-missing is the configured-but-moved case,',
-      '  which check also reports; covered would contradict it in the same run.',
+      '  which check also reports; default-missing is an absent built-in fallback',
+      '  on a machine with no config file, so no configured path needs repairing.',
       '  A bare /, ~/, ./ or ../ names no particular destination and is ignored.',
       '  Sentence punctuation after a path is ignored only after the exact path is',
       '  tried, so a real directory whose name ends in punctuation still wins.',
