@@ -256,6 +256,19 @@ check('the defaults are the safe ones', () => {
   assert.strictEqual(a.quotes, false, 'quoting must be off by default');
   assert.strictEqual(a.days, 7);
   assert.strictEqual(a.json, false);
+  assert.strictEqual(a.since, null);
+});
+
+check('an explicit since timestamp selects a fixed report boundary', () => {
+  const a = P.parseArgs(['--since', '2026-08-10T00:00:00Z']);
+  assert.strictEqual(a.since, '2026-08-10T00:00:00.000Z');
+});
+
+check('since rejects invalid, future, and competing rolling windows', () => {
+  assert.throws(() => P.parseArgs(['--since', 'Monday']), /ISO-8601/);
+  assert.throws(() => P.parseArgs(['--since', '2999-01-01T00:00:00Z']), /future/);
+  assert.throws(() => P.parseArgs(['--days', '7', '--since', '2026-08-10T00:00:00Z']),
+    /exactly one/);
 });
 
 check('every shape that used to leak quotes is now a hard error', () => {

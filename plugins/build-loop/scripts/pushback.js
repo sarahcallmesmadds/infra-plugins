@@ -332,6 +332,7 @@ function selftest(fixturePath) {
 // validate inputs at the boundary and make failures visible; this is that.
 const FLAGS = {
   '--days': 'value',
+  '--since': 'value',
   '--root': 'value',
   '--fixture': 'value',
   '--quotes': 'switch',
@@ -341,10 +342,11 @@ const FLAGS = {
 };
 
 const USAGE = [
-  'Usage: pushback.js [--days N] [--quotes] [--json] [--root DIR]',
+  'Usage: pushback.js [--days N | --since ISO] [--quotes] [--json] [--root DIR]',
   '       pushback.js --selftest [--fixture FILE]',
   '',
   '  --days N    how far back to look, a positive number of days. Default 7.',
+  '  --since ISO start at an explicit ISO-8601 timestamp instead of a rolling window.',
   '  --quotes    include the user\'s own messages in the output. Off by default,',
   '              because this output is pasted into channels and those messages',
   '              are private. Never pass it for anything leaving the machine.',
@@ -352,7 +354,8 @@ const USAGE = [
 ].join('\n');
 
 function parseArgs(args) {
-  const out = { days: 7, quotes: false, json: false, selftest: false, root: null, fixture: null, help: false };
+  const out = { days: 7, since: null, quotes: false, json: false, selftest: false, root: null, fixture: null, help: false };
+  let daysWasSet = false;
 
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
@@ -397,9 +400,20 @@ function parseArgs(args) {
           + 'as though it were the window you asked for.');
       }
       out.days = days;
+      daysWasSet = true;
+    } else if (arg === '--since') {
+      const since = Date.parse(value);
+      if (!Number.isFinite(since) || since > Date.now()) {
+        throw new Error(`--since needs an ISO-8601 timestamp that is not in the future, not "${value}".`);
+      }
+      out.since = new Date(since).toISOString();
     } else {
       out[arg.slice(2)] = value;
     }
+  }
+
+  if (daysWasSet && out.since) {
+    throw new Error('--days and --since describe different windows; pass exactly one of them.');
   }
 
   return out;
@@ -443,13 +457,14 @@ function main(argv) {
     process.exit(0);
   }
 
-  const days = args.days;
-  const since = Date.now() - days * 24 * 3600 * 1000;
+  const days = args.since ? null : args.days;
+  const since = args.since ? Date.parse(args.since) : Date.now() - days * 24 * 3600 * 1000;
   const result = scan(since, args.root);
 
   if (args.json) {
     console.log(JSON.stringify({
       days,
+      since: args.since,
       files: result.files,
       typed: result.typed.length,
       pushbacks: result.pushbacks.length,
@@ -459,7 +474,8 @@ function main(argv) {
     return;
   }
 
-  console.log(`Window: last ${days} days, ${result.files} transcript files.\n`);
+  const window = args.since ? `since ${args.since}` : `last ${days} days`;
+  console.log(`Window: ${window}, ${result.files} transcript files.\n`);
   console.log(report(result, { quotes: args.quotes }));
 
   if (args.quotes) {

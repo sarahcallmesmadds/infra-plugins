@@ -363,8 +363,13 @@ Claude Code transcripts are already on disk.
 Run:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/pushback.js" --days 7 --quotes
+week_start="$(node -e 'const d=new Date(); const day=d.getUTCDay()||7; d.setUTCHours(0,0,0,0); d.setUTCDate(d.getUTCDate()+1-day); console.log(d.toISOString())')"
+node "${CLAUDE_PLUGIN_ROOT}/scripts/pushback.js" --since "$week_start" --quotes
 ```
+
+Keep `week_start` for Step 9. This is the same Monday 00:00 UTC boundary used
+by the rest of the report, so every section describes one period and consecutive
+reports neither overlap nor leave a gap.
 
 It prints one headline number, pushbacks per hundred messages the user actually
 typed, then a breakdown by kind and the most recent examples.
@@ -382,9 +387,9 @@ hundred across the 2,445 messages before that window.
 
 **Those two figures are not a like-for-like comparison and must not be presented
 as one.** The detector's patterns were written from the 36-hour window, so it
-finds more there by construction. What is comparable is one week against
-another from now on, because the detector no longer changes between them. Say so
-if you quote both.
+finds more there by construction. What is comparable is one ISO week against
+another from now on, because the detector no longer changes between them and
+each report starts at Monday 00:00 UTC. Say so if you quote both.
 
 **State the floor.** The count only includes times the user said something. Giving
 up and working around an answer leaves no trace, so every figure is a lower bound.
@@ -533,10 +538,11 @@ different audience from a file on their own Mac, whatever the channel is.
 Regenerate that section for the post with the plain command:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/pushback.js" --days 7
+node "${CLAUDE_PLUGIN_ROOT}/scripts/pushback.js" --since "$week_start"
 ```
 
-which emits the rate and the counts and no quotes. Substitute it for the local
+using the exact `week_start` retained from Step 6b. This emits the rate and the
+counts and no quotes. Substitute it for the local
 Step 6b section before posting. This applies to the direct message too: the rule
 is about the surface, not about who can see it.
 
