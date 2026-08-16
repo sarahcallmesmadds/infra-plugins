@@ -372,7 +372,8 @@ every section describes one period and consecutive reports neither overlap nor
 leave a gap. Step 9 computes the boundary again rather than relying on shell state.
 
 It prints one headline number, pushbacks per hundred messages the user actually
-typed, then a breakdown by kind and the most recent examples.
+typed, then a breakdown by kind and the answer-level signal comparison. It does
+not print example messages unless `--quotes` is explicitly added.
 
 The saved report carries counts, not quotes. If the user wants the examples,
 run the same command with `--quotes` and show that output only in the current
