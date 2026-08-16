@@ -17,7 +17,7 @@ they could either act on themselves or forward to whoever produced it.
 ## Run it
 
 ```bash
-"${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js check --file <path>
+node "${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js check --file <path>
 ```
 
 Stdin works when there is no file. `--prose` or `--technical` narrows it to one

@@ -16,7 +16,7 @@ This puts a count in the status line and names anything that needs attention.
 ## Step 1: Show what is actually connected
 
 ```bash
-"${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js mcp-servers
+node "${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js mcp-servers
 ```
 
 Never present a list from memory or from a previous session. This asks the
@@ -69,8 +69,8 @@ Merge into the existing file if there is one. Do not overwrite it.
 ## Step 4: Build the first cache and show the result
 
 ```bash
-"${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js mcp-refresh
-"${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js mcp-status
+node "${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js mcp-refresh
+node "${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js mcp-status
 ```
 
 Show what came back. If anything is `needs_auth`, say which and that signing in

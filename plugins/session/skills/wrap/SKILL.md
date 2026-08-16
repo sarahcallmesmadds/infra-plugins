@@ -16,7 +16,7 @@ The output is one handoff document. Write it for a reader who was not here.
 ## Step 0: Sweep old handoffs out of the way
 
 ```bash
-"${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js archive
+node "${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js archive
 ```
 
 This moves handoffs untouched for 30 days into an `archived/` folder. It moves,
@@ -28,7 +28,7 @@ away". If it reports nothing, say nothing about it.
 ### Then check the folder still agrees with the index
 
 ```bash
-"${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js reconcile
+node "${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js reconcile
 ```
 
 Read-only. It changes nothing here, and it is run at the start rather than the
@@ -74,7 +74,7 @@ Read back over the whole conversation and pull out:
 Then collect what is still binding from before this session:
 
 ```bash
-"${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js constraints
+node "${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js constraints
 ```
 
 **A decision made in an earlier session does not stop applying because this
@@ -172,7 +172,7 @@ it is the first thing lost when the session is summarized casually.
 Ask where it goes:
 
 ```bash
-"${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js target "<short topic>" --json
+node "${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js target "<short topic>" --json
 ```
 
 It returns the path, the kind, and the slug `/pickup` will need. A directory
@@ -222,7 +222,7 @@ padded one is noise that costs tokens at every future pickup.
 ### Then confirm it is actually there
 
 ```bash
-"${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js find "<slug>" --json
+node "${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js find "<slug>" --json
 ```
 
 Writing the file and recording where it went are two different things, and
@@ -241,7 +241,7 @@ Carry the result into Step 4. It decides what that step is allowed to say.
 ## Step 3: Update the durable notes, if this project has them
 
 ```bash
-"${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js memory --json
+node "${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js memory --json
 ```
 
 If that returns a directory, this project keeps notes that load at the start of
@@ -297,7 +297,7 @@ file, which is a week later than it needs to be.
 ### Then measure what you just wrote to
 
 ```bash
-"${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js memory-check
+node "${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js memory-check
 ```
 
 Nothing above this line checks whether any of it happened, and every component

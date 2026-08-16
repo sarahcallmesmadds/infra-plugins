@@ -16,7 +16,7 @@ so most pickups are a paste.
 ## Step 1: Find the handoff
 
 ```bash
-"${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js find "<slug>" --json
+node "${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js find "<slug>" --json
 ```
 
 That returns the match and, when there is none, every path it tried plus a
@@ -58,7 +58,7 @@ else, take the structure as it comes and do not force it into the template.
 ### Then ask what still binds
 
 ```bash
-"${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js constraints --cwd "<the project directory>"
+node "${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js constraints --cwd "<the project directory>"
 ```
 
 **Pass `--cwd` explicitly. Do not rely on where the session started.** Scope is
@@ -177,7 +177,7 @@ entirely.
 **No slug given.** Show a menu rather than guessing:
 
 ```bash
-"${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js recent
+node "${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js recent
 ```
 
 List them newest first with their age, and ask which.

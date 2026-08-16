@@ -8,7 +8,7 @@ description: Run the transition-only core-tools health probe used by a Claude De
 Run the local health probe:
 
 ```bash
-"${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js mcp-probe
+node "${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js mcp-probe
 ```
 
 If the command prints a line, return that line verbatim. It is either a new or
