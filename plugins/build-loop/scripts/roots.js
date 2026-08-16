@@ -448,6 +448,21 @@ function remoteOf(dir) {
   }
 }
 
+function withoutSentenceEnd(value) {
+  return String(value).replace(/[.:;!?]+$/, '');
+}
+
+// Match the form remoteOf returns. Try exact spelling elsewhere before calling
+// this when punctuation can be a real filename; repository identities cannot
+// retain a clone-only `.git` suffix or prose punctuation and still compare.
+function normalizeRepoPair(pair) {
+  const slash = pair.indexOf('/');
+  if (slash < 0) return pair;
+  const head = pair.slice(0, slash);
+  const tail = withoutSentenceEnd(pair.slice(slash + 1)).replace(/\.git$/, '');
+  return `${head}/${tail}`;
+}
+
 // A configured root that is not on disk answers differently from one that was
 // never configured. Both mean the item was not searched, and the remedies are
 // opposite: one is a path to repair, the other a repository to add. Reporting
@@ -463,14 +478,22 @@ function coversWhere(where, roots, usedDefaults = false) {
   });
 
   const lower = text.toLowerCase();
-  const segments = lower.split(/[^a-z0-9._-]+/).filter(Boolean);
+  const rawSegments = lower.split(/[^a-z0-9._-]+/).filter(Boolean);
+  const segments = [...new Set(rawSegments.flatMap((segment) => {
+    const stripped = withoutSentenceEnd(segment);
+    return stripped && stripped !== segment ? [segment, stripped] : [segment];
+  }))];
   // First collect syntax, without deciding what it means. A slash pair can be
   // a repository, a relative path, or ordinary prose such as "read/write".
   // Only corroborated repository pairs are allowed to force not-covered later.
-  const slashPairs = (lower.match(/[a-z0-9._-]+\/[a-z0-9._-]+/g) || []).filter((pair) => {
-    const [head, tail] = pair.split('/');
-    return pair !== 'and/or' && !(/^\d+$/.test(head) && /^\d+$/.test(tail));
-  });
+  const slashPairs = [...new Set(
+    (lower.match(/[a-z0-9._-]+\/[a-z0-9._-]+/g) || [])
+      .filter((pair) => {
+        const [head, tail] = pair.split('/');
+        return pair !== 'and/or' && !(/^\d+$/.test(head) && /^\d+$/.test(tail));
+      })
+      .map(normalizeRepoPair)
+  )];
   const explicitRepoPairs = new Set();
   let hasSpecificPath = false;
   // A global pair regex is non-overlapping. In github.com/owner/repo it first
@@ -478,7 +501,12 @@ function coversWhere(where, roots, usedDefaults = false) {
   // tail could later masquerade as a bare local root name. Pull ordinary
   // GitHub URL and host-qualified spellings out explicitly.
   for (const match of lower.matchAll(/(?:https?:\/\/)?github\.com\/([a-z0-9._-]+)\/([a-z0-9._-]+)/g)) {
-    const pair = `${match[1]}/${match[2]}`;
+    const pair = normalizeRepoPair(`${match[1]}/${match[2]}`);
+    explicitRepoPairs.add(pair);
+    if (!slashPairs.includes(pair)) slashPairs.push(pair);
+  }
+  for (const match of lower.matchAll(/git@github\.com:([a-z0-9._-]+)\/([a-z0-9._-]+)/g)) {
+    const pair = normalizeRepoPair(`${match[1]}/${match[2]}`);
     explicitRepoPairs.add(pair);
     if (!slashPairs.includes(pair)) slashPairs.push(pair);
   }
@@ -497,9 +525,9 @@ function coversWhere(where, roots, usedDefaults = false) {
     // Try the exact path first, because Unix permits punctuation at the end of
     // a real directory name. Then try the form with ordinary sentence-ending
     // punctuation removed, so "put it in ~/Projects/x." still names x.
-    const withoutSentenceEnd = trimmed.replace(/[.:;!?]+$/, '');
-    const candidates = withoutSentenceEnd && withoutSentenceEnd !== trimmed
-      ? [trimmed, withoutSentenceEnd]
+    const pathWithoutSentenceEnd = withoutSentenceEnd(trimmed);
+    const candidates = pathWithoutSentenceEnd && pathWithoutSentenceEnd !== trimmed
+      ? [trimmed, pathWithoutSentenceEnd]
       : [trimmed];
     for (const candidate of candidates) {
       const abs = path.resolve(expand(candidate)).toLowerCase();
@@ -531,16 +559,15 @@ function coversWhere(where, roots, usedDefaults = false) {
     }
   }
 
-  const configuredRepoNames = new Set(
-    roots.filter((r) => r.kind === 'plugin-repo')
-      .flatMap((r) => [r.name, path.basename(r.path)])
+  const configuredRootNames = new Set(
+    roots.flatMap((r) => [r.name, path.basename(r.path)])
       .map((name) => String(name).toLowerCase())
   );
   const repoPairs = slashPairs.filter((pair) => {
     const slash = pair.indexOf('/');
     const head = pair.slice(0, slash);
     const tail = pair.slice(slash + 1);
-    return explicitRepoPairs.has(pair) || remoteOwners.has(head) || configuredRepoNames.has(tail);
+    return explicitRepoPairs.has(pair) || remoteOwners.has(head) || configuredRootNames.has(tail);
   });
 
   // 2b. An uncorroborated pair can be a path relative to a configured root.

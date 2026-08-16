@@ -714,15 +714,24 @@ check('no skill has gone back to writing its own plugin-repo globs', () => {
   );
 
   check('a destination inside a configured root is covered, and names it', () => {
-    const { code, stdout } = run(home, ['covers', '--where', 'sarahcallmesmadds/infra-plugins']);
-    assert.strictEqual(code, 0);
-    assert.strictEqual(stdout.trim(), 'covered infra-plugins');
+    for (const where of [
+      'sarahcallmesmadds/infra-plugins',
+      'sarahcallmesmadds/infra-plugins.',
+      'https://github.com/sarahcallmesmadds/infra-plugins.git',
+      'git@github.com:sarahcallmesmadds/infra-plugins.git',
+    ]) {
+      const { code, stdout } = run(home, ['covers', '--where', where]);
+      assert.strictEqual(code, 0);
+      assert.strictEqual(stdout.trim(), 'covered infra-plugins', `${where} missed its checkout`);
+    }
   });
 
   check('a bare root name, with no owner, is covered too', () => {
-    assert.strictEqual(
-      run(home, ['covers', '--where', 'infra-plugins']).stdout.trim(), 'covered infra-plugins'
-    );
+    for (const where of ['infra-plugins', 'It goes in infra-plugins.']) {
+      assert.strictEqual(
+        run(home, ['covers', '--where', where]).stdout.trim(), 'covered infra-plugins'
+      );
+    }
   });
 
   check('a destination in a repository nobody configured is not covered', () => {
@@ -766,12 +775,21 @@ check('no skill has gone back to writing its own plugin-repo globs', () => {
     for (const where of [
       'https://github.com/sarahcallmesmadds/skills',
       'github.com/sarahcallmesmadds/skills',
+      'https://github.com/sarahcallmesmadds/skills.git',
     ]) {
       assert.strictEqual(
         run(home, ['covers', '--where', where]).stdout.trim(), 'not-covered',
         `${where} let its repo tail masquerade as the local skills root`
       );
     }
+  });
+
+  check('a clone URL for an unconfigured repository stays not covered', () => {
+    assert.strictEqual(
+      run(home, ['covers', '--where',
+        'https://github.com/sarahcallmesmadds/something-else.git']).stdout.trim(),
+      'not-covered'
+    );
   });
 
   check('--where-file reads free text without shell interpolation', () => {
@@ -795,6 +813,24 @@ check('no skill has gone back to writing its own plugin-repo globs', () => {
     const { stdout } = run(home, ['covers', '--where',
       'sarahcallmesmadds/skills, moving out of _work-skills-rebuild-ref/v1-source/']);
     assert.strictEqual(stdout.trim(), 'not-covered');
+  });
+
+  check('owner/repository tails cannot borrow roots when no remote is readable', () => {
+    const configured = makeHome({ roots: [
+      { name: 'personal', path: '~/.claude/skills', kind: 'skill' },
+    ] });
+    fs.mkdirSync(path.join(configured, '.claude', 'skills'), { recursive: true });
+    assert.strictEqual(
+      run(configured, ['covers', '--where', 'sarahcallmesmadds/skills']).stdout.trim(),
+      'not-covered'
+    );
+
+    const defaults = makeHome();
+    fs.mkdirSync(path.join(defaults, '.claude', 'skills'), { recursive: true });
+    assert.strictEqual(
+      run(defaults, ['covers', '--where', 'sarahcallmesmadds/skills']).stdout.trim(),
+      'not-covered'
+    );
   });
 
   check('but a bare "skills" still means the local root somebody configured', () => {

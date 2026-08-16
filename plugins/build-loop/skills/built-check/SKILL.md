@@ -257,6 +257,10 @@ single-word slash commands are prose, not destinations. So are uncorroborated
 slash-joined words such as `read/write`; slash syntax alone never proves a
 repository exists elsewhere. A relative path whose leading directory exists
 inside a configured root, such as `plugins/build-loop`, is covered by that root.
+A slash pair whose tail is a configured root name stays repository-shaped even
+when no git remote is readable, so `owner/skills` cannot borrow a local root
+called `skills`. Clone-only `.git` suffixes and sentence punctuation do not
+change repository identity or a bare root name.
 A bare `/`, `~/`, `./` or `../` is ignored: it names no particular destination
 and must not resolve to the process working directory, home, or parent directory.
 
