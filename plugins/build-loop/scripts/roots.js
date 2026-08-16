@@ -498,17 +498,31 @@ function coversWhere(where, roots, usedDefaults = false) {
   let hasSpecificPath = false;
   // A global pair regex is non-overlapping. In github.com/owner/repo it first
   // consumes github.com/owner and would never expose owner/repo, so the repo
-  // tail could later masquerade as a bare local root name. Pull ordinary
-  // GitHub URL and host-qualified spellings out explicitly.
-  for (const match of lower.matchAll(/(?:https?:\/\/)?github\.com\/([a-z0-9._-]+)\/([a-z0-9._-]+)/g)) {
-    const pair = normalizeRepoPair(`${match[1]}/${match[2]}`);
+  // tail could later masquerade as a bare local root name. Pull the last two
+  // path segments from host-qualified URLs independently of their provider.
+  const addExplicitPath = (pathText) => {
+    const parts = pathText.split('/').filter(Boolean);
+    if (parts.length < 2) return;
+    const pair = normalizeRepoPair(`${parts[parts.length - 2]}/${parts[parts.length - 1]}`);
     explicitRepoPairs.add(pair);
     if (!slashPairs.includes(pair)) slashPairs.push(pair);
+  };
+  for (const match of lower.matchAll(/[a-z][a-z0-9+.-]*:\/\/[^\s,;"'()]+/g)) {
+    try {
+      addExplicitPath(decodeURIComponent(new URL(withoutSentenceEnd(match[0])).pathname));
+    } catch {
+      // It looked URL-shaped but was not parseable. The generic pairs still get
+      // their ordinary prose/path treatment; malformed text is not a CLI fault.
+    }
   }
-  for (const match of lower.matchAll(/git@github\.com:([a-z0-9._-]+)\/([a-z0-9._-]+)/g)) {
-    const pair = normalizeRepoPair(`${match[1]}/${match[2]}`);
-    explicitRepoPairs.add(pair);
-    if (!slashPairs.includes(pair)) slashPairs.push(pair);
+  // Schemeless links are ordinary too. Requiring a dotted host with an
+  // alphabetic suffix keeps `folder.name/child/grandchild` in the relative-path
+  // path while accepting gitlab.com/owner/repo and private company domains.
+  for (const match of lower.matchAll(/\b(?:[a-z0-9-]+\.)+[a-z]{2,}(?::\d+)?\/([a-z0-9._-]+)\/([a-z0-9._-]+)/g)) {
+    addExplicitPath(`${match[1]}/${match[2]}`);
+  }
+  for (const match of lower.matchAll(/[a-z0-9._-]+@[^:\s]+:([a-z0-9._/-]+)/g)) {
+    addExplicitPath(match[1]);
   }
 
   // 1. A destination written as a path, which `where` being free text makes

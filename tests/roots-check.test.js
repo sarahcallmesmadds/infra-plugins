@@ -771,11 +771,17 @@ check('no skill has gone back to writing its own plugin-repo globs', () => {
     );
   });
 
-  check('GitHub URL spellings preserve the owner/repository pair', () => {
+  check('host-qualified URL spellings preserve the owner/repository pair', () => {
     for (const where of [
       'https://github.com/sarahcallmesmadds/skills',
       'github.com/sarahcallmesmadds/skills',
       'https://github.com/sarahcallmesmadds/skills.git',
+      'https://gitlab.com/sarahcallmesmadds/skills',
+      'gitlab.com/sarahcallmesmadds/skills',
+      'https://bitbucket.org/sarahcallmesmadds/skills.git',
+      'https://github.company.com/sarahcallmesmadds/skills',
+      'github.company.com/sarahcallmesmadds/skills',
+      'git@gitlab.com:sarahcallmesmadds/skills.git',
     ]) {
       assert.strictEqual(
         run(home, ['covers', '--where', where]).stdout.trim(), 'not-covered',
@@ -789,6 +795,21 @@ check('no skill has gone back to writing its own plugin-repo globs', () => {
       run(home, ['covers', '--where',
         'https://github.com/sarahcallmesmadds/something-else.git']).stdout.trim(),
       'not-covered'
+    );
+  });
+
+  check('a non-GitHub URL matches a checkout with the same remote', () => {
+    const h = makeHome({ roots: [
+      { name: 'gitlab-repo', path: '~/Projects/gitlab-repo', kind: 'plugin-repo' },
+    ] });
+    const checkout = path.join(h, 'Projects', 'gitlab-repo');
+    fs.mkdirSync(checkout, { recursive: true });
+    execFileSync('git', ['-C', checkout, 'init', '-q'], { stdio: 'ignore' });
+    execFileSync('git', ['-C', checkout, 'remote', 'add', 'origin',
+      'https://gitlab.com/acme/gitlab-repo.git'], { stdio: 'ignore' });
+    assert.strictEqual(
+      run(h, ['covers', '--where', 'https://gitlab.com/acme/gitlab-repo.git']).stdout.trim(),
+      'covered gitlab-repo'
     );
   });
 
