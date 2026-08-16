@@ -192,6 +192,8 @@ fs.writeFileSync(path.join(nested, 's.jsonl'),
   line({ type: 'assistant', timestamp: when, message: { content: [{ type: 'text', text: 'a'.repeat(500) + ' worth flagging that my first pass was wrong' }] } })
   + line(Object.assign({ timestamp: when }, user('too much jargon i dont understand')))
   + line(Object.assign({ timestamp: when }, user('yes do it')))
+  + line(Object.assign({ timestamp: when }, user('1 bug plugins/example.js:12 **Forwarded finding that is not typed prose**')))
+  + line(Object.assign({ timestamp: when }, user('• UserPromptSubmit hook (failed) what does this mean')))
   + line(Object.assign({ timestamp: when }, user('<bash-input> ls</bash-input>')))
   + line(Object.assign({ timestamp: when }, user([{ type: 'tool_result', content: 'x' }]))));
 
@@ -200,7 +202,7 @@ check('scan finds transcripts in nested directories', () => {
   assert.strictEqual(r.files, 1);
 });
 
-check('scan counts only what the user typed', () => {
+check('scan excludes pasted content from the typed denominator', () => {
   const r = P.scan(0, tmp);
   assert.strictEqual(r.typed.length, 2, `counted ${r.typed.length}`);
 });
@@ -300,6 +302,16 @@ check('the defaults are the safe ones', () => {
   assert.strictEqual(a.days, 7);
   assert.strictEqual(a.json, false);
   assert.strictEqual(a.since, null);
+  assert.strictEqual(a.thisWeek, false);
+});
+
+check('this-week selects the machine-local Monday boundary', () => {
+  const a = P.parseArgs(['--this-week']);
+  assert.strictEqual(a.thisWeek, true);
+  const start = new Date(P.localWeekStart(new Date(2026, 7, 16, 21, 0, 0)));
+  assert.strictEqual(start.getDay(), 1);
+  assert.strictEqual(start.getHours(), 0);
+  assert.strictEqual(start.getMinutes(), 0);
 });
 
 check('an explicit since timestamp selects a fixed report boundary', () => {
@@ -311,6 +323,8 @@ check('since rejects invalid, future, and competing rolling windows', () => {
   assert.throws(() => P.parseArgs(['--since', 'Monday']), /ISO-8601/);
   assert.throws(() => P.parseArgs(['--since', '2999-01-01T00:00:00Z']), /future/);
   assert.throws(() => P.parseArgs(['--days', '7', '--since', '2026-08-10T00:00:00Z']),
+    /exactly one/);
+  assert.throws(() => P.parseArgs(['--since', '2026-08-10T00:00:00Z', '--this-week']),
     /exactly one/);
 });
 

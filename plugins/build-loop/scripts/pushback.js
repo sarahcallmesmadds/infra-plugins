@@ -101,10 +101,13 @@ const MAX_PUSHBACK_LENGTH = 800;
 
 function classify(text) {
   if (text.length > MAX_PUSHBACK_LENGTH) return null;
-  if (PASTED.test(text)) return null;
-  if (FINDING_MARKUP.test(text)) return null;
+  if (isPasted(text)) return null;
   for (const k of KINDS) if (k.test.test(text)) return k.kind;
   return null;
+}
+
+function isPasted(text) {
+  return PASTED.test(text) || FINDING_MARKUP.test(text);
 }
 
 // A transcript line is the user's own typing only when it is a plain text
@@ -197,6 +200,7 @@ function scan(since, root) {
 
       const text = userText(record);
       if (text === null) continue;
+      if (isPasted(text)) continue;
       const at = record.timestamp ? new Date(record.timestamp).getTime() : 0;
       if (at < since) continue;
 
@@ -365,6 +369,7 @@ function selftest(fixturePath) {
 const FLAGS = {
   '--days': 'value',
   '--since': 'value',
+  '--this-week': 'switch',
   '--root': 'value',
   '--fixture': 'value',
   '--quotes': 'switch',
@@ -374,11 +379,12 @@ const FLAGS = {
 };
 
 const USAGE = [
-  'Usage: pushback.js [--days N | --since ISO] [--quotes] [--json] [--root DIR]',
+  'Usage: pushback.js [--days N | --since ISO | --this-week] [--quotes] [--json] [--root DIR]',
   '       pushback.js --selftest [--fixture FILE]',
   '',
   '  --days N    how far back to look, a positive number of days. Default 7.',
   '  --since ISO start at an explicit ISO-8601 timestamp instead of a rolling window.',
+  '  --this-week start at Monday 00:00 in the machine\'s local timezone.',
   '  --quotes    include the user\'s own messages in the output. Off by default,',
   '              because this output is pasted into channels and those messages',
   '              are private. Never pass it for anything leaving the machine.',
@@ -386,7 +392,7 @@ const USAGE = [
 ].join('\n');
 
 function parseArgs(args) {
-  const out = { days: 7, since: null, quotes: false, json: false, selftest: false, root: null, fixture: null, help: false };
+  const out = { days: 7, since: null, thisWeek: false, quotes: false, json: false, selftest: false, root: null, fixture: null, help: false };
   let daysWasSet = false;
 
   for (let i = 0; i < args.length; i += 1) {
@@ -408,7 +414,8 @@ function parseArgs(args) {
     }
 
     if (kind === 'switch') {
-      out[arg.slice(2)] = true;
+      if (arg === '--this-week') out.thisWeek = true;
+      else out[arg.slice(2)] = true;
       continue;
     }
 
@@ -444,11 +451,20 @@ function parseArgs(args) {
     }
   }
 
-  if (daysWasSet && out.since) {
-    throw new Error('--days and --since describe different windows; pass exactly one of them.');
+  const windows = Number(daysWasSet) + Number(Boolean(out.since)) + Number(out.thisWeek);
+  if (windows > 1) {
+    throw new Error('--days, --since, and --this-week describe different windows; pass exactly one.');
   }
 
   return out;
+}
+
+function localWeekStart(now) {
+  const start = new Date(now === undefined ? Date.now() : now);
+  const day = start.getDay() || 7;
+  start.setHours(0, 0, 0, 0);
+  start.setDate(start.getDate() + 1 - day);
+  return start.getTime();
 }
 
 function main(argv) {
@@ -489,14 +505,18 @@ function main(argv) {
     process.exit(0);
   }
 
-  const days = args.since ? null : args.days;
-  const since = args.since ? Date.parse(args.since) : Date.now() - days * 24 * 3600 * 1000;
+  const fixedWindow = args.since || args.thisWeek;
+  const days = fixedWindow ? null : args.days;
+  const since = args.since ? Date.parse(args.since)
+    : args.thisWeek ? localWeekStart()
+      : Date.now() - days * 24 * 3600 * 1000;
+  const sinceIso = fixedWindow ? new Date(since).toISOString() : null;
   const result = scan(since, args.root);
 
   if (args.json) {
     console.log(JSON.stringify({
       days,
-      since: args.since,
+      since: sinceIso,
       files: result.files,
       typed: result.typed.length,
       pushbacks: result.pushbacks.length,
@@ -506,7 +526,7 @@ function main(argv) {
     return;
   }
 
-  const window = args.since ? `since ${args.since}` : `last ${days} days`;
+  const window = fixedWindow ? `since ${sinceIso}` : `last ${days} days`;
   console.log(`Window: ${window}, ${result.files} transcript files.\n`);
   console.log(report(result, { quotes: args.quotes }));
 
@@ -520,4 +540,4 @@ function main(argv) {
 
 if (require.main === module) main(process.argv);
 
-module.exports = { classify, userText, scan, report, signals, selftest, rate, KINDS, parseArgs };
+module.exports = { classify, userText, scan, report, signals, selftest, rate, localWeekStart, KINDS, parseArgs };

@@ -363,13 +363,12 @@ Claude Code transcripts are already on disk.
 Run:
 
 ```bash
-week_start="$(node -e 'const d=new Date(); const day=d.getUTCDay()||7; d.setUTCHours(0,0,0,0); d.setUTCDate(d.getUTCDate()+1-day); console.log(d.toISOString())')"
-node "${CLAUDE_PLUGIN_ROOT}/scripts/pushback.js" --since "$week_start"
+node "${CLAUDE_PLUGIN_ROOT}/scripts/pushback.js" --this-week
 ```
 
-This is the same Monday 00:00 UTC boundary used by the rest of the report, so
-every section describes one period and consecutive reports neither overlap nor
-leave a gap. Step 9 computes the boundary again rather than relying on shell state.
+`--this-week` starts at Monday 00:00 in the machine's local timezone. That is
+the same local calendar week used to name the summary file, so every section
+describes one period and consecutive reports neither overlap nor leave a gap.
 
 It prints one headline number, pushbacks per hundred messages the user actually
 typed, then a breakdown by kind and the answer-level signal comparison. It does
@@ -440,7 +439,7 @@ console.log(utc.getUTCFullYear() + '-' + String(week).padStart(2, '0'));
 
 This outputs `YYYY-WW` (e.g. `2026-17`). The summary filename is `{YYYY-WW}.md`.
 
-**"This week" definition:** An entry is "this week" if its `id` timestamp prefix (the ISO-8601 prefix in the id field, e.g. `"2026-04-24T..."`) falls within the current ISO week (Monday 00:00 UTC through Sunday 23:59 UTC). Entries outside this window still appear in the "Still Open" section if their status is `"Open"`, but are NOT listed as "Fixed This Week."
+**"This week" definition:** An entry is "this week" if its `id` timestamp (for example, `"2026-04-24T..."`) falls within the machine's current local ISO week, from Monday 00:00 local time through now. Entries outside this window still appear in the "Still Open" section if their status is `"Open"`, but are NOT listed as "Fixed This Week."
 
 **Build the report content** in this order (Pattern Flags FIRST — front-loading rule from 04-DESIGN.md Section 6):
 
@@ -540,12 +539,11 @@ different audience from a file on their own Mac, whatever the channel is.
 Recompute the boundary and regenerate that section for the post with:
 
 ```bash
-week_start="$(node -e 'const d=new Date(); const day=d.getUTCDay()||7; d.setUTCHours(0,0,0,0); d.setUTCDate(d.getUTCDate()+1-day); console.log(d.toISOString())')"
-node "${CLAUDE_PLUGIN_ROOT}/scripts/pushback.js" --since "$week_start"
+node "${CLAUDE_PLUGIN_ROOT}/scripts/pushback.js" --this-week
 ```
 
-Do not rely on a shell variable from Step 6b surviving until this step. This
-emits the rate and counts and no quotes. Substitute it for the local Step 6b
+This recomputes the local week boundary in the posting step, emits the rate and
+counts and no quotes. Substitute it for the local Step 6b
 section before posting. If this command fails, stop and report the failure;
 never fall back to quoted output. This applies to the direct message too: the
 rule is about the surface, not about who can see it.
