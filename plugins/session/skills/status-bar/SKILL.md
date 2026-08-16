@@ -6,6 +6,11 @@ allowed-tools: Read, Write, Bash(*/bin/hook-node:*), Bash(node:*)
 
 # Status bar
 
+The leading wildcard in `Bash(*/bin/hook-node:*)` is deliberate. Claude Code's
+[Bash permission rules](https://code.claude.com/docs/en/permissions#wildcard-patterns)
+support wildcards at the beginning, middle, or end of a command, so this grants
+the launcher at its versioned plugin path without granting unrelated commands.
+
 Set up the persistent terminal UI that answers "which model, which folder, how
 full is the context, and what is this session doing". Codex and Claude Code
 expose different status surfaces, so follow only the route for the runtime in

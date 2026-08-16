@@ -1,7 +1,7 @@
 ---
 name: devin-review-response
 description: Resolve a complete Devin code-review round without point fixes. Use when Devin posts PR findings, the user asks to address or fix a Devin review, or a branch needs a final Devin-response pass before push or merge. Maps dependencies before editing, audits paired and adjacent files, classifies every finding, validates the round record, and produces one atomic commit per review round.
-allowed-tools: Read, Write, Bash(node:*), Bash(git:*), Bash(gh:*)
+allowed-tools: Read, Write, Grep, Glob, Bash(mktemp:*), Bash(node:*), Bash(git:*), Bash(gh:*)
 ---
 
 # Devin review response
@@ -14,7 +14,19 @@ Resolve the repository, PR, branch, head SHA, and review round. Confirm the chec
 
 Fetch every inline and top-level finding. If Devin reports additional findings behind its web interface, stop and ask the user to provide them. An incomplete finding set cannot produce a clean round.
 
-Create a JSON round record from [references/round-record.example.json](references/round-record.example.json). Set `review_outcome` to `findings` when the review contains findings, or `clean` only when the authoritative review completed with none. An empty array without that explicit clean outcome must fail validation. Keep the record in a private temporary directory until the round is complete.
+Create one private temporary directory for the round:
+
+```bash
+mktemp -d "${TMPDIR:-/tmp}/devin-review.XXXXXX"
+```
+
+Use the path it prints as `{scratch}`. Create a JSON round record at
+`{scratch}/round.json` from
+[references/round-record.example.json](references/round-record.example.json).
+Set `review_outcome` to `findings` when the review contains findings, or `clean`
+only when the authoritative review completed with none. An empty array without
+that explicit clean outcome must fail validation. Keep the record there until
+the round is complete.
 
 ## 2. Classify every finding
 
@@ -56,10 +68,10 @@ Sweep tests, fixtures, docs, examples, manifests, generated surfaces, and counts
 ## 5. Verify and ship one round
 
 Run the repository's complete relevant test, typecheck, lint, and formatting gates. Record each command and outcome in `verification`.
-The frontmatter pre-approves `node`, `git`, and `gh`, which are the commands
-this procedure names. A repository-specific gate using another command remains
-available through the host's normal permission prompt; do not broaden the Bash
-grant to suppress that prompt.
+The frontmatter pre-approves repository search, private scratch-directory
+creation, and the `node`, `git`, and `gh` commands this procedure names. A
+repository-specific gate using another command remains available through the
+host's normal permission prompt; do not broaden the Bash grant to suppress it.
 
 Validate the record:
 

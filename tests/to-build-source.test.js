@@ -274,7 +274,7 @@ check('no skill names a shell command its allowed-tools does not grant', () => {
   assert.deepStrictEqual(offenders, [], `\n  ${offenders.join('\n  ')}`);
 });
 
-check('quoted path commands remain visible to the grant check', () => {
+check('leading-wildcard Bash grants cover quoted path commands', () => {
   const parsed = commandForGrantCheck(
     '"${CLAUDE_PLUGIN_ROOT}"/bin/hook-node "${CLAUDE_PLUGIN_ROOT}"/statusline/install.js'
   );

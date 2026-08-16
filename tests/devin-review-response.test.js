@@ -45,6 +45,15 @@ check('skill ships every linked reference', () => {
   }
 });
 
+check('skill can search and create its private round directory without broad Bash', () => {
+  const body = fs.readFileSync(path.join(SKILL, 'SKILL.md'), 'utf8');
+  const frontmatter = body.slice(0, body.indexOf('---', 4));
+  assert.match(frontmatter, /allowed-tools:.*\bGrep\b/);
+  assert.match(frontmatter, /allowed-tools:.*\bGlob\b/);
+  assert.match(frontmatter, /Bash\(mktemp:\*\)/);
+  assert.doesNotMatch(frontmatter, /\bBash\b(?!\s*\()/);
+});
+
 check('validator uses the plugin-level scripts convention', () => {
   assert.ok(fs.existsSync(VALIDATOR), 'plugin-level pre-push validator is missing');
   assert.ok(!fs.existsSync(path.join(SKILL, 'scripts/pre-push-check.js')),
