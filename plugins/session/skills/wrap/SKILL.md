@@ -103,6 +103,21 @@ inherits from its main checkout.
 - **It warns that the scan was truncated, or that a retirement matched
   nothing.** Both mean the list is not trustworthy as given. Resolve it before
   writing rather than carrying a list you have been told is wrong.
+- **It warns that two constraints look like one rule in two wordings.** This is
+  the one a wrap can make worse rather than merely inherit. Carrying both
+  forward verbatim, which is what every other instruction here tells you to do,
+  writes the fork into another document and grows it.
+
+  Resolving it is not a judgement call about which reads better. Ask which
+  wording is current, carry that one, and retire the other by quoting it
+  exactly, per the retirement rule below. Then check the command again before
+  writing: a retirement that matched nothing has left both live and the wrap is
+  about to record them both.
+
+  Where the two turn out to be genuinely different rules that happen to read
+  alike, say so in the handoff. The check reports and never edits precisely
+  because it cannot tell the difference, and an unexplained pair will be
+  reported again at every wrap from here on.
 
 **Nothing inside a constraint may change between sessions.** No running count,
 no session number, no date, no "third time this has come up". This governs

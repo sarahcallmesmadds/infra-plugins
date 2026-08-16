@@ -176,6 +176,29 @@ check('the template does not tell the writer to annotate a constraint', () => {
     'wrap no longer says the bullet carries the constraint alone');
 });
 
+check('wrap is told to act on the near-duplicate warning, not just read it', () => {
+  // The one warning a wrap can make worse rather than merely inherit: carrying
+  // both wordings forward verbatim, which every other instruction in the step
+  // tells it to do, writes the fork into another document. The bullet listing
+  // untrustworthy-list warnings named only truncation and unmatched retirement,
+  // so the model had no instruction covering this one.
+  const text = skill('wrap');
+  assert.match(
+    text,
+    /two constraints look like one rule in two wordings/i,
+    'wrap no longer mentions the near-duplicate warning, so it will carry both wordings forward and grow the fork'
+  );
+  // Naming it is not enough. Without the remedy the model knows something is
+  // wrong and not what to do, and the plausible guess, picking the better
+  // wording and dropping the other silently, is a constraint leaving by
+  // omission.
+  assert.match(
+    text,
+    /retire the other by quoting it\s+exactly/i,
+    'wrap names the near-duplicate warning without saying how to resolve it'
+  );
+});
+
 check('wrap forbids a value inside a constraint that changes between sessions', () => {
   // A running count inside the text forks a new constraint at every increment,
   // because matching is on the whole text. Measured on 2026-08-15: five
