@@ -397,6 +397,37 @@ function cmdLayout(args) {
   return OK;
 }
 
+// Answer one exact, machine-readable coverage question. `where` remains free
+// prose and never reaches this command; callers pass the optional
+// `destination_root` field through a file so user text is not interpolated into
+// a shell command. A missing name is different from a configured path that has
+// moved, because their remedies are different.
+function cmdCoverage(args) {
+  if (args._.length > 0) {
+    fail('roots.js: coverage takes --name-file, not a positional destination.');
+  }
+  if (args['name-file'] === undefined) {
+    fail('roots.js: coverage requires --name-file with a file containing the exact destination root name.');
+  }
+  let name;
+  try {
+    name = fs.readFileSync(expand(args['name-file']), 'utf8').trim();
+  } catch (error) {
+    fail(`roots.js: could not read --name-file ${JSON.stringify(args['name-file'])} (${error.message}).`);
+  }
+  if (!name) fail('roots.js: --name-file must contain a root name.');
+
+  const state = resolve({ name });
+  const root = state.roots[0];
+  const answer = !root
+    ? 'not-configured'
+    : root.exists
+      ? 'covered'
+      : state.usedDefaults ? 'default-missing' : 'root-missing';
+  process.stdout.write(JSON.stringify({ answer, root: name }) + '\n');
+  return OK;
+}
+
 // --- argument parsing ----------------------------------------------------
 
 // Same shape as queue.js on purpose, including refusing an unknown option
@@ -411,6 +442,7 @@ const COMMAND_OPTS = {
   list: new Set(['kind', 'name']),
   check: new Set(['kind', 'name']),
   layout: new Set(['root', 'slug']),
+  coverage: new Set(['name-file']),
 };
 
 function parseArgs(command, argv) {
@@ -456,7 +488,7 @@ function parseArgs(command, argv) {
   return out;
 }
 
-const COMMANDS = { list: cmdList, check: cmdCheck, layout: cmdLayout };
+const COMMANDS = { list: cmdList, check: cmdCheck, layout: cmdLayout, coverage: cmdCoverage };
 
 function main(argv) {
   const command = argv[0];
@@ -467,6 +499,7 @@ function main(argv) {
       '  check [--kind K] [--name N]   report any root in scope that is missing',
       '  list  [--kind K] [--name N]   the roots as JSON, each with an exists flag',
       '  layout [--root P] [--slug S]  where a plugin repo keeps things, as listings',
+      '  coverage --name-file F         whether one exact destination root was searched',
       '',
       '  layout answers one question for two callers. Without --slug it lists',
       '  everything under a checkout, which is the scan. With --slug it looks for',
@@ -492,6 +525,10 @@ function main(argv) {
       '  3 and 5 are separated so a caller can have one rule for each instead of',
       '  re-deriving the difference from the wording. Both mean a directory is',
       '  not there. Only one of them means somebody should go and fix a path.',
+      '',
+      '  coverage is the exception to the graded exit codes above. Its four',
+      '  ordinary answers are carried in the JSON answer field and all exit 0.',
+      '  Exit 1 still means the invocation or configuration could not be read.',
       '',
       '  Everything addressed to a person goes to stdout, including the exit-1',
       '  explanation, because the skills relay what was printed. stderr carries',

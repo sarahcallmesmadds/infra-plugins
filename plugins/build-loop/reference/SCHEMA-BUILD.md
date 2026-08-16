@@ -35,6 +35,7 @@ One JSON file per item, stored at:
   "what": "Warn about stale branches at the start of a session and offer to clean them up.",
   "why": "22 stale branches have built up and nothing surfaces them until they cause a conflict.",
   "where": "smadds marketplace",
+  "destination_root": "infra-plugins",
   "source": "",
   "blocked_by": "",
   "session_id": "00dc3f8e-941c-...",
@@ -76,6 +77,7 @@ The `built` object is written by `/built-check` when the item is confirmed done.
 | `what` | string | yes | Plain language, one or two sentences on what it should do. |
 | `why` | string | no | The problem it solves. Empty string when not given. This is the field that decides whether the item is still worth building in three months, so it is worth filling in. |
 | `where` | string | no | Intended home: a marketplace, a repository, a root name. Empty string when not known yet. **A destination, not a source.** It routinely names something that does not exist yet, which is why it is never path-checked. |
+| `destination_root` | string | no | Exact configured root name that must be searched for this item. This is the machine-readable coverage field; `where` remains display prose and is never parsed. Missing or empty means every available root is in scope, preserving existing entries. |
 | `source` | string | no | Material the build reads from: a spec, a prior implementation, a document. One filesystem path, absolute or `~`-relative, or empty. Checked by `/to-build` on every list, and reported when it no longer resolves. Empty string when the item is built from its own `what` and needs nothing else, which is the common case. |
 | `blocked_by` | string | no | Free text describing what has to happen first. Empty string when nothing blocks it. Not a structured reference to another item, because most blockers are not other to-build items. |
 | `session_id` | string | yes | Claude Code session ID. The route back to the conversation the item came out of, which is where the reasoning for it lives. Resolve it from the scratchpad directory path, `.../{project-slug}/{session-id}/scratchpad`, and confirm it against `~/.claude/projects/*/{session_id}.jsonl`. Empty string only when that fails. |
@@ -155,6 +157,7 @@ does the read, the change and the write in one process holding a lock.
 |---------|------|--------|
 | v1 | 2026-07-27 | Initial schema. |
 | v1 | 2026-08-03 | Added the optional `source` field. `$schema_version` stays at 1: the field is optional, an item without it is valid, and every reader treats a missing `source` the same as an empty one. |
+| v1 | 2026-08-15 | Added optional `destination_root` for the `/built-check` consumer. The version stays at 1 because missing and empty both retain the legacy all-roots search scope. `/to-build` authoring and migration are deliberately separate follow-up work; this entry documents the accepted consumer contract, not a claim that writers populate it yet. |
 
 ### Why `source` is its own field rather than a scan of the text
 

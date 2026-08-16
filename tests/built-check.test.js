@@ -194,5 +194,55 @@ check('git reads a bare date as the current time of day, not midnight', () => {
   fs.rmSync(repo, { recursive: true, force: true });
 });
 
-console.log(`\n6 checks, ${failed} failed`);
+check('coverage uses only the structured destination root, never where prose', () => {
+  assert.match(text, /`where` is human prose\. Never parse it/);
+  assert.match(text, /`destination_root`, an exact configured root name/);
+  assert.doesNotMatch(text, /covers\s+--where/);
+});
+
+check('destination root text is passed by file rather than interpolated', () => {
+  assert.match(text, /coverage[\s\\\n]+--name-file \{scratch\}\/destination-\{id\}\.txt/);
+  assert.match(text, /Never\s+paste it into a shell argument/);
+});
+
+check('legacy items remain searched across all available roots', () => {
+  assert.match(text, /destination_root` is missing or empty[\s\S]{0,240}all available roots/);
+  assert.match(text, /empty `where` does not mean the\s+item was unsearched/);
+});
+
+check('found evidence always outranks destination coverage', () => {
+  assert.match(text, /actual evidence always outranks destination\s+coverage/);
+  assert.match(text, /never downgrade it to "not searched"/);
+});
+
+check('not-searched items are unnumbered and cannot be closed', () => {
+  assert.match(text, /Items under "Not searched" are not numbered and cannot be\s+closed/);
+});
+
+check('a run with no closeable item does not ask the close question', () => {
+  assert.match(text, /every item is either "no sign of it" or "not searched"[\s\S]{0,260}Do not print the close question/);
+});
+
+check('coverage failures become an explicit unknown state', () => {
+  assert.match(text, /Exit 1, or output that is not that JSON shape[\s\S]{0,260}coverage \*\*unknown\*\*/);
+  assert.match(text, /Unknown coverage can never produce\s+the "not searched" verdict/);
+  assert.match(text, /not a string or contains only whitespace[\s\S]{0,220}mark its coverage unknown/);
+});
+
+check('Step 3 requires all four evidence sources', () => {
+  assert.match(text, /Collect from four places\. Gather all four before judging/);
+  for (const label of ['3a', '3b', '3c', '3d']) {
+    assert.match(text, new RegExp(`### ${label}\\b`), `Step ${label} is missing`);
+  }
+});
+
+check('an explicit destination root overrides generic kind scoping', () => {
+  assert.match(text, /An explicit `destination_root`\s+overrides that filter/);
+  assert.match(text, /also search that root using the item's convention even when the root's configured\s+kind differs/);
+  assert.match(text, /`covered` answer mean the destination was actually searched/);
+  assert.match(text, /For kind `other`[\s\S]{0,180}exact `<slug>` or `<slug>\.\*` name/);
+  assert.match(text, /Do not infer this override from `where`/);
+});
+
+console.log(`\n15 checks, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

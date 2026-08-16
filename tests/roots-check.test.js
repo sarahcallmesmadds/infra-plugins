@@ -680,6 +680,78 @@ check('no skill has gone back to writing its own plugin-repo globs', () => {
   );
 });
 
+// --- coverage: exact structured destination roots -------------------------
+
+{
+  const home = makeHome({ roots: [
+    { name: 'live', path: '~/live', kind: 'skill' },
+    { name: 'moved', path: '~/moved', kind: 'plugin-repo' },
+  ] });
+  fs.mkdirSync(path.join(home, 'live'));
+
+  const coverage = (name) => {
+    const file = path.join(home, `destination-${name.replace(/[^a-z0-9]/gi, '-')}.txt`);
+    fs.writeFileSync(file, name);
+    return run(home, ['coverage', '--name-file', file]);
+  };
+
+  check('coverage matches only an exact configured root name', () => {
+    assert.deepStrictEqual(JSON.parse(coverage('live').stdout), { answer: 'covered', root: 'live' });
+    assert.deepStrictEqual(JSON.parse(coverage('lives').stdout), { answer: 'not-configured', root: 'lives' });
+  });
+
+  check('coverage separates a moved root from an unconfigured root', () => {
+    assert.deepStrictEqual(JSON.parse(coverage('moved').stdout), { answer: 'root-missing', root: 'moved' });
+    assert.deepStrictEqual(JSON.parse(coverage('elsewhere').stdout), { answer: 'not-configured', root: 'elsewhere' });
+  });
+
+  check('coverage output stays one valid JSON record for unusual root names', () => {
+    const result = coverage('not configured\ncovered personal');
+    assert.deepStrictEqual(JSON.parse(result.stdout), {
+      answer: 'not-configured', root: 'not configured\ncovered personal',
+    });
+    assert.strictEqual(result.stdout.trim().split('\n').length, 1);
+  });
+
+  check('coverage reads the name from a file and never accepts a positional destination', () => {
+    const positional = run(home, ['coverage', 'live']);
+    assert.notStrictEqual(positional.code, 0);
+    assert.match(positional.stdout, /not a positional destination/);
+  });
+
+  check('coverage clearly requires --name-file when it is omitted', () => {
+    const out = run(home, ['coverage']);
+    assert.notStrictEqual(out.code, 0);
+    assert.match(out.stdout, /coverage requires --name-file/);
+    assert.doesNotMatch(out.stdout, /undefined|path.*argument/i);
+  });
+
+  check('coverage refuses an empty destination-root file', () => {
+    const file = path.join(home, 'empty-destination.txt');
+    fs.writeFileSync(file, '');
+    const out = run(home, ['coverage', '--name-file', file]);
+    assert.notStrictEqual(out.code, 0);
+    assert.match(out.stdout, /must contain a root name/);
+  });
+
+  check('coverage reports configuration failures as exit 1 prose', () => {
+    const h = makeHome('{ broken json');
+    const file = path.join(h, 'destination.txt');
+    fs.writeFileSync(file, 'live');
+    const out = run(h, ['coverage', '--name-file', file]);
+    assert.strictEqual(out.code, 1);
+    assert.match(out.stdout, /not valid JSON/);
+    assert.throws(() => JSON.parse(out.stdout));
+  });
+
+  check('help documents that ordinary coverage answers exit zero', () => {
+    const out = run(home, ['--help']);
+    assert.strictEqual(out.code, 0);
+    assert.match(out.stdout, /coverage is the exception[\s\S]*four[\s\S]*answers[\s\S]*exit 0/);
+    assert.match(out.stdout, /Exit 1 still means the invocation or configuration could not be read/);
+  });
+}
+
 for (const home of HOMES) fs.rmSync(home, { recursive: true, force: true });
 
 console.log(`\n${total} checks, ${failed} failed`);
