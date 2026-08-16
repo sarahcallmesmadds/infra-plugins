@@ -88,6 +88,21 @@ inherits from its main checkout.
   both then show as live, the list grows a near duplicate at every wrap, and a
   later retirement quoting one of them silently leaves the other in force. The
   command already reports where each came from on its own line.
+  **Nothing inside a constraint may change between sessions.** No running count,
+  no session number, no date, no "third time this has come up". Matching is on
+  the whole text, so a value that moves makes every session's copy a different
+  constraint: carrying it verbatim preserves a stale figure, correcting it forks
+  a near duplicate, and there is no third option. Measured on 2026-08-15, one
+  rule about where handoffs file was live in five numbered wordings at once,
+  ending "Sixth" through "Tenth session running", and five retirement lines had
+  been written chasing four of them. Retiring one leaves the rest in force,
+  because an exact quote is exact.
+
+  Where the recurrence is itself the point, count it rather than storing it. How
+  many handoffs carry a constraint is a search anyone can run, and what a rising
+  count is really reporting, a tool that keeps proposing the wrong answer,
+  belongs in the bug queue where it can be fixed rather than in a number that
+  records it being tolerated.
 - **It lists none, and names the handoffs it found for this project.** Those
   documents predate the section. Read them, pull out anything binding, and
   propose it to the user before writing:
