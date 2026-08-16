@@ -21,6 +21,7 @@
 
 'use strict';
 
+const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const { PATTERNS } = require('../plugins/guardrails/scripts/patterns');
@@ -56,6 +57,10 @@ const DESCRIPTIONS = {
 };
 const UNDO = fs.readFileSync(
   path.join(PLUGIN, 'skills', 'undo-possible', 'SKILL.md'),
+  'utf8'
+);
+const INJECTION = fs.readFileSync(
+  path.join(PLUGIN, 'skills', 'injection-scan', 'SKILL.md'),
   'utf8'
 );
 
@@ -237,6 +242,14 @@ check('the root README row is actually found, so the check above is checking som
   // A selector that silently matches nothing is a test that passes forever. The
   // row is located by a pattern, so the pattern gets its own assertion.
   if (!README_ROW) throw new Error('no guardrails row found in the root README table');
+});
+
+check('injection-scan does not promise silent URL fetching', () => {
+  const frontmatter = INJECTION.slice(0, INJECTION.indexOf('---', 4));
+  assert.match(frontmatter, /web-page text already fetched into the conversation/);
+  assert.match(frontmatter, /It does not fetch URLs itself/);
+  assert.doesNotMatch(frontmatter, /allowed-tools:.*(?:WebFetch|curl|wget)/);
+  assert.match(INJECTION, /fetch it through the host's normal web permission flow first/);
 });
 
 check('no description says it blocks what the hook only asks about', () => {

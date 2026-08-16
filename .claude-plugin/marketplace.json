@@ -12,7 +12,7 @@
       "name": "guardrails",
       "source": "./plugins/guardrails",
       "description": "Blocks commits to protected branches, asks before irreversible deletes, flags prompt injection in content the model reads or writes, and can require a governing document be read before a directory is written.",
-      "version": "0.5.3",
+      "version": "0.5.4",
       "author": {
         "name": "Sarah Madden"
       },
@@ -82,7 +82,7 @@
       "name": "session",
       "source": "./plugins/session",
       "description": "Make sessions continuous. Wrap one up into a handoff the next one loads, start with today's date and a compact build-loop brief, warn when another session is already working here, and put cost, context and connected tool health in the status line.",
-      "version": "0.8.16",
+      "version": "0.8.17",
       "author": {
         "name": "Sarah Madden"
       },

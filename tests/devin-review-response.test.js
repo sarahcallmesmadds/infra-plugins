@@ -45,6 +45,35 @@ check('skill ships every linked reference', () => {
   }
 });
 
+check('skill can search and create its private round directory without broad Bash', () => {
+  const body = fs.readFileSync(path.join(SKILL, 'SKILL.md'), 'utf8');
+  const frontmatter = body.slice(0, body.indexOf('---', 4));
+  assert.match(frontmatter, /allowed-tools:.*\bGrep\b/);
+  assert.match(frontmatter, /allowed-tools:.*\bGlob\b/);
+  assert.match(frontmatter, /allowed-tools:.*\bEdit\b/);
+  assert.match(frontmatter, /Bash\(mktemp:\*\)/);
+  assert.doesNotMatch(frontmatter, /\bBash\b(?!\s*\()/);
+  assert.doesNotMatch(frontmatter, /Bash\((?:git|gh):\*\)/);
+  for (const grant of [
+    'git branch --show-current', 'git diff', 'git log', 'git remote -v',
+    'git rev-parse', 'git status', 'gh auth status', 'gh pr view',
+  ]) {
+    assert.match(frontmatter, new RegExp(`Bash\\(${grant.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}:\\*\\)`));
+  }
+  for (const mutation of ['git add', 'git commit', 'git push', 'git reset', 'gh pr merge']) {
+    assert.doesNotMatch(frontmatter, new RegExp(`Bash\\(${mutation.replace(/ /g, '\\s')}`));
+  }
+  assert.match(frontmatter, /Bash\(gh api --method GET:\*\)/);
+  assert.doesNotMatch(frontmatter, /Bash\(gh api:\*\)/);
+});
+
+check('inline review fallback is explicitly read-only', () => {
+  const body = fs.readFileSync(path.join(SKILL, 'SKILL.md'), 'utf8');
+  assert.match(body, /gh api --method GET/);
+  assert.match(body, /`reviews` and `comments` endpoints/);
+  assert.match(body, /method must be explicit/);
+});
+
 check('validator uses the plugin-level scripts convention', () => {
   assert.ok(fs.existsSync(VALIDATOR), 'plugin-level pre-push validator is missing');
   assert.ok(!fs.existsSync(path.join(SKILL, 'scripts/pre-push-check.js')),

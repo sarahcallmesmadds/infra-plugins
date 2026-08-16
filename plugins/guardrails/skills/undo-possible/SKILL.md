@@ -1,6 +1,7 @@
 ---
 name: undo-possible
 description: Assess a shell command for irreversible destructive potential before running it, and explain what it would do. Read-only, runs nothing. Use when a command involves rm, git reset, git clean, force push, or branch deletion, or when you are about to run something you did not write. Triggers on "undo-possible", "can I undo this", "is this command safe", "what will this do", "should I run this".
+allowed-tools: Read, Bash(node:*)
 ---
 
 # undo-possible
