@@ -217,7 +217,9 @@ Look back over the current session. If something on the list was built in this c
 Those forms overlap with ordinary sentences and cannot support a reliable
 machine verdict.
 
-An item may instead carry `destination_root`, an exact configured root name.
+An item may instead carry `destination_root`, an exact build-loop root name.
+It may name a root already in the config or one the user expects to add later;
+the latter intentionally returns `not-configured` until that root is added.
 When that field is a string containing at least one non-whitespace character,
 write its value verbatim to
 `{scratch}/destination-{id}.txt`, then run:

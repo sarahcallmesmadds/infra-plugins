@@ -35,7 +35,9 @@ check('writer, schema and consumer use the same field', () => {
   assert.match(schema, /\| `destination_root` \| string \| no \|/);
   assert.match(toBuild, /^Destination root: \{destination_root,/m);
   assert.match(toBuild, /^destination_root:\s+\{destination_root,/m);
-  assert.match(builtCheck, /carry `destination_root`, an exact configured root name/);
+  assert.match(builtCheck, /carry `destination_root`, an exact build-loop root name/);
+  assert.match(builtCheck, /root already in the config or one the user expects to add later/);
+  assert.match(builtCheck, /intentionally returns `not-configured` until that root is added/);
 });
 
 check('authoring selects exact root names and never parses where prose', () => {
@@ -93,6 +95,12 @@ check('a created item reaches the exact coverage consumer', () => {
       env, encoding: 'utf8',
     }));
     assert.deepStrictEqual(result, { answer: 'covered', root: 'work' });
+
+    fs.writeFileSync(nameFile, 'future-root');
+    const future = JSON.parse(execFileSync(process.execPath, [roots, 'coverage', '--name-file', nameFile], {
+      env, encoding: 'utf8',
+    }));
+    assert.deepStrictEqual(future, { answer: 'not-configured', root: 'future-root' });
   } finally {
     fs.rmSync(home, { recursive: true, force: true });
   }
