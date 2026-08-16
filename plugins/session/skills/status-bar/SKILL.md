@@ -1,7 +1,7 @@
 ---
 name: status-bar
 description: Set up the native Codex footer and task-progress title, or the richer Claude Code status line with model, folder, current task, spend, context, and connected-tool health. Use when the user says "set up the status bar", "install the status line", "show me my context usage", "show the current Codex task", "add the usage bar", or invokes /status-bar. Also use when a status line has stopped rendering or is showing an old version.
-allowed-tools: Read, Write, Bash(ls:*), Bash(node:*)
+allowed-tools: Read, Write, Edit, Bash(ls:*), Bash(node:*)
 ---
 
 # Status bar

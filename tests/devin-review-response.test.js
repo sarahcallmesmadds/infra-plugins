@@ -50,6 +50,7 @@ check('skill can search and create its private round directory without broad Bas
   const frontmatter = body.slice(0, body.indexOf('---', 4));
   assert.match(frontmatter, /allowed-tools:.*\bGrep\b/);
   assert.match(frontmatter, /allowed-tools:.*\bGlob\b/);
+  assert.match(frontmatter, /allowed-tools:.*\bEdit\b/);
   assert.match(frontmatter, /Bash\(mktemp:\*\)/);
   assert.doesNotMatch(frontmatter, /\bBash\b(?!\s*\()/);
   assert.doesNotMatch(frontmatter, /Bash\((?:git|gh):\*\)/);
@@ -62,6 +63,15 @@ check('skill can search and create its private round directory without broad Bas
   for (const mutation of ['git add', 'git commit', 'git push', 'git reset', 'gh pr merge']) {
     assert.doesNotMatch(frontmatter, new RegExp(`Bash\\(${mutation.replace(/ /g, '\\s')}`));
   }
+  assert.match(frontmatter, /Bash\(gh api --method GET:\*\)/);
+  assert.doesNotMatch(frontmatter, /Bash\(gh api:\*\)/);
+});
+
+check('inline review fallback is explicitly read-only', () => {
+  const body = fs.readFileSync(path.join(SKILL, 'SKILL.md'), 'utf8');
+  assert.match(body, /gh api --method GET/);
+  assert.match(body, /`reviews` and `comments` endpoints/);
+  assert.match(body, /method must be explicit/);
 });
 
 check('validator uses the plugin-level scripts convention', () => {

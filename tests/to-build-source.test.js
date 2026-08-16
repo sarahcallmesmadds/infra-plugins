@@ -43,9 +43,14 @@ function commandIsGranted(command, grants) {
 }
 
 function commandForGrantCheck(command) {
-  const token = command.split(/\s/)[0];
+  const token = (command.match(/^(?:"[^"]*"|'[^']*'|[^\s"'])+/) || [])[0];
   if (!token) return null;
-  const normalizedToken = token.replace(/'[^']*'/g, "''").replace(/"[^"]*"/g, '""');
+  // Preserve the path around an environment expansion. Blanking the complete
+  // quoted token turns "${ROOT}/scripts/cli.js" into "" and drops the command
+  // from the audit, while removing only the expansion leaves /scripts/cli.js.
+  const normalizedToken = token
+    .replace(/\$\{[A-Za-z_][A-Za-z0-9_]*\}/g, '')
+    .replace(/\$[A-Za-z_][A-Za-z0-9_]*/g, '');
   const executable = normalizedToken.replace(/["']/g, '').split('/').pop();
   if (!/^[a-zA-Z][a-zA-Z0-9_.-]*$/.test(executable)) return null;
   const args = command.slice(token.length)
@@ -58,18 +63,36 @@ function commandForGrantCheck(command) {
 }
 
 function shellSegments(block) {
-  // Heredocs must be removed before quoted strings, or stripping a quoted
-  // delimiter such as 'PY' leaves the program body behind. Quoted arguments
-  // are then blanked before separators are split, so `git commit -m "a; b"`
-  // cannot invent a command called `b`.
+  // Remove heredocs first, then split only on shell operators outside quotes.
+  // Keeping quoted text intact lets commandForGrantCheck recover a fully
+  // quoted executable path without treating separators in arguments as shell.
   const body = block
-    .replace(/<<-?\s*'?([A-Za-z_][A-Za-z0-9_]*)'?\n[\s\S]*?\n\1\n?/g, '\n')
-    .replace(/'[^']*'/g, "''")
-    .replace(/"[^"]*"/g, '""');
+    .replace(/<<-?\s*'?([A-Za-z_][A-Za-z0-9_]*)'?\n[\s\S]*?\n\1\n?/g, '\n');
   return body.split('\n').flatMap((raw) => {
     const stripped = raw.trim();
     if (!stripped || stripped.startsWith('#')) return [];
-    return stripped.split(/\|\||&&|\||;/).map((segment) => segment.trim()).filter(Boolean);
+    const segments = [];
+    let start = 0;
+    let quote = null;
+    for (let i = 0; i < stripped.length; i += 1) {
+      const char = stripped[i];
+      if (quote) {
+        if (char === quote && stripped[i - 1] !== '\\') quote = null;
+        continue;
+      }
+      if (char === '"' || char === "'") {
+        quote = char;
+        continue;
+      }
+      const width = stripped.startsWith('&&', i) || stripped.startsWith('||', i) ? 2
+        : (char === '|' || char === ';' ? 1 : 0);
+      if (!width) continue;
+      segments.push(stripped.slice(start, i).trim());
+      i += width - 1;
+      start = i + 1;
+    }
+    segments.push(stripped.slice(start).trim());
+    return segments.filter(Boolean);
   });
 }
 
@@ -288,6 +311,14 @@ check('quoted path commands remain visible to the grant check', () => {
     executable: 'hook-node',
   });
   assert.ok(!commandIsGranted(parsed.command, ['node']));
+
+  const fullyQuoted = commandForGrantCheck(
+    '"${CLAUDE_PLUGIN_ROOT}/scripts/cli.js" archive'
+  );
+  assert.deepStrictEqual(fullyQuoted, {
+    command: '"/scripts/cli.js" archive',
+    executable: 'cli.js',
+  });
 });
 
 check('status-bar scopes ls and marks its dynamic launcher as approval-required', () => {
@@ -303,8 +334,23 @@ check('status-bar scopes ls and marks its dynamic launcher as approval-required'
 
 check('quoted separators do not invent shell commands', () => {
   assert.deepStrictEqual(shellSegments('git commit -m "add; stuff | more"\n'), [
-    'git commit -m ""',
+    'git commit -m "add; stuff | more"',
   ]);
+});
+
+check('skills that require in-place edits pre-approve Edit', () => {
+  const files = [
+    'plugins/session/skills/core-tools/SKILL.md',
+    'plugins/session/skills/status-bar/SKILL.md',
+    'plugins/session/skills/wrap/SKILL.md',
+    'plugins/slop-check/skills/slop-check/SKILL.md',
+    'plugins/build-loop/skills/devin-review-response/SKILL.md',
+  ];
+  for (const relative of files) {
+    const body = fs.readFileSync(path.join(__dirname, '..', relative), 'utf8');
+    const frontmatter = body.slice(0, body.indexOf('---', 4));
+    assert.match(frontmatter, /allowed-tools:.*\bEdit\b/, `${relative} does not grant Edit`);
+  }
 });
 
 check('restricted Bash grants retain their full prefix and stop at delimiters', () => {

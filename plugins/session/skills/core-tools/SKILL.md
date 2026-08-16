@@ -1,7 +1,7 @@
 ---
 name: core-tools
 description: Pick which connected tools to watch, so the status line warns when one needs signing in again. Reads the servers actually connected on this machine and lets the user choose. Use when the user says "core tools", "which of my tools are connected", "watch my MCP servers", "tell me when Notion drops", "is my Slack still connected", or invokes /core-tools.
-allowed-tools: Read, Write, Bash(node:*)
+allowed-tools: Read, Write, Edit, Bash(node:*)
 ---
 
 # Core tools

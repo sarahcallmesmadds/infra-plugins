@@ -1,7 +1,7 @@
 ---
 name: devin-review-response
 description: Resolve a complete Devin code-review round without point fixes. Use when Devin posts PR findings, the user asks to address or fix a Devin review, or a branch needs a final Devin-response pass before push or merge. Maps dependencies before editing, audits paired and adjacent files, classifies every finding, validates the round record, and produces one atomic commit per review round.
-allowed-tools: Read, Write, Grep, Glob, Bash(mktemp:*), Bash(node:*), Bash(git branch --show-current:*), Bash(git diff:*), Bash(git log:*), Bash(git remote -v:*), Bash(git rev-parse:*), Bash(git status:*), Bash(gh auth status:*), Bash(gh pr view:*)
+allowed-tools: Read, Write, Edit, Grep, Glob, Bash(mktemp:*), Bash(node:*), Bash(git branch --show-current:*), Bash(git diff:*), Bash(git log:*), Bash(git remote -v:*), Bash(git rev-parse:*), Bash(git status:*), Bash(gh auth status:*), Bash(gh pr view:*), Bash(gh api --method GET:*)
 ---
 
 # Devin review response
@@ -12,7 +12,12 @@ Treat one Devin review as one bounded change set. Do not edit until every findin
 
 Resolve the repository, PR, branch, head SHA, and review round. Confirm the checked-out branch is the PR head and the local head matches the remote head.
 
-Fetch every inline and top-level finding. If Devin reports additional findings behind its web interface, stop and ask the user to provide them. An incomplete finding set cannot produce a clean round.
+Fetch every inline and top-level finding. Prefer the connected GitHub app. When
+it cannot return inline review comments, use `gh api --method GET` against the
+pull request's `reviews` and `comments` endpoints; the method must be explicit
+so the scoped grant cannot authorize a GitHub write. If Devin reports additional
+findings behind its web interface, stop and ask the user to provide them. An
+incomplete finding set cannot produce a clean round.
 
 Create one private temporary directory for the round:
 
