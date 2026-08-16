@@ -194,5 +194,34 @@ check('git reads a bare date as the current time of day, not midnight', () => {
   fs.rmSync(repo, { recursive: true, force: true });
 });
 
-console.log(`\n6 checks, ${failed} failed`);
+check('coverage uses only the structured destination root, never where prose', () => {
+  assert.match(text, /`where` is human prose\. Never parse it/);
+  assert.match(text, /`destination_root`, an exact configured root name/);
+  assert.doesNotMatch(text, /covers\s+--where/);
+});
+
+check('destination root text is passed by file rather than interpolated', () => {
+  assert.match(text, /coverage[\s\\\n]+--name-file \{scratch\}\/destination-\{id\}\.txt/);
+  assert.match(text, /Never\s+paste it into a shell argument/);
+});
+
+check('legacy items remain searched across all available roots', () => {
+  assert.match(text, /destination_root` is missing or empty[\s\S]{0,240}all available roots/);
+  assert.match(text, /empty `where` does not mean the\s+item was unsearched/);
+});
+
+check('found evidence always outranks destination coverage', () => {
+  assert.match(text, /actual evidence always outranks destination\s+coverage/);
+  assert.match(text, /never downgrade it to "not searched"/);
+});
+
+check('not-searched items are unnumbered and cannot be closed', () => {
+  assert.match(text, /Items under "Not searched" are not numbered and cannot be\s+closed/);
+});
+
+check('a run with no closeable item does not ask the close question', () => {
+  assert.match(text, /every item is either "no sign of it" or "not searched"[\s\S]{0,260}Do not print the close question/);
+});
+
+console.log(`\n12 checks, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

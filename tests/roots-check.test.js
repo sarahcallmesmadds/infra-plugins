@@ -680,6 +680,54 @@ check('no skill has gone back to writing its own plugin-repo globs', () => {
   );
 });
 
+// --- coverage: exact structured destination roots -------------------------
+
+{
+  const home = makeHome({ roots: [
+    { name: 'live', path: '~/live', kind: 'skill' },
+    { name: 'moved', path: '~/moved', kind: 'plugin-repo' },
+  ] });
+  fs.mkdirSync(path.join(home, 'live'));
+
+  const coverage = (name) => {
+    const file = path.join(home, `destination-${name.replace(/[^a-z0-9]/gi, '-')}.txt`);
+    fs.writeFileSync(file, name);
+    return run(home, ['coverage', '--name-file', file]);
+  };
+
+  check('coverage matches only an exact configured root name', () => {
+    assert.deepStrictEqual(JSON.parse(coverage('live').stdout), { answer: 'covered', root: 'live' });
+    assert.deepStrictEqual(JSON.parse(coverage('lives').stdout), { answer: 'not-configured', root: 'lives' });
+  });
+
+  check('coverage separates a moved root from an unconfigured root', () => {
+    assert.deepStrictEqual(JSON.parse(coverage('moved').stdout), { answer: 'root-missing', root: 'moved' });
+    assert.deepStrictEqual(JSON.parse(coverage('elsewhere').stdout), { answer: 'not-configured', root: 'elsewhere' });
+  });
+
+  check('coverage output stays one valid JSON record for unusual root names', () => {
+    const result = coverage('not configured\ncovered personal');
+    assert.deepStrictEqual(JSON.parse(result.stdout), {
+      answer: 'not-configured', root: 'not configured\ncovered personal',
+    });
+    assert.strictEqual(result.stdout.trim().split('\n').length, 1);
+  });
+
+  check('coverage reads the name from a file and never accepts a positional destination', () => {
+    const positional = run(home, ['coverage', 'live']);
+    assert.notStrictEqual(positional.code, 0);
+    assert.match(positional.stdout, /not a positional destination/);
+  });
+
+  check('coverage refuses an empty destination-root file', () => {
+    const file = path.join(home, 'empty-destination.txt');
+    fs.writeFileSync(file, '');
+    const out = run(home, ['coverage', '--name-file', file]);
+    assert.notStrictEqual(out.code, 0);
+    assert.match(out.stdout, /must contain a root name/);
+  });
+}
+
 for (const home of HOMES) fs.rmSync(home, { recursive: true, force: true });
 
 console.log(`\n${total} checks, ${failed} failed`);

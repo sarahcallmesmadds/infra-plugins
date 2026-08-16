@@ -199,29 +199,72 @@ A file that exists but predates the item's `created_at` is NOT evidence that the
 
 Look back over the current session. If something on the list was built in this conversation, that is the strongest evidence available and it will not be in the git log yet if nothing has been committed. Note it as session evidence and say plainly that it is uncommitted.
 
+### 3d — Exact destination coverage
+
+`where` is human prose. Never parse it as a root, path, URL or repository name.
+Those forms overlap with ordinary sentences and cannot support a reliable
+machine verdict.
+
+An item may instead carry `destination_root`, an exact configured root name.
+When that field is a non-empty string, write its value verbatim to
+`{scratch}/destination-{id}.txt`, then run:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/roots.js" coverage \
+  --name-file {scratch}/destination-{id}.txt
+```
+
+The file handoff is required because the field is user-authored text. Never
+paste it into a shell argument.
+
+The command prints one JSON object with `answer` and `root`. Interpret `answer`:
+
+- `covered` — that configured root exists and was searched.
+- `not-configured` — no configured root has that exact name.
+- `root-missing` — the root is configured but its directory is absent.
+- `default-missing` — it names an absent built-in fallback on a machine with no
+  config file.
+
+When `destination_root` is missing or empty, do not run this command. The item
+uses the legacy contract: all available roots are its search scope, so judge it
+normally from 3a, 3b and 3c. In particular, an empty `where` does not mean the
+item was unsearched.
+
 ---
 
 ## Step 4 — Judge each open item
 
-For each item, land on exactly one of three verdicts. When the evidence is mixed, take the lower verdict. A wrong "looks built" quietly deletes work from the list, and a wrong "no sign of it" costs one line of the user's attention.
+For each item, land on exactly one of four verdicts. When the evidence is mixed,
+take the lower verdict, except that actual evidence always outranks destination
+coverage. A wrong "looks built" quietly deletes work from the list, and a wrong
+"no sign of it" costs one line of the user's attention.
 
 | Verdict | When |
 |---|---|
 | **looks built** | Something matching the item exists on disk and was created or last changed after the item was added, OR a commit after the item was added clearly does the thing the item describes, OR it was built in this session. |
 | **started** | Partial evidence. A directory exists but is empty or has no manifest, or a commit mentions it as work in progress. |
 | **no sign of it** | Nothing found. |
+| **not searched** | Step 3d returned `not-configured`, `root-missing` or `default-missing`, and 3a, 3b and 3c found no evidence. Keep the exact answer for the final remedy. |
 
-Write one line of evidence for every verdict that is not "no sign of it". Name the actual path or commit. "Looks done" is not evidence, `plugins/git-hygiene/plugin.json, added in a1b2c3d on 2026-08-01` is.
+If any disk, commit or session evidence exists, judge that evidence normally and
+never downgrade it to "not searched" because `destination_root` is stale.
+
+Write one line of evidence for every verdict that is not "no sign of it". Name the actual path or commit. "Looks done" is not evidence, `plugins/git-hygiene/plugin.json, added in a1b2c3d on 2026-08-01` is. For "not searched", quote the exact `destination_root` and coverage answer.
 
 ---
 
 ## Step 5 — Show the findings and ask
 
-If every item comes back "no sign of it":
+If every item comes back "no sign of it", with none "not searched":
 
 > "Checked {N} open items against the last {days} days. No sign that any of them have been built yet. Nothing to close."
 
 Stop. Do not ask a question that has only one answer.
+
+If every item is either "no sign of it" or "not searched", show those two
+groups, say "Nothing to close", print the applicable destination-root notes
+from Step 7, and stop. Do not print the close question when no numbered item is
+closeable.
 
 Otherwise show this:
 
@@ -239,10 +282,15 @@ No sign of it yet:
   - {title}
   - {title}
 
+Not searched:
+  - {title} - destination root: {destination_root} ({coverage answer})
+
 Close the built ones? (all / a list of numbers like "1,3" / none)
 ```
 
-Omit any of the three groups that is empty. Do not print an empty heading.
+Omit any empty group. Items under "Not searched" are not numbered and cannot be
+closed from this report, because the report has no evidence about whether they
+were built.
 
 On their response:
 
@@ -302,7 +350,7 @@ Marking something `In Progress` from Step 5 uses the same sequence, setting only
 
 ```
 Closed {K} items: {titles}.
-{M} still open. {J} started but not finished.
+{M} still open. {J} started but not finished. {U} not searched.
 ```
 
 Add these lines only when they apply:
@@ -311,6 +359,9 @@ Add these lines only when they apply:
 - `Note: {title} was closed on session evidence and is not committed yet.`
 - `Note: something called {slug} already existed before {title} was added. Worth a look, the name may be taken.`
 - `Note: the git log returned nothing for any root in this window. If that looks wrong, the window may be the problem rather than the work.`
+- `Note: {X} items name roots that are not configured: {roots}. Add those exact root names to ~/.claude/build-loop.config.json to search them.`
+- `Note: {G} items name configured roots whose paths are missing: {roots}. Fix those paths rather than adding duplicate roots.`
+- `Note: {A} items name absent built-in defaults: {roots}. No configuration entry is broken; add a root only if you want that location searched.`
 
 That last line matters more than it looks. Every way this step fails, a malformed cutoff or the wrong `date` flag or a root that is not a repository, ends at the same place: no commits, and a confident "no sign of it". Saying the log came back empty costs one line and is the only signal that separates "nothing was built" from "nothing was looked at".
 
