@@ -41,6 +41,19 @@ check('a text block array is the user talking', () => {
   assert.strictEqual(P.userText(user([{ type: 'text', text: 'huh?' }])), 'huh?');
 });
 
+check('an appended system reminder block is removed from a real user message', () => {
+  const reminder = '<system-reminder>' + 'i dont understand '.repeat(100) + '</system-reminder>';
+  assert.strictEqual(P.userText(user([
+    { type: 'text', text: 'yes do it' },
+    { type: 'text', text: reminder },
+  ])), 'yes do it');
+});
+
+check('an inline system reminder is removed from a string message', () => {
+  assert.strictEqual(P.userText(user('yes do it\n<system-reminder>what does that mean</system-reminder>')),
+    'yes do it');
+});
+
 check('a tool result is not the user talking', () => {
   assert.strictEqual(P.userText(user([{ type: 'tool_result', content: 'i dont understand' }])), null);
 });
@@ -207,6 +220,27 @@ check('the signal check reads the tail for a handover, not the whole answer', ()
   assert.strictEqual(s.counted, 1);
   assert.strictEqual(s.narrates, 1);
   assert.strictEqual(s.noHandover, 1, 'an answer ending on its own process hands over nothing');
+});
+
+check('signals count each answer once across a burst of user messages', () => {
+  const answer = { text: 'x'.repeat(600) + ' and my first pass was wrong' };
+  const s = P.signals([{ answer }, { answer }, { answer }]);
+  assert.strictEqual(s.counted, 1);
+  assert.strictEqual(s.narrates, 1);
+  assert.strictEqual(s.noHandover, 1);
+});
+
+check('an answer that drew pushback is excluded from the comparison group', () => {
+  const answer = { text: 'x'.repeat(600) + ' and my first pass was wrong' };
+  const result = {
+    typed: [
+      { text: 'i dont understand', answer },
+      { text: 'yes do it', answer },
+    ],
+    pushbacks: [{ text: 'i dont understand', kind: 'cannot-understand', answer }],
+    byKind: Object.fromEntries(P.KINDS.map((k) => [k.kind, k.kind === 'cannot-understand' ? 1 : 0])),
+  };
+  assert.doesNotMatch(P.report(result, {}), /against every other answer/);
 });
 
 // --- the report keeps the user's words off any external surface ------------

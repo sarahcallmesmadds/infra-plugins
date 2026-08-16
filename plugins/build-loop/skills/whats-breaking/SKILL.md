@@ -364,20 +364,21 @@ Run:
 
 ```bash
 week_start="$(node -e 'const d=new Date(); const day=d.getUTCDay()||7; d.setUTCHours(0,0,0,0); d.setUTCDate(d.getUTCDate()+1-day); console.log(d.toISOString())')"
-node "${CLAUDE_PLUGIN_ROOT}/scripts/pushback.js" --since "$week_start" --quotes
+node "${CLAUDE_PLUGIN_ROOT}/scripts/pushback.js" --since "$week_start"
 ```
 
-Keep `week_start` for Step 9. This is the same Monday 00:00 UTC boundary used
-by the rest of the report, so every section describes one period and consecutive
-reports neither overlap nor leave a gap.
+This is the same Monday 00:00 UTC boundary used by the rest of the report, so
+every section describes one period and consecutive reports neither overlap nor
+leave a gap. Step 9 computes the boundary again rather than relying on shell state.
 
 It prints one headline number, pushbacks per hundred messages the user actually
 typed, then a breakdown by kind and the most recent examples.
 
-`--quotes` is what includes the examples, and it is off by default because this
-output gets pasted into channels. Add it here, where the report is being written
-to a file on the user's own machine, and nowhere else. Step 9 covers what to run
-instead when any of this is going to Slack.
+The saved report carries counts, not quotes. If the user wants the examples,
+run the same command with `--quotes` and show that output only in the current
+local session. Do not copy those examples into the summary file: the session
+plugin reads that file into future session briefs, where the examples would use
+the brief's limited space and persist private transcript text beyond this run.
 
 **The rate is the whole point.** A writing rule that does not move it is not
 working, and adding more rules to the skill will not change a flat line. Report
@@ -458,11 +459,6 @@ This outputs `YYYY-WW` (e.g. `2026-17`). The summary filename is `{YYYY-WW}.md`.
 ### Resolved
 - **{target}**: Structural fix applied {date}.
 
-## Pushback Rate
-
-{Full output from Step 6b, including the headline rate, breakdown, floor statement,
-and local-only recent examples.}
-
 ## Fixes Applied This Week
 
 - `{target}` ({repo}): {one-line summary from what_happened} [queue:{entry-id}]
@@ -481,6 +477,11 @@ and local-only recent examples.}
 ## No Action Needed
 
 {N} targets had no corrections this week.
+
+## Pushback Rate
+
+{Counts-only output from Step 6b, including the headline rate, breakdown, signal
+comparison, and floor statement. Never include quoted examples in this file.}
 ```
 
 **Section rules:**
@@ -535,16 +536,18 @@ quotes the user's own messages when it is asked to, which is what makes a
 pattern actionable when they read it themselves. Those same lines are somebody's
 unguarded words about being confused and frustrated, and a channel is a
 different audience from a file on their own Mac, whatever the channel is.
-Regenerate that section for the post with the plain command:
+Recompute the boundary and regenerate that section for the post with:
 
 ```bash
+week_start="$(node -e 'const d=new Date(); const day=d.getUTCDay()||7; d.setUTCHours(0,0,0,0); d.setUTCDate(d.getUTCDate()+1-day); console.log(d.toISOString())')"
 node "${CLAUDE_PLUGIN_ROOT}/scripts/pushback.js" --since "$week_start"
 ```
 
-using the exact `week_start` retained from Step 6b. This emits the rate and the
-counts and no quotes. Substitute it for the local
-Step 6b section before posting. This applies to the direct message too: the rule
-is about the surface, not about who can see it.
+Do not rely on a shell variable from Step 6b surviving until this step. This
+emits the rate and counts and no quotes. Substitute it for the local Step 6b
+section before posting. If this command fails, stop and report the failure;
+never fall back to quoted output. This applies to the direct message too: the
+rule is about the surface, not about who can see it.
 
 **Quoting is opt-in, and there is no flag to get wrong.** The script only quotes
 when `--quotes` is passed, and refuses any argument it does not recognise rather

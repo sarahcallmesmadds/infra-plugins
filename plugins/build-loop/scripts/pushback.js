@@ -117,14 +117,24 @@ function userText(record) {
   if (record.userType && record.userType !== 'external') return null;
 
   const content = record.message && record.message.content;
+  const injected = [
+    '<command-message>', '<command-name>', '<local-command-stdout>',
+    '<local-command-caveat>', '<bash-input>', '<bash-stdout>', '<bash-stderr>',
+    '<system-reminder>', '[Request interrupted', 'Caveat:', 'Stop hook feedback:',
+    'Base directory for this skill:',
+  ];
+  const isInjected = (value) => injected.some((marker) => value.trim().startsWith(marker));
   let text = null;
-  if (typeof content === 'string') text = content;
+  if (typeof content === 'string') {
+    text = content.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/gi, '');
+  }
   else if (Array.isArray(content)) {
     const parts = [];
     for (const block of content) {
       // A tool result is the transcript talking to itself.
       if (block && block.type === 'tool_result') return null;
-      if (block && block.type === 'text' && typeof block.text === 'string') parts.push(block.text);
+      if (block && block.type === 'text' && typeof block.text === 'string'
+        && !isInjected(block.text)) parts.push(block.text);
     }
     text = parts.length ? parts.join('\n') : null;
   }
@@ -134,13 +144,7 @@ function userText(record) {
   if (!trimmed) return null;
 
   // Injected wrappers. Each of these is machinery, not a message.
-  const injected = [
-    '<command-message>', '<command-name>', '<local-command-stdout>',
-    '<local-command-caveat>', '<bash-input>', '<bash-stdout>', '<bash-stderr>',
-    '<system-reminder>', '[Request interrupted', 'Caveat:', 'Stop hook feedback:',
-    'Base directory for this skill:',
-  ];
-  for (const marker of injected) if (trimmed.startsWith(marker)) return null;
+  if (isInjected(trimmed)) return null;
 
   return trimmed;
 }
@@ -225,8 +229,11 @@ function signals(entries) {
   let narrates = 0;
   let noHandover = 0;
   let counted = 0;
+  const seen = new Set();
   for (const e of entries) {
     if (!e.answer || e.answer.text.length < 400) continue;
+    if (seen.has(e.answer)) continue;
+    seen.add(e.answer);
     counted += 1;
     if (NARRATES.test(e.answer.text)) narrates += 1;
     if (!HANDS_OVER.test(e.answer.text.slice(-400))) noHandover += 1;
@@ -265,8 +272,9 @@ function report(result, options) {
     lines.push(`${String(n).padStart(3)}  ${k.label}`);
   }
 
+  const pushedAnswers = new Set(result.pushbacks.map((p) => p.answer).filter(Boolean));
   const pushed = signals(result.pushbacks);
-  const others = signals(result.typed.filter((t) => !classify(t.text)));
+  const others = signals(result.typed.filter((t) => t.answer && !pushedAnswers.has(t.answer)));
   if (pushed.counted && others.counted) {
     lines.push('');
     lines.push('In the answers that drew a pushback, against every other answer over 400 characters:');
