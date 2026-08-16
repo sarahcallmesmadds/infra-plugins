@@ -1,7 +1,7 @@
 ---
 name: devin-review-response
 description: Resolve a complete Devin code-review round without point fixes. Use when Devin posts PR findings, the user asks to address or fix a Devin review, or a branch needs a final Devin-response pass before push or merge. Maps dependencies before editing, audits paired and adjacent files, classifies every finding, validates the round record, and produces one atomic commit per review round.
-allowed-tools: Read, Write, Bash
+allowed-tools: Read, Write, Bash(node:*), Bash(git:*), Bash(gh:*)
 ---
 
 # Devin review response
@@ -56,6 +56,10 @@ Sweep tests, fixtures, docs, examples, manifests, generated surfaces, and counts
 ## 5. Verify and ship one round
 
 Run the repository's complete relevant test, typecheck, lint, and formatting gates. Record each command and outcome in `verification`.
+The frontmatter pre-approves `node`, `git`, and `gh`, which are the commands
+this procedure names. A repository-specific gate using another command remains
+available through the host's normal permission prompt; do not broaden the Bash
+grant to suppress that prompt.
 
 Validate the record:
 

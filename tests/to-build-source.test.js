@@ -36,25 +36,41 @@ function bashGrantPrefixes(line) {
 }
 
 function commandIsGranted(command, grants) {
-  return grants.some((grant) => command === grant || command.startsWith(`${grant} `));
+  return grants.some((grant) => {
+    const pattern = grant.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
+    return new RegExp(`^${pattern}(?:$| )`).test(command);
+  });
 }
 
 function commandForGrantCheck(command) {
   const token = command.split(/\s/)[0];
   if (!token) return null;
-  const executable = token.replace(/["']/g, '').split('/').pop();
+  const normalizedToken = token.replace(/'[^']*'/g, "''").replace(/"[^"]*"/g, '""');
+  const executable = normalizedToken.replace(/["']/g, '').split('/').pop();
   if (!/^[a-zA-Z][a-zA-Z0-9_.-]*$/.test(executable)) return null;
   const args = command.slice(token.length)
     .replace(/'[^']*'/g, "''")
     .replace(/"[^"]*"/g, '""');
   return {
-    command: `${executable}${args}`,
-    // A variable-expanded or absolute path is the real first token. Claude's
-    // permission matcher does not reduce it to the basename, so only a bare
-    // Bash grant can authorize this form reliably. Keep the basename in the
-    // diagnostic so the offending launcher is still recognizable.
-    requiresBroadBash: token.includes('/'),
+    command: `${normalizedToken}${args}`,
+    executable,
   };
+}
+
+function shellSegments(block) {
+  // Heredocs must be removed before quoted strings, or stripping a quoted
+  // delimiter such as 'PY' leaves the program body behind. Quoted arguments
+  // are then blanked before separators are split, so `git commit -m "a; b"`
+  // cannot invent a command called `b`.
+  const body = block
+    .replace(/<<-?\s*'?([A-Za-z_][A-Za-z0-9_]*)'?\n[\s\S]*?\n\1\n?/g, '\n')
+    .replace(/'[^']*'/g, "''")
+    .replace(/"[^"]*"/g, '""');
+  return body.split('\n').flatMap((raw) => {
+    const stripped = raw.trim();
+    if (!stripped || stripped.startsWith('#')) return [];
+    return stripped.split(/\|\||&&|\||;/).map((segment) => segment.trim()).filter(Boolean);
+  });
 }
 
 let failed = 0;
@@ -243,22 +259,15 @@ check('no skill names a shell command its allowed-tools does not grant', () => {
       // `python3 - <<'PY'` in find-skill put `import`, `CONFIG` and `rel` into
       // the used set, and stripping quotes cannot reach them because a heredoc
       // is not quoted.
-      const body = block[1]
-        .replace(/<<-?\s*'?([A-Za-z_][A-Za-z0-9_]*)'?\n[\s\S]*?\n\1\n?/g, '\n');
-      for (const raw of body.split('\n')) {
-        const stripped = raw.trim();
-        if (!stripped || stripped.startsWith('#')) continue;
-        for (const seg of stripped.split(/\|\||&&|\||;/)) {
-          const command = seg.trim();
-          const parsed = commandForGrantCheck(command);
-          if (!parsed || BUILTIN.has(parsed.command.split(/\s/)[0])) continue;
-          used.add(parsed);
-        }
+      for (const command of shellSegments(block[1])) {
+        const parsed = commandForGrantCheck(command);
+        if (!parsed || BUILTIN.has(parsed.executable)) continue;
+        used.add(parsed);
       }
     }
     const missing = [...used]
-      .filter(({ command, requiresBroadBash }) => requiresBroadBash || !commandIsGranted(command, granted))
-      .map(({ command }) => command)
+      .filter(({ command }) => !commandIsGranted(command, granted))
+      .map(({ command, executable }) => command.startsWith(executable) ? command : `${executable} (${command})`)
       .sort();
     if (missing.length) offenders.push(`${name}: runs ${missing.join(', ')} but grants ${granted.sort().join(', ') || '(nothing)'}`);
   }
@@ -270,9 +279,17 @@ check('quoted path commands remain visible to the grant check', () => {
     '"${CLAUDE_PLUGIN_ROOT}"/bin/hook-node "${CLAUDE_PLUGIN_ROOT}"/statusline/install.js'
   );
   assert.deepStrictEqual(parsed, {
-    command: 'hook-node ""/statusline/install.js',
-    requiresBroadBash: true,
+    command: '""/bin/hook-node ""/statusline/install.js',
+    executable: 'hook-node',
   });
+  assert.ok(commandIsGranted(parsed.command, ['*/bin/hook-node']));
+  assert.ok(!commandIsGranted(parsed.command, ['node']));
+});
+
+check('quoted separators do not invent shell commands', () => {
+  assert.deepStrictEqual(shellSegments('git commit -m "add; stuff | more"\n'), [
+    'git commit -m ""',
+  ]);
 });
 
 check('restricted Bash grants retain their full prefix and stop at delimiters', () => {
