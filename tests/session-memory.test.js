@@ -92,12 +92,63 @@ check('a file with no declared type gets the permissive budget', () => {
 });
 
 check('the total is reported against the whole directory', () => {
+  // These three each break the 2500 durable cap on their own, which is why
+  // over-budget fires. Stated here because it used to fire on the directory
+  // total instead, and then this case passed for a reason it no longer holds.
   const dir = dirWith({
     'a.md': file('reference', 4000), 'b.md': file('reference', 4000), 'c.md': file('reference', 4000),
   });
   const r = memory.audit({ dir });
   assert.ok(kinds(r).includes('over-budget'));
   assert.ok(r.total > 10000, `total was ${r.total}`);
+});
+
+// The regression this check was rewritten for, on 2026-08-04.
+//
+// over-budget used to compare the directory total against totalWords. A
+// directory of small, compliant files exceeds any fixed total once there are
+// enough of them, so the flag stayed up whatever anyone edited and reported
+// over-budget on every wrap forever. A warning nobody can clear gets switched
+// off, and then the whole check goes with it.
+//
+// This is the case that was impossible before, so it is the one that must fail
+// if the old condition ever comes back.
+check('over-budget stays silent when every file is inside its own cap', () => {
+  const files = {};
+  for (let i = 0; i < 12; i += 1) files[`f${i}.md`] = file('reference', 2000);
+  const r = memory.audit({ dir: dirWith(files) });
+  assert.ok(r.total > 10000, `total was ${r.total}, so this does not test what it claims`);
+  assert.ok(!kinds(r).includes('over-budget'),
+    `every file is under 2500 and the directory still reported over-budget: ${JSON.stringify(kinds(r))}`);
+});
+
+check('over-budget counts how far the oversize files are over their own caps', () => {
+  // file() prefixes 11 words of frontmatter, so 2589 lands on 2600 words
+  // against the 2500 durable cap. One file, 100 words over.
+  const r = memory.audit({ dir: dirWith({ 'big.md': file('reference', 2589) }) });
+  const f = r.findings.find((x) => x.kind === 'over-budget');
+  assert.ok(f, 'over-budget did not fire on a file 100 words over its cap');
+  assert.strictEqual(f.files, 1);
+  assert.strictEqual(f.excess, 100);
+  assert.ok(/1 file is over its per-file cap by 100 words/.test(f.note), f.note);
+});
+
+check('over-budget carries no directory total, so nothing can print an unclearable number', () => {
+  // The caller prints "N words, over M" whenever words is set. Carrying the
+  // total here is what put the number nobody could move back on screen.
+  const r = memory.audit({ dir: dirWith({ 'big.md': file('reference', 4000) }) });
+  const f = r.findings.find((x) => x.kind === 'over-budget');
+  assert.strictEqual(f.words, undefined);
+  assert.strictEqual(f.limit, undefined);
+});
+
+check('over-budget says "files are" when more than one is over', () => {
+  const r = memory.audit({
+    dir: dirWith({ 'a.md': file('reference', 4000), 'b.md': file('project', 1000) }),
+  });
+  const f = r.findings.find((x) => x.kind === 'over-budget');
+  assert.strictEqual(f.files, 2);
+  assert.ok(/2 files are over their per-file cap/.test(f.note), f.note);
 });
 
 check('budgets can be overridden one key at a time', () => {
