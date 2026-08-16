@@ -86,8 +86,9 @@ check('a file does not depend on itself', () => {
 // A test suite spawns its subject rather than importing it, so there is no
 // require() to read and the dependency is written only as a path constant.
 // Reading require() alone left 12 of the 98 mapped entries with nothing to
-// find, and nothing found is stamped as confirmed, so the suites reaching
-// across the most plugins were the ones the hook did nothing for.
+// find, and nothing found means nothing reported, so the suites reaching across
+// the most plugins were the ones the hook did nothing for. It used to also be
+// stamped as confirmed; the stamp went in schema v5.
 
 check('a path built from __dirname and literals is a reference', () => {
   const f = path.join(plugin, 'hooks', 'joined.js');

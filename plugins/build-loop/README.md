@@ -198,14 +198,20 @@ a list of skill roots. You do not need to change it.
 
 ## What it will not do
 
-**It never writes without asking.** Every command that changes a file shows you
-a draft or a diff first and stops. There is no exception, and there used to be
-one: `deps-watch` stamped a machine-check date onto a `DEPS.json` entry after an
-ordinary edit. That stamp was removed on 2026-08-15 because nothing read it, so
-the hook now only reports, in the conversation, when a file calls something the
-map does not record. Writing an edge means writing the sentence explaining why
-two things are connected, and that is a judgment `/audit-deps` still takes to
-you for approval.
+**No command writes without asking.** Every command that changes a file shows
+you a draft or a diff first and stops. Writing an edge means writing the
+sentence explaining why two things are connected, and that is a judgment
+`/audit-deps` still takes to you for approval.
+
+**One file is still written unattended, and it is not a command.**
+`hook-health.log` is written by a hook, only when a hook's interpreter goes
+missing, and it is described under "Where it keeps its state" above. It is the
+only such file.
+
+There used to be a second: `deps-watch` stamped a machine-check date onto a
+`DEPS.json` entry after an ordinary edit. That stamp was removed on 2026-08-15
+because nothing read it, so the hook now only reports, in the conversation, when
+a file calls something the map does not record.
 
 **It never pushes.** Fixes are committed locally. Pushing stays a deliberate
 thing you do.
@@ -333,11 +339,12 @@ expresses, one thing reading a file another writes, so an edit adding one would
 have left the entry looking freshly reviewed and it would never have come up
 again. The map's own top-level `last_updated` is left alone for the same reason.
 
-**It yields rather than overwrites.** The lock only stops another hook.
-`/audit-deps` rewrites the whole map through the Write tool and takes no lock at
-all, so if edges you just approved land while the hook is mid-write, the hook
-checks and abandons its stamp instead of renaming over them. Losing a stamp
-costs one stale line until the next edit. Losing approved edges costs the map.
+**It yielded rather than overwrote, and now there is nothing to yield.** As
+shipped in 0.9.0 the hook took a lock, wrote through a temporary file, and
+compared the map before renaming, so that edges approved mid-write were never
+overwritten by a stamp. **All of that went with the stamp in schema v5.** The
+hook does not open the map for writing at all, which removes the race rather
+than handling it. See "Upgrading to 0.10.0" above.
 
 **It reports one direction only, on purpose.** A call with no recorded edge is
 dangerous, because `/flag-issue` reads the map to decide what a fix puts at

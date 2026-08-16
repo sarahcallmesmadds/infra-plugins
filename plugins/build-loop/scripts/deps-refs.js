@@ -41,9 +41,11 @@
 //          importing it, so `const HOOK = path.join(__dirname, '..', 'plugins',
 //          'guardrails', 'hooks', 'bash-guard.js')` is the only place the
 //          dependency is written down. Reading only require() left 12 of the 98
-//          mapped entries with nothing to find, and an empty result is stamped
-//          as confirmed, so the suites that reach across the most plugins were
-//          the ones this hook silently did nothing for.
+//          mapped entries with nothing to find, and nothing found means nothing
+//          reported, so the suites that reach across the most plugins were the
+//          ones this hook silently did nothing for. That used to be worse: an
+//          empty result was also stamped as confirmed. The stamp went in schema
+//          v5, so the cost now is a missing report rather than a false record.
 //   .md    scripts/<name>.js appearing inside a fenced code block, which is how
 //          a skill invokes one. Prose is excluded on purpose. queue.js mentions
 //          roots.js in a line comment and does not call it; matching that would
