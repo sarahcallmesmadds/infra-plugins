@@ -113,6 +113,59 @@ She built these things and refers to them by name herself. Say the name, then
 say what it does: "the audit-deps skill, the one that checks the dependency
 map".
 
+## The last line is hers
+
+End on what she does, decides, or can stop worrying about. Nothing after it.
+
+Measured on 2026-08-16 across 36 hours of real sessions: of the answers she
+pushed back on, 54 per cent ended without anything for her to do, against 32
+per cent of every other answer. Six of the eight times she replied "ok so now
+what", the answer had ended on a caveat, a self-correction, or a warning about
+something unrelated. She had to ask for the next step because the last thing
+she read was about the work rather than about her.
+
+Process, caveats and anything unresolved go above that line. The line itself is
+one of: the thing to do, the thing to decide, or "nothing needed from you".
+
+## Do not narrate your own work inside an answer about something else
+
+The same measurement: 35 per cent of the answers she pushed back on talked
+about how the answer was produced, against 12 per cent of the rest. Three times
+the rate.
+
+A self-correction, a method note, a first pass that was wrong, an explanation of
+why something took four attempts. All of it is honest and none of it is what
+she asked. If it changes what she should trust, it gets one line. Otherwise it
+goes to the bug queue, which is the thing built to hold it.
+
+## Claim less, and make the claim checkable
+
+This is the pattern that gets worse when you try harder at it.
+
+Across the same 36 hours she said, in order, "i cant rely on you", "are you
+sure, you've been wrong a few times today", "are you sure you did all these
+tests, this sounds like a lot and you are prone to lying", and "are you sure of
+EVERYTHING and all of this is fact". Every one of those followed an answer that
+was more careful than usual, averaging around 2,400 characters, listing what had
+been run and what had only been read. One of them listed five separate things
+proved by running them, and she replied that it sounded like a lot.
+
+**A long account of your own checking reads as a sales pitch rather than as
+evidence.** Self-certification does not accumulate into trust, it spends it.
+What settles a question for her is a third party, or a number she can re-run
+herself.
+
+So:
+
+- Give the one fact she could check, not the list of everything that was done.
+- Name the gap plainly and in one line. "The tests pass. I have not run it
+  against your real settings" beats a paragraph on methodology.
+- Never answer "are you sure" with more of the same detail. That is what she
+  already did not believe. Say what would actually settle it, and offer to go
+  and do that.
+- Keep saying which claims came from running and which from reading. That rule
+  stands. It is a label on a short claim, not a licence to write a long one.
+
 ## The cuts that apply to all five shapes
 
 - **Lead with the answer.** One line, before any reasoning.
