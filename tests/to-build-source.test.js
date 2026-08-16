@@ -39,6 +39,24 @@ function commandIsGranted(command, grants) {
   return grants.some((grant) => command === grant || command.startsWith(`${grant} `));
 }
 
+function commandForGrantCheck(command) {
+  const token = command.split(/\s/)[0];
+  if (!token) return null;
+  const executable = token.replace(/["']/g, '').split('/').pop();
+  if (!/^[a-zA-Z][a-zA-Z0-9_.-]*$/.test(executable)) return null;
+  const args = command.slice(token.length)
+    .replace(/'[^']*'/g, "''")
+    .replace(/"[^"]*"/g, '""');
+  return {
+    command: `${executable}${args}`,
+    // A variable-expanded or absolute path is the real first token. Claude's
+    // permission matcher does not reduce it to the basename, so only a bare
+    // Bash grant can authorize this form reliably. Keep the basename in the
+    // diagnostic so the offending launcher is still recognizable.
+    requiresBroadBash: token.includes('/'),
+  };
+}
+
 let failed = 0;
 function check(what, fn) {
   try {
@@ -226,24 +244,35 @@ check('no skill names a shell command its allowed-tools does not grant', () => {
       // the used set, and stripping quotes cannot reach them because a heredoc
       // is not quoted.
       const body = block[1]
-        .replace(/<<-?\s*'?([A-Za-z_][A-Za-z0-9_]*)'?\n[\s\S]*?\n\1\n?/g, '\n')
-        .replace(/'[^']*'/g, "''").replace(/"[^"]*"/g, '""');
+        .replace(/<<-?\s*'?([A-Za-z_][A-Za-z0-9_]*)'?\n[\s\S]*?\n\1\n?/g, '\n');
       for (const raw of body.split('\n')) {
         const stripped = raw.trim();
         if (!stripped || stripped.startsWith('#')) continue;
         for (const seg of stripped.split(/\|\||&&|\||;/)) {
           const command = seg.trim();
-          const word = command.split(/\s/)[0];
-          if (!word || BUILTIN.has(word)) continue;
-          if (!/^[a-zA-Z][a-zA-Z0-9_.-]*$/.test(word)) continue;
-          used.add(command);
+          const parsed = commandForGrantCheck(command);
+          if (!parsed || BUILTIN.has(parsed.command.split(/\s/)[0])) continue;
+          used.add(parsed);
         }
       }
     }
-    const missing = [...used].filter((command) => !commandIsGranted(command, granted)).sort();
+    const missing = [...used]
+      .filter(({ command, requiresBroadBash }) => requiresBroadBash || !commandIsGranted(command, granted))
+      .map(({ command }) => command)
+      .sort();
     if (missing.length) offenders.push(`${name}: runs ${missing.join(', ')} but grants ${granted.sort().join(', ') || '(nothing)'}`);
   }
   assert.deepStrictEqual(offenders, [], `\n  ${offenders.join('\n  ')}`);
+});
+
+check('quoted path commands remain visible to the grant check', () => {
+  const parsed = commandForGrantCheck(
+    '"${CLAUDE_PLUGIN_ROOT}"/bin/hook-node "${CLAUDE_PLUGIN_ROOT}"/statusline/install.js'
+  );
+  assert.deepStrictEqual(parsed, {
+    command: 'hook-node ""/statusline/install.js',
+    requiresBroadBash: true,
+  });
 });
 
 check('restricted Bash grants retain their full prefix and stop at delimiters', () => {

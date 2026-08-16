@@ -1,7 +1,7 @@
 ---
 name: status-bar
 description: Set up the native Codex footer and task-progress title, or the richer Claude Code status line with model, folder, current task, spend, context, and connected-tool health. Use when the user says "set up the status bar", "install the status line", "show me my context usage", "show the current Codex task", "add the usage bar", or invokes /status-bar. Also use when a status line has stopped rendering or is showing an old version.
-allowed-tools: Read, Write, Bash(node:*)
+allowed-tools: Read, Write, Bash
 ---
 
 # Status bar
@@ -194,7 +194,7 @@ Check in this order and stop at the first thing that is wrong.
 
 1. **Is the setting there.** No `statusLine` key means it was never switched on.
 2. **Does the resolver exist.** `ls ~/.claude/statusline.js`.
-3. **Is a copy installed.** `node "${CLAUDE_PLUGIN_ROOT}"/statusline/install.js --dry-run`
+3. **Is a copy installed.** `"${CLAUDE_PLUGIN_ROOT}"/bin/hook-node "${CLAUDE_PLUGIN_ROOT}"/statusline/install.js --dry-run`
    reports the versions it can see. An empty list means the plugin is present as
    source but not installed from a marketplace, so there is nothing to resolve.
 4. **Feed it a payload by hand.** The line is a command that reads JSON on
