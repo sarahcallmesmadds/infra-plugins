@@ -356,14 +356,14 @@ function parseArgs(args) {
 
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
-    const kind = FLAGS[arg];
+    const kind = Object.prototype.hasOwnProperty.call(FLAGS, arg) ? FLAGS[arg] : null;
 
     if (!kind) {
       // Named separately because it is the exact shape that failed before: it
       // looks like it was understood and was silently dropped.
       const equals = arg.indexOf('=');
       const base = equals === -1 ? null : arg.slice(0, equals);
-      if (arg.startsWith('--') && base && FLAGS[base]) {
+      if (arg.startsWith('--') && base && Object.prototype.hasOwnProperty.call(FLAGS, base)) {
         throw new Error(FLAGS[base] === 'switch'
           ? `${base} takes no value. Write "${base}" on its own rather than "${arg}".`
           : `${base} takes its value as a separate word. `
@@ -378,7 +378,9 @@ function parseArgs(args) {
     }
 
     const value = args[i + 1];
-    if (value === undefined || FLAGS[value] || value.startsWith('--')) {
+    if (value === undefined
+      || Object.prototype.hasOwnProperty.call(FLAGS, value)
+      || value.startsWith('--')) {
       throw new Error(`${arg} needs a value after it.`);
     }
     i += 1;
@@ -423,7 +425,8 @@ function main(argv) {
     const r = selftest(args.fixture);
     if (!r.ok) {
       console.log(r.reason);
-      console.log('Build one with --label to measure this properly.');
+      console.log('Create ~/.claude/build-loop/pushback-fixture.json as a JSON array of');
+      console.log('objects with "text" (string) and "pushback" (boolean), then run this again.');
       process.exit(1);
     }
     console.log(`Labelled set: ${r.positives} pushbacks, ${r.negatives} not.`);

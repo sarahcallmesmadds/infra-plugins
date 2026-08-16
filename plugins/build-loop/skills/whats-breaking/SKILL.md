@@ -415,7 +415,7 @@ becomes a tracked defect rather than a note nobody reads.
 
 ## Step 7: Generate Summary Report Content
 
-Using the queue entries loaded in Step 1 and the detection results from Steps 2-6, build the weekly summary report. The report covers the current ISO week — use the ISO week computation below to determine which entries are "this week" vs older.
+Using the queue entries loaded in Step 1 and the detection results from Steps 2-6b, build the weekly summary report. The report covers the current ISO week — use the ISO week computation below to determine which entries are "this week" vs older.
 
 **Compute the ISO week filename** using this exact logic (from 04-RESEARCH.md Pattern 5 — do NOT use calendar year/week, it produces wrong filenames at year boundaries):
 
@@ -452,6 +452,11 @@ This outputs `YYYY-WW` (e.g. `2026-17`). The summary filename is `{YYYY-WW}.md`.
 
 ### Resolved
 - **{target}**: Structural fix applied {date}.
+
+## Pushback Rate
+
+{Full output from Step 6b, including the headline rate, breakdown, floor statement,
+and local-only recent examples.}
 
 ## Fixes Applied This Week
 
@@ -512,7 +517,7 @@ Post this summary to Slack?
 
 **If yes:**
 1. Ask for channel if they didn't specify one. Default: the user's DM.
-2. Use the Slack MCP (`mcp__slack__*` tools — already configured in sessions) to post the full report content (same text as the .md file).
+2. Build a channel-safe copy of the full report as described under **Pushback quotes never go to Slack** below. Post that copy with the Slack MCP (`mcp__slack__*` tools — already configured in sessions). Never post the `.md` file verbatim because its Pushback Rate section contains private quotes.
 3. Confirm: `Posted to {channel}.`
 
 **If no:**

@@ -297,6 +297,17 @@ check('an unrecognised flag is refused even in the value position', () => {
   assert.throws(() => P.parseArgs(['--fixture', '--bogus']), /needs a value/);
 });
 
+check('object prototype names are not recognised as command-line flags', () => {
+  for (const name of ['constructor', 'toString', 'hasOwnProperty', '__proto__']) {
+    assert.throws(() => P.parseArgs([name]), /unknown argument/, `accepted ${name}`);
+  }
+});
+
+check('object prototype names remain valid flag values', () => {
+  assert.strictEqual(P.parseArgs(['--root', 'constructor']).root, 'constructor');
+  assert.strictEqual(P.parseArgs(['--fixture', 'toString']).fixture, 'toString');
+});
+
 check('a report over an empty window says so rather than dividing by zero', () => {
   const out = P.report({ typed: [], pushbacks: [], byKind: {}, files: 0 }, {});
   assert.match(out, /nothing to report/);
