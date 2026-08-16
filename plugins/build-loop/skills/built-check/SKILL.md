@@ -253,9 +253,12 @@ as unqualified prose. A folder-style pair such as `Projects/name` may match a
 configured plugin repository, and a missing or non-git checkout may fall back
 to its configured name because no remote contradicts it. All four are ordinary
 things to find in this field, because `where` is free text. Dates, `and/or` and
-single-word slash commands are prose, not destinations. A bare `/`, `~/`, `./`
-or `../` is ignored: it names no particular destination and must not resolve to
-the process working directory, home, or parent directory.
+single-word slash commands are prose, not destinations. So are uncorroborated
+slash-joined words such as `read/write`; slash syntax alone never proves a
+repository exists elsewhere. A relative path whose leading directory exists
+inside a configured root, such as `plugins/build-loop`, is covered by that root.
+A bare `/`, `~/`, `./` or `../` is ignored: it names no particular destination
+and must not resolve to the process working directory, home, or parent directory.
 
 Pass an empty file for an item whose `where` is empty. An empty value is an
 answer rather than a mistake.

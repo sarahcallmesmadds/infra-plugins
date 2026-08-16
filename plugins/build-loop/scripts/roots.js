@@ -464,21 +464,23 @@ function coversWhere(where, roots, usedDefaults = false) {
 
   const lower = text.toLowerCase();
   const segments = lower.split(/[^a-z0-9._-]+/).filter(Boolean);
-  // A slash alone does not make prose an owner/repository reference. Dates and
-  // the ordinary conjunction "and/or" otherwise become evidence that the item
-  // belongs outside every configured root. Keep the deliberately small filter
-  // here: unmatched real owner/repository pairs must still answer not-covered.
-  const pairs = (lower.match(/[a-z0-9._-]+\/[a-z0-9._-]+/g) || []).filter((pair) => {
+  // First collect syntax, without deciding what it means. A slash pair can be
+  // a repository, a relative path, or ordinary prose such as "read/write".
+  // Only corroborated repository pairs are allowed to force not-covered later.
+  const slashPairs = (lower.match(/[a-z0-9._-]+\/[a-z0-9._-]+/g) || []).filter((pair) => {
     const [head, tail] = pair.split('/');
     return pair !== 'and/or' && !(/^\d+$/.test(head) && /^\d+$/.test(tail));
   });
+  const explicitRepoPairs = new Set();
   let hasSpecificPath = false;
   // A global pair regex is non-overlapping. In github.com/owner/repo it first
   // consumes github.com/owner and would never expose owner/repo, so the repo
   // tail could later masquerade as a bare local root name. Pull ordinary
   // GitHub URL and host-qualified spellings out explicitly.
   for (const match of lower.matchAll(/(?:https?:\/\/)?github\.com\/([a-z0-9._-]+)\/([a-z0-9._-]+)/g)) {
-    pairs.push(`${match[1]}/${match[2]}`);
+    const pair = `${match[1]}/${match[2]}`;
+    explicitRepoPairs.add(pair);
+    if (!slashPairs.includes(pair)) slashPairs.push(pair);
   }
 
   // 1. A destination written as a path, which `where` being free text makes
@@ -515,12 +517,42 @@ function coversWhere(where, roots, usedDefaults = false) {
     }
   }
 
-  // 2. A readable origin is the strongest answer to an owner-qualified reference.
+  // 2. A readable origin is the strongest answer to an owner-qualified
+  //    reference, and supplies evidence about which owner names are meaningful
+  //    in otherwise ambiguous free text.
   const remotes = new Map();
+  const remoteOwners = new Set();
   for (const r of roots) {
     const remote = remoteOf(r.path);
     remotes.set(r, remote);
-    if (remote && pairs.includes(remote)) return hit(r);
+    if (remote) {
+      remoteOwners.add(remote.slice(0, remote.indexOf('/')));
+      if (slashPairs.includes(remote)) return hit(r);
+    }
+  }
+
+  const configuredRepoNames = new Set(
+    roots.filter((r) => r.kind === 'plugin-repo')
+      .flatMap((r) => [r.name, path.basename(r.path)])
+      .map((name) => String(name).toLowerCase())
+  );
+  const repoPairs = slashPairs.filter((pair) => {
+    const slash = pair.indexOf('/');
+    const head = pair.slice(0, slash);
+    const tail = pair.slice(slash + 1);
+    return explicitRepoPairs.has(pair) || remoteOwners.has(head) || configuredRepoNames.has(tail);
+  });
+
+  // 2b. An uncorroborated pair can be a path relative to a configured root.
+  // The destination itself may not exist yet, so the durable clue is its
+  // leading directory: `plugins/build-loop` belongs to a root that already has
+  // `<root>/plugins`. Confirmed repository pairs never enter this fallback.
+  for (const pair of slashPairs.filter((candidate) => !repoPairs.includes(candidate))) {
+    const head = pair.slice(0, pair.indexOf('/'));
+    if (head === '.' || head === '..' || head.includes('.')) continue;
+    for (const r of roots) {
+      if (r.exists && existsAsDir(path.join(r.path, head))) return hit(r);
+    }
   }
 
   // 3. A pair that is a fragment of a path rather than an `owner/repo`
@@ -531,7 +563,7 @@ function coversWhere(where, roots, usedDefaults = false) {
     'code', 'dev', 'project', 'projects', 'repo', 'repos', 'repositories',
     'source', 'src', 'work', 'workspace', 'workspaces',
   ]);
-  for (const pair of pairs) {
+  for (const pair of slashPairs) {
     const slash = pair.indexOf('/');
     const head = pair.slice(0, slash);
     const tail = pair.slice(slash + 1);
@@ -554,7 +586,7 @@ function coversWhere(where, roots, usedDefaults = false) {
   //    `someoneelse/infra-plugins` is a contradicted repository claim. Ignore pairs
   //    whose head looks like a host; URL extraction already added owner/repo,
   //    and github.com/owner must not make a root named owner look relevant.
-  for (const pair of pairs) {
+  for (const pair of repoPairs) {
     const slash = pair.indexOf('/');
     const head = pair.slice(0, slash);
     const tail = pair.slice(slash + 1);
@@ -570,7 +602,7 @@ function coversWhere(where, roots, usedDefaults = false) {
   // 5. Bare names. A tail that was owner-qualified has already had its turn and
   //    does not get a second one as a directory name, which is what stops
   //    `sarahcallmesmadds/skills` being answered by a local `~/.claude/skills`.
-  const claimed = new Set(pairs.map((p) => p.slice(p.indexOf('/') + 1)));
+  const claimed = new Set(repoPairs.map((p) => p.slice(p.indexOf('/') + 1)));
   const bare = new Set(segments.filter((s) => !claimed.has(s)));
 
   for (const r of roots) {
@@ -582,7 +614,7 @@ function coversWhere(where, roots, usedDefaults = false) {
   // identifying a machine-resolvable root. That is not evidence that the home
   // lies outside the configured roots: all of them were still searched. Keep
   // `not-covered` for explicit paths and owner/repo pairs that missed.
-  if (!hasSpecificPath && pairs.length === 0) {
+  if (!hasSpecificPath && repoPairs.length === 0) {
     return { answer: 'unqualified', root: null };
   }
   return { answer: 'not-covered', root: null };
@@ -717,6 +749,7 @@ function main(argv) {
       '  Free prose with no resolvable root is unqualified, because it does not prove',
       '  the destination lies outside the configured roots that were searched.',
       '  Incidental slashes in dates, "and/or", and slash-command names stay prose.',
+      '  Other slash pairs need repository evidence; relative paths under a root count.',
       '',
       '  layout answers one question for two callers. Without --slug it lists',
       '  everything under a checkout, which is the scan. With --slug it looks for',

@@ -695,6 +695,10 @@ check('no skill has gone back to writing its own plugin-repo globs', () => {
   const home = makeHome();
   const checkout = path.join(home, 'Projects', 'infra-plugins');
   fs.mkdirSync(checkout, { recursive: true });
+  fs.mkdirSync(path.join(checkout, 'plugins', 'build-loop'), { recursive: true });
+  // A directory sharing the known remote owner must not turn owner/repository
+  // syntax into a relative path before repository identity is checked.
+  fs.mkdirSync(path.join(checkout, 'sarahcallmesmadds'), { recursive: true });
   fs.mkdirSync(path.join(home, '.claude', 'skills'), { recursive: true });
   const git = (...args) => execFileSync('git', ['-C', checkout, ...args], { stdio: 'ignore' });
   git('init', '-q');
@@ -741,12 +745,21 @@ check('no skill has gone back to writing its own plugin-repo globs', () => {
       'the marketplace, decide by 8/14',
       'the docs and/or the site',
       'run /built-check first',
+      'the read/write docs',
+      'docs/reference for the plugin',
     ]) {
       assert.strictEqual(
         run(home, ['covers', '--where', where]).stdout.trim(), 'unqualified',
         `${where} was treated as proof that no configured root could hold it`
       );
     }
+  });
+
+  check('a relative path under a configured root is covered', () => {
+    assert.strictEqual(
+      run(home, ['covers', '--where', 'plugins/build-loop']).stdout.trim(),
+      'covered infra-plugins'
+    );
   });
 
   check('GitHub URL spellings preserve the owner/repository pair', () => {
@@ -810,7 +823,7 @@ check('no skill has gone back to writing its own plugin-repo globs', () => {
     for (const where of ['hq-skills', '_work-skills-rebuild-ref/v1-source', 'my-skills-repo']) {
       assert.strictEqual(
         run(home, ['covers', '--where', where]).stdout.trim(),
-        where.includes('/') ? 'not-covered' : 'unqualified',
+        'unqualified',
         `${where} was treated as the 'personal' root at ~/.claude/skills`
       );
     }
