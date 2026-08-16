@@ -95,8 +95,10 @@ Also try to fill, without asking:
   node "${CLAUDE_PLUGIN_ROOT}/scripts/roots.js" list
   ```
 
-  Exit 0, 3, 4 or 5 still prints the root list as JSON; use its `roots[].name`
-  values. Exit 1 means the config could not be read: relay the message and leave
+  Exit 0, 3 or 4 still prints the root list as JSON; use its `roots[].name`
+  values. Exit 5 means only built-in default locations are absent; it also
+  prints the JSON root list, so use the names without treating the defaults as
+  a broken user configuration. Exit 1 means the config could not be read: relay the message and leave
   `destination_root` empty rather than guessing. Fill the field only when the user
   explicitly named a root by that exact name, or explicitly supplied the name
   they expect to add to the config later. Never extract it from a repository
