@@ -88,10 +88,29 @@ Do NOT ask about kind as its own question. It is a guess you show in the draft a
 Also try to fill, without asking:
 
 - **where** — a marketplace, repository, or root name if one was named. Empty string otherwise.
+- **destination_root** — the exact build-loop root name that must be searched.
+  Read the available names once with:
+
+  ```bash
+  node "${CLAUDE_PLUGIN_ROOT}/scripts/roots.js" list
+  ```
+
+  Exit 0, 3, 4 or 5 still prints the root list as JSON; use its `roots[].name`
+  values. Exit 1 means the config could not be read: relay the message and leave
+  `destination_root` empty rather than guessing. Fill the field only when the user
+  explicitly named a root by that exact name, or explicitly supplied the name
+  they expect to add to the config later. Never extract it from a repository
+  URL, filesystem path, marketplace name or other `where` prose. Empty string
+  means every available root remains in scope.
 - **source** — one filesystem path, if the user named material the build will read from: a spec, an existing implementation, a document. Empty string otherwise, which is the common case.
 - **blocked_by** — free text if the user said something has to happen first. Empty string otherwise.
 
 **`where` and `source` are not the same thing and must not be conflated.** `where` is the destination and routinely does not exist yet. `source` is material that has to exist for the item to be buildable, and it is the only one that gets path-checked. If the user names a single place that is both, record it as `where` and leave `source` empty; a destination that is missing is normal and warning about it would be noise.
+
+**`where` and `destination_root` are also not interchangeable.** `where` is what
+the user said and stays readable. `destination_root` is an exact configuration
+key consumed by `/built-check`. Do not infer the key from `where`; a missing
+machine-readable key is safer than confidently selecting the wrong root.
 
 Do not put a path in `source` that you inferred rather than heard. An empty `source` means "nothing extra to read", which is true of most items and is a better default than a guess that later reports itself broken.
 
@@ -167,6 +186,7 @@ Kind: {kind}
 What: {what}
 Why: {why, or "(not given)"}
 Where: {where, or "(not decided)"}
+Destination root: {destination_root, or "(not selected; all roots searched)"}
 Source: {source, or "(nothing to read)"}
 Blocked by: {blocked_by, or "nothing"}
 
@@ -209,6 +229,7 @@ kind:            {kind}
 what:            {what}
 why:             {why, or ""}
 where:           {where, or ""}
+destination_root: {destination_root, or ""}
 source:          {source, or ""}
 blocked_by:      {blocked_by, or ""}
 session_id:      the current session ID, resolved as below. "" only after that has failed.
