@@ -124,17 +124,21 @@ function userText(record) {
     'Base directory for this skill:',
   ];
   const isInjected = (value) => injected.some((marker) => value.trim().startsWith(marker));
+  const stripSystemReminders = (value) =>
+    value.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/gi, '');
   let text = null;
   if (typeof content === 'string') {
-    text = content.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/gi, '');
+    text = stripSystemReminders(content);
   }
   else if (Array.isArray(content)) {
     const parts = [];
     for (const block of content) {
       // A tool result is the transcript talking to itself.
       if (block && block.type === 'tool_result') return null;
-      if (block && block.type === 'text' && typeof block.text === 'string'
-        && !isInjected(block.text)) parts.push(block.text);
+      if (block && block.type === 'text' && typeof block.text === 'string') {
+        const clean = stripSystemReminders(block.text);
+        if (clean.trim() && !isInjected(clean)) parts.push(clean);
+      }
     }
     text = parts.length ? parts.join('\n') : null;
   }

@@ -54,6 +54,14 @@ check('an inline system reminder is removed from a string message', () => {
     'yes do it');
 });
 
+check('an inline system reminder is removed inside a text block', () => {
+  const reminder = '<system-reminder>' + 'plugins/example.js:123 '.repeat(100)
+    + '</system-reminder>';
+  const text = P.userText(user([{ type: 'text', text: `i dont understand\n${reminder}` }]));
+  assert.strictEqual(text, 'i dont understand');
+  assert.strictEqual(P.classify(text), 'cannot-understand');
+});
+
 check('a tool result is not the user talking', () => {
   assert.strictEqual(P.userText(user([{ type: 'tool_result', content: 'i dont understand' }])), null);
 });
