@@ -183,6 +183,94 @@ check('an entry pointing at nothing is separated from one pointing at something'
     'the lookup already gives the right answer, which is why this is the mild category');
 });
 
+// ------------------------------------------------- still being written ----
+
+// Devin round 1 on PR #114. A bare existence check collapses three answers into
+// "not there", and the report's advice for a dead entry is to forget it. An
+// entry recorded minutes ago whose document has not appeared is a wrap running
+// in another session right now, and forgetting the entry of a project handoff
+// destroys the only record of where it went.
+//
+// The trigger needs both halves: a central document named for the slug, and an
+// entry for that same slug naming a project path that is not written yet.
+check('an entry recorded moments ago is not reported as a dead entry', () => {
+  const home = tmpHome();
+  fs.mkdirSync(path.join(home, 'code', 'kappa'), { recursive: true });
+  fixture(home, {
+    docs: ['kappa'],
+    entries: {
+      kappa: {
+        path: path.join(home, 'code', 'kappa', 'HANDOFF.md'),
+        kind: 'project',
+        recorded_at: new Date().toISOString(),
+      },
+    },
+  });
+
+  const out = json(home, ['reconcile']);
+  assert.strictEqual(out.superseded.length, 0, 'a wrap in flight is never called stale');
+  assert.strictEqual(out.pending.length, 1, 'it is reported, not silently skipped');
+  assert.strictEqual(out.pending[0].slug, 'kappa');
+});
+
+// The impact, asserted on the bytes rather than on the classification. The
+// defect was not the label, it was the sentence underneath it.
+check('the report offers no way to delete a handoff that is still being written', () => {
+  const home = tmpHome();
+  fs.mkdirSync(path.join(home, 'code', 'lambda'), { recursive: true });
+  fixture(home, {
+    docs: ['lambda'],
+    entries: {
+      lambda: {
+        path: path.join(home, 'code', 'lambda', 'HANDOFF.md'),
+        kind: 'project',
+        recorded_at: new Date().toISOString(),
+      },
+    },
+  });
+
+  const report = cli(home, ['reconcile']).stdout;
+  assert.doesNotMatch(report, /forget lambda/,
+    'no command is offered that would drop the entry of a handoff being written');
+  assert.match(report, /wrap in progress/,
+    'and it says what the entry actually is, so the silence is not mistaken for nothing found');
+  assert.doesNotMatch(report, /The index and the folder agree/,
+    'a run that refused to judge something must not claim everything agreed');
+});
+
+// The other state that must never be called dead. `existsSync` says false for an
+// unmounted volume exactly as it does for a deletion.
+check('an entry whose whole directory is missing is separated from a dead one', () => {
+  const home = tmpHome();
+  fixture(home, {
+    docs: ['mu'],
+    entries: { mu: entry(path.join(home, 'not', 'mounted', 'HANDOFF.md'), 'project') },
+  });
+
+  const out = json(home, ['reconcile']);
+  assert.strictEqual(out.superseded.length, 0);
+  assert.strictEqual(out.unreachable.length, 1);
+
+  const report = cli(home, ['reconcile']).stdout;
+  assert.match(report, /not mounted/,
+    'the report names the possibility that would make deleting it a mistake');
+});
+
+// The window has to be a window. An old entry pointing at nothing really is
+// dead, and sparing it forever would make the finding useless.
+check('an old entry pointing at nothing is still reported as dead', () => {
+  const home = tmpHome();
+  fs.mkdirSync(path.join(home, 'code', 'nu'), { recursive: true });
+  fixture(home, {
+    docs: ['nu'],
+    entries: { nu: entry(path.join(home, 'code', 'nu', 'HANDOFF.md'), 'project') },
+  });
+
+  const out = json(home, ['reconcile']);
+  assert.strictEqual(out.pending.length, 0, 'the sparing window does not swallow everything');
+  assert.strictEqual(out.superseded.length, 1);
+});
+
 // ----------------------------------------------------------------- fix ----
 
 check('--fix records an entry for every document that had none', () => {

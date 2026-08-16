@@ -742,7 +742,7 @@ function centralDocs(home = os.homedir()) {
   return out;
 }
 
-function reconcileIndex({ home = os.homedir() } = {}) {
+function reconcileIndex({ home = os.homedir(), now = Date.now() } = {}) {
   const docs = centralDocs(home);
   // Read through the gate, so this sees one whole version of the index rather
   // than one caught between another session's read and its write. `readOnly`
@@ -753,6 +753,8 @@ function reconcileIndex({ home = os.homedir() } = {}) {
   const shadowed = [];
   const unlisted = [];
   const superseded = [];
+  const pending = [];
+  const unreachable = [];
 
   for (const doc of docs) {
     const entry = handoffs[doc.slug];
@@ -762,19 +764,40 @@ function reconcileIndex({ home = os.homedir() } = {}) {
     }
     if (samePath(entry.path, doc.path)) continue;
 
-    let recordedExists = false;
-    try { recordedExists = fs.existsSync(entry.path); } catch (_) { recordedExists = false; }
+    // `entryState` rather than a bare existence check, and that distinction is
+    // the whole of Devin round 1 on PR #114.
+    //
+    // `fs.existsSync` collapses three different answers into "not there", and
+    // only one of them may be called a dead entry. A wrap records where it will
+    // write before it writes, so an entry recorded minutes ago whose document
+    // has not appeared is a handoff in progress. A path whose whole directory is
+    // missing may be an unmounted volume rather than a deletion. The advice
+    // printed for a dead entry is to forget it, and forgetting the entry of a
+    // project handoff destroys the only record of where that handoff went, which
+    // is the one thing the index exists to hold.
+    //
+    // This is the same window `pruneIndex` was given in PR #111, the day before
+    // this function was written, and it came straight back the moment new code
+    // asked the question its own way instead of calling the function that
+    // already knew the answer.
+    const state = entryState(entry, now);
 
-    if (recordedExists) {
+    if (state === 'present') {
       shadowed.push({
         slug: doc.slug, doc: doc.path, recorded: entry.path, kind: entry.kind || 'project',
       });
+    } else if (state === 'pending') {
+      // Spared and reported, in the same words the sweep uses. Not evidence of
+      // anything, in either direction.
+      pending.push({ slug: doc.slug, doc: doc.path, recorded: entry.path });
+    } else if (state === 'unreachable') {
+      unreachable.push({ slug: doc.slug, doc: doc.path, recorded: entry.path });
     } else {
-      // The entry points at nothing, so `findHandoff` falls through to the
-      // search order and reaches the document anyway. The lookup is already
-      // right, which is why this is not grouped with `shadowed`. The dead entry
-      // is `archive`'s job, and saying so is cheaper than a second way to drop
-      // one.
+      // Genuinely gone: the directory is right there and the document is not in
+      // it, and the entry is old enough that it is not a wrap in flight. The
+      // lookup already reaches the document beside it through the search order,
+      // so only the entry is wrong, which is why this is not grouped with
+      // `shadowed`.
       superseded.push({ slug: doc.slug, doc: doc.path, recorded: entry.path });
     }
   }
@@ -801,6 +824,12 @@ function reconcileIndex({ home = os.homedir() } = {}) {
     shadowed,
     duplicates,
     superseded,
+    // Spared rather than judged. Both are entries this cannot call dead without
+    // risking a live handoff, and both are reported, because a check that
+    // silently keeps something is as hard to trust as one that silently drops
+    // it.
+    pending,
+    unreachable,
     unlisted,
   };
 }
@@ -812,7 +841,7 @@ function reconcileIndex({ home = os.homedir() } = {}) {
 // a command that guesses that is a command that can lose a handoff. Those two
 // are reported and left alone.
 function applyReconcile({ home = os.homedir(), now = Date.now() } = {}) {
-  const found = reconcileIndex({ home });
+  const found = reconcileIndex({ home, now });
   if (!found.unlisted.length) return { ...found, recorded: [], written: true };
 
   const recorded = [];

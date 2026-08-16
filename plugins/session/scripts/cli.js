@@ -290,6 +290,37 @@ const COMMANDS = {
       lines.push('', '  Lookups already reach the right document. Clear the dead entry with cli.js forget <slug>.', '');
     }
 
+    // Spared, and said out loud, because the advice above is to delete an entry
+    // and these are the two cases where deleting one loses something.
+    //
+    // A wrap notes where it will write before it writes, so an entry recorded
+    // minutes ago whose document has not appeared is a handoff being written
+    // right now, in another session. Reported without a remedy on purpose:
+    // there is nothing to do but wait, and the only command that could be
+    // offered here is the one that would destroy it.
+    if (result.pending && result.pending.length) {
+      const n = result.pending.length;
+      lines.push(`${n} index ${plural(n, 'entry was', 'entries were')} recorded in the last few minutes, `
+        + `naming ${plural(n, 'a document', 'documents')} that ${plural(n, 'has', 'have')} not appeared yet:`, '');
+      for (const p of result.pending) lines.push(`  ${p.slug}  (recorded ${p.recorded})`);
+      lines.push('', '  That is what a wrap in progress looks like from outside. Left alone, and not',
+        '  reported as stale. If a wrap is running, let it finish.', '');
+    }
+
+    // The other one that must never be called dead. `existsSync` says false for
+    // an external disk, a network share and a volume that is not mounted, and
+    // nothing here can tell those from a deletion.
+    if (result.unreachable && result.unreachable.length) {
+      const n = result.unreachable.length;
+      lines.push(`${n} index ${plural(n, 'entry names', 'entries name')} a path whose directory could not be read:`, '');
+      for (const u of result.unreachable) lines.push(`  ${u.slug}  (recorded ${u.recorded})`);
+      // The remedy is conditioned rather than offered flat, for the same reason
+      // the sweep conditions its own: forgetting an entry whose volume is simply
+      // not mounted loses a live handoff.
+      lines.push('', '  Either the project moved, or its disk is not mounted, and this cannot tell which.',
+        `  If ${plural(n, 'it is', 'they are')} gone for good: cli.js forget <slug>`, '');
+    }
+
     // Last, and deliberately understated. A central document with no entry is
     // still found by name, because the search order looks in this folder before
     // it needs the index. This was filed as the headline symptom and measuring
@@ -313,8 +344,13 @@ const COMMANDS = {
       }
     }
 
+    // Pending and unreachable count as findings for this line even though
+    // nothing is wrong with either. Printing "the index and the folder agree"
+    // above a list of entries this run refused to judge would be the same fault
+    // as any other summary that claims more than it checked.
     const clean = !result.shadowed.length && !result.duplicates.length
-      && !result.superseded.length && !result.unlisted.length;
+      && !result.superseded.length && !result.unlisted.length
+      && !(result.pending || []).length && !(result.unreachable || []).length;
     if (clean) lines.push('The index and the folder agree.', '');
 
     // What was looked at, said on every run rather than only when something is

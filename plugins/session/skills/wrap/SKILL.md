@@ -40,11 +40,19 @@ handoff means `/pickup` opens a different document and says nothing, so surface
 that immediately and name both paths. It is not repaired automatically because
 choosing between two real documents is the user's call, not this skill's.
 
-Everything else it reports is untidiness. Duplicated slugs, dead entries and
-unlisted documents do not stop anything being found, so mention them in one line
-in the Step 4 summary under "Filed away" and move on. Do not run `--fix` as part
-of a wrap: it writes to the index, and a wrap is already the one command most
-likely to be running in another session at the same time.
+Duplicated slugs, dead entries and unlisted documents are untidiness. None of
+them stops anything being found, so mention them in one line in the Step 4
+summary under "Filed away" and move on.
+
+**Entries it reports as recorded in the last few minutes are not findings at
+all.** That is another session's wrap in flight, quite possibly one running
+beside this one. Do not offer to clear them and do not repeat them as a problem.
+The same goes for an entry whose directory could not be read, which may be a disk
+that is not plugged in.
+
+Do not run `--fix` as part of a wrap: it writes to the index, and a wrap is
+already the one command most likely to be running in another session at the same
+time.
 
 If it reports that the index and the folder agree, say nothing about it.
 
