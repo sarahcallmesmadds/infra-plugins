@@ -1,0 +1,358 @@
+#!/usr/bin/env node
+'use strict';
+
+// Counts the times the user pushed back on an answer, and what kind of pushback
+// it was. Reads Claude Code transcripts, which are already on disk, so nothing
+// has to be captured live and no hook is involved.
+//
+// The number that matters is pushbacks per hundred messages the user actually
+// typed. Everything else is detail underneath it. A rate that does not fall is
+// how you find out a writing rule is not working, and no amount of extra rules
+// in the skill will change a flat line.
+//
+// What this cannot see: the times the user gave up and worked around the answer
+// instead of saying so. Those leave no trace in a transcript, so every number
+// here is a floor rather than a measurement, and the report says so out loud.
+//
+// Privacy. Transcripts are the user's own words, including the ones they would
+// not want quoted. The quotes exist so a pattern can be acted on, and they stay
+// local: `--format slack` drops every quote and emits counts only. The public
+// test fixtures for this file are written for the test and contain nobody's
+// real messages. See tests/pushback.test.js.
+
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
+
+const PROJECTS = path.join(os.homedir(), '.claude', 'projects');
+
+// Ordered. A message is counted once, under the first kind that matches, so a
+// message carrying two complaints does not inflate the total. The order runs
+// most-specific first: "are you sure ... i dont understand" is about trust, and
+// filing it under jargon would lose the more useful half.
+// Typos are load-bearing. The user types fast and the misspellings are as
+// frequent as the correct spellings, so a pattern that only matches the
+// dictionary form misses roughly a fifth of real hits. Every alternate spelling
+// below came out of a real message, not out of imagination.
+const KINDS = [
+  {
+    kind: 'off-track',
+    label: 'Stop going off track, do the thing I asked',
+    // Behaviour rather than writing. Cannot be fixed by rewording an answer.
+    test: /(stay on track|going off track|off track|i did ?n.?t ask (for|about)|that.?s not what i asked|do not do anything but|dont do anything but|before we do anything else|stop,? ?stop|what the fuck|unhappy with this session|i do ?n.?t want .{0,30}(bullshit|skeptics)|bullshit|the info you gave me|no i thought the whole)/i,
+  },
+  {
+    kind: 'distrust',
+    label: 'Are you sure, you have been wrong',
+    test: /(are you sure|you.?ve been wrong|you have been wrong|prone to lying|i can.?t rely on you|cant rely on you|stop claiming|did you actually|is (this|that) (actually )?(true|fact)|all of this is fact|before i approve|rounds of feedback|that.?s good,? right\??$|thats good right)/i,
+  },
+  {
+    kind: 'cannot-understand',
+    label: 'Too jargony, cannot understand it',
+    test: /(i do ?n.?t understand|dont understand|idu\b|too jargon|too much jargon|so jargony|jargony|too technical|no idea what|no clue what|i.?m confused|im confused|so confused|i.?m lost|im lost|(so|really|very|f\S*ing|is) confusing|too much (text|info)|what (does|doe s|do es) (all )?(of )?(this|that|it|annn*y+)|what does a+n+y+ of this|hard to understand|couldn.?t repeat|^(huh|what|wat)\?*$|^(huh|what)\?\?+)/i,
+  },
+  {
+    kind: 'no-next-action',
+    label: 'Now what, the answer gave me nothing to do',
+    // Leading filler is common: "ok great now what", "okay so what should we do".
+    test: /^((ok(ay)?|great|cool|so|and|well|right)[\s,!.]*)*((now what|what now|what.?s next|so what (do|should) we|what (do|should) we (do|need to do)|are we done|where is the pr|where.?s the pr|whwere is the pr)\b)|what do you need from me/i,
+  },
+  {
+    kind: 'undecidable',
+    label: 'This does not help me decide',
+    test: /(does ?n.?t help me|doesnt help me|help me make a decision|what value does|in order to make the decision|how do i (choose|decide))/i,
+  },
+  {
+    kind: 'what-is-this',
+    label: 'What is this thing of mine, and how does it differ from that one',
+    test: /(how is .{1,40} different from|what is the .{1,40} (needed|for)\??$|are we (talking|takng|takling|talkng) about|sorry,? wh?at|draft wa?ht|wait,? how|what is it that.?s going|what is (hte|the) .{1,40} that matters)/i,
+  },
+];
+
+// Content the user pasted in rather than wrote. A forwarded review finding, a
+// meeting transcript or a block of terminal output can easily contain "I don't
+// understand" without the user being confused about anything. Out-of-sample
+// checking on 2,445 older messages showed every remaining false positive was
+// this and nothing else.
+const PASTED = /^(\d+\s+(bugs?|fl|flags?)\b|pr+ ?\d+\b|here is the response|from codex:|session summary:|reply with exactly|run the shell|•\s|❯\s|\[\d{4}-\d{2}-\d{2})/i;
+const FINDING_MARKUP = /\*\*[^*]{20,}\*\*|^\s*```|\.js:\d+|\.md:\d+/m;
+
+// Real pushback is short and direct. The longest in a labelled set of 55 was
+// 471 characters and the median was 58. A ceiling of 800 keeps every one of
+// them while cutting the pasted blocks, which run to thousands.
+const MAX_PUSHBACK_LENGTH = 800;
+
+function classify(text) {
+  if (text.length > MAX_PUSHBACK_LENGTH) return null;
+  if (PASTED.test(text)) return null;
+  if (FINDING_MARKUP.test(text)) return null;
+  for (const k of KINDS) if (k.test.test(text)) return k.kind;
+  return null;
+}
+
+// A transcript line is the user's own typing only when it is a plain text
+// message from an external user on the main thread. Tool results, sidechain
+// turns, slash-command expansions, hook feedback and shell echoes all arrive as
+// role "user" and none of them are the user talking.
+function userText(record) {
+  if (!record || record.type !== 'user') return null;
+  if (record.isSidechain) return null;
+  if (record.userType && record.userType !== 'external') return null;
+
+  const content = record.message && record.message.content;
+  let text = null;
+  if (typeof content === 'string') text = content;
+  else if (Array.isArray(content)) {
+    const parts = [];
+    for (const block of content) {
+      // A tool result is the transcript talking to itself.
+      if (block && block.type === 'tool_result') return null;
+      if (block && block.type === 'text' && typeof block.text === 'string') parts.push(block.text);
+    }
+    text = parts.length ? parts.join('\n') : null;
+  }
+  if (!text) return null;
+
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+
+  // Injected wrappers. Each of these is machinery, not a message.
+  const injected = [
+    '<command-message>', '<command-name>', '<local-command-stdout>',
+    '<local-command-caveat>', '<bash-input>', '<bash-stdout>', '<bash-stderr>',
+    '<system-reminder>', '[Request interrupted', 'Caveat:', 'Stop hook feedback:',
+    'Base directory for this skill:',
+  ];
+  for (const marker of injected) if (trimmed.startsWith(marker)) return null;
+
+  return trimmed;
+}
+
+function collect(dir, out) {
+  let entries;
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch (e) { return out; }
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) collect(full, out);
+    else if (entry.name.endsWith('.jsonl')) out.push(full);
+  }
+  return out;
+}
+
+// Returns { typed, pushbacks, byKind, files } for everything at or after `since`.
+// `since` is a millisecond timestamp; pass 0 for all of history.
+function scan(since, root) {
+  const files = collect(root || PROJECTS, []);
+  const typed = [];
+  const pushbacks = [];
+
+  for (const file of files) {
+    let lines;
+    try { lines = fs.readFileSync(file, 'utf8').split('\n'); } catch (e) { continue; }
+    let previousAnswer = null;
+
+    for (const line of lines) {
+      if (!line) continue;
+      let record;
+      try { record = JSON.parse(line); } catch (e) { continue; }
+      if (record.isSidechain) continue;
+
+      if (record.type === 'assistant') {
+        const content = record.message && record.message.content;
+        if (Array.isArray(content)) {
+          const parts = content.filter((b) => b && b.type === 'text').map((b) => b.text);
+          if (parts.length && parts.join('').trim()) {
+            previousAnswer = { text: parts.join('\n'), at: record.timestamp };
+          }
+        } else if (typeof content === 'string' && content.trim()) {
+          previousAnswer = { text: content, at: record.timestamp };
+        }
+        continue;
+      }
+
+      const text = userText(record);
+      if (text === null) continue;
+      const at = record.timestamp ? new Date(record.timestamp).getTime() : 0;
+      if (at < since) continue;
+
+      const entry = { at: record.timestamp, text, answer: previousAnswer, file: path.basename(file) };
+      typed.push(entry);
+      const kind = classify(text);
+      if (kind) pushbacks.push(Object.assign({ kind }, entry));
+    }
+  }
+
+  typed.sort((a, b) => (a.at < b.at ? -1 : 1));
+  pushbacks.sort((a, b) => (a.at < b.at ? -1 : 1));
+
+  const byKind = {};
+  for (const k of KINDS) byKind[k.kind] = 0;
+  for (const p of pushbacks) byKind[p.kind] += 1;
+
+  return { typed, pushbacks, byKind, files: files.length };
+}
+
+function rate(pushbacks, typed) {
+  if (!typed) return 0;
+  return Math.round((pushbacks / typed) * 1000) / 10;
+}
+
+// Two signals that separated the answers she pushed back on from the rest, when
+// this was measured by hand on 2026-08-16. Kept here so the report can show
+// whether they are still separating, rather than restating a finding from a day
+// that has passed.
+const NARRATES = /(worth flagging|one thing worth|my first pass|the fault was mine|i got wrong|i was wrong|correction on my own|i also did not|i did not (run|test|verify|check)|rather than (assuming|trusting)|why it took)/i;
+const HANDS_OVER = /(\?|say the word|tell me|want me to|shall i|next step|do you want|your call|yours to call|recommend)/i;
+
+function signals(entries) {
+  let narrates = 0;
+  let noHandover = 0;
+  let counted = 0;
+  for (const e of entries) {
+    if (!e.answer || e.answer.text.length < 400) continue;
+    counted += 1;
+    if (NARRATES.test(e.answer.text)) narrates += 1;
+    if (!HANDS_OVER.test(e.answer.text.slice(-400))) noHandover += 1;
+  }
+  return {
+    counted,
+    narrates,
+    noHandover,
+    narratesPct: counted ? Math.round((narrates / counted) * 100) : 0,
+    noHandoverPct: counted ? Math.round((noHandover / counted) * 100) : 0,
+  };
+}
+
+function report(result, options) {
+  const opts = options || {};
+  const quotes = opts.format !== 'slack';
+  const total = result.typed.length;
+  const hits = result.pushbacks.length;
+  const lines = [];
+
+  lines.push(`Pushback rate: ${rate(hits, total)} per hundred messages (${hits} of ${total} typed).`);
+  lines.push('');
+
+  if (!total) {
+    lines.push('No messages in this window, so there is nothing to report.');
+    return lines.join('\n');
+  }
+
+  const ordered = KINDS.slice().sort((a, b) => result.byKind[b.kind] - result.byKind[a.kind]);
+  for (const k of ordered) {
+    const n = result.byKind[k.kind];
+    if (!n) continue;
+    lines.push(`${String(n).padStart(3)}  ${k.label}`);
+  }
+
+  const pushed = signals(result.pushbacks);
+  const others = signals(result.typed.filter((t) => !classify(t.text)));
+  if (pushed.counted && others.counted) {
+    lines.push('');
+    lines.push('In the answers that drew a pushback, against every other answer over 400 characters:');
+    lines.push(`  talks about how it was produced   ${pushed.narratesPct}%  against  ${others.narratesPct}%`);
+    lines.push(`  ends with nothing to do           ${pushed.noHandoverPct}%  against  ${others.noHandoverPct}%`);
+    lines.push('  (Both were roughly double when this was first measured. Level pegging means the');
+    lines.push('   signal has stopped separating, which is either progress or a broken detector.)');
+  }
+
+  if (quotes && hits) {
+    lines.push('');
+    lines.push('Most recent, oldest first:');
+    for (const p of result.pushbacks.slice(-8)) {
+      const when = p.at ? p.at.slice(0, 16).replace('T', ' ') : '?';
+      lines.push(`  [${when}] (${p.kind}) ${p.text.replace(/\s+/g, ' ').slice(0, 100)}`);
+    }
+  }
+
+  lines.push('');
+  lines.push('This counts only the times something was said. Working around an answer in');
+  lines.push('silence leaves no trace, so treat every number here as a floor.');
+
+  return lines.join('\n');
+}
+
+// Measures the detector against a labelled set the user keeps locally, since
+// their real messages cannot go in a public repository. Without this the
+// detector is a pile of regular expressions nobody has checked, which is the
+// exact shape of a test that passes without testing anything.
+function selftest(fixturePath) {
+  const file = fixturePath || path.join(os.homedir(), '.claude', 'build-loop', 'pushback-fixture.json');
+  if (!fs.existsSync(file)) {
+    return { ok: false, reason: `no labelled set at ${file}. Nothing was measured.` };
+  }
+  const cases = JSON.parse(fs.readFileSync(file, 'utf8'));
+  let caught = 0;
+  let missed = [];
+  let wrong = [];
+  for (const c of cases) {
+    const got = classify(c.text);
+    if (c.pushback && got) caught += 1;
+    else if (c.pushback && !got) missed.push(c.text);
+    else if (!c.pushback && got) wrong.push({ text: c.text, as: got });
+  }
+  const positives = cases.filter((c) => c.pushback).length;
+  const negatives = cases.length - positives;
+  return {
+    ok: true,
+    positives,
+    negatives,
+    caught,
+    missed,
+    wrong,
+    catchPct: positives ? Math.round((caught / positives) * 100) : 0,
+    falsePct: negatives ? Math.round((wrong.length / negatives) * 100) : 0,
+  };
+}
+
+function main(argv) {
+  const args = argv.slice(2);
+  const get = (flag) => {
+    const i = args.indexOf(flag);
+    return i === -1 ? null : args[i + 1];
+  };
+
+  if (args.includes('--selftest')) {
+    const r = selftest(get('--fixture'));
+    if (!r.ok) {
+      console.log(r.reason);
+      console.log('Build one with --label to measure this properly.');
+      process.exit(1);
+    }
+    console.log(`Labelled set: ${r.positives} pushbacks, ${r.negatives} not.`);
+    console.log(`Caught ${r.caught} of ${r.positives} (${r.catchPct}%).`);
+    console.log(`Wrongly flagged ${r.wrong.length} of ${r.negatives} (${r.falsePct}%).`);
+    if (r.missed.length) {
+      console.log('\nMissed:');
+      for (const m of r.missed.slice(0, 20)) console.log('  ' + m.replace(/\s+/g, ' ').slice(0, 90));
+    }
+    if (r.wrong.length) {
+      console.log('\nWrongly flagged:');
+      for (const w of r.wrong.slice(0, 20)) console.log(`  (${w.as}) ` + w.text.replace(/\s+/g, ' ').slice(0, 90));
+    }
+    process.exit(0);
+  }
+
+  const days = Number(get('--days') || 7);
+  const since = Date.now() - days * 24 * 3600 * 1000;
+  const result = scan(since, get('--root'));
+
+  if (args.includes('--json')) {
+    console.log(JSON.stringify({
+      days,
+      files: result.files,
+      typed: result.typed.length,
+      pushbacks: result.pushbacks.length,
+      rate: rate(result.pushbacks.length, result.typed.length),
+      byKind: result.byKind,
+    }, null, 2));
+    return;
+  }
+
+  console.log(`Window: last ${days} days, ${result.files} transcript files.\n`);
+  console.log(report(result, { format: get('--format') }));
+}
+
+if (require.main === module) main(process.argv);
+
+module.exports = { classify, userText, scan, report, signals, selftest, rate, KINDS };

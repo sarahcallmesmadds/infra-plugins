@@ -54,9 +54,48 @@ them are things you forget you meant to fix.
 - `/audit-deps` — scan every configured root and reconcile what is on disk
   against the dependency map.
 - `/whats-breaking` — a weekly view of what broke, what got fixed, and what
-  keeps coming back.
+  keeps coming back. It also reports a pushback rate, described below.
 - `/find-skill` — route an intent to the right skill, by scanning what is
   actually installed rather than a list someone maintained by hand.
+
+## The pushback rate
+
+The queue records what you noticed and took the trouble to log. It misses the
+other half: the times an answer did not land and you said so in the conversation
+rather than filing anything. Those are already written down, because Claude Code
+keeps a transcript of every session on disk.
+
+`/whats-breaking` reads them and reports one number, pushbacks per hundred
+messages you actually typed, broken down by kind. You can also run it directly:
+
+```bash
+node plugins/build-loop/scripts/pushback.js --days 7
+```
+
+**That number is the scoreboard for any rule about how answers get written.** A
+rule that does not move it is not working, and writing more rules will not
+change a flat line.
+
+Three things it is careful about, because each one is a way this could quietly
+lie to you:
+
+**It counts only what was said.** Giving up on an answer and working around it
+leaves no trace, so every figure is a floor rather than a measurement. The report
+says this itself.
+
+**It is measured against your own words, not against a demo.** The detector is
+checked with `--selftest` against a labelled set of your real messages kept at
+`~/.claude/build-loop/pushback-fixture.json`, which never enters this repository.
+The test suite here proves the script is wired up and deliberately does not claim
+to prove it is accurate, because a public repository is the wrong home for
+somebody's unguarded messages. A catch rate under about 90 per cent means the
+patterns have drifted from how you write and the weekly number is understating
+things.
+
+**Your quotes stay on your machine.** The local report quotes you, which is what
+makes a pattern worth acting on. `--format slack` drops every quote and emits
+counts only, and the skill uses that form for anything it posts, the direct
+message included.
 
 ## Why a dependency map
 

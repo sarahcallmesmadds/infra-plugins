@@ -353,6 +353,61 @@ Flagged targets:
 
 ---
 
+## Step 6b: Pushback Rate
+
+Steps 1 to 6 read the bug queue, which records what the user noticed and took the
+trouble to log. This step reads the other half: the times an answer did not land
+and they said so in the conversation. Nothing has to be captured live, because
+Claude Code transcripts are already on disk.
+
+Run:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/pushback.js" --days 7
+```
+
+It prints one headline number, pushbacks per hundred messages the user actually
+typed, then a breakdown by kind and the most recent examples.
+
+**The rate is the whole point.** A writing rule that does not move it is not
+working, and adding more rules to the skill will not change a flat line. Report
+the number first and the breakdown second. Baseline measured by hand on
+2026-08-16 over the preceding 36 hours: **15.4 per hundred**, against 5.4 per
+hundred across the 2,445 messages before that window.
+
+**Those two figures are not a like-for-like comparison and must not be presented
+as one.** The detector's patterns were written from the 36-hour window, so it
+finds more there by construction. What is comparable is one week against
+another from now on, because the detector no longer changes between them. Say so
+if you quote both.
+
+**State the floor.** The count only includes times the user said something. Giving
+up and working around an answer leaves no trace, so every figure is a lower bound.
+The script prints this line itself; do not delete it when summarising.
+
+**Accuracy.** The detector is measured against a labelled set of the user's own
+messages, which lives at `~/.claude/build-loop/pushback-fixture.json` and stays
+off this public repository. Check it with:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/pushback.js" --selftest
+```
+
+If that reports a catch rate below about 90 per cent, the patterns have drifted
+from how the user actually writes and the weekly number is understating things.
+That is worth a queue entry against `pushback.js` rather than a silent shrug.
+The suite in `tests/pushback.test.js` proves the script is wired up correctly and
+deliberately does **not** prove it is accurate, because a public repository is the
+wrong place for somebody's unguarded messages.
+
+**When a kind crosses three occurrences in a week**, treat it exactly like a
+structural pattern flag from Step 2: surface it, do not fix it silently, and
+suggest a queue entry against the skill that is supposed to prevent it, which is
+`say-it-simply` in the `slop-check` plugin. That is how a conversational pattern
+becomes a tracked defect rather than a note nobody reads.
+
+---
+
 ## Step 7: Generate Summary Report Content
 
 Using the queue entries loaded in Step 1 and the detection results from Steps 2-6, build the weekly summary report. The report covers the current ISO week — use the ISO week computation below to determine which entries are "this week" vs older.
@@ -459,6 +514,21 @@ Post this summary to Slack?
 Confirm: `Summary saved locally. Not posted to Slack.`
 
 **Channel safety:** the user's DM is the safe default per 04-DESIGN.md Section 9. For a public channel, confirm the channel name back to them before posting — "Posting to #{channel-name}, correct?" — and wait for confirmation.
+
+**Pushback quotes never go to Slack.** The Step 6b section of the local report
+quotes the user's own messages, which is what makes a pattern actionable when
+they read it themselves. Those same lines are somebody's unguarded words about
+being confused and frustrated, and a channel is a different audience from a file
+on their own Mac, whatever the channel is. Regenerate that section for the post
+with:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/pushback.js" --days 7 --format slack
+```
+
+which emits the rate and the counts and drops every quote. Substitute it for the
+local Step 6b section before posting. This applies to the DM too: the rule is
+about the surface, not about who can see it.
 
 ---
 
