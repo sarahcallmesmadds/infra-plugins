@@ -25,6 +25,37 @@ never deletes, and `/pickup` still finds archived documents by name.
 If it reports moving anything, mention it in the Step 4 summary under "Filed
 away". If it reports nothing, say nothing about it.
 
+### Then check the folder still agrees with the index
+
+```bash
+"${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js reconcile
+```
+
+Read-only. It changes nothing here, and it is run at the start rather than the
+end so that a slug returning the wrong document is known before this session
+records another one.
+
+**Only one of its findings is urgent.** A slug reported as returning the wrong
+handoff means `/pickup` opens a different document and says nothing, so surface
+that immediately and name both paths. It is not repaired automatically because
+choosing between two real documents is the user's call, not this skill's.
+
+Duplicated slugs, dead entries and unlisted documents are untidiness. None of
+them stops anything being found, so mention them in one line in the Step 4
+summary under "Filed away" and move on.
+
+**Entries it reports as recorded in the last few minutes are not findings at
+all.** That is another session's wrap in flight, quite possibly one running
+beside this one. Do not offer to clear them and do not repeat them as a problem.
+The same goes for an entry whose directory could not be read, which may be a disk
+that is not plugged in.
+
+Do not run `--fix` as part of a wrap: it writes to the index, and a wrap is
+already the one command most likely to be running in another session at the same
+time.
+
+If it reports that the index and the folder agree, say nothing about it.
+
 ---
 
 ## Step 1: Review the session

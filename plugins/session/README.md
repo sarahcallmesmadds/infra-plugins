@@ -396,6 +396,68 @@ A directory that cannot hold a lock at all, usually one that is not writable, is
 different case and stays quiet. The index write is about to fail there too, and
 `indexWritten: false` already reports that properly.
 
+### When the folder and the index disagree
+
+The lock stops the index losing a write. It does nothing about the index and the
+folder drifting apart afterwards, which is a separate fault with separate causes:
+a hand repair, a document moved by something other than the sweep, an entry
+written for a path that was later reused.
+
+```
+cli.js reconcile [--fix]
+```
+
+Reads the folder back and reports what it finds. It changes nothing without
+`--fix`, and `--fix` only ever adds.
+
+**A slug returning the wrong handoff** is the finding worth the command. Lookups
+check the index first and return its path whenever that file exists, so an entry
+pointing at some other real document wins over the correctly named one lying
+beside it, and nothing says so. `/pickup <slug>` then opens a different handoff
+with no sign that it did. Reported first, and not repaired automatically: which of
+the two documents is the real one is a decision, and a command that guesses it is
+a command that can lose a handoff. `cli.js forget <slug>` drops the entry and lets
+the search order find the document beside it.
+
+**One document with two slugs recorded against it** is cheap to read past and is
+how the shadowing above tends to get created. Also left alone, same remedy.
+
+**An entry pointing at nothing, beside a document named for that slug**, is
+reported separately because the lookup is already right: a recorded path that
+resolves to nothing is skipped and the search order reaches the document. Only the
+entry is stale.
+
+**A document with no entry at all** is reported last and is the mildest finding,
+which is the opposite of how it was first filed. A central handoff is found by
+name whether or not it is listed, because the search order looks in this folder
+for `HANDOFF-<slug>.md` before it needs the index. `--fix` records them because it
+costs nothing, not because they were lost.
+
+Two states are reported and deliberately not judged, because the advice for a
+dead entry is to delete it and deleting either of these loses something real.
+
+**An entry recorded in the last ten minutes whose document has not appeared** is a
+wrap running right now in another session, not a stale record. A wrap notes where
+it will write before it writes, so that gap is what one looks like from outside.
+No remedy is offered for it: there is nothing to do but let it finish.
+
+**An entry whose whole directory could not be read** may be a moved project or a
+volume that is not mounted, and nothing here can tell those apart. Its remedy is
+conditioned on the project being gone for good, because forgetting the entry of a
+handoff sitting on an unplugged disk is exactly the loss the index exists to
+prevent.
+
+Both were originally collapsed into the dead-entry finding by a bare existence
+check, which `fs.existsSync` answers the same way for all three. Review caught it
+on the first round. It is the same ten minute window `pruneIndex` carries, and it
+came straight back the moment new code asked the question its own way instead of
+calling `entryState`.
+
+What it cannot see is worth as much as what it reports, so it prints both on every
+run. Pause documents are never indexed and are not scanned. Handoffs kept beside
+their work cannot be enumerated at all: the index is the only record of where they
+went, which is the whole reason it exists.
+
 ## Constraints that outlive the session that set them
 
 A handoff records what happened. It also has to record what is still binding,

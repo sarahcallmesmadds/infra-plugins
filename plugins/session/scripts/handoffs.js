@@ -671,6 +671,203 @@ function recentHandoffs({ home = os.homedir(), limit = 5 } = {}) {
   return out.sort((a, b) => b.mtime - a.mtime).slice(0, limit);
 }
 
+// ---------------------------------------------------------------------------
+// Reconcile: what the folder holds, against what the index records.
+//
+// The index is only ever written forwards. `target` records an intent before the
+// document exists, the sweep repoints and prunes, and until this existed nothing
+// read the folder back and asked whether the two still agreed. They stopped
+// agreeing, and the manual pass that repaired that introduced a duplicate entry
+// on the same day, which is the argument for a command rather than a careful
+// afternoon.
+//
+// What this is not for, stated first because it is what the bug was filed as.
+// An unlisted central document is still found by name: `searchPaths` looks in
+// this folder for `HANDOFF-<slug>.md` before the index is needed at all, so a
+// missing entry costs nothing there. That was measured, not reasoned about, on
+// the two slugs the original report named as unfindable. Both resolved. So
+// `unlisted` is reported last and quietly, and the loud findings are the two
+// below, which were found by looking rather than by being filed.
+//
+// `shadowed` is the one that hands back a wrong answer. `findHandoff` consults
+// the index first and returns its path whenever that file exists, so an entry
+// pointing at some other real document wins over the correctly named one lying
+// beside it, and nothing anywhere says so. `/pickup <slug>` then opens a
+// different handoff with no sign that it did. That is not a missing entry, it is
+// a confident wrong one, and it is the reason this command leads with it.
+//
+// `duplicate` is two or more slugs recorded against one document. Cheap to read
+// past, and it is how the shadowing above came to exist, so it is worth naming.
+//
+// Detection changes nothing. `applyReconcile` is the only half that writes, and
+// the only thing it writes is an entry for a document sitting right there on the
+// disk, which is the one repair that cannot lose anything.
+
+function resolvePath(p) {
+  // `realpathSync` throws on a path that is not there, and a recorded path that
+  // is not there is the ordinary case here rather than an error. Falling back to
+  // `resolve` keeps a comparable string for it.
+  try { return fs.realpathSync(p); } catch (_) { return path.resolve(p); }
+}
+
+function samePath(a, b) {
+  if (!a || !b) return false;
+  return resolvePath(a) === resolvePath(b);
+}
+
+// Every document this folder is answerable for.
+//
+// `HANDOFF-<slug>.md`, in the handoffs folder and its archive, which is the same
+// set `archiveStale` and `recentHandoffs` walk. A `<slug>-pause.md` is a fourth
+// kind in `searchPaths` and is deliberately not scanned: nothing ever records
+// one, so every pause document on the disk would be reported as unlisted, every
+// run, forever. The report says which shapes it looked at rather than leaving
+// that gap to be inferred from a clean result.
+function centralDocs(home = os.homedir()) {
+  const out = [];
+  for (const dir of [handoffRoot(home), archiveRoot(home)]) {
+    let names;
+    try { names = fs.readdirSync(dir); } catch (_) { continue; }
+    for (const name of names) {
+      if (!name.startsWith('HANDOFF-') || !name.endsWith('.md')) continue;
+      const full = path.join(dir, name);
+      try { if (!fs.statSync(full).isFile()) continue; } catch (_) { continue; }
+      out.push({
+        slug: slugify(name.replace(/^HANDOFF-/, '').replace(/\.md$/, '')),
+        path: full,
+        archived: dir === archiveRoot(home),
+      });
+    }
+  }
+  return out;
+}
+
+function reconcileIndex({ home = os.homedir(), now = Date.now() } = {}) {
+  const docs = centralDocs(home);
+  // Read through the gate, so this sees one whole version of the index rather
+  // than one caught between another session's read and its write. `readOnly`
+  // because nothing on this path writes, and a preview that queues behind a
+  // running wrap is previewing state that wrap is in the middle of changing.
+  const handoffs = mutateIndex(home, (map) => map, { readOnly: true }) || {};
+
+  const shadowed = [];
+  const unlisted = [];
+  const superseded = [];
+  const pending = [];
+  const unreachable = [];
+
+  for (const doc of docs) {
+    const entry = handoffs[doc.slug];
+    if (!entry || !entry.path) {
+      unlisted.push({ slug: doc.slug, path: doc.path, archived: doc.archived });
+      continue;
+    }
+    if (samePath(entry.path, doc.path)) continue;
+
+    // `entryState` rather than a bare existence check, and that distinction is
+    // the whole of Devin round 1 on PR #114.
+    //
+    // `fs.existsSync` collapses three different answers into "not there", and
+    // only one of them may be called a dead entry. A wrap records where it will
+    // write before it writes, so an entry recorded minutes ago whose document
+    // has not appeared is a handoff in progress. A path whose whole directory is
+    // missing may be an unmounted volume rather than a deletion. The advice
+    // printed for a dead entry is to forget it, and forgetting the entry of a
+    // project handoff destroys the only record of where that handoff went, which
+    // is the one thing the index exists to hold.
+    //
+    // This is the same window `pruneIndex` was given in PR #111, the day before
+    // this function was written, and it came straight back the moment new code
+    // asked the question its own way instead of calling the function that
+    // already knew the answer.
+    const state = entryState(entry, now);
+
+    if (state === 'present') {
+      shadowed.push({
+        slug: doc.slug, doc: doc.path, recorded: entry.path, kind: entry.kind || 'project',
+      });
+    } else if (state === 'pending') {
+      // Spared and reported, in the same words the sweep uses. Not evidence of
+      // anything, in either direction.
+      pending.push({ slug: doc.slug, doc: doc.path, recorded: entry.path });
+    } else if (state === 'unreachable') {
+      unreachable.push({ slug: doc.slug, doc: doc.path, recorded: entry.path });
+    } else {
+      // Genuinely gone: the directory is right there and the document is not in
+      // it, and the entry is old enough that it is not a wrap in flight. The
+      // lookup already reaches the document beside it through the search order,
+      // so only the entry is wrong, which is why this is not grouped with
+      // `shadowed`.
+      superseded.push({ slug: doc.slug, doc: doc.path, recorded: entry.path });
+    }
+  }
+
+  // Two slugs against one document. Grouped by the resolved path so a symlinked
+  // or differently spelled route to the same file is still one document.
+  const byPath = new Map();
+  for (const [slug, entry] of Object.entries(handoffs)) {
+    if (!entry || !entry.path) continue;
+    const key = resolvePath(entry.path);
+    if (!byPath.has(key)) byPath.set(key, []);
+    byPath.get(key).push(slug);
+  }
+  const duplicates = [];
+  for (const [p, slugs] of byPath) {
+    if (slugs.length > 1) duplicates.push({ path: p, slugs: slugs.slice().sort() });
+  }
+  duplicates.sort((a, b) => a.path.localeCompare(b.path));
+
+  return {
+    root: handoffRoot(home),
+    scanned: docs.length,
+    entries: Object.keys(handoffs).length,
+    shadowed,
+    duplicates,
+    superseded,
+    // Spared rather than judged. Both are entries this cannot call dead without
+    // risking a live handoff, and both are reported, because a check that
+    // silently keeps something is as hard to trust as one that silently drops
+    // it.
+    pending,
+    unreachable,
+    unlisted,
+  };
+}
+
+// Record an entry for every document that has none.
+//
+// The only repair here, and deliberately the only one. A shadowed slug and a
+// duplicated one both need somebody to say which document is the real one, and
+// a command that guesses that is a command that can lose a handoff. Those two
+// are reported and left alone.
+function applyReconcile({ home = os.homedir(), now = Date.now() } = {}) {
+  const found = reconcileIndex({ home, now });
+  if (!found.unlisted.length) return { ...found, recorded: [], written: true };
+
+  const recorded = [];
+  const written = mutateIndex(home, (handoffs, save) => {
+    for (const d of found.unlisted) {
+      // Re-checked inside the lock. The scan above ran outside it, on purpose,
+      // so another session may have recorded this very slug in between, and
+      // writing over a fresher entry with this one is the same lost write the
+      // rest of this file exists to stop.
+      if (handoffs[d.slug]) continue;
+      handoffs[d.slug] = {
+        path: d.path,
+        kind: d.archived ? 'archived' : 'central',
+        recorded_at: new Date(now).toISOString(),
+      };
+      recorded.push(d);
+    }
+    // Nothing left to do once the re-check above has skipped them all. Reported
+    // as written because there was nothing to write, not as a failed write.
+    if (!recorded.length) return true;
+    return save(handoffs);
+  });
+
+  return { ...found, recorded, written: written === true };
+}
+
 // The repository a directory belongs to, following a worktree back to its main
 // checkout. Two handoffs for the same project can record different directories,
 // because work moves into a worktree, and a plain string compare on those paths
@@ -1023,4 +1220,6 @@ module.exports = {
   findHandoff,
   archiveStale,
   recentHandoffs,
+  reconcileIndex,
+  applyReconcile,
 };
