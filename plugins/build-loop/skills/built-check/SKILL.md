@@ -247,11 +247,15 @@ or add a root in the wrong case sends them to change the one thing that is not
 wrong.
 
 A destination is read four ways, in this order: as a path when it is anchored
-at `~/`, `/` or `./`; as an owner-qualified repository when a root's git remote
-answers to it; as a configured root name; or as unqualified prose. All four are
-ordinary things to find in this field, because `where` is free text. A bare
-`/`, `~/`, `./` or `../` is ignored: it names no particular destination and
-must not resolve to the process working directory, home, or parent directory.
+at `~/`, `/` or `./`; as an owner-qualified repository, with a readable git
+remote authoritative over a same-named checkout; as a configured root name; or
+as unqualified prose. A folder-style pair such as `Projects/name` may match a
+configured plugin repository, and a missing or non-git checkout may fall back
+to its configured name because no remote contradicts it. All four are ordinary
+things to find in this field, because `where` is free text. Dates, `and/or` and
+single-word slash commands are prose, not destinations. A bare `/`, `~/`, `./`
+or `../` is ignored: it names no particular destination and must not resolve to
+the process working directory, home, or parent directory.
 
 Pass an empty file for an item whose `where` is empty. An empty value is an
 answer rather than a mistake.

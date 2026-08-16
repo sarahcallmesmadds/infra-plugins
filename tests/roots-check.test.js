@@ -726,8 +726,22 @@ check('no skill has gone back to writing its own plugin-repo globs', () => {
     assert.strictEqual(stdout.trim(), 'not-covered');
   });
 
+  check('a different owner cannot borrow an existing checkout by repository name', () => {
+    assert.strictEqual(
+      run(home, ['covers', '--where', 'someoneelse/infra-plugins']).stdout.trim(),
+      'not-covered'
+    );
+  });
+
   check('ordinary destination prose is unqualified, not outside every root', () => {
-    for (const where of ['smadds marketplace', 'the company marketplace', 'somewhere-else']) {
+    for (const where of [
+      'smadds marketplace',
+      'the company marketplace',
+      'somewhere-else',
+      'the marketplace, decide by 8/14',
+      'the docs and/or the site',
+      'run /built-check first',
+    ]) {
       assert.strictEqual(
         run(home, ['covers', '--where', where]).stdout.trim(), 'unqualified',
         `${where} was treated as proof that no configured root could hold it`
@@ -852,6 +866,10 @@ check('no skill has gone back to writing its own plugin-repo globs', () => {
     ] });
     fs.mkdirSync(path.join(h, 'dev', 'infra-plugins'), { recursive: true });
     fs.mkdirSync(path.join(h, '.claude', 'skills'), { recursive: true });
+    const checkout = path.join(h, 'dev', 'infra-plugins');
+    execFileSync('git', ['-C', checkout, 'init', '-q'], { stdio: 'ignore' });
+    execFileSync('git', ['-C', checkout, 'remote', 'add', 'origin',
+      'https://github.com/sarahcallmesmadds/infra-plugins.git'], { stdio: 'ignore' });
     assert.strictEqual(
       run(h, ['covers', '--where', 'Projects/infra-plugins']).stdout.trim(),
       'covered infra-plugins'

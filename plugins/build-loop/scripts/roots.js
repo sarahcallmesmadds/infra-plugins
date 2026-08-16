@@ -426,11 +426,13 @@ function cmdLayout(args) {
 // last segment is also `skills`. Matching those is a false positive on precisely
 // the five items that started this, and it would report them as searched.
 //
-// So an `owner/name` pair is answered by the root's git remote, not by its
-// directory name, and a bare segment that appears as the tail of an unmatched
-// pair does not get a second chance as a bare name. `sarahcallmesmadds/skills`
-// is then not-covered even beside a root called `skills`, while a bare `skills`
-// still is, because somebody who wrote that meant the local one.
+// So a readable git remote is authoritative for an `owner/name` pair, and a
+// bare segment that appears as the tail of an unmatched pair does not get a
+// second chance as a bare name. A missing or non-git plugin checkout has no
+// repository identity to contradict its configured tail, and ordinary folder
+// heads such as `Projects/name` remain path descriptions. This keeps
+// `sarahcallmesmadds/skills` not-covered beside a root called `skills`, while a
+// bare `skills` still means the local root somebody configured.
 function remoteOf(dir) {
   try {
     const url = execFileSync('git', ['-C', dir, 'remote', 'get-url', 'origin'], {
@@ -462,7 +464,14 @@ function coversWhere(where, roots, usedDefaults = false) {
 
   const lower = text.toLowerCase();
   const segments = lower.split(/[^a-z0-9._-]+/).filter(Boolean);
-  const pairs = (lower.match(/[a-z0-9._-]+\/[a-z0-9._-]+/g) || []);
+  // A slash alone does not make prose an owner/repository reference. Dates and
+  // the ordinary conjunction "and/or" otherwise become evidence that the item
+  // belongs outside every configured root. Keep the deliberately small filter
+  // here: unmatched real owner/repository pairs must still answer not-covered.
+  const pairs = (lower.match(/[a-z0-9._-]+\/[a-z0-9._-]+/g) || []).filter((pair) => {
+    const [head, tail] = pair.split('/');
+    return pair !== 'and/or' && !(/^\d+$/.test(head) && /^\d+$/.test(tail));
+  });
   let hasSpecificPath = false;
   // A global pair regex is non-overlapping. In github.com/owner/repo it first
   // consumes github.com/owner and would never expose owner/repo, so the repo
@@ -483,7 +492,6 @@ function coversWhere(where, roots, usedDefaults = false) {
     // and '.'/'..' into broad process-relative directories. Any of those can
     // contain a configured root and falsely answer covered for stray prose.
     if (trimmed === '' || trimmed === '~' || trimmed === '.' || trimmed === '..') continue;
-    hasSpecificPath = true;
     // Try the exact path first, because Unix permits punctuation at the end of
     // a real directory name. Then try the form with ordinary sentence-ending
     // punctuation removed, so "put it in ~/Projects/x." still names x.
@@ -498,11 +506,20 @@ function coversWhere(where, roots, usedDefaults = false) {
         if (abs === rp || abs.startsWith(rp + path.sep) || rp.startsWith(abs + path.sep)) return hit(r);
       }
     }
+    // `~/x`, `./x` and `../x` are explicit even with one segment. A leading
+    // slash plus one word is also how slash commands are written, so only call
+    // an unmatched absolute form a path when it has another slash. An exact
+    // single-segment absolute root already returned from the comparison above.
+    if (/^(~|\.{1,2})\//.test(trimmed) || trimmed.slice(1).includes('/')) {
+      hasSpecificPath = true;
+    }
   }
 
-  // 2. An owner-qualified reference is answered by the remote and by nothing else.
+  // 2. A readable origin is the strongest answer to an owner-qualified reference.
+  const remotes = new Map();
   for (const r of roots) {
     const remote = remoteOf(r.path);
+    remotes.set(r, remote);
     if (remote && pairs.includes(remote)) return hit(r);
   }
 
@@ -510,6 +527,10 @@ function coversWhere(where, roots, usedDefaults = false) {
   //    reference: its head names the directory a root sits in and its tail
   //    names the root. `Projects/infra-plugins` reaches here, and without it
   //    step 4 discards the half that carries the meaning.
+  const folderHeads = new Set([
+    'code', 'dev', 'project', 'projects', 'repo', 'repos', 'repositories',
+    'source', 'src', 'work', 'workspace', 'workspaces',
+  ]);
   for (const pair of pairs) {
     const slash = pair.indexOf('/');
     const head = pair.slice(0, slash);
@@ -527,7 +548,10 @@ function coversWhere(where, roots, usedDefaults = false) {
   //    missing checkout also cannot answer `git remote get-url`, so its durable
   //    configured name is the only clue left. After the stronger remote and
   //    exact filesystem checks above, let a pair tail match only a plugin-repo
-  //    root's exact configured name or path basename. Ignore pairs
+  //    root's exact configured name or path basename. If an existing checkout
+  //    has a readable, different remote, trust it unless the head is an ordinary
+  //    folder name: `Projects/infra-plugins` is a path description, while
+  //    `someoneelse/infra-plugins` is a contradicted repository claim. Ignore pairs
   //    whose head looks like a host; URL extraction already added owner/repo,
   //    and github.com/owner must not make a root named owner look relevant.
   for (const pair of pairs) {
@@ -537,6 +561,7 @@ function coversWhere(where, roots, usedDefaults = false) {
     if (head.includes('.')) continue;
     for (const r of roots) {
       if (r.kind !== 'plugin-repo') continue;
+      if (r.exists && remotes.get(r) && !folderHeads.has(head)) continue;
       const names = [r.name, path.basename(r.path)].map((n) => String(n).toLowerCase());
       if (names.includes(tail)) return hit(r);
     }
@@ -691,6 +716,7 @@ function main(argv) {
       '  tried, so a real directory whose name ends in punctuation still wins.',
       '  Free prose with no resolvable root is unqualified, because it does not prove',
       '  the destination lies outside the configured roots that were searched.',
+      '  Incidental slashes in dates, "and/or", and slash-command names stay prose.',
       '',
       '  layout answers one question for two callers. Without --slug it lists',
       '  everything under a checkout, which is the scan. With --slug it looks for',
