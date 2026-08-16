@@ -511,6 +511,19 @@ quote leaves the rest in force. Where the recurrence is itself the point, count
 how many handoffs carry the constraint rather than storing that number inside
 it.
 
+The command warns when it finds a pair. Two live constraints that agree
+everywhere except one short stretch are reported above the list, naming the
+stretch that differs and the handoff each wording came from, rather than
+printing two near-identical paragraphs and leaving the reader to spot the word.
+
+It does not detect on digits, which is the obvious implementation and the wrong
+one. Constraints legitimately carry a colour code, a count of files, the date a
+decision was made, and a warning that fires on those is ignored within a day,
+at which point it is also ignoring the real case. The signal is a pair that
+agrees almost everywhere, so the comparison is between constraints rather than
+inside one. It reports and never edits: two wordings might be one rule that
+drifted or two rules that read alike, and only a person can say which.
+
 **Retiring one has to be written down.** A constraint that vanishes with no line
 explaining why is indistinguishable from one that was forgotten, so removal is
 recorded rather than implied:

@@ -1089,6 +1089,94 @@ function retiredTarget(s) {
 // it is a real anomaly, and `truncated` says so out loud when it happens.
 const CONSTRAINT_SCAN_CAP = 500;
 
+// Two constraints that are the same rule wearing two wordings.
+//
+// The wrap step forbids a value that changes between sessions inside a
+// constraint, because matching is on the whole text: bump a counter and the
+// new wording is a different constraint, the old one cannot be retired by
+// quoting the new one, and both read as live. That rule is prose, so nothing
+// catches a number going back in. This is what catches it.
+//
+// **Detecting on digits is the obvious implementation and it is wrong.**
+// Constraints legitimately carry numbers: a colour code, a count of files, the
+// date a decision was made. A digit rule fires on all of those and the warning
+// is ignored within a day, which is worse than no warning because it also
+// covers the real case.
+//
+// The signal is a PAIR that agrees everywhere except one short stretch. So the
+// comparison is between constraints rather than inside one: take the common
+// prefix and the common suffix, and what is left in the middle is what they
+// disagree about. Two wordings of the same rule leave a few characters each
+// ("Tenth" against "Seventh"). Two genuinely different rules leave most of
+// themselves.
+//
+// Thresholds are deliberately conservative. A false warning here sends someone
+// to reconcile two rules that were never the same, so the cost of guessing
+// wrong is somebody editing a constraint that was correct.
+const NEAR_DUP_MAX_DIFF = 24;
+const NEAR_DUP_MIN_SHARED = 40;
+const NEAR_DUP_MIN_RATIO = 0.85;
+
+function nearDuplicateConstraints(constraints = []) {
+  const pairs = [];
+  for (let i = 0; i < constraints.length; i += 1) {
+    for (let j = i + 1; j < constraints.length; j += 1) {
+      const a = constraints[i];
+      const b = constraints[j];
+      const ta = a.text || '';
+      const tb = b.text || '';
+      if (!ta || !tb || ta === tb) continue;
+
+      let pre = 0;
+      while (pre < ta.length && pre < tb.length && ta[pre] === tb[pre]) pre += 1;
+
+      let suf = 0;
+      // Stop before the prefix on either side, or a short string with a long
+      // shared head counts its own middle twice and every pair looks identical.
+      while (
+        suf < ta.length - pre
+        && suf < tb.length - pre
+        && ta[ta.length - 1 - suf] === tb[tb.length - 1 - suf]
+      ) suf += 1;
+
+      const diffA = ta.length - pre - suf;
+      const diffB = tb.length - pre - suf;
+      const shared = pre + suf;
+      const longer = Math.max(ta.length, tb.length);
+
+      if (diffA > NEAR_DUP_MAX_DIFF || diffB > NEAR_DUP_MAX_DIFF) continue;
+      if (shared < NEAR_DUP_MIN_SHARED) continue;
+      if (shared / longer < NEAR_DUP_MIN_RATIO) continue;
+
+      // Detection is on characters, the report is on words.
+      //
+      // "Seventh" and "Tenth" share the trailing "enth", so a character diff
+      // reports "Sev" against "T", which is accurate and unreadable. The
+      // thresholds above stay on the character spans, because that is the
+      // honest measure of how much two constraints differ. Only the strings
+      // shown to a person are widened to the surrounding word.
+      // Both boundaries move OUTWARD, so the span grows to whole words. The
+      // prefix start walks left until the character before it is whitespace.
+      // The suffix start walks right, which means shrinking `s`, until the
+      // character before it is whitespace. Growing `s` instead pulls the
+      // boundary further into the shared tail and reports less than the
+      // character diff did: "Seventh" came out as "Se".
+      let p = pre;
+      while (p > 0 && !/\s/.test(ta[p - 1])) p -= 1;
+      let s = suf;
+      while (s > 0 && !/\s/.test(ta[ta.length - s - 1])) s -= 1;
+
+      // Trimmed, because the boundary lands on the space before the next word
+      // and a quoted span with a hanging space reads as a typo in the warning.
+      pairs.push({
+        a: { text: ta, from: a.from, differs: ta.slice(p, ta.length - s).trim() },
+        b: { text: tb, from: b.from, differs: tb.slice(p, tb.length - s).trim() },
+      });
+    }
+  }
+  return pairs;
+}
+
 // Every constraint still in force for the project `cwd` belongs to.
 //
 // Documents are read newest first, and a retirement in a newer one suppresses
@@ -1170,6 +1258,10 @@ function carriedConstraints({ cwd = process.cwd(), home = os.homedir(), limit = 
     constraints: out,
     scanned,
     unmatchedRetirements,
+    // Computed over what survived retirement, not over every bullet ever
+    // written. A wording that was properly retired is not a live duplicate, and
+    // warning about it would punish the person who did the tidying.
+    nearDuplicates: nearDuplicateConstraints(out),
     truncated,
     // Without git, scoping falls back to comparing real paths, which still
     // groups a directory with itself but cannot tell a worktree from an
@@ -1189,6 +1281,7 @@ module.exports = {
   constraintsIn,
   retiredIn,
   carriedConstraints,
+  nearDuplicateConstraints,
   handoffRoot,
   archiveRoot,
   indexLockPath,
