@@ -172,17 +172,21 @@ Classify everything into one of four buckets:
 **EXISTING** — in both. Check whether the file mtime from Step 1 is newer than the entry's `last_updated` field. Parse both as timestamps and compare. If newer, the entry is STALE and may need `depends_on` re-inferred.
 **ONE-SIDED** — a `dependents` row on entry T naming A, where **A has no `depends_on` path to T at all**, neither directly nor through other entries. This one is about the map's internal consistency rather than about disk, so it is computed from `existing` alone and needs no file to have changed.
 
-**A missing direct edge is not the test, and using it as the test is wrong.** SCHEMA-DEPS.md tracks transitive dependencies on purpose: if A depends on B and B depends on C, A appears in C's `dependents`. A's `depends_on` correctly names B and not C, so every transitive back-edge in a healthy map looks unmatched if you only compare direct edges. Counting those inflates the bucket with rows that are already right, and `add-missing` would then write a direct A → C edge the schema does not intend, turning a correct indirect relationship into a fabricated direct one.
+**A missing direct edge is not the test, and using it as the test is wrong.** Step 6 writes back-edges for direct edges only, so most rows in a healthy map do match directly. But a person may write a row that is explained by a chain: A depends on B, B depends on C, and somebody recorded A on C's `dependents` by hand. A's `depends_on` correctly names B and not C, so that row looks unmatched if you only compare direct edges. Counting it inflates the bucket with a row that is already right, and `add-missing` would then write a direct A → C edge, turning a correct indirect relationship into a fabricated direct one.
+
+**Generation is direct-only. Acceptance is not.** SCHEMA-DEPS.md v5 settled that `dependents` is generated from direct edges only, and in the same breath that a chain-explained row is still valid. Do not read the first half as licence to drop the walk below.
 
 So follow the forward edges. Take the entry named in the `dependents` row, walk its `depends_on` transitively, and if T is reachable the row is explained and belongs in no bucket. Only a row with no path at all is one-sided.
 
-Measured against the live map on 2026-08-11: 249 `dependents` rows, 147 matched by a direct edge, 3 explained only transitively, 99 genuinely unexplained. Three is small here, and it is three rows this skill would otherwise have reported as broken and offered to "repair" by inventing an edge.
+SCHEMA-DEPS.md carries the last measurement of how many rows are in each state, and it is the only copy. As of that measurement the walk finds nothing the direct test would have missed, which is the state this step keeps the map in rather than a reason to drop the walk: it costs nothing on a clean map and is what stops the first hand-written chain row being reported as broken.
 
 Work ONE-SIDED out here, not later. Step 6 is where the decision is applied, but it is the last approval gate in the skill and Step 5 is the only one, so a bucket discovered after Step 5 would mean asking the user a second question about a write they already approved. Anything the user has to decide is decided in one place.
 
 A few will resolve themselves: if Step 4 infers a `depends_on` that happens to mirror a one-sided row, the pair is whole and it leaves the bucket. Recheck against the final map in Step 6 and say how many resolved rather than carrying the Step 3 number through.
 
-**Compare against `last_updated`, never `last_auto_checked`.** The second is written by the `deps-watch` hook after an ordinary edit, and it means only that every reference the file mechanically makes was already recorded. It cannot see a semantic edge, one thing reading a file another writes, which is the kind this map exists to catch. Treating it as a review date would empty this bucket of exactly the entries that most need looking at. Carry the field through unchanged on write; it is not yours to set.
+**`last_updated` is the only date to compare against, and the only one an entry carries.** There was a second, `last_auto_checked`, written by the `deps-watch` hook after an ordinary edit. It was removed in SCHEMA-DEPS.md v5 because nothing read it. The reason it was never the field to compare against still holds and is why it is worth remembering: it recorded only that every reference the file mechanically makes was already recorded, which cannot see a semantic edge, one thing reading a file another writes, and that is the kind this map exists to catch. Treating a machine check as a review date empties this bucket of exactly the entries that most need looking at.
+
+**Drop `last_auto_checked` if you find it.** A map written before v5 still carries it on some entries. It is not carried through on write.
 
 If `$ARGUMENTS` is non-empty, filter **all four buckets** to entries whose name or composite key matches, so `/audit-deps daily-brief` reviews one thing without scanning every change.
 
@@ -267,7 +271,7 @@ For orphaned entries specifically, ask explicitly: "Remove {composite_key} from 
 
 For stale entries, only re-infer if the user confirms. **If they decline, leave `last_updated` alone.**
 
-This used to say to bump it anyway, to acknowledge the file was inspected. Nothing inspected it. SCHEMA-DEPS.md defines `last_updated` as the date the edges were judged correct by a person or by this skill, and v4 added `last_auto_checked` precisely so an unattended check would stop writing into that field. Stamping it after a version bump records a review that did not happen, and since it is also what this skill compares against the file mtime, the entry then never comes up for review again.
+This used to say to bump it anyway, to acknowledge the file was inspected. Nothing inspected it. SCHEMA-DEPS.md defines `last_updated` as the date the edges were judged correct by a person or by this skill. Stamping it after a version bump records a review that did not happen, and since it is also what this skill compares against the file mtime, the entry then never comes up for review again. v4 went as far as giving an unattended check its own field to write instead; v5 stopped the unattended write altogether. Either way this skill's own writes are the ones left that can still get it wrong.
 
 It is the same fault v4 was written to fix, reappearing in the skill instead of the hook. On 2026-08-11 following it would have marked 64 entries reviewed because a rename changed a URL string in them.
 
@@ -292,7 +296,7 @@ After applying the approved additions/removals/changes:
 
    This step used to say "prune" and nothing else. Measured against the live map on 2026-08-11, following it removed **99 of 249** back-edges in one pass, 40 percent, and almost all of them were test coverage links of the shape `guardrails/bash-guard <- bash-guard.test`. Those are the rows that answer "what does this fix put at risk", which is the question the map exists for. Nothing errored. The file came back smaller, `/apply-fix` reported fewer dependents than it should, and everything looked healthy.
 
-   It would also have taken 3 more that are not one-sided at all, being explained by a transitive chain. Those are the rows the definition in Step 3 now excludes.
+   It would also have taken 3 more that are not one-sided at all, being explained by a transitive chain. Those are the rows the definition in Step 3 now excludes. The live map has none of either shape as of 2026-08-15, which is the state this step is meant to keep it in rather than evidence the step is no longer needed.
 
    A one-sided edge is usually a **missing `depends_on`, not a stale dependent.** `run-all` lists every test as a dependent while its own `depends_on` is empty, and the relationship is real either way. Deleting the only record of it is the one option that loses information.
 
@@ -316,7 +320,7 @@ This is the critical discipline — if Claude is killed during a Write, DEPS.jso
 
    This skill is the only thing that rewrites the whole map, so it is the only place the version can be stamped. Without this step the field was documentation-only: the schema said 4 while every map on disk said 3, and the schema's own rule to bump it in `DEPS.json` in the same commit could not be satisfied by any shipped code path. Readers here are version-agnostic, so this is not urgent, but a version field nothing maintains is worse than none: it looks like a migration signal and never moves.
 
-   Never write `last_auto_checked` here. That one belongs to the hook.
+   Drop `last_auto_checked` from any entry that still carries it. The field was removed in v5 and the hook that wrote it no longer writes anything, so a map coming out of this step should not contain it.
 
 1. Build the final JSON string (2-space indent).
 2. Write to `~/.claude/build-loop/DEPS.json.tmp` using the Write tool.

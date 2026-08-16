@@ -5,29 +5,28 @@
 // edited, this reads what the file now calls and compares it to what the map
 // records. Two outcomes and nothing in between:
 //
-//   nothing new appeared   The entry is stamped as confirmed against the file
-//                          as it now stands, silently. This is the common case
-//                          and the whole point: ordinary edits stop
-//                          accumulating a warning nobody can act on.
+//   nothing new appeared   Nothing happens. This is the common case, and
+//                          silence is the whole point: ordinary edits should
+//                          cost nothing and say nothing.
 //
 //   something new appeared The file calls a mapped target with no recorded
 //                          edge. That is the case where /flag-issue would miss
-//                          a dependent, so it is said out loud and the entry is
-//                          NOT stamped, leaving the drift visible until
-//                          /audit-deps records the edge properly.
+//                          a dependent, so it is said out loud in the
+//                          conversation, where somebody can act on it.
 //
-// THE WARNING AND THE DRIFT NAMED ABOVE ARE GONE AS OF SESSION 0.8.7. Both
-// meant the session brief's drift line, which compared a file's modification
-// time against its entry's recorded date. It was removed for reporting 82 of
-// 127 entries as changed with nothing actually missing, because `last_updated`
-// is a review date that is never bumped by machine. So the first row's "stop
-// accumulating a warning" describes a warning that no longer exists, and the
-// second row's "leaving the drift visible" points at a line that is not there.
+// READ-ONLY. This hook never writes DEPS.json, and there is no path through it
+// that does. It used to stamp `last_auto_checked` on the quiet branch, taking a
+// lock and rewriting the map on every ordinary save; that field had no reader
+// once session 0.8.7 removed the session brief's drift line, so the stamp and
+// its lock came out on 2026-08-15. Queue entry 2026-08-15T19-17-34-deps-watch
+// carries the decision, and deps-refs.js carries the longer note.
 //
-// What survives is the second row's other half: saying it out loud in the
-// conversation. That was always the useful part and it is untouched. The stamp
-// still happens and nothing reads it, which is a live question rather than an
-// oversight, filed as queue entry 2026-08-15T19-17-34-deps-watch.
+// The consequence worth knowing: a mapped file can now be edited any number of
+// times without the map recording that anything looked at it. That is correct
+// here. The map's review date means a person or /audit-deps judged the edges,
+// and this hook does neither. It reads what a file mechanically calls, which
+// cannot see one thing reading a file another writes, so it was never evidence
+// of review in the first place.
 //
 // It never edits the edges itself. Writing an edge means writing the `reason`
 // that goes with it, and a sentence explaining why two things are connected is
@@ -42,7 +41,7 @@
 const fs = require('fs');
 const path = require('path');
 const { readEvent, advise } = require('../scripts/hook-io.js');
-const { DEPS_PATH, bump, entryByPath, extractRefs, unrecorded } = require('../scripts/deps-refs.js');
+const { DEPS_PATH, entryByPath, extractRefs, unrecorded } = require('../scripts/deps-refs.js');
 
 // The manifest matcher is `Write|Edit`, and that is an exact-string list, not a
 // regex. A matcher built only from letters, digits, `_`, `-`, spaces, `,` and
@@ -55,7 +54,7 @@ const { DEPS_PATH, bump, entryByPath, extractRefs, unrecorded } = require('../sc
 // the other direction: a matcher here was once anchored to `^(Write|Edit)$` to
 // close a gap the exact-string path had already closed, which made one manifest
 // differ from every other for no gain. tests/hook-executable.test.js pins the
-// form. If a MultiEdit ever needs stamping, the manifest is what has to change,
+// form. If a MultiEdit ever needs checking, the manifest is what has to change,
 // and adding a tool name here alone would do nothing.
 readEvent((event) => {
   if (event.tool_name !== 'Write' && event.tool_name !== 'Edit') return;
@@ -78,25 +77,16 @@ readEvent((event) => {
 
   const refs = extractRefs(filePath, content);
   // null means nothing could be read from this file, which is not the same as
-  // reading it and finding nothing new. Stamping here would mark the entry
-  // confirmed without a single reference having been checked. Leave it
-  // unstamped and say nothing.
-  //
-  // This used to say the entry "would never report drift again" and to leave it
-  // drifted, which named the session brief's drift line. That line is gone as
-  // of session 0.8.7. The reason to skip the stamp is unchanged and does not
-  // depend on it: a file that could not be read has had nothing checked, so
-  // recording it as confirmed is a false statement about work that never
-  // happened, and /audit-deps compares `last_updated` rather than this field
-  // when it decides what to look at.
+  // reading it and finding nothing new. The two used to be worth separating
+  // because one of them stamped the entry and the other did not. Now that
+  // nothing is written either way, the distinction survives only as a reason
+  // not to warn: an unreadable file has no missing edges to report, and
+  // claiming otherwise would name edges nobody checked for.
   if (refs === null) return;
 
   const missing = unrecorded(deps, hit.entry, refs);
 
-  if (missing.length === 0) {
-    bump(hit.key, new Date().toISOString());
-    return;
-  }
+  if (missing.length === 0) return;
 
   const names = missing.map((m) => m.id);
   advise('PostToolUse', [

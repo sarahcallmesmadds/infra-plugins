@@ -198,14 +198,14 @@ a list of skill roots. You do not need to change it.
 
 ## What it will not do
 
-**It never writes without asking, with one named exception.** Every command that
-changes a file shows you a draft or a diff first and stops. The exception is
-`deps-watch`, which stamps `last_auto_checked` onto a `DEPS.json` entry after an
-edit that added no new dependency. It writes that one field and nothing else: it
-never adds, removes, or edits an edge, never touches the `last_updated` review
-date, and abandons its own write rather than overwrite a change you approved.
-Writing an edge means writing the sentence explaining why two things are
-connected, and that is a judgment `/audit-deps` still takes to you for approval.
+**It never writes without asking.** Every command that changes a file shows you
+a draft or a diff first and stops. There is no exception, and there used to be
+one: `deps-watch` stamped a machine-check date onto a `DEPS.json` entry after an
+ordinary edit. That stamp was removed on 2026-08-15 because nothing read it, so
+the hook now only reports, in the conversation, when a file calls something the
+map does not record. Writing an edge means writing the sentence explaining why
+two things are connected, and that is a judgment `/audit-deps` still takes to
+you for approval.
 
 **It never pushes.** Fixes are committed locally. Pushing stays a deliberate
 thing you do.
@@ -217,6 +217,48 @@ answer, not its conclusion.
 **It does not judge quality.** It records what you said was wrong. It has no
 opinion about whether something is any good, and it will not rewrite anything
 you did not complain about.
+
+## Upgrading to 0.10.0
+
+Nothing to do on upgrade. Two rules that the documents claimed and the code did
+not are settled, in opposite directions: one was dropped from the code, the
+other from the documents.
+
+**`deps-watch` no longer writes anything.** It used to stamp a machine-check
+date, `last_auto_checked`, onto a map entry after any edit that added no new
+dependency. That field's only reader was the session brief's drift line, removed
+in session 0.8.7, so the write had gone nowhere for a while. The field, the code
+that wrote it, and the lock that existed only to guard that one write are all
+removed. What the hook still does is the half worth having: when an edited file
+calls something the map does not record, it says so in the conversation.
+
+Three things follow, and none of them need action. The plugin no longer touches
+`DEPS.json` outside `/audit-deps`, so an ordinary save cannot contend with an
+audit for that file. There is one lock implementation in this plugin now rather
+than two that could drift, which closes the duplication behind queue entry
+`2026-08-08T02-20-54-deps-refs`. And a map entry no longer records that anything
+looked at it between audits, which is correct: the hook read what a file
+mechanically calls, and that was never evidence a person had judged the edges.
+
+**`dependents` is direct-only, and now says so.** The schema claimed since v1
+that transitive dependents were tracked, meaning that if A depends on B and B
+depends on C then A appears in C's dependents. Nothing ever implemented it. It
+is retracted rather than built, because `/flag-issue` writes one dep-review per
+dependent, so storing the closure would fan reviews across most of a repository
+every time a shared module was corrected.
+
+One distinction survives the retraction and matters if you ever read that code:
+generation is direct-only, but **acceptance is not**. A `dependents` row that
+only a chain explains is still valid, and `/audit-deps` still walks forward
+edges before calling a row one-sided. Without that, it would offer to "repair" a
+correct indirect relationship by inventing a direct edge.
+
+**`DEPS.json` moves to schema v5** and no migration is needed. A pre-v5 map may
+carry `last_auto_checked` on some entries; it is ignored, and the next
+`/audit-deps` run drops it. No `dependents` row changes meaning: every row in
+the live map was already explained by a direct edge when the rule changed, so
+it reclassifies nothing. SCHEMA-DEPS.md carries that measurement and is the
+only place it is written down.
 
 ## Upgrading to 0.9.9
 
@@ -232,9 +274,9 @@ counted as drifted forever, so the number only grew and the line was always on.
 The brief now reports only an entry whose file is gone, which is a fact somebody
 can act on in one command.
 
-**What that means here.** `last_auto_checked` has no reader. The brief was its
-only one: `deps-refs.js` writes it, and `/audit-deps` carries it through while
-its own skill says explicitly never to compare against it. `SCHEMA-DEPS.md` said
+**What that means here.** `last_auto_checked` had no reader. The brief was its
+only one: `deps-refs.js` wrote it, and `/audit-deps` carried it through while
+its own skill said explicitly never to compare against it. `SCHEMA-DEPS.md` said
 the brief read it, which is the sharper error of the two, since a schema
 reference is where somebody goes to learn what is true.
 
@@ -242,10 +284,13 @@ reference is where somebody goes to learn what is true.
 file that calls a mapped target with no recorded edge is untouched and is the
 reason the hook earns its place. Only the silent stamping lost its purpose.
 
-**What is not decided here.** Whether `deps-watch` should keep writing a field
-nothing reads. That is a design question rather than a documentation one, and it
-is filed as queue entry `2026-08-15T19-17-34-deps-watch`. This release makes the
-documents true about today; it does not pre-empt that decision.
+**Since decided: the field is gone.** Whether `deps-watch` should keep writing a
+field nothing reads was left open here and answered on 2026-08-15. It should
+not. The field, its writer, and the second lock implementation that existed only
+to guard that one write were all removed together, `DEPS.json` moved to schema
+v5, and `deps-watch` became read-only. A map written before v5 may still carry
+the field on some entries; it is ignored and the next `/audit-deps` run drops
+it.
 
 ## Upgrading to 0.9.0
 
@@ -274,10 +319,12 @@ the recorded edges.
 
 | Outcome | What happens |
 |---|---|
-| Nothing new appeared | `last_auto_checked` is stamped, silently. No warning accumulates. **No longer the point: the warning meant here was removed in session 0.8.7. The stamp still happens and nothing reads it.** |
-| The file calls a mapped target with no recorded edge | It says so in the conversation and does **not** stamp, so the drift stays visible until `/audit-deps` records the edge. **"Stays visible" meant the brief's drift line, which is gone. What stays visible is the report in the conversation, which is the half that still works.** |
+| Nothing new appeared | `last_auto_checked` is stamped, silently. No warning accumulates. **Both halves are now history: the warning meant here was removed in session 0.8.7, and the stamp itself was removed in schema v5. Nothing happens on this branch at all.** |
+| The file calls a mapped target with no recorded edge | It says so in the conversation and does **not** stamp, so the drift stays visible until `/audit-deps` records the edge. **"Stays visible" meant the brief's drift line, which is gone, and there is no stamp left to withhold. What stays visible is the report in the conversation, which is the half that still works and is now the whole hook.** |
 
-**Two dates, kept apart.** The hook writes `last_auto_checked` and never
+**Two dates, kept apart.** **There is one date now: schema v5 removed the
+second, and the hook writes neither.** As shipped in 0.9.0 the hook wrote
+`last_auto_checked` and never
 `last_updated`. `last_updated` is the review date, and `/audit-deps` compares it
 against the file's modification time to decide an entry is stale and may need
 its dependencies worked out again. Writing a machine check into that field
@@ -352,7 +399,8 @@ explains why that costs a Codex user nothing rather than leaving them worse off.
 
 **`DEPS.json` moves to schema v4.** The only change is the new
 `last_auto_checked` field, which is simply absent on an older map, so nothing
-needs migrating and older readers are unaffected.
+needs migrating and older readers are unaffected. **Superseded: v5 removed that
+field again, on 2026-08-15, once it was clear nothing read it.**
 
 This release originally also required Session 0.8.1, which was what taught the
 brief to read the new field. **That requirement is void.** Session 0.8.7 removed

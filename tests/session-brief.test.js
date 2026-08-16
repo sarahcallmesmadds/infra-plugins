@@ -171,6 +171,9 @@ check('an edited file is not reported at all', () => {
   fs.writeFileSync(path.join(home, 'watched.js'), 'watched');
   writeJson(path.join(root, 'DEPS.json'), { targets: {
     reviewed: { path: '~/reviewed.js', last_updated: '2000-01-01T00:00:00Z' },
+    // A pre-v5 map: `last_auto_checked` was removed from the schema on
+    // 2026-08-15, and this entry keeps it to prove the brief does not start
+    // reading a field again just because an old map still carries it.
     watched: {
       path: '~/watched.js',
       last_updated: '2000-01-01T00:00:00Z',
