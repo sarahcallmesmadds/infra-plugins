@@ -560,25 +560,34 @@ check('the summary does not report work that did not happen', () => {
 // entries. Nothing in this skill can tell a live target from a retired one, so
 // the default has to be the answer that writes nothing.
 //
-// Both halves are pinned because they fail apart. The prompt line is what the
-// user reads at the moment they answer; the paragraph is what an implementation
-// consults when the answer comes back bare. Either one alone leaves the skill
-// telling the reader and the implementation different things.
+// Three assertions, all positive, and all three read the two paragraphs that
+// instruct. The prompt line is what the user reads at the moment they answer,
+// and the instruction paragraph is what an implementation consults when the
+// answer comes back bare. Either one alone leaves the skill telling the reader
+// and the implementation different things, so both are pinned.
 //
-// The negative here is written against the prompt line rather than against any
-// mention of ALL in the file. The paragraph below that line quotes the retired
-// default deliberately, to record that it was tried and what it cost, and a
-// check that cannot tell an instruction from its own history forces the history
-// to be deleted to go green. That trap already cost this file once, in the
-// summary-template check above.
+// Nothing here reads the paragraph underneath, which records that ALL was tried
+// first and what it cost. That is deliberate and it is the point worth keeping:
+// a check anchored in a history paragraph makes the history load-bearing, so
+// rewording it fails a suite while the behaviour is perfectly correct, and the
+// cheapest way to go green is to delete the record of why the rule exists. The
+// first version of this check did exactly that, pinning the closing clause of
+// that paragraph, and Devin caught it on the pull request. The summary-template
+// check above documents the same trap from the other direction.
+//
+// The prompt-line assertion is anchored to the end of the line rather than
+// matching the default anywhere on it. Also from that review: a substring test
+// passes against `Default: none. If the user gives a bare response, add all
+// missing entries.`, which states the opposite on the same line and is a more
+// likely edit than flipping the word, because it reads as a clarification.
 check('the new-items bucket defaults to adding nothing', () => {
   const skill = SKILLS['audit-deps'];
   const prompt = skill.match(/^\s*so say which ones you want\..*$/m);
   assert.ok(prompt, 'the missing-entries prompt line is gone from the Step 5 draft');
   assert.ok(
-    /Default: none\./.test(prompt[0]),
-    'the draft asks which new entries to add without defaulting to none, so a '
-    + `bare yes writes every one of them: ${prompt[0].trim()}`
+    /Default: none\.\s*$/.test(prompt[0]),
+    'the draft asks which new entries to add and does not end by defaulting to '
+    + `none, so a bare yes writes every one of them: ${prompt[0].trim()}`
   );
   assert.ok(
     /\*\*Default is NONE\.\*\*/.test(skill),
@@ -586,9 +595,9 @@ check('the new-items bucket defaults to adding nothing', () => {
     + 'default, so an unanswered draft writes entries nobody chose'
   );
   assert.ok(
-    /the reader has to choose, so make them choose/.test(skill),
-    'the reason a warning paragraph cannot stand in for a non-writing default '
-    + 'is gone, so the default reads as arbitrary and gets flipped back'
+    /the one bucket whose approval creates entries/.test(skill),
+    'the instruction no longer says why this bucket defaults differently from '
+    + 'the other three, so the default reads as arbitrary and gets flipped back'
   );
 });
 
