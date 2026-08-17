@@ -208,10 +208,16 @@ const notRunnableMessage = (target) => `Plugin hooks are off because ${target} i
 // empty, which is valid JSON carrying nothing, so the fix would have reproduced
 // the fault it was written to cure.
 //
-// So nothing variable is announced at all. Only the stderr line, which is plain
-// text and cannot be malformed, carries the absolute path. The announced
-// message names the same file relative to the plugin directory, which is fixed
-// text in the manifest. That also closes the cases escaping would have missed:
+// So nothing variable is announced at all. The announced message names the file
+// relative to the plugin directory, which is fixed text in the manifest.
+//
+// The absolute path survives only on the stderr line, and a Codex reader never
+// sees that line: the Codex branch exits as soon as it has written its JSON. So
+// on that host the path is genuinely lost, and it is worth being exact about
+// that rather than saying the path is still on stderr as though both readers got
+// it. Raised in review on 2026-08-17, when the README said exactly that. The
+// trade is still right, because the alternative on that host was not a longer
+// message but no message. That also closes the cases escaping would have missed:
 // a real tab or newline in the path is a control character JSON forbids raw, and
 // no amount of quote-escaping helps.
 //
@@ -282,6 +288,14 @@ function sayFor(event) {
     + `exit ${CODEX_EXIT}; fi; printf '%s\\n' "$1" >&2; exit ${GUARD_EXIT}; }; `;
 }
 
+// The stderr-only branch below still writes `echo`, and knowingly. /bin/sh and
+// /bin/zsh interpret a backslash in its argument, so it mangles a path holding
+// one exactly as the announcing branch did before this change. It is left alone
+// because that shape is carried by this plugin's PostToolUse hooks and by all
+// four other plugins, and a fix for one plugin does not ride along in another's
+// pull request. Nothing here is exercised against an awkward plugin root for the
+// stderr-only shape, so that defect is live and untested rather than covered.
+// Named in review on 2026-08-17 so the printf change is not read as repo-wide.
 function clausesFor(target, say) {
   const fire = (message, announced) => {
     if (!say) return `{ echo "${message}" >&2; exit ${GUARD_EXIT}; }`;
@@ -1096,8 +1110,11 @@ check('the guard actually fires, and only when it should', () => {
           `${shell}: with ${JSON.stringify(awkward)} in the plugin root the announcement carried `
           + `${JSON.stringify(oddAnnounced.hookSpecificOutput.additionalContext)}`);
 
-        // The stderr line still names the absolute path, which is the whole
-        // reason the announced message is allowed to drop it.
+        // The stderr line still names the absolute path. That is what makes the
+        // announced message allowed to drop it for the reader who does see this
+        // line, which is the Claude Code one. The Codex reader does not, and this
+        // assertion does not pretend otherwise: it runs the guard again with
+        // PLUGIN_ROOT removed, which is the Claude Code environment.
         const oddStderr = sayRun({ ...withoutCodex, CLAUDE_PLUGIN_ROOT: oddRoot });
         assert.strictEqual(oddStderr.err.trim(), notRunnableMessage(oddLauncher),
           `${shell}: with ${JSON.stringify(awkward)} in the plugin root the stderr line was ${JSON.stringify(oddStderr.err)}, `
