@@ -534,7 +534,9 @@ check('the guard actually fires, and only when it should', () => {
 
     const gone = run({ ...process.env, CLAUDE_PLUGIN_ROOT: path.join(os.tmpdir(), 'no-such-plugin-0.0.0') });
     assert.strictEqual(gone.out, '',
-      `${shell}: the hook body ran even though the plugin directory has gone`);
+      `${shell}: stdout was ${JSON.stringify(gone.out)} with the plugin directory gone. Either the `
+      + 'hook body ran anyway, or the message is going to stdout, where most events send it to the '
+      + 'debug log and the three that surface it feed it to Claude as context instead of showing it');
     assert.strictEqual(gone.code, GUARD_EXIT,
       `${shell}: the guard exited ${gone.code} rather than ${GUARD_EXIT}. Exit 0 sends stderr to the `
       + 'debug log and nowhere the reader will see it, and exit 2 blocks the tool call on PreToolUse');
