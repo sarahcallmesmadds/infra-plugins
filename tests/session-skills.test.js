@@ -320,6 +320,148 @@ check('wrap forbids printing the pickup line when the check found nothing', () =
   );
 });
 
+// Added 2026-08-16. Wrap's test for what to carry asked only whether a rule
+// still applied, never where it should live, so a permanent fact passed forever
+// and was copied into every later handoff. One document about a writing skill
+// ended up carrying 26 rules, 21 of them belonging to a project rather than to
+// that session. Both halves are pinned: the test itself, and the order of the
+// move, because writing the retirement before the destination exists deletes
+// the rule and leaves a note pointing at somewhere it is not.
+check('wrap sends a rule that outlives the work to the project file', () => {
+  const text = skill('wrap');
+  assert.match(
+    text,
+    /stays true after this piece of work ends/i,
+    'wrap no longer asks whether a rule outlives the work, so a permanent fact '
+    + 'passes the still-applies test forever and is copied into every later handoff'
+  );
+  assert.match(
+    text,
+    /belong in that project'?s own instructions file/i,
+    'wrap no longer names where a durable rule goes, so the test has nowhere to send it'
+  );
+});
+
+// Added in the same change, after review. The first version of the paragraph
+// above told the model to file a rule in CLAUDE.md "which loads on its own",
+// which is a Claude Code behaviour. This plugin ships a Codex manifest too, and
+// Codex reads no such file, so a rule moved there and retired from the handoff
+// stopped binding under Codex while the handoff recorded it as safely filed.
+// That is worse than the noise it was fixing: a long list can be read, and a
+// rule the runtime cannot see cannot. CONTRIBUTING.md requires a real fallback
+// wherever only one runtime can automate something, so both halves are pinned.
+check('wrap requires the destination be reachable from the runtime', () => {
+  const text = skill('wrap');
+  assert.match(
+    text,
+    /Codex does not/i,
+    'wrap no longer says Codex will not load the project file on its own, so the '
+    + 'move reads as safe on a runtime where it silently drops the rule'
+  );
+  assert.match(
+    text,
+    /`AGENTS\.md`/,
+    'wrap no longer names the file that makes a project reachable from Codex, so '
+    + 'the check it asks for cannot be carried out'
+  );
+});
+
+// Added in review round 2. The retirement template hardcoded <project>/CLAUDE.md
+// while the rule above it qualifies a project on carrying AGENTS.md. Coherent
+// only where AGENTS.md is the pointer and CLAUDE.md holds the rules, which is
+// the common arrangement but not the only one. A project keeping its rules in
+// AGENTS.md would get a note naming a file the rule was never written into,
+// which is the failure the next paragraph describes rather than a wording nit.
+check('the retirement note names the file the rule actually landed in', () => {
+  const text = skill('wrap');
+  assert.doesNotMatch(
+    text,
+    /because it is now recorded in <project>\/CLAUDE\.md/,
+    'the retirement template hardcodes CLAUDE.md again, so a project holding its '
+    + 'rules anywhere else gets a note pointing at a file the rule is not in'
+  );
+  assert.match(
+    text,
+    /Name the file the rule landed in, not the file that made the project/i,
+    'the instruction distinguishing where the rule went from what made the project '
+    + 'qualify is gone, so the two get conflated in the note'
+  );
+});
+
+check('wrap keeps the rule in the handoff when the project is not reachable', () => {
+  const text = skill('wrap');
+  assert.match(
+    text,
+    /Where a project does not qualify, the rule stays in the handoff/i,
+    'the fallback is gone, so a project the runtimes cannot read has no stated '
+    + 'answer and the rule gets moved somewhere half of them cannot see'
+  );
+});
+
+// Added in review round 4. Two findings, both about the move having no brakes.
+// The instruction wrote into a committed, shared file with no point where the
+// user was asked, which nothing else in this skill does outside the handoff and
+// the durable notes. And it collided with Step 3, which already claims anything
+// staying true beyond this week, so one rule could be filed in both places and
+// the two copies could then disagree.
+check('wrap asks before writing into a project instructions file', () => {
+  const text = skill('wrap');
+  assert.match(
+    text,
+    /Ask before writing into a project'?s instructions file, every time/i,
+    'the approval gate is gone, so a routine wrap silently edits a committed file '
+    + 'that everybody working in the repository shares'
+  );
+  assert.match(
+    text,
+    /No answer is a no/i,
+    'the default on silence is gone, so an unanswered prompt can be read as consent'
+  );
+});
+
+check('wrap separates the project file from the durable notes', () => {
+  const text = skill('wrap');
+  assert.match(
+    text,
+    /This is not Step 3, and the two must not both take the same rule/i,
+    'the split is gone, so this section and Step 3 both claim rules that outlive '
+    + 'the work and one rule can be filed in both'
+  );
+});
+
+// Added in review round 3. The qualification test named a file pairing,
+// AGENTS.md beside CLAUDE.md, rather than the outcome it was after. A project
+// holding its rules in AGENTS.md alone is the same situation and failed the
+// test as written, so the fallback kept its rules in the handoff for no reason.
+// Which filenames a host actually loads was not verifiable from here, so the
+// skill states the requirement and says to check rather than asserting either
+// way about a runtime it cannot observe.
+check('qualification is about reach, not about which files are present', () => {
+  const text = skill('wrap');
+  assert.match(
+    text,
+    /reachable from every\s+runtime the work runs under/i,
+    'qualification is stated as a file pairing again, so a project holding its '
+    + 'rules in one reachable file fails a test it should pass'
+  );
+  assert.match(
+    text,
+    /Confirm it rather than inferring it from the filenames/i,
+    'the instruction to check the runtime is gone, so the skill implies it knows '
+    + 'which filenames each host loads, which it does not'
+  );
+});
+
+check('wrap writes the project file before retiring the rule from the handoff', () => {
+  const text = skill('wrap');
+  assert.match(
+    text,
+    /Write it into the project file first, then retire it here/i,
+    'the ordering is gone, so a retirement can be written before the destination '
+    + 'exists, which deletes the rule and leaves a note saying it is filed somewhere it is not'
+  );
+});
+
 // --------------------------------------------------------------- pickup ----
 
 // Added 2026-08-09, the other half of the constraints fix. Wrap carrying them

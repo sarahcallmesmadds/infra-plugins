@@ -138,6 +138,80 @@ count is really reporting, a tool that keeps proposing the wrong answer,
 belongs in the bug queue where it can be fixed rather than in a number that
 records it being tolerated.
 
+**A rule that outlives the work belongs in the project, not in the handoff.**
+Before carrying one, ask whether it stays true after this piece of work ends. A
+deploy restriction, a filing rulebook, a standard the code has to meet: those
+are documentation, and they belong in that project's own instructions file. A
+handoff constraint is for what is true this week and false next: which checkout
+is shared right now, what is half migrated, what is waiting on somebody.
+
+**This is not Step 3, and the two must not both take the same rule.** The
+durable notes hold what stays true about the work and the person across every
+project, and load every session wherever it starts. A project's instructions
+file holds what governs work inside that one project, and loads when the work is
+in it. So a rule naming a repository, a path, a branch or a deploy target goes to
+the project; a rule about how to work, or about the person, goes to the notes in
+Step 3. Sending one rule to both is how two copies come to disagree, which is the
+thing this whole section exists to stop.
+
+**Check the destination is reachable from the runtime before moving anything.**
+Claude Code loads a project's `CLAUDE.md` on its own once work moves into the
+folder. Codex does not, and this plugin ships a Codex manifest, so a rule filed
+that way is invisible to half the hosts this skill runs on. It would not merely
+read as noise there, it would stop binding, with a retirement line in the
+handoff saying it had been safely filed.
+
+So a project qualifies as a destination when its rules are reachable from every
+runtime the work runs under, which today means Claude Code and Codex. The usual
+arrangement is the rules in `CLAUDE.md` with an `AGENTS.md` beside it holding a
+pointer rather than a second copy. A project keeping its rules in `AGENTS.md`
+alone qualifies just as well, provided every runtime in use reads that file.
+
+**Confirm it rather than inferring it from the filenames.** Which names a host
+loads is a property of that host and its version, so it is checked where the
+work is happening and not promised here.
+
+**Where a project does not qualify, the rule stays in the handoff.** A list that
+is too long is recoverable by reading it. A rule nobody's runtime can see is not.
+
+Carrying a permanent fact forward instead is how a document about one thing
+accumulates the rules of everything. Measured on 2026-08-16, a handoff about a
+writing skill carried 26 rules, and 21 of them belonged to a project rather than
+to the work that session was doing.
+
+**Ask before writing into a project's instructions file, every time.** That file
+is committed and shared with everybody who works in the repository, and a wrap is
+not the moment to change one unasked. Show the rule and the file it would go
+into, and move it only on an explicit yes:
+
+> This rule outlives the work, so it belongs in `<file>` rather than the handoff.
+> Move it there? <the rule, quoted>
+
+No answer is a no. Without one the rule stays in the handoff, the same fallback
+as a project the runtime cannot reach. Nothing else in this skill writes outside
+the handoff and the durable notes without being asked, and this is not the
+exception.
+
+**Write it into the project file first, then retire it here.** A move is a
+retirement and uses the same line, so the trace survives:
+
+```
+- Retired this session: <the constraint, quoted exactly as it was written>, because it is now recorded in <the path of the file it was actually written into>.
+```
+
+**Name the file the rule landed in, not the file that made the project
+qualify.** Those are usually different. In the common arrangement the rules sit
+in `CLAUDE.md` and `AGENTS.md` is the pointer that makes them reachable from
+Codex, so the note names `CLAUDE.md`. A project that keeps its rules in
+`AGENTS.md` instead is named that way. Writing the wrong one produces a note
+pointing at a file the rule was never written into, which is the failure
+described immediately below rather than a cosmetic slip.
+
+The order is not a preference. A retirement written before the destination
+exists deletes the rule and leaves a note saying it was filed somewhere it is
+not, which is worse than either doing nothing or losing it outright, because the
+note stops anybody looking.
+
 **Dropping one requires saying so.** If this session retired a constraint,
 record it as retired with the reason:
 
