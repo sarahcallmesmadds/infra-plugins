@@ -468,6 +468,31 @@ check('every hook command says so when its plugin directory has gone', () => {
     + `        Prefix the command with: ${GUARD}`);
 });
 
+check('the guard exits on a code that reaches the reader and blocks nothing', () => {
+  // This is the check that would have caught the bug, and the reason it is
+  // written as a constraint on the number rather than folded into the probe
+  // below. The probe builds its command from GUARD, which embeds GUARD_EXIT, so
+  // asserting that the command exits with GUARD_EXIT only proves the shell
+  // honours `exit N`. It cannot say whether N was the right choice, and it
+  // passed contentedly while N was 0.
+  //
+  // Three values are wrong, each for its own reason, so each is refused by name.
+  assert.notStrictEqual(GUARD_EXIT, 0,
+    'exit 0 sends stderr to the debug log and nowhere else, so the message reaches nobody '
+    + 'and the guard becomes a no-op that looks like a fix');
+  assert.notStrictEqual(GUARD_EXIT, 2,
+    'exit 2 is a blocking error. guardrails declares PreToolUse hooks, where it blocks the '
+    + 'tool call, so a plugin update would refuse every Bash, Write and Edit for the rest of '
+    + 'the session rather than merely failing to guard them');
+  assert.notStrictEqual(GUARD_EXIT, 127,
+    'exit 127 is what the shell says when it cannot find a command and what bin/hook-node '
+    + 'deliberately says for its own interpreter-not-found failure. Reusing it here adds a '
+    + 'third meaning to the ambiguity that cost four rounds to diagnose');
+
+  assert.ok(Number.isInteger(GUARD_EXIT) && GUARD_EXIT > 0 && GUARD_EXIT < 126,
+    `${GUARD_EXIT} is not a plain non-zero exit status a shell will report unchanged`);
+});
+
 check('the guard actually fires, and only when it should', () => {
   // The assertion above passes on a healthy tree whether the guard works or
   // not: it compares two strings and never asks a shell what they do. This runs
