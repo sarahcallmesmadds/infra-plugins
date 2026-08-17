@@ -348,6 +348,39 @@ check('and neither is reported as an unowned document',
 check('a proposal carrying one code line is under the source threshold',
   codeShare(`${PROPOSAL}\nfunction go() { return 1; }\n`) < 0.30, true);
 
+// Codex review on #137, run as a second opinion before a fourth Devin round.
+// It found the one thing three Devin rounds had not: counting a line as code only
+// when it declares, comments or braces misses a source file built from a string
+// table, and the same input on main produced one finding where this produced two.
+console.log('\nsource is recognised by how its lines end, not by what they hold');
+const STRING_TABLE = 'const STEPS = [\n'
+  + Array.from({ length: 40 },
+    (_, i) => `  "We will build step ${i} and the plan is to implement it across the team",`).join('\n')
+  + '\n];\n\nmodule.exports = { STEPS };\n';
+check('a source file built from a string table is read as source',
+  codeShare(STRING_TABLE) > 0.30, true);
+check('...so its planning language is not an unowned document',
+  checkSpec(STRING_TABLE).some((f) => f.name === 'no-owner-and-no-date'), false);
+check('...and not a proposal with no cut line either',
+  checkOverplanned(STRING_TABLE)
+    .some((f) => f.name === 'never-says-what-it-is-not-doing'), false);
+
+// The other direction, which the first fix for the above would have broken.
+// Hard-wrapped prose ends line after line with a comma, so counting a bare comma
+// as code turned a wrapped plan carrying a code sample into source.
+const WRAPPED_PLAN = ('We will build the migration in three passes, one region at a time,\n'
+  + 'so that any problem is cheap to unwind. The plan is to run the smallest\n'
+  + 'region first, and to keep both systems live for a week either side of it,\n'
+  + 'because a reconciliation report is the only thing that tells us whether a\n'
+  + 'region is safe to cut over at all.\n').repeat(4);
+const WRAPPED_WITH_CODE = `${WRAPPED_PLAN}\n\`\`\`\nfunction go() { return 1; }\n\`\`\`\n`;
+check('the wrapped-plan fixture clears the length gate',
+  WRAPPED_WITH_CODE.length > 800, true);
+check('a hard-wrapped plan showing a code sample is still a document',
+  codeShare(WRAPPED_WITH_CODE) < 0.30, true);
+check('...and is still asked who owns it',
+  checkSpec(WRAPPED_WITH_CODE).some((f) => f.name === 'no-owner-and-no-date'), true);
+
 // The numbers written into the threshold comments, recomputed here. Two review
 // rounds each caught a figure in a comment that no longer matched the fixture it
 // came from, so the figures are asserted rather than noted.

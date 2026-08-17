@@ -349,25 +349,44 @@ function leanedOn(text, pattern) {
 // 840-character line, so a code line appended to it is half the lines and three
 // per cent of the text.
 //
-// Measured over this repository's own files by scratchpad/measure-codeshare.js.
-// The margin is not wide and the tighter side is source: documents reach 22 per
-// cent at most, which is this repository's CLAUDE.md and its code fences, while
-// the lowest source file is the slop-check suite at 35 per cent, low because it is
-// mostly prose fixtures. Thirty sits between them. Both bounds are pinned by tests
-// against real files in this repository, so a suite that grows more prose trips a
-// row here rather than quietly becoming a document.
-const CODE_LINE = /^\s*(\/\/|\*|\/\*)/;
-const BRACE_LINE = /^\s*[{}()[\];]+\s*$/;
+// What counts as a code line is how it ENDS, not what it holds.
+//
+// The first version of this counted a line only if it declared something, was a
+// comment, or was a bare brace. A second reviewer broke it in one try: a source
+// file whose bulk is a string table matches none of those, scores near zero, and
+// is read as a document. That was a regression rather than a gap, because the
+// same input on main produced one finding and this produced two.
+//
+// Code lines end in punctuation that continues a structure. Prose lines end in a
+// full stop or a word, because prose wraps mid-sentence. That test does not care
+// whether the line holds English, which is the whole problem with a string table.
+//
+// A trailing comma alone does not count. Hard-wrapped prose ends lines with one
+// constantly, and counting it read a wrapped plan carrying a code sample as
+// source, which is the same defect facing the other way. A comma counts only when
+// the line also holds a quote or a closing bracket: that is a string-table row,
+// and it is not a wrapped sentence.
+//
+// Measured over this repository's own files. Documents that get as far as
+// `looksLikeCode` reach 6.5 per cent, and the lowest source file is the slop-check
+// suite at 91.5 per cent. Thirty sits in the middle of that gap rather than in the
+// thirteen-point one the previous version had. Both bounds are asserted in
+// tests/slop-check.test.js against real files here.
+const CODE_ENDING = /[;{}[\]()]$/;
+const LIST_ROW = /["'`\])}][^"'`]*,$/;
+const COMMENT_LINE = /^\s*(\/\/|\*|\/\*)/;
 
 function codeShare(text) {
   const lines = text.split('\n').filter((line) => line.trim());
   let code = 0;
   let all = 0;
   for (const line of lines) {
+    const trimmed = line.trim();
     all += line.length;
     // No `#`. It is a comment in shell and Python and a heading in markdown, and
     // counting it made every structured document look like source.
-    if (looksLikeCode(line) || CODE_LINE.test(line) || BRACE_LINE.test(line)) {
+    if (CODE_ENDING.test(trimmed) || LIST_ROW.test(trimmed)
+        || COMMENT_LINE.test(trimmed) || looksLikeCode(line)) {
       code += line.length;
     }
   }
