@@ -597,6 +597,13 @@ check('the summary does not report work that did not happen', () => {
 // claiming reflow is free, which is a worse failure than the strictness, because
 // it tells the reader to go looking for a wording change that is not there.
 //
+// A blank line inserted inside the instruction paragraph fails too, for the same
+// reason rather than by accident. A blank line in markdown does not wrap a
+// paragraph, it ends one and starts another, so the second half stops being part
+// of the instruction that governs and becomes a separate paragraph that happens
+// to sit underneath it. The message reports where the missing phrase went instead
+// of calling it deleted.
+//
 // The rest of the cost is real and is accepted rather than solved. Flattening
 // leaves case, emphasis and punctuation load-bearing, so writing `**Default is
 // none.**` in place of NONE fails a check whose subject has not changed. Making
@@ -623,7 +630,7 @@ check('the new-items bucket defaults to adding nothing', () => {
   // Normalised first. The paragraph match below ends on a blank line, which is
   // two newlines and is three characters under CRLF, so a file saved with
   // Windows endings would find no paragraph at all and report it as missing.
-  const skill = SKILLS['audit-deps'].replace(/\r\n/g, '\n');
+  const skill = SKILLS['audit-deps'].replace(/\r\n?/g, '\n');
   // Spacing is not meaning. Everything below compares flattened text.
   const flat = (s) => s.replace(/\s+/g, ' ').trim();
 
@@ -715,8 +722,11 @@ check('the new-items bucket defaults to adding nothing', () => {
   // which the count above cannot do: blaming the second on the wording sends the
   // reader looking for a deletion that never happened.
   const missing = claims.filter(([, re]) => !re.test(instruction));
-  const elsewhere = missing.filter(([, re]) => re.test(skill)).map(([name]) => name);
-  const gone = missing.filter(([, re]) => !re.test(skill)).map(([name]) => name);
+  // Against the flattened file, not the raw one. A claim reflowed across two
+  // physical lines is still in the file, and testing the raw text calls it gone,
+  // which is the more alarming of the two messages and the wrong one.
+  const elsewhere = missing.filter(([, re]) => re.test(flatSkill)).map(([name]) => name);
+  const gone = missing.filter(([, re]) => !re.test(flatSkill)).map(([name]) => name);
   const sentence = (s) => s.charAt(0).toUpperCase() + s.slice(1);
   const diagnosis = [
     gone.length
