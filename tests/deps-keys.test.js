@@ -664,10 +664,12 @@ check('the new-items bucket defaults to adding nothing', () => {
     prompts.length, 1,
     prompts.length === 0
       ? flatSkill.includes(PROMPT_LINE)
-        ? 'the missing-entries prompt line is wrapped across more than one line. '
-          + 'It still reads correctly once the wrap is ignored, and it is still '
-          + 'wrong: it sits in a fenced draft, so the break is what the user is '
-          + 'shown. Put it back on one line'
+        ? 'no single line in the Step 5 draft matches, and the whole sentence does '
+          + 'appear once the file is flattened. Most likely the line is wrapped '
+          + 'across two, which is worth fixing because it sits in a fenced draft '
+          + 'where the break is what the user is shown. Worth ruling out first: '
+          + 'flattening joins every line to the next, so two neighbouring lines '
+          + 'can read that way without either being the draft line'
         : 'no single line in the Step 5 draft starts "so say which ones you want.". '
           + 'Either the line is gone, or it has been wrapped across lines and '
           + 'reworded as well, and this cannot tell which from here'
@@ -695,7 +697,10 @@ check('the new-items bucket defaults to adding nothing', () => {
   // alone means the paragraph is unfindable if it is ever the last thing in the
   // file, which reports as the paragraph being missing rather than as the end of
   // the file arriving early.
-  const paragraphs = skill.match(/^For missing entries,[\s\S]*?(?=\n\n|(?![\s\S]))/gm) || [];
+  // `\s*` for the same reason the prompt matcher has it. Without it an indented
+  // copy of the correct paragraph, under a numbered step or inside a block quote,
+  // is not found at all and reports as missing.
+  const paragraphs = skill.match(/^\s*For missing entries,[\s\S]*?(?=\n\n|(?![\s\S]))/gm) || [];
   assert.strictEqual(
     paragraphs.length, 1,
     paragraphs.length === 0
@@ -758,8 +763,8 @@ check('the new-items bucket defaults to adding nothing', () => {
     + 'This is the one bucket whose approval creates entries, and the other three '
     + 'all default to changing nothing, so this one does too.',
     diagnosis
-      || 'the paragraph an implementation reads for the default still states both '
-        + 'claims but no longer says what it said. Reflow is already ignored, so '
+      || 'the paragraph an implementation reads for the default still contains both '
+        + 'phrases but no longer says what it said. Reflow is already ignored, so '
         + 'this is a wording or formatting change. A sentence added to the end of '
         + 'it is the specific edit this is here to catch, because it leaves every '
         + 'phrase worth grepping for in place'
