@@ -353,9 +353,85 @@ Flagged targets:
 
 ---
 
+## Step 6b: Pushback Rate
+
+Steps 1 to 6 read the bug queue, which records what the user noticed and took the
+trouble to log. This step reads the other half: the times an answer did not land
+and they said so in the conversation. Nothing has to be captured live, because
+Claude Code transcripts are already on disk.
+
+Run:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/pushback.js" --this-week
+```
+
+`--this-week` starts at Monday 00:00 in the machine's local timezone. That is
+the same local calendar week used to name the summary file, so every section
+describes one period and consecutive reports neither overlap nor leave a gap.
+
+It prints one headline number, pushbacks per hundred eligible typed messages,
+then a breakdown by kind and the answer-level signal comparison. Messages over
+the detector's 800-character boundary are excluded from both sides and reported
+as a separate skipped count. It does not print example messages unless
+`--quotes` is explicitly added.
+
+If the command says the transcript folder does not exist or cannot be read,
+write `Pushback rate unavailable: this runtime has no readable Claude Code
+transcripts.` in the section and continue building the rest of the weekly
+report. This is expected in Codex and on a fresh machine. Never turn absence of
+input into a zero. If the command instead reports an incomplete scan, keep its
+warning in the report; the readable conversations still produce a useful rate.
+
+The saved report carries counts, not quotes. If the user wants the examples,
+run the same command with `--quotes` and show that output only in the current
+local session. Do not copy those examples into the summary file: the session
+plugin reads that file into future session briefs, where the examples would use
+the brief's limited space and persist private transcript text beyond this run.
+
+**The rate is the whole point.** A writing rule that does not move it is not
+working, and adding more rules to the skill will not change a flat line. Report
+the number first and the breakdown second. Baseline measured by hand on
+2026-08-16 over the preceding 36 hours: **15.4 per hundred**, against 5.4 per
+hundred across the 2,445 messages before that window.
+
+**Those two figures are not a like-for-like comparison and must not be presented
+as one.** The detector's patterns were written from the 36-hour window, so it
+finds more there by construction. What is comparable is one ISO week against
+another from now on, because the detector no longer changes between them and
+each report starts at Monday 00:00 in the machine's local timezone. Say so if
+you quote both.
+
+**State the floor.** The count only includes times the user said something. Giving
+up and working around an answer leaves no trace, so every figure is a lower bound.
+The script prints this line itself; do not delete it when summarising.
+
+**Accuracy.** The detector is measured against a labelled set of the user's own
+messages, which lives at `~/.claude/build-loop/pushback-fixture.json` and stays
+off this public repository. Check it with:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/pushback.js" --selftest
+```
+
+If that reports a catch rate below about 90 per cent, the patterns have drifted
+from how the user actually writes and the weekly number is understating things.
+That is worth a queue entry against `pushback.js` rather than a silent shrug.
+The suite in `tests/pushback.test.js` proves the script is wired up correctly and
+deliberately does **not** prove it is accurate, because a public repository is the
+wrong place for somebody's unguarded messages.
+
+**When a kind crosses three occurrences in a week**, treat it exactly like a
+structural pattern flag from Step 2: surface it, do not fix it silently, and
+suggest a queue entry against the skill that is supposed to prevent it, which is
+`say-it-simply` in the `slop-check` plugin. That is how a conversational pattern
+becomes a tracked defect rather than a note nobody reads.
+
+---
+
 ## Step 7: Generate Summary Report Content
 
-Using the queue entries loaded in Step 1 and the detection results from Steps 2-6, build the weekly summary report. The report covers the current ISO week — use the ISO week computation below to determine which entries are "this week" vs older.
+Using the queue entries loaded in Step 1 and the detection results from Steps 2-6b, build the weekly summary report. The report covers the current ISO week — use the ISO week computation below to determine which entries are "this week" vs older.
 
 **Compute the ISO week filename** using this exact logic (from 04-RESEARCH.md Pattern 5 — do NOT use calendar year/week, it produces wrong filenames at year boundaries):
 
@@ -373,7 +449,7 @@ console.log(utc.getUTCFullYear() + '-' + String(week).padStart(2, '0'));
 
 This outputs `YYYY-WW` (e.g. `2026-17`). The summary filename is `{YYYY-WW}.md`.
 
-**"This week" definition:** An entry is "this week" if its `id` timestamp prefix (the ISO-8601 prefix in the id field, e.g. `"2026-04-24T..."`) falls within the current ISO week (Monday 00:00 UTC through Sunday 23:59 UTC). Entries outside this window still appear in the "Still Open" section if their status is `"Open"`, but are NOT listed as "Fixed This Week."
+**"This week" definition:** An entry is "this week" if its `id` timestamp (for example, `"2026-04-24T..."`) falls within the machine's current local ISO week, from Monday 00:00 local time through now. Entries outside this window still appear in the "Still Open" section if their status is `"Open"`, but are NOT listed as "Fixed This Week."
 
 **Build the report content** in this order (Pattern Flags FIRST — front-loading rule from 04-DESIGN.md Section 6):
 
@@ -411,6 +487,11 @@ This outputs `YYYY-WW` (e.g. `2026-17`). The summary filename is `{YYYY-WW}.md`.
 ## No Action Needed
 
 {N} targets had no corrections this week.
+
+## Pushback Rate
+
+{Counts-only output from Step 6b, including the headline rate, breakdown, signal
+comparison, and floor statement. Never include quoted examples in this file.}
 ```
 
 **Section rules:**
@@ -452,13 +533,35 @@ Post this summary to Slack?
 
 **If yes:**
 1. Ask for channel if they didn't specify one. Default: the user's DM.
-2. Use the Slack MCP (`mcp__slack__*` tools — already configured in sessions) to post the full report content (same text as the .md file).
+2. Verify the saved report's Pushback Rate section contains counts only, as required by Steps 6b and 7. Then post the full saved report with the Slack MCP (`mcp__slack__*` tools — already configured in sessions). If quoted examples appear in the file, stop instead of posting and rebuild that section with the plain command below.
 3. Confirm: `Posted to {channel}.`
 
 **If no:**
 Confirm: `Summary saved locally. Not posted to Slack.`
 
 **Channel safety:** the user's DM is the safe default per 04-DESIGN.md Section 9. For a public channel, confirm the channel name back to them before posting — "Posting to #{channel-name}, correct?" — and wait for confirmation.
+
+**The saved report is counts-only.** A separate interactive run with `--quotes`
+may show examples on the user's screen, but that output never belongs in the
+summary file and never goes to Slack. Before posting, the plain command below
+is the source of truth for the Pushback Rate section:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/pushback.js" --this-week
+```
+
+It emits the rate and counts and no quotes. Use it to rebuild the section if the
+saved file violates the counts-only invariant. If it fails, stop and report the
+failure; never fall back to quoted output. This applies to the direct message
+too: the rule is about the surface, not about who can see it.
+
+**Quoting is opt-in, and there is no flag to get wrong.** The script only quotes
+when `--quotes` is passed, and refuses any argument it does not recognise rather
+than ignoring it. So a typo, a wrong flag, or a half-remembered option produces
+counts or an error, never the quotes. An earlier version had this the other way
+round, with quoting on by default and one string comparison guarding it, and
+three different spellings got past it in a single review. **Never add `--quotes`
+to a command whose output is going anywhere but the user's own screen.**
 
 ---
 
