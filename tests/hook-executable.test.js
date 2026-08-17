@@ -34,7 +34,7 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const { execFileSync } = require('child_process');
+const { execFileSync, spawnSync } = require('child_process');
 
 const ROOT = path.join(__dirname, '..');
 
@@ -77,18 +77,47 @@ function indexMode(file) {
 // run. It has to be in the command string, which the host builds from an
 // environment variable it still holds.
 //
-// Exit 0 rather than non-zero: the hooks really are off, and there is nothing
-// the session can do about it, so failing every prompt on top of saying so adds
-// noise without adding a remedy. This does not keep the guardrails working. It
-// replaces a bare 127, which reads identically to bin/hook-node's own
-// interpreter-not-found exit, with a line that says what happened and what
-// fixes it. Telling those two apart is what made the original diagnosis take
-// four rounds.
+// The exit code is 3, and which code it is decides whether any of this works.
+//
+// This was written as exit 0 first, and exit 0 makes the whole guard pointless.
+// The hook docs are explicit: "Stderr from a hook that exits 0 goes to the debug
+// log only, never the transcript, and Claude never sees it." The message would
+// have gone nowhere, and the change would have been a no-op wearing the clothes
+// of a fix. Caught in review on 2026-08-16, after being argued for in a commit
+// message on the grounds that exiting 0 keeps the noise down. It does. It also
+// keeps the message down.
+//
+// Putting it on stdout instead does not work either. For most events stdout on
+// exit 0 also goes to the debug log rather than the transcript, and for the
+// three where it is surfaced, UserPromptSubmit, UserPromptExpansion and
+// SessionStart, it is added as context for Claude rather than shown to the
+// reader. That would put this line into the model's context on every prompt and
+// still not tell the person whose hooks are off.
+//
+// So it has to be a non-zero exit with the message on stderr, which the docs
+// describe as a non-blocking error: "the action proceeds, and the transcript
+// shows a `<hook name> hook error` notice followed by the first line of stderr".
+// Hence one line, and the message first.
+//
+// Not 2, which is the one non-zero code that would do real damage. Exit 2 is a
+// blocking error, and guardrails declares three PreToolUse hooks, where exit 2
+// blocks the tool call. A plugin update would then refuse every Bash, Write and
+// Edit for the rest of the session rather than merely failing to guard them.
+//
+// Not 127 either, which is the code this entry exists because of: the shell says
+// it when it cannot find a command, and bin/hook-node deliberately reuses it for
+// its own interpreter-not-found failure. A third meaning would make the
+// ambiguity that cost four diagnosis rounds worse rather than better.
+//
+// This does not keep the guardrails working. They are already off. It replaces
+// a bare code with a line naming the cause and the remedy.
 //
 // One wording for all five plugins, checked byte-for-byte below. Naming the
 // plugin that tripped first was considered and dropped: the remedy is a restart
 // whichever one it is, and a restart fixes all of them at once.
-const GUARD = '[ -d "${CLAUDE_PLUGIN_ROOT}" ] || { echo "Plugin hooks are off in this session because a plugin was updated after it started. Restart to switch them back on." >&2; exit 0; }; ';
+const GUARD_EXIT = 3;
+const GUARD_MESSAGE = 'Plugin hooks are off in this session because a plugin was updated after it started. Restart to switch them back on.';
+const GUARD = `[ -d "\${CLAUDE_PLUGIN_ROOT}" ] || { echo "${GUARD_MESSAGE}" >&2; exit ${GUARD_EXIT}; }; `;
 
 // What a hooks.json command actually asks the shell to do.
 //
@@ -468,24 +497,46 @@ check('the guard actually fires, and only when it should', () => {
   if (absent.length) console.log(`        (not installed here, so unchecked: ${absent.join(', ')})`);
 
   for (const shell of shells) {
+    // Exit code, stdout and stderr all three, because which stream the message
+    // lands on is the difference between a working guard and a silent one, and
+    // an earlier version of this check read only stdout and so would have passed
+    // just as happily while the message went to the debug log and nowhere else.
     const run = (env) => {
-      try {
-        return execFileSync(shell, ['-lc', probe], { env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
-      } catch (error) {
-        throw new Error(`${shell} exited non-zero, so a host would report the hook as failed: ${error.message}`);
-      }
+      const result = spawnSync(shell, ['-lc', probe], { env, encoding: 'utf8' });
+      if (result.error) throw new Error(`${shell} could not be run: ${result.error.message}`);
+      return { code: result.status, out: result.stdout, err: result.stderr };
     };
 
-    assert.strictEqual(run({ ...process.env, CLAUDE_PLUGIN_ROOT: path.join(os.tmpdir(), 'no-such-plugin-0.0.0') }), '',
+    const gone = run({ ...process.env, CLAUDE_PLUGIN_ROOT: path.join(os.tmpdir(), 'no-such-plugin-0.0.0') });
+    assert.strictEqual(gone.out, '',
       `${shell}: the hook body ran even though the plugin directory has gone`);
+    assert.strictEqual(gone.code, GUARD_EXIT,
+      `${shell}: the guard exited ${gone.code} rather than ${GUARD_EXIT}. Exit 0 sends stderr to the `
+      + 'debug log and nowhere the reader will see it, and exit 2 blocks the tool call on PreToolUse');
+    assert.strictEqual(gone.err.trim(), GUARD_MESSAGE,
+      `${shell}: stderr was ${JSON.stringify(gone.err)}, and only its first line is surfaced`);
 
     const withoutRoot = { ...process.env };
     delete withoutRoot.CLAUDE_PLUGIN_ROOT;
-    assert.strictEqual(run(withoutRoot), '',
+    const unset = run(withoutRoot);
+    assert.strictEqual(unset.out, '',
       `${shell}: the hook body ran with CLAUDE_PLUGIN_ROOT unset, which expands the path to nothing`);
+    assert.strictEqual(unset.code, GUARD_EXIT,
+      `${shell}: the guard exited ${unset.code} rather than ${GUARD_EXIT} with the variable unset`);
 
-    assert.strictEqual(run({ ...process.env, CLAUDE_PLUGIN_ROOT: ROOT }).trim(), 'RAN',
+    // One line, because the transcript shows the first line of stderr and
+    // discards the rest. A message that grew a second line would lose it here
+    // with nothing to say so.
+    assert.strictEqual(gone.err.trimEnd().split('\n').length, 1,
+      `${shell}: the message is ${gone.err.trimEnd().split('\n').length} lines and only the first is shown`);
+
+    const healthy = run({ ...process.env, CLAUDE_PLUGIN_ROOT: ROOT });
+    assert.strictEqual(healthy.out.trim(), 'RAN',
       `${shell}: the guard blocked a hook whose plugin directory is present, so it would switch every hook off`);
+    assert.strictEqual(healthy.code, 0,
+      `${shell}: a healthy hook exited ${healthy.code}, so every hook would report an error on every event`);
+    assert.strictEqual(healthy.err, '',
+      `${shell}: a healthy hook wrote ${JSON.stringify(healthy.err)} to stderr, which the transcript would show as an error`);
   }
 });
 
