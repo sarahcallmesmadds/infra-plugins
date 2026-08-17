@@ -586,48 +586,82 @@ check('the summary does not report work that did not happen', () => {
 // amount of anchoring makes a presence test able to say "and nothing here
 // contradicts it". Only comparing the whole text does that.
 //
-// Whitespace is flattened before comparing, so the cost of that strictness lands
-// where it should. A markdown reflow, a rewrap across two lines, a change to the
-// three spaces before Default: none of those are the default changing, and none
-// of them fail this. Any change to the words does, including an added sentence,
-// which is the whole point. Rewording either passage on purpose means updating
-// the expected text here, and the failure messages say so, because a check that
+// Whitespace is flattened before comparing, so part of the cost of that
+// strictness is refunded. A markdown reflow, a rewrap across two lines, a change
+// to the three spaces before Default: none of those are the default changing,
+// and none of them fail this.
+//
+// The rest of the cost is real and is accepted rather than solved. Flattening
+// leaves case, emphasis and punctuation load-bearing, so writing `**Default is
+// none.**` in place of NONE fails a check whose subject has not changed. Making
+// those tolerant too would mean deciding which characters carry meaning in a
+// sentence whose entire job is to carry one, and the failure message is the
+// cheaper answer: it says reflow is already ignored, which leaves rewording, and
+// it says to update the expected text when that was deliberate. A check that
 // fails without saying what to do about it gets deleted rather than answered.
 check('the new-items bucket defaults to adding nothing', () => {
   const skill = SKILLS['audit-deps'];
   // Layout is not meaning. Everything below compares flattened text.
   const flat = (s) => s.replace(/\s+/g, ' ').trim();
 
-  const prompt = skill.match(/^\s*so say which ones you want\..*$/m);
-  assert.ok(prompt, 'the missing-entries prompt line is gone from the Step 5 draft');
+  // Every passage is counted, not just found. A first match is not necessarily
+  // the passage that governs: a correct copy sitting anywhere above the real one
+  // satisfies a comparison against match()[0] while the real one below it says
+  // the opposite. Nothing plants a decoy by accident, but an unrelated section
+  // quoting the draft would do it without meaning to, and either way the check
+  // would be reading a passage nobody runs on.
+  const prompts = skill.match(/^\s*so say which ones you want\..*$/gm) || [];
   assert.strictEqual(
-    flat(prompt[0]),
+    prompts.length, 1,
+    prompts.length === 0
+      ? 'the missing-entries prompt line is gone from the Step 5 draft'
+      : `${prompts.length} lines in audit-deps start "so say which ones you want.". `
+        + 'This check cannot tell which one Step 5 shows the user, so it is not '
+        + 'checking anything until there is one'
+  );
+  assert.strictEqual(
+    flat(prompts[0]),
     'so say which ones you want. all / none / name them. Default: none.',
     'the line the user answers no longer says what it said. Reflow and spacing '
-    + 'are already ignored, so this is a wording change. If it was deliberate, '
-    + 'update the expected text here. If it is an added clause, it changes what '
-    + 'the draft tells the user a bare answer does'
+    + 'are already ignored, so this is a wording or formatting change. If it was '
+    + 'deliberate, update the expected text here. If it is an added clause, it '
+    + 'changes what the draft tells the user a bare answer does'
   );
 
   // To the next blank line. A blank line inside the paragraph would truncate the
-  // match, so the assertion below reports the extraction rather than the wording
-  // when that happens, and the two failures do not read alike.
-  const instruction = skill.match(/^For missing entries,[\s\S]*?(?=\n\n)/m);
-  assert.ok(
-    instruction,
-    'no paragraph starting "For missing entries," was found. Either it is gone, '
-    + 'or a reflow moved that opening phrase off the start of a line'
-  );
+  // match, so the count below reports the extraction rather than the wording when
+  // that happens, and the two failures do not read alike.
+  const paragraphs = skill.match(/^For missing entries,[\s\S]*?(?=\n\n)/gm) || [];
   assert.strictEqual(
-    flat(instruction[0]),
+    paragraphs.length, 1,
+    paragraphs.length === 0
+      ? 'no paragraph starting "For missing entries," was found. Either it is '
+        + 'gone, or a reflow moved that opening phrase off the start of a line'
+      : `${paragraphs.length} paragraphs start "For missing entries,", so this `
+        + 'check cannot tell which one an implementation reads'
+  );
+  const instruction = flat(paragraphs[0]);
+  const claims = [
+    ['the default', /\*\*Default is NONE\.\*\*/],
+    ['the reason it differs from the other three', /the one bucket whose approval creates entries/],
+  ];
+  // Named before the whole-paragraph comparison speaks, because "this long
+  // string differs from that long string" sends the reader to a character diff
+  // to answer a question the check already knows the answer to.
+  const missing = claims.filter(([, re]) => !re.test(instruction)).map(([name]) => name);
+  assert.strictEqual(
+    instruction,
     'For missing entries, take the list whole or in part. `all` adds every one, '
     + '`none` adds nothing, and naming them adds only those. **Default is NONE.** '
     + 'This is the one bucket whose approval creates entries, and the other three '
     + 'all default to changing nothing, so this one does too.',
-    'the paragraph an implementation reads for the default no longer says what '
-    + 'it said. Reflow is already ignored, so this is a wording change. A '
-    + 'sentence added to the end of it is the specific edit this is here to '
-    + 'catch, because it leaves every phrase worth grepping for in place'
+    missing.length
+      ? `the instruction paragraph no longer states ${missing.join(' or ')}`
+      : 'the paragraph an implementation reads for the default still states both '
+        + 'claims but no longer says what it said. Reflow is already ignored, so '
+        + 'this is a wording or formatting change. A sentence added to the end of '
+        + 'it is the specific edit this is here to catch, because it leaves every '
+        + 'phrase worth grepping for in place'
   );
 });
 
