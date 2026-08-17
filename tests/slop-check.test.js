@@ -234,6 +234,54 @@ check('the inflection fixture is long enough, and thin on markers',
 check('"scope" and "scopes" are one marker, not two',
   checkSpec(SPARSE_INFLECTION).some((f) => f.name === 'no-owner-and-no-date'), false);
 
+// Devin review round 2 on #137. Three of these are what the round found, and each
+// one is a case no count of distinct words could have got right.
+//
+// The proposal below is the one that broke counting for good. It uses two markers,
+// "we will" and "build", at a low density, which is exactly the shape of the essay
+// fixture above that must stay quiet. Two inputs, same marker count, opposite
+// answers, so the count is not the thing that separates them. What separates them
+// is that "we will" commits somebody and "build" only describes work.
+console.log('\ncommitment language separates a proposal from a retrospective');
+const SHORT_PLAN = 'We will build the billing service. '
+  + 'The first phase is to build the data model and the second is to build the API. '
+  + 'We will write tests as we build. We will also build a small admin panel. '
+  + 'The work will take several weeks and we will review it daily. '
+  + ('This paragraph carries ordinary context that is not planning language itself, '
+    + 'so the marker count stays low while the document passes the length gate. ').repeat(8);
+check('the short-plan fixture is long enough to reach both checks',
+  SHORT_PLAN.length > 800, true);
+check('a plain proposal using only "we will" and "build" is asked who owns it',
+  checkSpec(SHORT_PLAN).some((f) => f.name === 'no-owner-and-no-date'), true);
+check('...and is asked what it is not doing',
+  checkOverplanned(SHORT_PLAN)
+    .some((f) => f.name === 'never-says-what-it-is-not-doing'), true);
+check('the essay it shares a marker count with still stays quiet',
+  checkSpec(PRODUCT_ESSAY).some((f) => f.name === 'no-owner-and-no-date'), false);
+
+// A list is not a document. Density alone said this was the densest plan it had
+// ever seen, which is what a ceiling with no floor does: 150 headings reading
+// "Scope" run one marker per 6 characters, and prose cannot do that.
+const SCOPE_LIST = Array.from({ length: 150 }, () => 'Scope').join('\n');
+check('the heading-list fixture is long enough to reach the check',
+  SCOPE_LIST.length > 800, true);
+check('a list of 150 headings is not an unowned document',
+  checkSpec(SCOPE_LIST).some((f) => f.name === 'no-owner-and-no-date'), false);
+
+// Source code, which checkSpec has always excluded and checkOverplanned did not.
+// The same question about the same kind of document, answered about documents by
+// only one of the two.
+const CODE_WITH_COMMENTS = 'function go() {\n'
+  + Array.from({ length: 60 }, (_, i) => `  // we will handle step ${i}`).join('\n')
+  + '\n}';
+check('the commented-code fixture is long enough to reach the check',
+  CODE_WITH_COMMENTS.length > 700, true);
+check('code carrying sixty "we will" comments is not a proposal',
+  checkOverplanned(CODE_WITH_COMMENTS)
+    .some((f) => f.name === 'never-says-what-it-is-not-doing'), false);
+check('...and the same text is not reported as an unowned document either',
+  checkSpec(CODE_WITH_COMMENTS).some((f) => f.name === 'no-owner-and-no-date'), false);
+
 console.log('\nthe two readings are separate');
 {
   // Two signals is "somewhat heavier", not a verdict. Three stacks into one.

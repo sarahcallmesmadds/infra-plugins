@@ -238,19 +238,49 @@ function checkOverbuilt(text) {
 // newsletter and a LinkedIn draft are all long, all unowned and all proposing
 // nothing, and both checks fired on all of them.
 //
-// One word is not a genre, and neither is two. "build" and "approach" both turn
-// up in any post about making something, so counting two distinct words flagged a
-// perfectly ordinary essay about product work. Three separates that essay from a
-// real plan, measured rather than picked: across the fixtures below, writing that
-// must stay quiet reaches one or two, and a genuine plan reaches four or five.
+// Counting words was the wrong instrument, and two rounds of tuning the count
+// only moved which writing it was wrong about.
 //
-// Repetition is the second route, and it is the one counting distinct words
-// misses entirely. A document saying "we will" fifty times in 1650 characters is
-// proposing work as plainly as one that says it once alongside "the deliverable",
-// and a scope statement repeated sixty times is a scope document. The measured
-// gap is wide: writing that must stay quiet runs one marker per 137 characters at
-// its densest, and the repeated cases run one per 18 to 33. Sixty sits between
-// them with room on both sides.
+// One word was too few: any post mentioning building something matched. Two was
+// too few in one direction and too many in the other, because "build" and
+// "approach" are two different words that both belong in an ordinary essay about
+// product work, while a real proposal can lean on "we will" alone. Three was
+// still wrong: a plain proposal saying "we will build" and little else reaches
+// only two.
+//
+// The distinction the count kept missing is not how many words appear but what
+// kind. "We will", "the plan", "a proposal" and "the deliverable" commit somebody
+// to something. "Build", "implement" and "approach" describe work and appear just
+// as readily in a retrospective. So the commitment words count double, and the
+// work words count single, against a threshold of three. One commitment word plus
+// one work word is a proposal. Two work words on their own are a Tuesday.
+//
+// What the numbers below are and are not. They come from the seven fixtures in
+// tests/slop-check.test.js, which are hand-written, few, and chosen by the person
+// who wrote this. They show that these thresholds separate the cases that exist
+// there. They do not establish that the thresholds are right in general, and an
+// earlier version of this comment claimed they did. Round 2 of the review made
+// that concrete by producing a two-marker proposal from outside the sample that
+// the threshold missed, which is why the rule now turns on the kind of word
+// rather than on a count that happened to fit seven examples.
+//
+// Density is the second route, and it catches what any count of distinct words
+// cannot: one word leaned on so hard that it is the subject of the document. A
+// band rather than a ceiling, and both ends are measured from those same
+// fixtures by scratchpad/measure-fixtures.js, which reads them out of the test
+// file rather than from a copy, so editing a fixture moves the numbers.
+//
+// The ceiling of 60 sits between the sparsest case that must fire on density
+// alone, at one marker per 33 characters, and the densest case that must stay
+// quiet, at one per 119. The floor of 12 sits between that same 33 and a list of
+// 150 headings reading "Scope", which runs one per 6 and is not prose at all.
+// Telling a list it names no owner is the same category of wrong as telling a
+// post.
+//
+// Two earlier versions of this comment carried the densest quiet figure as 137
+// and then as 135. Both were measured from a draft of the essay fixture and never
+// re-measured after it was lengthened for the suite. The number is 119.4, and
+// that is the reason the script above exists rather than a note of the figure.
 //
 // Multi-word alternatives come before their own substrings. `out of scope` is
 // still reachable after `scopes?` today, because a search starting at the word
@@ -258,7 +288,20 @@ function checkOverbuilt(text) {
 // where the engine happens to start rather than anything this file states. Order
 // them and it stops depending on that.
 
-const PROPOSAL_MARKERS = /\b(we (?:will|should|could)|the plan|proposal|deliverable|approach|implement|build)\b/gi;
+// The word lists, and the patterns built from them. Written once each: the
+// combined proposal pattern is the two halves joined rather than a third copy of
+// the same words, because three lists that must agree is three chances to edit
+// one and not the others, and nothing here would report the disagreement.
+const COMMITMENT_WORDS = ['we (?:will|should|could)', 'the plan', 'proposal', 'deliverable'];
+const WORK_WORDS = ['approach', 'implement', 'build'];
+
+function anyOf(words) {
+  return new RegExp(`\\b(${words.join('|')})\\b`, 'gi');
+}
+
+const COMMITMENT_MARKERS = anyOf(COMMITMENT_WORDS);
+const WORK_MARKERS = anyOf(WORK_WORDS);
+const PROPOSAL_MARKERS = anyOf([...COMMITMENT_WORDS, ...WORK_WORDS]);
 
 const PLANNING_TERMS = /\b(out of scope|acceptance criteria|success criteria|rollout plan|migration plan|project plan|key results?|scopes?|requirements?|deliverables?|milestones?|timelines?|stakeholders?|sign-?off|roadmaps?|sprints?|backlog|objectives?)\b/gi;
 
@@ -271,15 +314,21 @@ function markers(text, pattern) {
   return { distinct: new Set(all).size, total: all.length };
 }
 
-// Three distinct markers, or one leaned on hard enough to be the subject.
-//
-// The density term needs a length to divide by, and both callers already require
-// more than 700 characters, so it is never asked about a short string where two
-// markers would look dense.
-function saturated(text, pattern) {
-  const { distinct, total } = markers(text, pattern);
-  if (distinct >= 3) return true;
-  return total > 0 && text.length / total <= 60;
+// One word used often enough to be the subject, and often enough to still be
+// prose. Both bounds are load-bearing and they fail in opposite directions: with
+// no ceiling this never fires, and with no floor it fires on any list.
+function leanedOn(text, pattern) {
+  const { total } = markers(text, pattern);
+  if (total === 0) return false;
+  const perMarker = text.length / total;
+  return perMarker <= 60 && perMarker >= 12;
+}
+
+// Commitment words count double, work words single, three to qualify.
+function proposesWork(text) {
+  const weight = 2 * markers(text, COMMITMENT_MARKERS).distinct
+    + markers(text, WORK_MARKERS).distinct;
+  return weight >= 3 || leanedOn(text, PROPOSAL_MARKERS);
 }
 
 // A document proposing work is the same question as whether it is a plan, for the
@@ -287,7 +336,9 @@ function saturated(text, pattern) {
 // written entirely in the language of doing the work and never say "scope", and a
 // plan can be laid out in planning vocabulary and never say "we will".
 function readsAsAPlan(text) {
-  return saturated(text, PROPOSAL_MARKERS) || saturated(text, PLANNING_TERMS);
+  return proposesWork(text)
+    || markers(text, PLANNING_TERMS).distinct >= 3
+    || leanedOn(text, PLANNING_TERMS);
 }
 
 // The same failure in a plan rather than in code: a build heavier than the
@@ -333,12 +384,17 @@ function checkOverplanned(text) {
   // qualifying word was "build", in the phrase "what I am going to build next",
   // and told its writer their post had never declared a cut line.
   //
-  // `saturated` rather than a count of two, for the reasons above it. Two was the
-  // first correction and it was still wrong in both directions: it flagged an
-  // essay about product work that happened to say "build" and "approach", and it
-  // stayed silent on a document that said "we will" fifty times.
+  // `proposesWork` rather than a count, for the reasons given where it is defined.
+  // Every count tried here was wrong about something: one word flagged any post
+  // mentioning building, two flagged an essay about product work, and three
+  // stayed silent on a plain proposal that said "we will build" and little else.
+  //
+  // Not source code. `checkSpec` has always excluded it and this did not, so a
+  // function carrying sixty "we will" comments was told it had declared no cut
+  // line. The two checks ask the same question about the same kind of document,
+  // and only one of them was answering it about documents.
   const namesACut = /\b(out of scope|not (?:doing|building|in scope)|v2|version 2|later|deferred|explicitly excluded|won'?t (?:do|build|include)|minimum|smallest|first (?:cut|version|pass)|mvp)\b/i.test(text);
-  if (saturated(text, PROPOSAL_MARKERS) && !namesACut && text.length > 700) {
+  if (proposesWork(text) && !namesACut && text.length > 700 && !looksLikeCode(text)) {
     found.push(tag({ name: 'never-says-what-it-is-not-doing' }));
   }
 
