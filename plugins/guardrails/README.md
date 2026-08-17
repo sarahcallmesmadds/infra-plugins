@@ -98,8 +98,10 @@ about to run is still there. If it has gone, it prints one line saying hooks
 are off until you restart, and steps aside. That does not keep the hooks
 working, which nothing in the plugin can do from a folder that has been
 deleted, but it tells you why they stopped instead of leaving you a bare error
-code. The line shows up in the transcript once per hook per event, and blocks
-nothing.
+code. If the file is there and has simply lost its execute bit, which a zip
+download or a checkout without file modes can do, it says that instead and
+names the file, because a restart will not fix that one. The line shows up in
+the transcript once per hook per event, and blocks nothing.
 
 If your Node is somewhere else, name it:
 

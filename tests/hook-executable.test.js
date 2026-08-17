@@ -112,9 +112,6 @@ function indexMode(file) {
 // This does not keep the guardrails working. They are already off. It replaces
 // a bare code with a line naming the cause and the remedy.
 //
-// One wording for all five plugins, checked byte-for-byte below. Naming the
-// plugin that tripped first was considered and dropped: the remedy is a restart
-// whichever one it is, and a restart fixes all of them at once.
 // What the guard tests is the file the command is about to run, not the plugin
 // directory holding it.
 //
@@ -132,22 +129,40 @@ function indexMode(file) {
 // is a stronger property than one shared string, because it couples each guard
 // to the thing it guards rather than to its siblings.
 //
-// -x alone, without the -f that bin/hook-node pairs with it. The launcher needs
-// both because it accepts a path from the environment and a directory carries
-// the execute bit as its search bit, so a user pointing at a folder would pass.
-// Here the path is fixed and written in this repository, so the only question is
-// whether it is there.
+// Two clauses, not one, because `[ -x ]` alone is false for two different
+// reasons and they need different remedies.
+//
+// The file being gone is the mid-session update, and a restart fixes it. The
+// file being there but not runnable is a checkout that dropped its modes, a zip
+// download, a noexec mount or an interrupted install, and a restart fixes
+// nothing. A single -x test conflates them and the one message then states a
+// cause confidently and sometimes wrongly, sending somebody to restart when the
+// answer is chmod. This repository has already had the second case for real: on
+// 2026-08-04 consistency-lint.js shipped at mode 100644 and the shell refused
+// it, which is the bug at the top of this file.
+//
+// Handing back a confident wrong cause is the exact failure this whole guard
+// exists to end, so it would have been a poor thing to reintroduce while fixing
+// it. Caught in review on 2026-08-16.
+//
+// The not-runnable message names the path, which the shell expands, because
+// unlike "restart" the remedy needs to say what to chmod.
 const GUARD_EXIT = 3;
-const GUARD_MESSAGE = 'Plugin hooks are off in this session because a plugin was updated after it started. Restart to switch them back on.';
+const GONE_MESSAGE = 'Plugin hooks are off in this session because a plugin was updated after it started. Restart to switch them back on.';
+const notRunnableMessage = (target) => `Plugin hooks are off because ${target} is not executable. A restart will not help. Restore its execute bit with chmod +x.`;
 
 function guardFor(target) {
-  return `[ -x "${target}" ] || { echo "${GUARD_MESSAGE}" >&2; exit ${GUARD_EXIT}; }; `;
+  return `[ -e "${target}" ] || { echo "${GONE_MESSAGE}" >&2; exit ${GUARD_EXIT}; }; `
+    + `[ -x "${target}" ] || { echo "${notRunnableMessage(target)}" >&2; exit ${GUARD_EXIT}; }; `;
 }
 
-// Deliberately loose about the message and the code, so that a guard carrying
+// Deliberately loose about the messages and the codes, so that a guard carrying
 // the wrong ones is still recognised as a guard and reported as wrong, rather
 // than not matching and being reported as absent.
-const GUARD_RE = /^\[ -x "([^"]+)" \] \|\| \{ echo "([^"]*)" >&2; exit (\d+); \}; /;
+const GUARD_RE = new RegExp(
+  '^\\[ -e "([^"]+)" \\] \\|\\| \\{ echo "([^"]*)" >&2; exit (\\d+); \\}; '
+  + '\\[ -x "([^"]+)" \\] \\|\\| \\{ echo "([^"]*)" >&2; exit (\\d+); \\}; ',
+);
 
 // `"${CLAUDE_PLUGIN_ROOT}"/bin/hook-node` and `"${CLAUDE_PLUGIN_ROOT}/bin/hook-node"`
 // are the same path written two ways, and the two appear in the same command.
@@ -504,14 +519,20 @@ check('every hook command guards the file it is about to run', () => {
       continue;
     }
 
-    const [matched, guarded, message, code] = guard;
-    if (message !== GUARD_MESSAGE) wrong.push(`${where}: message is ${JSON.stringify(message)}`);
-    if (Number(code) !== GUARD_EXIT) wrong.push(`${where}: exits ${code}, not ${GUARD_EXIT}`);
+    const [matched, gonePath, goneMessage, goneCode, execPath, execMessage, execCode] = guard;
 
-    const runs = unquote(h.command.slice(matched.length).split(/\s+/)[0]);
-    if (guarded !== runs) {
-      wrong.push(`${where}: guards ${guarded} but runs ${runs}, so the guard is watching the wrong file`);
+    if (goneMessage !== GONE_MESSAGE) wrong.push(`${where}: the gone message is ${JSON.stringify(goneMessage)}`);
+    if (execMessage !== notRunnableMessage(execPath)) {
+      wrong.push(`${where}: the not-runnable message is ${JSON.stringify(execMessage)}, which does not name ${execPath}`);
     }
+    if (Number(goneCode) !== GUARD_EXIT) wrong.push(`${where}: the gone clause exits ${goneCode}, not ${GUARD_EXIT}`);
+    if (Number(execCode) !== GUARD_EXIT) wrong.push(`${where}: the not-runnable clause exits ${execCode}, not ${GUARD_EXIT}`);
+
+    // Both clauses have to watch the same file, and it has to be the one the
+    // command runs. Two clauses is two chances to point somewhere else.
+    const runs = unquote(h.command.slice(matched.length).split(/\s+/)[0]);
+    if (gonePath !== runs) wrong.push(`${where}: the gone clause watches ${gonePath} but the command runs ${runs}`);
+    if (execPath !== runs) wrong.push(`${where}: the not-runnable clause watches ${execPath} but the command runs ${runs}`);
   }
 
   assert.deepStrictEqual(wrong, [],
@@ -597,13 +618,15 @@ check('the guard actually fires, and only when it should', () => {
     assert.strictEqual(gone.code, GUARD_EXIT,
       `${shell}: the guard exited ${gone.code} rather than ${GUARD_EXIT}. Exit 0 sends stderr to the `
       + 'debug log and nowhere the reader will see it, and exit 2 blocks the tool call on PreToolUse');
-    assert.strictEqual(gone.err.trim(), GUARD_MESSAGE,
+    assert.strictEqual(gone.err.trim(), GONE_MESSAGE,
       `${shell}: stderr was ${JSON.stringify(gone.err)}, and only its first line is surfaced`);
 
-    // The directory is real and the launcher inside it is not. A guard testing
-    // the directory passes here and hands the shell a path it cannot execute,
-    // which is the bare 127 all over again.
+    // Two states inside one real directory, and they must not give the same
+    // answer. Missing means a restart helps; present but not runnable means it
+    // does not, and telling someone to restart then is a confident wrong cause,
+    // which is the failure this guard exists to end.
     const partial = fs.mkdtempSync(path.join(os.tmpdir(), 'partial-plugin-'));
+    const launcher = path.join(partial, 'bin', 'hook-node');
     fs.mkdirSync(path.join(partial, 'bin'));
     try {
       const incomplete = run({ ...process.env, CLAUDE_PLUGIN_ROOT: partial });
@@ -612,8 +635,23 @@ check('the guard actually fires, and only when it should', () => {
       assert.strictEqual(incomplete.code, GUARD_EXIT,
         `${shell}: a half-installed plugin exited ${incomplete.code} rather than ${GUARD_EXIT}, so a `
         + 'partial update still fails with nothing said');
-      assert.strictEqual(incomplete.err.trim(), GUARD_MESSAGE,
+      assert.strictEqual(incomplete.err.trim(), GONE_MESSAGE,
         `${shell}: a half-installed plugin said ${JSON.stringify(incomplete.err)}`);
+
+      // There, and not executable. The mode this repository actually shipped by
+      // accident on 2026-08-04.
+      fs.writeFileSync(launcher, '#!/bin/sh\n');
+      fs.chmodSync(launcher, 0o644);
+      const notRunnable = run({ ...process.env, CLAUDE_PLUGIN_ROOT: partial });
+      assert.strictEqual(notRunnable.out, '',
+        `${shell}: the hook body ran with a launcher that has no execute bit`);
+      assert.strictEqual(notRunnable.code, GUARD_EXIT,
+        `${shell}: a launcher with no execute bit exited ${notRunnable.code} rather than ${GUARD_EXIT}`);
+      assert.strictEqual(notRunnable.err.trim(), notRunnableMessage(launcher),
+        `${shell}: a launcher with no execute bit said ${JSON.stringify(notRunnable.err)}`);
+      assert.notStrictEqual(notRunnable.err.trim(), GONE_MESSAGE,
+        `${shell}: a launcher that is present but not executable was blamed on a plugin update, so `
+        + 'the reader is sent to restart when the answer is chmod');
     } finally {
       fs.rmSync(partial, { recursive: true, force: true });
     }
@@ -763,11 +801,23 @@ check('the three command forms are told apart', () => {
 
   // A guard whose message or exit code is wrong is still a guard, and has to be
   // stepped over so the check above can report it as wrong rather than absent.
-  const wrongExit = parseCommand(
-    `[ -x "\${CLAUDE_PLUGIN_ROOT}/bin/hook-node" ] || { echo "other" >&2; exit 9; }; "\${CLAUDE_PLUGIN_ROOT}"/bin/hook-node "\${CLAUDE_PLUGIN_ROOT}"/hooks/x.js`, dir);
-  assert.strictEqual(wrongExit.executed, 'plugins/example/bin/hook-node',
-    'a guard with the wrong message and code was not recognised as a guard, so the command '
+  const wrongEverything = parseCommand(
+    `[ -e "\${CLAUDE_PLUGIN_ROOT}/bin/hook-node" ] || { echo "other" >&2; exit 9; }; `
+    + `[ -x "\${CLAUDE_PLUGIN_ROOT}/bin/hook-node" ] || { echo "different" >&2; exit 8; }; `
+    + `"\${CLAUDE_PLUGIN_ROOT}"/bin/hook-node "\${CLAUDE_PLUGIN_ROOT}"/hooks/x.js`, dir);
+  assert.strictEqual(wrongEverything.executed, 'plugins/example/bin/hook-node',
+    'a guard with the wrong messages and codes was not recognised as a guard, so the command '
     + 'behind it would be reported as unguarded rather than as misconfigured');
+
+  // A guard that lost its second clause is not a guard this repository writes,
+  // and must not be stepped over as though it were. Otherwise the command
+  // behind a half-guard parses fine and the missing clause is never reported.
+  const halfGuard = parseCommand(
+    `[ -e "\${CLAUDE_PLUGIN_ROOT}/bin/hook-node" ] || { echo "${GONE_MESSAGE}" >&2; exit ${GUARD_EXIT}; }; `
+    + `"\${CLAUDE_PLUGIN_ROOT}"/bin/hook-node "\${CLAUDE_PLUGIN_ROOT}"/hooks/x.js`, dir);
+  assert.strictEqual(halfGuard.executed, null,
+    'a guard missing its not-runnable clause was treated as complete, so the command behind it '
+    + 'would be reported as fine rather than as half-guarded');
 });
 
 check('an unfindable interpreter is actually caught', () => {
