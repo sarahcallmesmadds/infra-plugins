@@ -992,7 +992,21 @@ function handoffDir(text) {
   if (!m) return null;
   const captured = m[1] !== undefined ? m[1] : m[2];
   if (captured === undefined) return null;
-  const expand = (s) => s.trim().replace(/^~(?=\/|$)/, os.homedir()).replace(/[`,]+$/, '').trim();
+  // The leading strip is what keeps an UNCLOSED backtick from getting worse than
+  // it was. `**Working directory:** `/tmp/x` with no closing backtick fails the
+  // quoted branch and lands in the unquoted one, which would otherwise carry the
+  // stray backtick into the path, resolve nothing, and drop the constraints
+  // silently: the exact failure this function was changed to fix. The old single
+  // capture happened to survive it, because its optional opening backtick ate the
+  // character whether or not a closing one ever arrived.
+  //
+  // Stripping runs before the tilde expansion, because `` `~/x `` has to become
+  // `~/x` before the home-directory rule can see the tilde at the start.
+  const expand = (s) => s.trim()
+    .replace(/^`+/, '')
+    .replace(/^~(?=\/|$)/, os.homedir())
+    .replace(/[`,]+$/, '')
+    .trim();
 
   // A quoted path is already delimited, so the parenthetical handling below
   // must not run on it: `**Working directory:** `~/Projects/a (b)`` names a

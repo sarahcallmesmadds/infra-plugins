@@ -976,6 +976,33 @@ check('a backticked aside after the path does not truncate it', () => {
   }
 });
 
+check('an unclosed opening backtick still gives up the path', () => {
+  // Raised by Devin review round 1 on PR #139 as a regression in the fix, not in
+  // the original code. The single capture this replaced had an optional opening
+  // backtick, so it ate a stray one whether or not a closing one arrived. Split
+  // in two, an unclosed backtick fails the quoted branch and lands in the
+  // unquoted one, which would carry it into the path. That resolves nowhere and
+  // drops the constraints without a word, which is the failure the split was
+  // made to fix, reappearing inside the fix.
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'session-open-'));
+  try {
+    assert.strictEqual(
+      handoffs.handoffDir(`**Working directory:** \`${base}`),
+      base,
+      'a stray opening backtick is carried into the path'
+    );
+    assert.strictEqual(
+      handoffs.handoffDir('**Working directory:** `/no/such/dir'),
+      '/no/such/dir',
+      'the same, where the path does not resolve and grouping is by string'
+    );
+    // The strip has to run before the tilde rule, or `~ never reaches it.
+    assert.strictEqual(handoffs.handoffDir('**Working directory:** `~'), os.homedir());
+  } finally {
+    fs.rmSync(base, { recursive: true, force: true });
+  }
+});
+
 check('a quoted path keeps a bracket that is part of the folder name', () => {
   // Quoting is how an author says the brackets are the name rather than an
   // aside, so the parenthetical strip must not run on a quoted capture.
