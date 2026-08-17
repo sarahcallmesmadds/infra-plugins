@@ -599,6 +599,20 @@ check('the summary does not report work that did not happen', () => {
 // cheaper answer: it says reflow is already ignored, which leaves rewording, and
 // it says to update the expected text when that was deliberate. A check that
 // fails without saying what to do about it gets deleted rather than answered.
+//
+// What this does not do, written down because five review rounds each found one
+// more version of it and the sixth would have too. It pins what these two
+// passages say. It cannot show that nothing else in the file contradicts them: a
+// paragraph inserted anywhere outside both spans, saying that a bare answer adds
+// everything, passes this untouched. Widening the spans moves that boundary
+// rather than removing it, because the file is prose and the property wanted is
+// semantic, and every widening costs tolerance somewhere a reflow will find.
+//
+// So the boundary is where it is on purpose. This catches the edit that actually
+// happens, someone changing the default where the default is written. Two
+// instructions in one file disagreeing is a different fault, it is not
+// detectable by pinning text, and it wants its own check rather than a wider
+// version of this one.
 check('the new-items bucket defaults to adding nothing', () => {
   const skill = SKILLS['audit-deps'];
   // Layout is not meaning. Everything below compares flattened text.
@@ -628,9 +642,11 @@ check('the new-items bucket defaults to adding nothing', () => {
     + 'changes what the draft tells the user a bare answer does'
   );
 
-  // To the next blank line. A blank line inside the paragraph would truncate the
-  // match, so the count below reports the extraction rather than the wording when
-  // that happens, and the two failures do not read alike.
+  // To the next blank line. A blank line inserted inside the paragraph truncates
+  // what is read without changing how many paragraphs match, so the count cannot
+  // report it and does not try to. The comparison below tells that case apart
+  // instead, by asking whether a phrase missing from what was read is still
+  // somewhere in the file.
   const paragraphs = skill.match(/^For missing entries,[\s\S]*?(?=\n\n)/gm) || [];
   assert.strictEqual(
     paragraphs.length, 1,
@@ -645,19 +661,41 @@ check('the new-items bucket defaults to adding nothing', () => {
     ['the default', /\*\*Default is NONE\.\*\*/],
     ['the reason it differs from the other three', /the one bucket whose approval creates entries/],
   ];
-  // Named before the whole-paragraph comparison speaks, because "this long
-  // string differs from that long string" sends the reader to a character diff
-  // to answer a question the check already knows the answer to.
-  const missing = claims.filter(([, re]) => !re.test(instruction)).map(([name]) => name);
+  // Said before the whole-paragraph comparison speaks, because "this long string
+  // differs from that long string" sends the reader to a character diff to answer
+  // a question the check already knows the answer to.
+  //
+  // Each is a phrase rather than an idea, so what it can honestly report is that
+  // the phrase is not there in that form, not that the thought is gone. The two
+  // read alike in a failure message and are not the same thing: an emphasis
+  // change loses the phrase and keeps the meaning.
+  //
+  // Split from moved, which the count above cannot tell apart: a phrase absent
+  // from the paragraph but present in the file means what was read stopped early,
+  // and blaming that on the wording sends the reader looking for a deletion that
+  // never happened.
+  const missing = claims.filter(([, re]) => !re.test(instruction));
+  const elsewhere = missing.filter(([, re]) => re.test(skill)).map(([name]) => name);
+  const gone = missing.filter(([, re]) => !re.test(skill)).map(([name]) => name);
+  const diagnosis = [
+    gone.length
+      ? `${gone.join(' and ')} ${gone.length > 1 ? 'no longer appear' : 'no longer appears'} `
+        + 'in this form anywhere in audit-deps'
+      : '',
+    elsewhere.length
+      ? `${elsewhere.join(' and ')} ${elsewhere.length > 1 ? 'are' : 'is'} still in the file but `
+        + 'outside the paragraph that was read, so a blank line has split that paragraph and only '
+        + 'the part above it was checked'
+      : '',
+  ].filter(Boolean).join('. ');
   assert.strictEqual(
     instruction,
     'For missing entries, take the list whole or in part. `all` adds every one, '
     + '`none` adds nothing, and naming them adds only those. **Default is NONE.** '
     + 'This is the one bucket whose approval creates entries, and the other three '
     + 'all default to changing nothing, so this one does too.',
-    missing.length
-      ? `the instruction paragraph no longer states ${missing.join(' or ')}`
-      : 'the paragraph an implementation reads for the default still states both '
+    diagnosis
+      || 'the paragraph an implementation reads for the default still states both '
         + 'claims but no longer says what it said. Reflow is already ignored, so '
         + 'this is a wording or formatting change. A sentence added to the end of '
         + 'it is the specific edit this is here to catch, because it leaves every '
