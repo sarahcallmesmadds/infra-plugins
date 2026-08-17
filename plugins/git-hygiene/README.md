@@ -151,6 +151,17 @@ profile, so it starts with a bare `PATH` that has none of those directories
 on it. Before 0.3.7 every hook here exited 127 under Codex for that reason,
 and silently, because a failed hook does not interrupt your session.
 
+Updating a plugin while a session is already open stops the hooks a second
+way, unrelated to finding Node. The session is still pointing at the version
+folder it started in, and Codex deletes that folder on update, so every hook in
+that session fails until you restart. Each hook now checks that the file it is
+about to run is still there. If it has gone, it prints one line saying hooks
+are off until you restart, and steps aside. That does not keep the hooks
+working, which nothing in the plugin can do from a folder that has been
+deleted, but it tells you why they stopped instead of leaving you a bare error
+code. The line shows up in the transcript once per hook per event, and blocks
+nothing.
+
 If your Node is somewhere else, name it:
 
 ```

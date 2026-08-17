@@ -689,6 +689,27 @@ check('every plugin that ships a JavaScript hook documents how node is found', (
     if (/`?node`? has to be on your/.test(text)) {
       problems.push(`${dir}/README.md still says node has to be on your PATH, which stopped being true`);
     }
+
+    // The guard is a runtime side effect a reader meets without asking for it:
+    // a line in the transcript, once per hook per event, after an update they
+    // may not connect it to. CONTRIBUTING requires READMEs to cover exactly
+    // that. Added after review found the guard shipped documented nowhere while
+    // build-loop's README still promised its probe "prints nothing to the
+    // conversation", which the guard had just made false.
+    if (!/while a session is already open/i.test(text)) {
+      problems.push(`${dir}/README.md does not say what happens when the plugin is updated mid-session`);
+    }
+  }
+
+  // build-loop's probe is the one hook whose README promised silence outright,
+  // so the promise is checked in the form the guard made it need.
+  const probeReadme = path.join(ROOT, 'plugins', 'build-loop', 'README.md');
+  if (fs.existsSync(probeReadme)) {
+    const text = fs.readFileSync(probeReadme, 'utf8');
+    if (/probe prints nothing to the\nconversation and never blocks/.test(text)) {
+      problems.push('plugins/build-loop/README.md still promises the probe prints nothing to the '
+        + 'conversation, which the guard made untrue when the probe file itself is missing');
+    }
   }
 
   assert.deepStrictEqual(problems, [],

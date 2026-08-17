@@ -142,6 +142,17 @@ profile, so it starts with a bare `PATH` that has none of those directories
 on it. Before 0.9.8 every hook here exited 127 under Codex for that reason,
 and silently, because a failed hook does not interrupt your session.
 
+Updating a plugin while a session is already open stops the hooks a second
+way, unrelated to finding Node. The session is still pointing at the version
+folder it started in, and Codex deletes that folder on update, so every hook in
+that session fails until you restart. Each hook now checks that the file it is
+about to run is still there. If it has gone, it prints one line saying hooks
+are off until you restart, and steps aside. That does not keep the hooks
+working, which nothing in the plugin can do from a folder that has been
+deleted, but it tells you why they stopped instead of leaving you a bare error
+code. The line shows up in the transcript once per hook per event, and blocks
+nothing.
+
 If your Node is somewhere else, name it:
 
 ```
@@ -187,8 +198,10 @@ searched, because "not found" is a question about where the search looked, with
 your home directory reduced to `~` so the line describes the search rather than
 the machine. It is still a diagnostic, so read it before pasting it somewhere
 public, the same as you would any other. The probe prints nothing to the
-conversation and never blocks a prompt. Deleting the file is safe: nothing
-reads it but you.
+conversation while it can run, and never blocks a prompt whatever happens. The
+one exception to its silence is the guard described above: if the probe file
+itself has gone because the plugin was updated mid-session, you get that one
+line instead of nothing. Deleting the log is safe: nothing reads it but you.
 
 ## Configuration
 
