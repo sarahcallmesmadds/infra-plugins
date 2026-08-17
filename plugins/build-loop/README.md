@@ -802,13 +802,19 @@ where the hook is reported as having completed and the message goes nowhere. So
 this plugin's `PostToolUse` hooks keep the stderr form, as do the other plugins,
 and any future conversion measures its own event first.
 
-The sentence Codex is told names no path, and since 0.10.9 that is deliberate.
+The sentence Codex is told names no path, and since 0.10.10 that is deliberate.
 The structured output is JSON built by pasting the message into a `printf`
 format, and the shell has no idea it is writing JSON, so anything expanded into
 it can break the syntax. A plugin directory holding a double quote, a backslash,
-a tab or a newline all do, and the result is output Codex cannot read: the hook
-is reported as having completed and the reader is told nothing, which is the
-failure this whole guard exists to end. Escaping it in the shell was the first
+a tab or a newline all do, and they spoil it in two ways. A quote, or a raw
+control character, or a backslash that begins no JSON escape, make the output
+unreadable, so Codex is handed nothing. A backslash that does begin one, and
+`\n`, `\t` and `\b` in a path all do, produces output that reads perfectly and
+says something other than what was written: a directory named `back\nbreak`
+announced a path with a real line break inside it. Either way the hook is
+reported as having completed, and the second is the worse of the two because it
+looks delivered. That is the failure this whole guard exists to end. Escaping it
+in the shell was the first
 answer and the wrong one, because it needs `sed`, which needs `PATH`, and a
 broken `PATH` is one of the things these hooks have to be able to complain
 about. So the absolute path stays on the stderr line, which is plain text and

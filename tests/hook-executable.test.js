@@ -186,11 +186,20 @@ const notRunnableMessage = (target) => `Plugin hooks are off because ${target} i
 
 // The Codex branch below builds JSON by pasting the message into a printf
 // format, and shell has no idea it is writing JSON. So a message carrying a
-// double quote or a backslash produces output Codex cannot parse, and the
-// sentence reaches nobody while the hook reports success: the same silent
-// delivery failure the announcing shape was added to end, arriving through
-// quoting instead of an exit code. Found on 2026-08-17 by running the released
-// guard against a plugin root containing a double quote.
+// double quote or a backslash spoils the output, and the hook reports success
+// either way: the same silent delivery failure the announcing shape was added to
+// end, arriving through quoting instead of an exit code. Found on 2026-08-17 by
+// running the released guard against a plugin root containing a double quote.
+//
+// It spoils it in two ways, and the second is the worse one. A double quote, or
+// a backslash that does not begin a JSON escape, or a raw control character, all
+// make the output unparseable, so Codex is handed nothing. But a backslash that
+// does begin one, and `\n`, `\t` and `\b` in a path all do, parses perfectly and
+// delivers a different sentence from the one written: measured here, a root named
+// `back\nbreak` announced a path with a real line break inside it. Saying only
+// that Codex cannot parse it was the first version of this comment and review
+// caught it, which matters because the two need different words: one reaches
+// nobody, the other reaches somebody wrong.
 //
 // Escaping it in shell was the first answer and the wrong one. It needs sed,
 // which means it needs PATH, and a broken PATH is a live case here rather than
@@ -203,8 +212,14 @@ const notRunnableMessage = (target) => `Plugin hooks are off because ${target} i
 // text and cannot be malformed, carries the absolute path. The announced
 // message names the same file relative to the plugin directory, which is fixed
 // text in the manifest. That also closes the cases escaping would have missed:
-// a tab or a newline in the path is a control character JSON forbids raw, and
+// a real tab or newline in the path is a control character JSON forbids raw, and
 // no amount of quote-escaping helps.
+//
+// A target that is not under the plugin directory has no relative form, so one
+// message is used for both routes there. That is safe for the same reason: it is
+// fixed text in the manifest either way. The recogniser accepts one argument or
+// two for exactly this case, and the check below asserts the announced message
+// carries no expansion, no backslash and no control character whichever it is.
 const PLUGIN_ROOT_PREFIX = '${CLAUDE_PLUGIN_ROOT}/';
 const announcedNotRunnable = (target) => (target.startsWith(PLUGIN_ROOT_PREFIX)
   ? notRunnableMessage(`${target.slice(PLUGIN_ROOT_PREFIX.length)} inside the plugin directory`)
@@ -312,7 +327,14 @@ const SAY_GUARD_RE = new RegExp(
   // goes to stderr, the second is what Codex is told and names no path. Both are
   // captured, because a guard that announced the path-carrying one would parse
   // here and break only on the plugin roots nobody tests with.
-  + '\\[ -x "([^"]+)" \\] \\|\\| say "([^"]*)" "([^"]*)"; ',
+  //
+  // The second is optional, because a target that is not under the plugin
+  // directory has no relative form and the generator writes one argument for it.
+  // Requiring two here made the generator and this regex disagree for exactly
+  // that case, so a guard the generator wrote would have been read back as no
+  // guard at all, and everything parseCommand feeds would then have gone green
+  // over an empty list. Raised in review of this change on 2026-08-17.
+  + '\\[ -x "([^"]+)" \\] \\|\\| say "([^"]*)"(?: "([^"]*)")?; ',
 );
 
 // One reading for either shape, so every check below asks the same questions of
@@ -324,7 +346,10 @@ function matchGuard(command) {
     return {
       matched, event, codexExit: Number(codexExit), announces: true,
       unsetMessage: unset, goneMessage: gone, execMessage: notRunnable,
-      execAnnounced,
+      // One argument means the announced message is the same one, which is what
+      // say() itself does with ${2:-$1}. Reading it the same way keeps this
+      // object describing the shell's behaviour rather than the regex's shape.
+      execAnnounced: execAnnounced === undefined ? notRunnable : execAnnounced,
       gonePath, execPath,
       unsetCode: Number(exitCode), goneCode: Number(exitCode), execCode: Number(exitCode),
     };
@@ -716,13 +741,15 @@ check('every hook command guards the file it is about to run', () => {
         wrong.push(`${where}: the Codex branch exits ${guard.codexExit}, and Codex reads any non-zero exit as a failure and drops what the hook said`);
       }
 
-      // Nothing the shell expands may reach the announced message, because the
-      // JSON around it is built by pasting rather than by anything that knows
-      // it is writing JSON. A plugin root holding a double quote, a backslash,
-      // a tab or a newline would produce output Codex cannot parse, and the
-      // hook would report success with its sentence lost. Asserted on the shape
-      // rather than on the four characters, so a fifth one nobody thought of is
-      // covered too.
+      // The announced message is pasted into a JSON string by a shell that does
+      // not know it is writing JSON, so two separate things can spoil it and
+      // both are checked.
+      //
+      // An expansion, because whatever it holds arrives unescaped. And a
+      // backslash or a control character sitting in the fixed text itself, which
+      // needs no expansion to do damage: review of this change pointed out that
+      // the first version tested only for expansions while claiming to cover
+      // anything, which is an assertion narrower than the sentence next to it.
       for (const [which, announced] of [
         ['unset', guard.unsetMessage],
         ['gone', guard.goneMessage],
@@ -730,9 +757,15 @@ check('every hook command guards the file it is about to run', () => {
       ]) {
         if (/[$`]/.test(announced)) {
           wrong.push(`${where}: the ${which} message announced to Codex is ${JSON.stringify(announced)}, which the shell `
-            + 'expands. An expansion holding a quote, a backslash or a control character makes the JSON unparseable, '
-            + 'and Codex then reports the hook Completed with nothing delivered. Announce fixed text and keep the '
-            + 'absolute path on the stderr line');
+            + 'expands. Whatever the expansion holds is pasted in unescaped, so a quote breaks the JSON outright and a '
+            + 'backslash or a control character corrupts the sentence, and Codex reports the hook Completed either way. '
+            + 'Announce fixed text and keep the absolute path on the stderr line');
+        }
+        // eslint-disable-next-line no-control-regex
+        if (/[\\\x00-\x1f]/.test(announced)) {
+          wrong.push(`${where}: the ${which} message announced to Codex is ${JSON.stringify(announced)}, which holds a `
+            + 'backslash or a control character. JSON reads it as an escape, so the sentence either fails to parse or '
+            + 'parses into something other than what it says, and the second is worse because it looks delivered');
         }
       }
 
@@ -1012,11 +1045,17 @@ check('the guard actually fires, and only when it should', () => {
       `${shell}: the announcement carried ${JSON.stringify(announced.hookSpecificOutput.additionalContext)} rather than the sentence`);
 
     // A plugin root the shell is happy with and JSON is not. Every character
-    // here is legal in a POSIX path, and each one breaks the announcement in a
-    // different way: the quote closes the string early, the backslash starts an
-    // escape, and the tab is a control character JSON forbids raw. Run rather
-    // than reasoned about, because the released 0.10.8 passed every other
-    // assertion in this suite while producing output Codex could not parse.
+    // here is legal in a POSIX path, and the three spoil the announcement in two
+    // different ways, which is why the assertion below compares the delivered
+    // sentence rather than only parsing it.
+    //
+    // The quote closes the string early and the raw tab is a control character
+    // JSON forbids, so both make the output unparseable and Codex is handed
+    // nothing. The backslash in `back\nbreak` begins a valid JSON escape, so that
+    // one parses and delivers a path with a real line break inside it. Checking
+    // only that it parsed would call that a pass. Run rather than reasoned about,
+    // because the released 0.10.8 passed every other assertion in this suite
+    // while doing both.
     //
     // The launcher is present and not executable, since that is the one clause
     // whose message named the path.
@@ -1045,6 +1084,13 @@ check('the guard actually fires, and only when it should', () => {
           throw new Error(`${shell}: with ${JSON.stringify(awkward)} in the plugin root the guard wrote `
             + `${JSON.stringify(oddCodex.out)}, which Codex cannot parse, so it reports the hook Completed and the `
             + `reader is told nothing: ${error.message}`);
+        }
+        // Compared, not merely parsed. A backslash that begins a valid JSON
+        // escape produces output that parses and says something else, and a test
+        // that stopped at JSON.parse would pass over it.
+        if (typeof oddAnnounced?.hookSpecificOutput?.additionalContext !== 'string') {
+          throw new Error(`${shell}: with ${JSON.stringify(awkward)} in the plugin root the announcement carried no `
+            + `sentence at all: ${JSON.stringify(oddCodex.out)}`);
         }
         assert.strictEqual(oddAnnounced.hookSpecificOutput.additionalContext, announcedNotRunnable('${CLAUDE_PLUGIN_ROOT}/bin/hook-node'),
           `${shell}: with ${JSON.stringify(awkward)} in the plugin root the announcement carried `
@@ -1244,23 +1290,39 @@ check('the three command forms are told apart', () => {
   // file exists to keep out, and it would arrive through the parser rather than
   // through a manifest. Raised in review of the tests on 2026-08-17, when the
   // say shape existed in the generator and no assertion had ever read one.
+  // Both targets, not just the one every manifest happens to use today. A target
+  // outside the plugin directory has no relative form, so the generator writes
+  // one argument to say() instead of two, and a recogniser that insisted on two
+  // read it as no guard at all. That is the drift this loop exists to catch and
+  // it was live in the first version of this change: the case is here because
+  // review found it, not because the earlier loop could have.
   for (const [what, event] of [['announcing', 'PostToolUse'], ['stderr-only', undefined]]) {
-    const target = '${CLAUDE_PLUGIN_ROOT}/bin/hook-node';
-    const built = `${guardFor(target, event)}"\${CLAUDE_PLUGIN_ROOT}"/bin/hook-node "\${CLAUDE_PLUGIN_ROOT}"/hooks/x.js`;
-    const read = matchGuard(built);
-    assert.ok(read, `the ${what} guard the generator writes is not recognised by the guard reader, `
-      + 'so a hook carrying it would be reported as having no guard at all');
-    assert.strictEqual(read.announces, Boolean(event),
-      `the ${what} guard was read back as announces:${read.announces}`);
-    assert.strictEqual(read.goneMessage, GONE_MESSAGE,
-      `the ${what} guard was read back carrying ${JSON.stringify(read.goneMessage)}`);
-    if (event) {
-      assert.strictEqual(read.event, event,
-        `the ${what} guard was built for ${event} and read back as ${read.event}`);
+    for (const [kind, target] of [
+      ['under the plugin directory', '${CLAUDE_PLUGIN_ROOT}/bin/hook-node'],
+      ['not under it', 'node'],
+    ]) {
+      const built = `${guardFor(target, event)}"\${CLAUDE_PLUGIN_ROOT}"/bin/hook-node "\${CLAUDE_PLUGIN_ROOT}"/hooks/x.js`;
+      const read = matchGuard(built);
+      assert.ok(read, `the ${what} guard the generator writes for a target ${kind} is not recognised by the `
+        + 'guard reader, so a hook carrying it would be reported as having no guard at all');
+      assert.strictEqual(read.announces, Boolean(event),
+        `the ${what} guard for a target ${kind} was read back as announces:${read.announces}`);
+      assert.strictEqual(read.goneMessage, GONE_MESSAGE,
+        `the ${what} guard for a target ${kind} was read back carrying ${JSON.stringify(read.goneMessage)}`);
+      assert.strictEqual(read.execMessage, notRunnableMessage(target),
+        `the ${what} guard for a target ${kind} was read back with the stderr message `
+        + `${JSON.stringify(read.execMessage)}`);
+      if (event) {
+        assert.strictEqual(read.event, event,
+          `the ${what} guard for a target ${kind} was built for ${event} and read back as ${read.event}`);
+        assert.strictEqual(read.execAnnounced, announcedNotRunnable(target),
+          `the ${what} guard for a target ${kind} was read back announcing `
+          + `${JSON.stringify(read.execAnnounced)}`);
+      }
+      assert.strictEqual(parseCommand(built, dir).executed, 'plugins/example/bin/hook-node',
+        `the parser did not see through the ${what} guard for a target ${kind}, so the file it protects `
+        + 'escapes every check built on the parser while those checks report a pass over nothing');
     }
-    assert.strictEqual(parseCommand(built, dir).executed, 'plugins/example/bin/hook-node',
-      `the parser did not see through the ${what} guard, so the file it protects escapes every `
-      + 'check built on the parser while those checks report a pass over nothing');
   }
 
   const bare = parseCommand('node "${CLAUDE_PLUGIN_ROOT}"/hooks/x.js', dir);
