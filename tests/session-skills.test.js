@@ -337,8 +337,42 @@ check('wrap sends a rule that outlives the work to the project file', () => {
   );
   assert.match(
     text,
-    /belongs? in (?:that|the) project'?s? `?CLAUDE\.md`?/i,
+    /belong in that project'?s own instructions file/i,
     'wrap no longer names where a durable rule goes, so the test has nowhere to send it'
+  );
+});
+
+// Added in the same change, after review. The first version of the paragraph
+// above told the model to file a rule in CLAUDE.md "which loads on its own",
+// which is a Claude Code behaviour. This plugin ships a Codex manifest too, and
+// Codex reads no such file, so a rule moved there and retired from the handoff
+// stopped binding under Codex while the handoff recorded it as safely filed.
+// That is worse than the noise it was fixing: a long list can be read, and a
+// rule the runtime cannot see cannot. CONTRIBUTING.md requires a real fallback
+// wherever only one runtime can automate something, so both halves are pinned.
+check('wrap requires the destination be reachable from the runtime', () => {
+  const text = skill('wrap');
+  assert.match(
+    text,
+    /Codex does not/i,
+    'wrap no longer says Codex will not load the project file on its own, so the '
+    + 'move reads as safe on a runtime where it silently drops the rule'
+  );
+  assert.match(
+    text,
+    /`AGENTS\.md`/,
+    'wrap no longer names the file that makes a project reachable from Codex, so '
+    + 'the check it asks for cannot be carried out'
+  );
+});
+
+check('wrap keeps the rule in the handoff when the project is not reachable', () => {
+  const text = skill('wrap');
+  assert.match(
+    text,
+    /Where it does not, the rule stays in the handoff/i,
+    'the fallback is gone, so a project with no Codex-side pointer has no stated '
+    + 'answer and the rule gets moved somewhere half the runtimes cannot read'
   );
 });
 

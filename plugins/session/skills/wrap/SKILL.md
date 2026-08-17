@@ -141,10 +141,21 @@ records it being tolerated.
 **A rule that outlives the work belongs in the project, not in the handoff.**
 Before carrying one, ask whether it stays true after this piece of work ends. A
 deploy restriction, a filing rulebook, a standard the code has to meet: those
-are documentation, and they belong in that project's `CLAUDE.md`, which loads on
-its own as soon as work moves into the folder. A handoff constraint is for what
-is true this week and false next: which checkout is shared right now, what is
-half migrated, what is waiting on somebody.
+are documentation, and they belong in that project's own instructions file. A
+handoff constraint is for what is true this week and false next: which checkout
+is shared right now, what is half migrated, what is waiting on somebody.
+
+**Check the destination is reachable from the runtime before moving anything.**
+Claude Code loads a project's `CLAUDE.md` on its own once work moves into the
+folder. Codex does not, and this plugin ships a Codex manifest, so a rule filed
+that way is invisible to half the hosts this skill runs on. It would not merely
+read as noise there, it would stop binding, with a retirement line in the
+handoff saying it had been safely filed.
+
+So a project qualifies as a destination when it carries an `AGENTS.md` beside
+its `CLAUDE.md`, holding a pointer to it rather than a second copy of the rules.
+**Where it does not, the rule stays in the handoff.** A list that is too long is
+recoverable by reading it. A rule nobody's runtime can see is not.
 
 Carrying a permanent fact forward instead is how a document about one thing
 accumulates the rules of everything. Measured on 2026-08-16, a handoff about a
