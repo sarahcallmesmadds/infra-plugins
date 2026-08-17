@@ -45,6 +45,19 @@ directory of individually compliant files exceeds any fixed total once there are
 them. Enforcing it produces a warning nobody can clear, and a warning nobody can clear gets
 the whole check switched off, which costs more than the thing it was measuring.
 
+**Write a comment for someone who does not know the code ever behaved differently.**
+Keep one if a reader who ignores it would break something: a warning earns its place, and so
+does the evidence that makes anyone believe it, as in "strip the guard first, or eight checks
+silently passed over an empty list". Delete one if ignoring it would only leave the reader
+less informed. Which pull request found it, who caught it and on what date belong in the
+commit message, where git already keeps them. On 2026-08-17 one test file held 663 lines of
+comment against 670 of code, and half of it was the file narrating its own past.
+
+**Release notes go in the plugin's `CHANGELOG.md`, never in its README.** A README is what
+somebody reads to install and use the plugin. build-loop's had grown to 844 lines of which 456
+were upgrade notes for twelve past versions, so a new reader opened a changelog. guardrails and
+git-hygiene still carry theirs in the README and want the same treatment.
+
 **Nothing personal belongs in this repository, because it is public.** That covers the
 maintainer's own vocabulary, worked examples and transcripts. A test fixture is a publishing
 surface like any other file here, so fixtures are written for the test rather than lifted from
