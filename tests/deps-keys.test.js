@@ -53,7 +53,7 @@ const SKILLS = {
 // should be noticed. So the count is derived AND compared, and this constant
 // has to move when a check is added or removed. Forgetting now fails the suite
 // instead of printing a smaller number nobody reads.
-const EXPECTED_CHECKS = 31;
+const EXPECTED_CHECKS = 32;
 
 let failed = 0;
 let ran = 0;
@@ -263,6 +263,36 @@ check('audit-deps writes plugin beside target, and carries it to back-edges', ()
   assert.ok(
     /plugin: A\.plugin/.test(t),
     'the back-edge step drops plugin, so dependents lose it while depends_on keeps it'
+  );
+});
+
+check('audit-deps Step 4 names every required edge field, with no ellipsis', () => {
+  // The ellipsis is the whole defect. Step 4's edge example used to read
+  // `{"target": "hook-io", "plugin": "guardrails", ...}`, and everything behind
+  // the `...` went unwritten: 118 edges across 41 entries carried no `repo`,
+  // measured on 2026-08-17 and repaired the same day. `plugin` was named and so
+  // it was always present; `repo` was not named and so it was always absent.
+  // That is the correlation this check exists to keep.
+  const t = SKILLS['audit-deps'];
+
+  assert.ok(
+    !/"plugin": "guardrails", \.\.\./.test(t),
+    'the edge example hides its remaining fields behind an ellipsis again, '
+    + 'which is exactly what left 118 edges without a repo'
+  );
+
+  // Named in prose, so a reader who skims the example still learns the set.
+  for (const field of ['target', 'kind', 'repo', 'reason']) {
+    assert.ok(
+      new RegExp('`' + field + '`').test(t),
+      `Step 4 never names \`${field}\`, which SCHEMA-DEPS.md marks required on an edge`
+    );
+  }
+
+  // Present in the worked example, so a reader who copies it gets a valid edge.
+  assert.ok(
+    /"repo":\s*"[^"]+"/.test(t),
+    'the worked edge example carries no repo, so copying it reproduces the bug'
   );
 });
 
