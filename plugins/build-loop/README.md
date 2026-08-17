@@ -785,6 +785,23 @@ old versions, so that session instead carries on running the code it started
 with, which is the same fact failing in the other direction. Since 0.10.7 the
 hooks say which has happened rather than failing with a bare error code.
 
+The two hosts need that sentence delivered differently, so since 0.10.8 the
+hooks that run on every prompt check which one they are in. Claude Code shows
+the first line a hook writes to stderr when it exits non-zero, so that is what
+it gets. Codex discards stderr on any non-zero exit and shows a bare number
+instead, so there it gets the one route Codex does surface: a zero exit carrying
+the sentence as structured output. The two are told apart by `PLUGIN_ROOT` and
+`CLAUDE_PLUGIN_ROOT` both being set and agreeing, since Codex sets the pair to
+the same value and Claude Code sets only the prefixed one. Both are required
+because `PLUGIN_ROOT` carries no vendor prefix, so alone it would put a Claude
+Code hook on the Codex branch and lose the sentence.
+
+Only the prompt hooks. Codex was measured on 2026-08-17 to deliver that
+structured output for `UserPromptSubmit` and to discard it for `PostToolUse`,
+where the hook is reported as having completed and the message goes nowhere. So
+this plugin's `PostToolUse` hooks keep the stderr form, as do the other plugins,
+and any future conversion measures its own event first.
+
 ## Licence
 
 MIT. See `LICENSE` at the repository root.
