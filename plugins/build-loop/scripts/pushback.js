@@ -5,8 +5,9 @@
 // it was. Reads Claude Code transcripts, which are already on disk, so nothing
 // has to be captured live and no hook is involved.
 //
-// The number that matters is pushbacks per hundred messages the user actually
-// typed. Everything else is detail underneath it. A rate that does not fall is
+// The number that matters is pushbacks per hundred eligible typed messages:
+// plain user messages short enough for this detector to classify. Everything
+// else is detail underneath it. A rate that does not fall is
 // how you find out a writing rule is not working, and no amount of extra rules
 // in the skill will change a flat line.
 //
@@ -188,6 +189,7 @@ function scan(since, root) {
   }
   const typed = [];
   const pushbacks = [];
+  let overlong = 0;
 
   for (const file of files) {
     let lines;
@@ -219,6 +221,10 @@ function scan(since, root) {
       const text = userText(record);
       if (text === null) continue;
       if (isPasted(text)) continue;
+      if (text.length > MAX_PUSHBACK_LENGTH) {
+        overlong += 1;
+        continue;
+      }
       const at = record.timestamp ? new Date(record.timestamp).getTime() : 0;
       if (at < since) continue;
 
@@ -236,7 +242,7 @@ function scan(since, root) {
   for (const k of KINDS) byKind[k.kind] = 0;
   for (const p of pushbacks) byKind[p.kind] += 1;
 
-  return { typed, pushbacks, byKind, files: files.length, skipped };
+  return { typed, pushbacks, byKind, files: files.length, skipped, overlong };
 }
 
 function rate(pushbacks, typed) {
@@ -283,7 +289,11 @@ function report(result, options) {
   const hits = result.pushbacks.length;
   const lines = [];
 
-  lines.push(`Pushback rate: ${rate(hits, total)} per hundred messages (${hits} of ${total} typed).`);
+  lines.push(`Pushback rate: ${rate(hits, total)} per hundred eligible messages (${hits} of ${total}).`);
+  if (result.overlong) {
+    lines.push(`Excluded ${result.overlong} message(s) over ${MAX_PUSHBACK_LENGTH} characters; `
+      + 'they are outside the detector\'s classification boundary.');
+  }
   if (result.skipped && result.skipped.length) {
     lines.push(`Incomplete scan: skipped ${result.skipped.length} unreadable transcript path(s).`);
     for (const item of result.skipped.slice(0, 3)) lines.push(`  ${item.path}: ${item.reason}`);
@@ -551,6 +561,7 @@ function main(argv) {
       files: result.files,
       skipped: result.skipped,
       typed: result.typed.length,
+      overlong: result.overlong,
       pushbacks: result.pushbacks.length,
       rate: rate(result.pushbacks.length, result.typed.length),
       byKind: result.byKind,

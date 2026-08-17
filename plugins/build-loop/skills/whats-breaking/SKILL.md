@@ -370,9 +370,11 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/pushback.js" --this-week
 the same local calendar week used to name the summary file, so every section
 describes one period and consecutive reports neither overlap nor leave a gap.
 
-It prints one headline number, pushbacks per hundred messages the user actually
-typed, then a breakdown by kind and the answer-level signal comparison. It does
-not print example messages unless `--quotes` is explicitly added.
+It prints one headline number, pushbacks per hundred eligible typed messages,
+then a breakdown by kind and the answer-level signal comparison. Messages over
+the detector's 800-character boundary are excluded from both sides and reported
+as a separate skipped count. It does not print example messages unless
+`--quotes` is explicitly added.
 
 If the command says the transcript folder does not exist or cannot be read,
 write `Pushback rate unavailable: this runtime has no readable Claude Code
@@ -531,7 +533,7 @@ Post this summary to Slack?
 
 **If yes:**
 1. Ask for channel if they didn't specify one. Default: the user's DM.
-2. Build a channel-safe copy of the full report as described under **Pushback quotes never go to Slack** below. Post that copy with the Slack MCP (`mcp__slack__*` tools — already configured in sessions). Never post the `.md` file verbatim because its Pushback Rate section contains private quotes.
+2. Verify the saved report's Pushback Rate section contains counts only, as required by Steps 6b and 7. Then post the full saved report with the Slack MCP (`mcp__slack__*` tools — already configured in sessions). If quoted examples appear in the file, stop instead of posting and rebuild that section with the plain command below.
 3. Confirm: `Posted to {channel}.`
 
 **If no:**
@@ -539,22 +541,19 @@ Confirm: `Summary saved locally. Not posted to Slack.`
 
 **Channel safety:** the user's DM is the safe default per 04-DESIGN.md Section 9. For a public channel, confirm the channel name back to them before posting — "Posting to #{channel-name}, correct?" — and wait for confirmation.
 
-**Pushback quotes never go to Slack.** The Step 6b section of the local report
-quotes the user's own messages when it is asked to, which is what makes a
-pattern actionable when they read it themselves. Those same lines are somebody's
-unguarded words about being confused and frustrated, and a channel is a
-different audience from a file on their own Mac, whatever the channel is.
-Recompute the boundary and regenerate that section for the post with:
+**The saved report is counts-only.** A separate interactive run with `--quotes`
+may show examples on the user's screen, but that output never belongs in the
+summary file and never goes to Slack. Before posting, the plain command below
+is the source of truth for the Pushback Rate section:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/scripts/pushback.js" --this-week
 ```
 
-This recomputes the local week boundary in the posting step, emits the rate and
-counts and no quotes. Substitute it for the local Step 6b
-section before posting. If this command fails, stop and report the failure;
-never fall back to quoted output. This applies to the direct message too: the
-rule is about the surface, not about who can see it.
+It emits the rate and counts and no quotes. Use it to rebuild the section if the
+saved file violates the counts-only invariant. If it fails, stop and report the
+failure; never fall back to quoted output. This applies to the direct message
+too: the rule is about the surface, not about who can see it.
 
 **Quoting is opt-in, and there is no flag to get wrong.** The script only quotes
 when `--quotes` is passed, and refuses any argument it does not recognise rather

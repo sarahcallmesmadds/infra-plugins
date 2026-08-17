@@ -195,6 +195,7 @@ fs.writeFileSync(path.join(nested, 's.jsonl'),
   + line(Object.assign({ timestamp: when }, user('yes do it')))
   + line(Object.assign({ timestamp: when }, user('1 bug plugins/example.js:12 **Forwarded finding that is not typed prose**')))
   + line(Object.assign({ timestamp: when }, user('• UserPromptSubmit hook (failed) what does this mean')))
+  + line(Object.assign({ timestamp: when }, user('a genuinely typed long thought ' + 'x'.repeat(900))))
   + line(Object.assign({ timestamp: when }, user('<bash-input> ls</bash-input>')))
   + line(Object.assign({ timestamp: when }, user([{ type: 'tool_result', content: 'x' }]))));
 
@@ -206,6 +207,13 @@ check('scan finds transcripts in nested directories', () => {
 check('scan excludes pasted content from the typed denominator', () => {
   const r = P.scan(0, tmp);
   assert.strictEqual(r.typed.length, 2, `counted ${r.typed.length}`);
+});
+
+check('scan excludes over-ceiling messages from both sides and reports the count', () => {
+  const r = P.scan(0, tmp);
+  assert.strictEqual(r.overlong, 1);
+  assert.strictEqual(r.typed.length, 2);
+  assert.match(P.report(r, {}), /Excluded 1 message\(s\) over 800 characters/);
 });
 
 check('scan finds the pushback and attaches the answer before it', () => {
@@ -262,7 +270,7 @@ check('the CLI reports a bad transcript root without a stack trace or clean zero
   assert.doesNotMatch(r.stdout, /0 per hundred/);
 });
 
-check('the rate is per hundred typed messages', () => {
+check('the rate is per hundred eligible typed messages', () => {
   assert.strictEqual(P.rate(1, 2), 50);
   assert.strictEqual(P.rate(0, 0), 0, 'an empty window must not divide by zero');
 });

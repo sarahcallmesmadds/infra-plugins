@@ -66,7 +66,9 @@ rather than filing anything. Those are already written down, because Claude Code
 keeps a transcript of every session on disk.
 
 `/whats-breaking` reads them and reports one number, pushbacks per hundred
-messages you actually typed, broken down by kind. You can also run it directly:
+eligible typed messages, broken down by kind. Pasted material and messages over
+the detector's 800-character classification boundary are excluded from both
+sides; the report states how many long messages it skipped. You can also run it directly:
 
 ```bash
 node plugins/build-loop/scripts/pushback.js --days 7
