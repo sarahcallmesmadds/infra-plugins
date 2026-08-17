@@ -152,10 +152,18 @@ that way is invisible to half the hosts this skill runs on. It would not merely
 read as noise there, it would stop binding, with a retirement line in the
 handoff saying it had been safely filed.
 
-So a project qualifies as a destination when it carries an `AGENTS.md` beside
-its `CLAUDE.md`, holding a pointer to it rather than a second copy of the rules.
-**Where it does not, the rule stays in the handoff.** A list that is too long is
-recoverable by reading it. A rule nobody's runtime can see is not.
+So a project qualifies as a destination when its rules are reachable from every
+runtime the work runs under, which today means Claude Code and Codex. The usual
+arrangement is the rules in `CLAUDE.md` with an `AGENTS.md` beside it holding a
+pointer rather than a second copy. A project keeping its rules in `AGENTS.md`
+alone qualifies just as well, provided every runtime in use reads that file.
+
+**Confirm it rather than inferring it from the filenames.** Which names a host
+loads is a property of that host and its version, so it is checked where the
+work is happening and not promised here.
+
+**Where a project does not qualify, the rule stays in the handoff.** A list that
+is too long is recoverable by reading it. A rule nobody's runtime can see is not.
 
 Carrying a permanent fact forward instead is how a document about one thing
 accumulates the rules of everything. Measured on 2026-08-16, a handoff about a

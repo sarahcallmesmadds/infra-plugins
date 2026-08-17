@@ -392,9 +392,32 @@ check('wrap keeps the rule in the handoff when the project is not reachable', ()
   const text = skill('wrap');
   assert.match(
     text,
-    /Where it does not, the rule stays in the handoff/i,
-    'the fallback is gone, so a project with no Codex-side pointer has no stated '
-    + 'answer and the rule gets moved somewhere half the runtimes cannot read'
+    /Where a project does not qualify, the rule stays in the handoff/i,
+    'the fallback is gone, so a project the runtimes cannot read has no stated '
+    + 'answer and the rule gets moved somewhere half of them cannot see'
+  );
+});
+
+// Added in review round 3. The qualification test named a file pairing,
+// AGENTS.md beside CLAUDE.md, rather than the outcome it was after. A project
+// holding its rules in AGENTS.md alone is the same situation and failed the
+// test as written, so the fallback kept its rules in the handoff for no reason.
+// Which filenames a host actually loads was not verifiable from here, so the
+// skill states the requirement and says to check rather than asserting either
+// way about a runtime it cannot observe.
+check('qualification is about reach, not about which files are present', () => {
+  const text = skill('wrap');
+  assert.match(
+    text,
+    /reachable from every\s+runtime the work runs under/i,
+    'qualification is stated as a file pairing again, so a project holding its '
+    + 'rules in one reachable file fails a test it should pass'
+  );
+  assert.match(
+    text,
+    /Confirm it rather than inferring it from the filenames/i,
+    'the instruction to check the runtime is gone, so the skill implies it knows '
+    + 'which filenames each host loads, which it does not'
   );
 });
 
