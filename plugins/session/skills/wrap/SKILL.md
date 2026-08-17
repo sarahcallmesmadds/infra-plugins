@@ -138,6 +138,31 @@ count is really reporting, a tool that keeps proposing the wrong answer,
 belongs in the bug queue where it can be fixed rather than in a number that
 records it being tolerated.
 
+**A rule that outlives the work belongs in the project, not in the handoff.**
+Before carrying one, ask whether it stays true after this piece of work ends. A
+deploy restriction, a filing rulebook, a standard the code has to meet: those
+are documentation, and they belong in that project's `CLAUDE.md`, which loads on
+its own as soon as work moves into the folder. A handoff constraint is for what
+is true this week and false next: which checkout is shared right now, what is
+half migrated, what is waiting on somebody.
+
+Carrying a permanent fact forward instead is how a document about one thing
+accumulates the rules of everything. Measured on 2026-08-16, a handoff about a
+writing skill carried 26 rules, and 21 of them belonged to a project rather than
+to the work that session was doing.
+
+**Write it into the project file first, then retire it here.** A move is a
+retirement and uses the same line, so the trace survives:
+
+```
+- Retired this session: <the constraint, quoted exactly as it was written>, because it is now recorded in <project>/CLAUDE.md.
+```
+
+The order is not a preference. A retirement written before the destination
+exists deletes the rule and leaves a note saying it was filed somewhere it is
+not, which is worse than either doing nothing or losing it outright, because the
+note stops anybody looking.
+
 **Dropping one requires saying so.** If this session retired a constraint,
 record it as retired with the reason:
 

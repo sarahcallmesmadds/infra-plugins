@@ -320,6 +320,38 @@ check('wrap forbids printing the pickup line when the check found nothing', () =
   );
 });
 
+// Added 2026-08-16. Wrap's test for what to carry asked only whether a rule
+// still applied, never where it should live, so a permanent fact passed forever
+// and was copied into every later handoff. One document about a writing skill
+// ended up carrying 26 rules, 21 of them belonging to a project rather than to
+// that session. Both halves are pinned: the test itself, and the order of the
+// move, because writing the retirement before the destination exists deletes
+// the rule and leaves a note pointing at somewhere it is not.
+check('wrap sends a rule that outlives the work to the project file', () => {
+  const text = skill('wrap');
+  assert.match(
+    text,
+    /stays true after this piece of work ends/i,
+    'wrap no longer asks whether a rule outlives the work, so a permanent fact '
+    + 'passes the still-applies test forever and is copied into every later handoff'
+  );
+  assert.match(
+    text,
+    /belongs? in (?:that|the) project'?s? `?CLAUDE\.md`?/i,
+    'wrap no longer names where a durable rule goes, so the test has nowhere to send it'
+  );
+});
+
+check('wrap writes the project file before retiring the rule from the handoff', () => {
+  const text = skill('wrap');
+  assert.match(
+    text,
+    /Write it into the project file first, then retire it here/i,
+    'the ordering is gone, so a retirement can be written before the destination '
+    + 'exists, which deletes the rule and leaves a note saying it is filed somewhere it is not'
+  );
+});
+
 // --------------------------------------------------------------- pickup ----
 
 // Added 2026-08-09, the other half of the constraints fix. Wrap carrying them
