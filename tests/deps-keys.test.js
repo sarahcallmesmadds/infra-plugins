@@ -574,44 +574,60 @@ check('the summary does not report work that did not happen', () => {
 // did exactly that. The summary-template check above documents the same trap
 // from the other direction.
 //
-// Two things here are stricter than they first look, and both are answers to
-// review findings on this pull request rather than caution for its own sake.
+// Both are compared whole rather than searched for the phrases that matter, and
+// that is the part worth explaining, because searching was tried three times and
+// failed the same way each time. A test for the presence of `Default: none.`
+// says nothing about what sits beside it. Three review rounds on this pull
+// request each defeated the previous version with one more sentence rather than
+// a changed one: appended after the default, inserted before it, and finally
+// appended to the end of the instruction paragraph, every time leaving the
+// pinned phrase intact and the meaning reversed. An override reading as a
+// clarification is a likelier edit than flipping the word none to all, and no
+// amount of anchoring makes a presence test able to say "and nothing here
+// contradicts it". Only comparing the whole text does that.
 //
-// The prompt line is matched whole rather than searched for a default. An
-// override reading as a clarification is a likelier edit than flipping the word
-// none to all, and it defeats a substring test wherever it sits: appended after
-// the default, or inserted before it, which is the same hole twice. Any
-// insertion changes what the line tells the user, so the line is pinned entire.
-// Rewording it means moving this assertion, which is the intended cost.
-//
-// The other two search the instruction paragraph rather than the whole file. Run
-// against the file they pass on a phrase sitting anywhere in it, including in
-// the history paragraph this check is written to keep out of, so the scoping is
-// what makes the paragraph claim above true rather than merely intended.
+// Whitespace is flattened before comparing, so the cost of that strictness lands
+// where it should. A markdown reflow, a rewrap across two lines, a change to the
+// three spaces before Default: none of those are the default changing, and none
+// of them fail this. Any change to the words does, including an added sentence,
+// which is the whole point. Rewording either passage on purpose means updating
+// the expected text here, and the failure messages say so, because a check that
+// fails without saying what to do about it gets deleted rather than answered.
 check('the new-items bucket defaults to adding nothing', () => {
   const skill = SKILLS['audit-deps'];
+  // Layout is not meaning. Everything below compares flattened text.
+  const flat = (s) => s.replace(/\s+/g, ' ').trim();
 
   const prompt = skill.match(/^\s*so say which ones you want\..*$/m);
   assert.ok(prompt, 'the missing-entries prompt line is gone from the Step 5 draft');
   assert.strictEqual(
-    prompt[0].trim(),
-    'so say which ones you want. all / none / name them.   Default: none.',
-    'the line the user answers no longer reads exactly as it did. If this is a '
-    + 'deliberate rewording, move this assertion with it. If it is an added '
-    + 'clause, it changes what the draft tells the user a bare answer does'
+    flat(prompt[0]),
+    'so say which ones you want. all / none / name them. Default: none.',
+    'the line the user answers no longer says what it said. Reflow and spacing '
+    + 'are already ignored, so this is a wording change. If it was deliberate, '
+    + 'update the expected text here. If it is an added clause, it changes what '
+    + 'the draft tells the user a bare answer does'
   );
 
+  // To the next blank line. A blank line inside the paragraph would truncate the
+  // match, so the assertion below reports the extraction rather than the wording
+  // when that happens, and the two failures do not read alike.
   const instruction = skill.match(/^For missing entries,[\s\S]*?(?=\n\n)/m);
-  assert.ok(instruction, 'the "For missing entries" instruction paragraph is gone');
   assert.ok(
-    /\*\*Default is NONE\.\*\*/.test(instruction[0]),
-    'the instruction paragraph no longer states that the missing bucket adds '
-    + 'nothing by default, so an unanswered draft writes entries nobody chose'
+    instruction,
+    'no paragraph starting "For missing entries," was found. Either it is gone, '
+    + 'or a reflow moved that opening phrase off the start of a line'
   );
-  assert.ok(
-    /the one bucket whose approval creates entries/.test(instruction[0]),
-    'the instruction no longer says why this bucket defaults differently from '
-    + 'the other three, so the default reads as arbitrary and gets flipped back'
+  assert.strictEqual(
+    flat(instruction[0]),
+    'For missing entries, take the list whole or in part. `all` adds every one, '
+    + '`none` adds nothing, and naming them adds only those. **Default is NONE.** '
+    + 'This is the one bucket whose approval creates entries, and the other three '
+    + 'all default to changing nothing, so this one does too.',
+    'the paragraph an implementation reads for the default no longer says what '
+    + 'it said. Reflow is already ignored, so this is a wording change. A '
+    + 'sentence added to the end of it is the specific edit this is here to '
+    + 'catch, because it leaves every phrase worth grepping for in place'
   );
 });
 
