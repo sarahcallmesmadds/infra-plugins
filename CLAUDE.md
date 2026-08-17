@@ -45,18 +45,19 @@ directory of individually compliant files exceeds any fixed total once there are
 them. Enforcing it produces a warning nobody can clear, and a warning nobody can clear gets
 the whole check switched off, which costs more than the thing it was measuring.
 
-**Write a comment for someone who does not know the code ever behaved differently.**
-Keep one if a reader who ignores it would break something: a warning earns its place, and so
-does the evidence that makes anyone believe it, as in "strip the guard first, or eight checks
-silently passed over an empty list". Delete one if ignoring it would only leave the reader
-less informed. Which pull request found it, who caught it and on what date belong in the
-commit message, where git already keeps them. On 2026-08-17 one test file held 663 lines of
-comment against 670 of code, and half of it was the file narrating its own past.
+**Write a comment for someone who does not know the code ever behaved differently.** A
+comment earns its place by naming a way this code has failed or can fail, together with
+whatever makes that warning believable instead of ignorable: "strip the guard first" gets
+ignored, "strip it, or eight checks pass over an empty list" does not. A comment that only
+records which pull request found something, who caught it, or on what date does not earn its
+place, because git keeps all three. **When it is not clear which of the two a comment is, keep
+it.** Deleting is the direction that loses information, so it carries the burden of proof, and
+the first pass at this rule cut two warnings that a reviewer had to put back.
 
 **Release notes go in the plugin's `CHANGELOG.md`, never in its README.** A README is what
-somebody reads to install and use the plugin. build-loop's had grown to 844 lines of which 456
-were upgrade notes for twelve past versions, so a new reader opened a changelog. guardrails and
-git-hygiene still carry theirs in the README and want the same treatment.
+somebody reads to install and use the plugin, and upgrade notes for versions nobody is running
+push that to the bottom of a long file. build-loop is the worked example. `guardrails` and
+`git-hygiene` still keep theirs in the README and want the same treatment.
 
 **Nothing personal belongs in this repository, because it is public.** That covers the
 maintainer's own vocabulary, worked examples and transcripts. A test fixture is a publishing
