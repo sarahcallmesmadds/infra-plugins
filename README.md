@@ -28,10 +28,10 @@ never arrive and installs fail.
 
 | Plugin | What it does |
 |---|---|
-| [`guardrails`](plugins/guardrails) | Blocks commits to protected branches, asks before irreversible deletes. Flags prompt injection in content the model reads or writes. |
+| [`guardrails`](plugins/guardrails) | Blocks commits to protected branches, asks before irreversible deletes. Flags prompt injection in content the model reads or writes. Enforced automatically in both Claude Code and Codex. |
 | [`git-hygiene`](plugins/git-hygiene) | Separates the old branches that are safe to delete from the ones still holding work that exists nowhere else, and cleans up the safe ones once you approve them. |
 | [`build-loop`](plugins/build-loop) | Keeps everything you build honest. Log what a skill, hook, command or script got wrong, fix it from the queue behind an approval gate, see what else a fix puts at risk, and keep a to-build list that closes itself when the work ships. |
-| [`slop-check`](plugins/slop-check) | Catches the habits that mean nobody edited it, and rewrites an answer that did not land. Checks any draft, document, pull request, chart or spec for the signs it shipped unreviewed, blocks em dashes and choppy sentence runs in the assistant's own writing, and reshapes a confusing answer around what you have to do. |
+| [`slop-check`](plugins/slop-check) | Catches the habits that mean nobody edited it, and rewrites an answer that did not land. Checks any draft, document, pull request, chart or spec for the signs it shipped unreviewed, blocks em dashes and choppy sentence runs in the assistant's own writing in both Claude Code and Codex, and reshapes a confusing answer around what you have to do. |
 | [`session`](plugins/session) | Carries work between sessions, warns about concurrent work, monitors connected tools, and shows cost and context in the Claude Code status line. |
 | [`spend-guardrails`](plugins/spend-guardrails) | Chooses the lowest-cost current Claude or OpenAI model that can reliably do the work and avoids retired models. |
 
@@ -46,9 +46,18 @@ Building or changing a plugin? Follow the authoring checklist in
 Where a plugin can serve both runtimes, it does, from one copy of the logic.
 Where it cannot, the README says so plainly rather than quietly degrading.
 
-The main asymmetry: Codex plugins cannot register hooks, so anything that
-depends on automatic enforcement is Claude Code only. In Codex the same checks
-are available as skills you invoke.
+Hooks run in both. This said the opposite until 2026-08-16, that Codex plugins
+cannot register hooks and so anything depending on automatic enforcement is
+Claude Code only. The inference was that a manifest with no hooks field means a
+host that ignores hooks, which reads the manifest and calls it the host. A probe
+hook added to the Codex-installed copy showed Codex reading each plugin's
+`hooks/hooks.json` and running the commands.
+
+The real asymmetry is what an update does to a session already open. Codex
+replaces the plugin's version folder, so that session loses its hooks until it
+restarts. Claude Code keeps old versions, so that session instead keeps running
+the code it started with. The hooks now say which has happened rather than
+failing with a bare error code.
 
 ## Tests
 
