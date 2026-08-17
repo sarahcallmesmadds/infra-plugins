@@ -237,8 +237,10 @@ Build the candidate entry with:
   called `guardrails/hook-io`.
 
   **`repo` is the field this step used to leave out**, and an ellipsis in the
-  example is what hid it. Following the old wording wrote 118 edges across 41
-  entries that carried no `repo` at all, which is why there is no ellipsis here.
+  example is what hid it. Measured against the live map on 2026-08-17: following
+  the old wording had written 118 edges across 41 of 141 entries with no `repo`
+  at all, every one of them on the hand-written side, which is why there is no
+  ellipsis here.
 - `dependents: []`, recomputed in Step 6
 - `confidence`, default `medium`, `high` on strong signals, `low` when uncertain
 - `last_updated`, current UTC ISO-8601
