@@ -802,6 +802,24 @@ where the hook is reported as having completed and the message goes nowhere. So
 this plugin's `PostToolUse` hooks keep the stderr form, as do the other plugins,
 and any future conversion measures its own event first.
 
+The sentence Codex is told names no path, and since 0.10.9 that is deliberate.
+The structured output is JSON built by pasting the message into a `printf`
+format, and the shell has no idea it is writing JSON, so anything expanded into
+it can break the syntax. A plugin directory holding a double quote, a backslash,
+a tab or a newline all do, and the result is output Codex cannot read: the hook
+is reported as having completed and the reader is told nothing, which is the
+failure this whole guard exists to end. Escaping it in the shell was the first
+answer and the wrong one, because it needs `sed`, which needs `PATH`, and a
+broken `PATH` is one of the things these hooks have to be able to complain
+about. So the absolute path stays on the stderr line, which is plain text and
+cannot be malformed, and the sentence Codex is told names the same file relative
+to the plugin directory, which is fixed text in the manifest.
+
+The stderr line uses `printf` rather than `echo` for the same reason. `/bin/sh`
+and `/bin/zsh` both interpret a backslash in `echo`'s argument, so a plugin
+directory named `back\nbreak` reached the reader with a real line break in the
+middle of the path, and only the first line of stderr is shown.
+
 ## Licence
 
 MIT. See `LICENSE` at the repository root.

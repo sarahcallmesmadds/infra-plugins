@@ -184,6 +184,32 @@ const UNSET_MESSAGE = 'Plugin hooks are off because this host did not tell the h
 const GONE_MESSAGE ='Plugin hooks are off in this session because a plugin was updated after it started. Restart to switch them back on.';
 const notRunnableMessage = (target) => `Plugin hooks are off because ${target} is not executable. A restart will not help. Restore its execute bit with chmod +x.`;
 
+// The Codex branch below builds JSON by pasting the message into a printf
+// format, and shell has no idea it is writing JSON. So a message carrying a
+// double quote or a backslash produces output Codex cannot parse, and the
+// sentence reaches nobody while the hook reports success: the same silent
+// delivery failure the announcing shape was added to end, arriving through
+// quoting instead of an exit code. Found on 2026-08-17 by running the released
+// guard against a plugin root containing a double quote.
+//
+// Escaping it in shell was the first answer and the wrong one. It needs sed,
+// which means it needs PATH, and a broken PATH is a live case here rather than
+// a hypothetical: bin/hook-node searches six places for node precisely because
+// PATH cannot be trusted. With sed unreachable the escaped message came back
+// empty, which is valid JSON carrying nothing, so the fix would have reproduced
+// the fault it was written to cure.
+//
+// So nothing variable is announced at all. Only the stderr line, which is plain
+// text and cannot be malformed, carries the absolute path. The announced
+// message names the same file relative to the plugin directory, which is fixed
+// text in the manifest. That also closes the cases escaping would have missed:
+// a tab or a newline in the path is a control character JSON forbids raw, and
+// no amount of quote-escaping helps.
+const PLUGIN_ROOT_PREFIX = '${CLAUDE_PLUGIN_ROOT}/';
+const announcedNotRunnable = (target) => (target.startsWith(PLUGIN_ROOT_PREFIX)
+  ? notRunnableMessage(`${target.slice(PLUGIN_ROOT_PREFIX.length)} inside the plugin directory`)
+  : notRunnableMessage(target));
+
 // Codex discards stderr on any non-zero exit, so the guard above is a bare
 // number there and the sentence reaches nobody. Measured on 2026-08-17 by
 // running a Codex turn against a plugin whose launcher had been removed: the
@@ -233,17 +259,22 @@ const CODEX_EXIT = 0;
 // value, measured from a hook's environment on 2026-08-17, and a stray
 // PLUGIN_ROOT from anywhere else will not happen to equal a versioned plugin
 // path. The non-empty test comes first because two unset variables are equal.
+// The second argument is what Codex is told, and it falls back to the first, so
+// the two messages that name no path stay written once.
 function sayFor(event) {
   return 'say(){ if [ -n "${PLUGIN_ROOT}" ] && [ "${PLUGIN_ROOT}" = "${CLAUDE_PLUGIN_ROOT}" ]; then printf '
-    + `'{"hookSpecificOutput":{"hookEventName":"${event}","additionalContext":"%s"}}' "$1"; `
-    + `exit ${CODEX_EXIT}; fi; echo "$1" >&2; exit ${GUARD_EXIT}; }; `;
+    + `'{"hookSpecificOutput":{"hookEventName":"${event}","additionalContext":"%s"}}' "\${2:-$1}"; `
+    + `exit ${CODEX_EXIT}; fi; printf '%s\\n' "$1" >&2; exit ${GUARD_EXIT}; }; `;
 }
 
 function clausesFor(target, say) {
-  const fire = (message) => (say ? `say "${message}"` : `{ echo "${message}" >&2; exit ${GUARD_EXIT}; }`);
+  const fire = (message, announced) => {
+    if (!say) return `{ echo "${message}" >&2; exit ${GUARD_EXIT}; }`;
+    return announced && announced !== message ? `say "${message}" "${announced}"` : `say "${message}"`;
+  };
   return `[ -n "\${CLAUDE_PLUGIN_ROOT}" ] || ${fire(UNSET_MESSAGE)}; `
     + `[ -e "${target}" ] || ${fire(GONE_MESSAGE)}; `
-    + `[ -x "${target}" ] || ${fire(notRunnableMessage(target))}; `;
+    + `[ -x "${target}" ] || ${fire(notRunnableMessage(target), announcedNotRunnable(target))}; `;
 }
 
 // event omitted gives the stderr-only shape, which is what the plugins that
@@ -267,11 +298,21 @@ const GUARD_RE = new RegExp(
 // hook whose message is thrown away for a second reason.
 const SAY_GUARD_RE = new RegExp(
   '^say\\(\\)\\{ if \\[ -n "\\$\\{PLUGIN_ROOT\\}" \\] && \\[ "\\$\\{PLUGIN_ROOT\\}" = "\\$\\{CLAUDE_PLUGIN_ROOT\\}" \\]; then printf '
-  + '\'\\{"hookSpecificOutput":\\{"hookEventName":"(\\w+)","additionalContext":"%s"\\}\\}\' "\\$1"; '
-  + 'exit (\\d+); fi; echo "\\$1" >&2; exit (\\d+); \\}; '
+  + '\'\\{"hookSpecificOutput":\\{"hookEventName":"(\\w+)","additionalContext":"%s"\\}\\}\' "\\$\\{2:-\\$1\\}"; '
+  // printf rather than echo, because /bin/sh and /bin/zsh both interpret a
+  // backslash in echo's argument, so a plugin root holding one had its path
+  // silently mangled on the stderr line too. Measured on 2026-08-17: a root
+  // named `with\backslash` reached the reader as `withackslash`, the \b eaten as
+  // a backspace. printf with a fixed format cannot do that, and it also stops a
+  // message beginning with a dash being read as an option.
+  + 'exit (\\d+); fi; printf \'%s\\\\n\' "\\$1" >&2; exit (\\d+); \\}; '
   + '\\[ -n "\\$\\{CLAUDE_PLUGIN_ROOT\\}" \\] \\|\\| say "([^"]*)"; '
   + '\\[ -e "([^"]+)" \\] \\|\\| say "([^"]*)"; '
-  + '\\[ -x "([^"]+)" \\] \\|\\| say "([^"]*)"; ',
+  // Two arguments on this clause alone: the first names the absolute path and
+  // goes to stderr, the second is what Codex is told and names no path. Both are
+  // captured, because a guard that announced the path-carrying one would parse
+  // here and break only on the plugin roots nobody tests with.
+  + '\\[ -x "([^"]+)" \\] \\|\\| say "([^"]*)" "([^"]*)"; ',
 );
 
 // One reading for either shape, so every check below asks the same questions of
@@ -279,10 +320,11 @@ const SAY_GUARD_RE = new RegExp(
 function matchGuard(command) {
   const say = SAY_GUARD_RE.exec(command);
   if (say) {
-    const [matched, event, codexExit, exitCode, unset, gonePath, gone, execPath, notRunnable] = say;
+    const [matched, event, codexExit, exitCode, unset, gonePath, gone, execPath, notRunnable, execAnnounced] = say;
     return {
       matched, event, codexExit: Number(codexExit), announces: true,
       unsetMessage: unset, goneMessage: gone, execMessage: notRunnable,
+      execAnnounced,
       gonePath, execPath,
       unsetCode: Number(exitCode), goneCode: Number(exitCode), execCode: Number(exitCode),
     };
@@ -293,6 +335,7 @@ function matchGuard(command) {
   return {
     matched, event: null, codexExit: null, announces: false,
     unsetMessage: unset, goneMessage: gone, execMessage: notRunnable,
+    execAnnounced: null,
     gonePath, execPath,
     unsetCode: Number(unsetCode), goneCode: Number(goneCode), execCode: Number(execCode),
   };
@@ -672,6 +715,31 @@ check('every hook command guards the file it is about to run', () => {
       if (guard.codexExit !== CODEX_EXIT) {
         wrong.push(`${where}: the Codex branch exits ${guard.codexExit}, and Codex reads any non-zero exit as a failure and drops what the hook said`);
       }
+
+      // Nothing the shell expands may reach the announced message, because the
+      // JSON around it is built by pasting rather than by anything that knows
+      // it is writing JSON. A plugin root holding a double quote, a backslash,
+      // a tab or a newline would produce output Codex cannot parse, and the
+      // hook would report success with its sentence lost. Asserted on the shape
+      // rather than on the four characters, so a fifth one nobody thought of is
+      // covered too.
+      for (const [which, announced] of [
+        ['unset', guard.unsetMessage],
+        ['gone', guard.goneMessage],
+        ['not-runnable', guard.execAnnounced],
+      ]) {
+        if (/[$`]/.test(announced)) {
+          wrong.push(`${where}: the ${which} message announced to Codex is ${JSON.stringify(announced)}, which the shell `
+            + 'expands. An expansion holding a quote, a backslash or a control character makes the JSON unparseable, '
+            + 'and Codex then reports the hook Completed with nothing delivered. Announce fixed text and keep the '
+            + 'absolute path on the stderr line');
+        }
+      }
+
+      if (guard.execAnnounced !== announcedNotRunnable(guard.execPath)) {
+        wrong.push(`${where}: the not-runnable message announced to Codex is ${JSON.stringify(guard.execAnnounced)}, `
+          + `rather than ${JSON.stringify(announcedNotRunnable(guard.execPath))}`);
+      }
     }
 
     if (unsetMessage !== UNSET_MESSAGE) wrong.push(`${where}: the unset message is ${JSON.stringify(unsetMessage)}`);
@@ -942,6 +1010,56 @@ check('the guard actually fires, and only when it should', () => {
       `${shell}: the announcement names ${announced.hookSpecificOutput.hookEventName}, and Codex rejects output whose event is not the one that fired`);
     assert.strictEqual(announced.hookSpecificOutput.additionalContext, GONE_MESSAGE,
       `${shell}: the announcement carried ${JSON.stringify(announced.hookSpecificOutput.additionalContext)} rather than the sentence`);
+
+    // A plugin root the shell is happy with and JSON is not. Every character
+    // here is legal in a POSIX path, and each one breaks the announcement in a
+    // different way: the quote closes the string early, the backslash starts an
+    // escape, and the tab is a control character JSON forbids raw. Run rather
+    // than reasoned about, because the released 0.10.8 passed every other
+    // assertion in this suite while producing output Codex could not parse.
+    //
+    // The launcher is present and not executable, since that is the one clause
+    // whose message named the path.
+    // `back\nbreak` rather than `back\slash`, and the difference is the whole
+    // value of the case. Both hold a backslash, but only the first is a
+    // sequence echo interprets, and /bin/sh and /bin/zsh both do interpret it
+    // while /bin/bash does not. The first version of this loop used
+    // `back\slash`, where \s is no escape, so putting echo back on the stderr
+    // line left all 17 checks green: a test written for a bug it could not see.
+    for (const awkward of ['quote"root', 'back\\nbreak', 'tab\there']) {
+      const odd = fs.mkdtempSync(path.join(os.tmpdir(), 'odd-plugin-'));
+      const oddRoot = path.join(odd, awkward);
+      fs.mkdirSync(path.join(oddRoot, 'bin'), { recursive: true });
+      const oddLauncher = path.join(oddRoot, 'bin', 'hook-node');
+      fs.writeFileSync(oddLauncher, '#!/bin/sh\n');
+      fs.chmodSync(oddLauncher, 0o644);
+      try {
+        const oddCodex = sayRun({ ...process.env, CLAUDE_PLUGIN_ROOT: oddRoot, PLUGIN_ROOT: oddRoot });
+        assert.strictEqual(oddCodex.code, CODEX_EXIT,
+          `${shell}: with ${JSON.stringify(awkward)} in the plugin root the guard exited ${oddCodex.code}, and Codex drops what a hook said on any non-zero exit`);
+
+        let oddAnnounced;
+        try {
+          oddAnnounced = JSON.parse(oddCodex.out);
+        } catch (error) {
+          throw new Error(`${shell}: with ${JSON.stringify(awkward)} in the plugin root the guard wrote `
+            + `${JSON.stringify(oddCodex.out)}, which Codex cannot parse, so it reports the hook Completed and the `
+            + `reader is told nothing: ${error.message}`);
+        }
+        assert.strictEqual(oddAnnounced.hookSpecificOutput.additionalContext, announcedNotRunnable('${CLAUDE_PLUGIN_ROOT}/bin/hook-node'),
+          `${shell}: with ${JSON.stringify(awkward)} in the plugin root the announcement carried `
+          + `${JSON.stringify(oddAnnounced.hookSpecificOutput.additionalContext)}`);
+
+        // The stderr line still names the absolute path, which is the whole
+        // reason the announced message is allowed to drop it.
+        const oddStderr = sayRun({ ...withoutCodex, CLAUDE_PLUGIN_ROOT: oddRoot });
+        assert.strictEqual(oddStderr.err.trim(), notRunnableMessage(oddLauncher),
+          `${shell}: with ${JSON.stringify(awkward)} in the plugin root the stderr line was ${JSON.stringify(oddStderr.err)}, `
+          + 'so Claude Code lost the path as well and nobody can act on it');
+      } finally {
+        fs.rmSync(odd, { recursive: true, force: true });
+      }
+    }
 
     // The unset state against the announcing shape, which the legacy probe
     // covers and this one did not until a review of #129 said so.
