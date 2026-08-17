@@ -677,17 +677,24 @@ check('the new-items bucket defaults to adding nothing', () => {
   const missing = claims.filter(([, re]) => !re.test(instruction));
   const elsewhere = missing.filter(([, re]) => re.test(skill)).map(([name]) => name);
   const gone = missing.filter(([, re]) => !re.test(skill)).map(([name]) => name);
+  const sentence = (s) => s.charAt(0).toUpperCase() + s.slice(1);
   const diagnosis = [
     gone.length
       ? `${gone.join(' and ')} ${gone.length > 1 ? 'no longer appear' : 'no longer appears'} `
         + 'in this form anywhere in audit-deps'
       : '',
+    // Two causes, and this cannot tell them apart, so it names both rather than
+    // picking. What it knows is where the phrase is not: the paragraph read
+    // stopped before it, which happens when a blank line splits the paragraph and
+    // equally when the phrase is moved somewhere else in the file. Asserting the
+    // split is a cause inferred from evidence that does not reach it, which is
+    // the fault this whole check exists to make hard to commit.
     elsewhere.length
       ? `${elsewhere.join(' and ')} ${elsewhere.length > 1 ? 'are' : 'is'} still in the file but `
-        + 'outside the paragraph that was read, so a blank line has split that paragraph and only '
-        + 'the part above it was checked'
+        + 'outside the paragraph that was read. Either a blank line has split that paragraph and '
+        + 'only the part above it was checked, or the phrase has moved out of it'
       : '',
-  ].filter(Boolean).join('. ');
+  ].filter(Boolean).map(sentence).join('. ');
   assert.strictEqual(
     instruction,
     'For missing entries, take the list whole or in part. `all` adds every one, '
