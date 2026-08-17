@@ -633,18 +633,44 @@ check('the new-items bucket defaults to adding nothing', () => {
   // the opposite. Nothing plants a decoy by accident, but an unrelated section
   // quoting the draft would do it without meaning to, and either way the check
   // would be reading a passage nobody runs on.
+  const PROMPT_LINE = 'so say which ones you want. all / none / name them. Default: none.';
   const prompts = skill.match(/^\s*so say which ones you want\..*$/gm) || [];
+  // Zero matches has two causes and a line matcher cannot tell them apart. A wrap
+  // that splits the opening phrase itself leaves nothing to find, and calling
+  // that gone sends the reader looking for a deleted line that is on screen in
+  // front of them. Flattening the whole file settles the one case worth naming:
+  // the exact sentence surviving there means the line is present and broken
+  // across lines, wherever the break falls.
+  //
+  // Only the whole sentence is used for that, never a shorter opening. Flattening
+  // joins every line to the one after it, so it invents adjacencies that exist
+  // nowhere in the file: a different passage in this same skill wraps as "so say"
+  // then "which ones you want. Nothing was stamped as reviewed", which flattens
+  // into the exact opening phrase of the line being looked for. A short anchor
+  // reports a deleted line as merely wrapped, using evidence assembled out of two
+  // unrelated sentences.
+  //
+  // So when the full sentence is absent, both causes stay on the table and the
+  // message says so rather than choosing.
+  const flatSkill = flat(skill);
   assert.strictEqual(
     prompts.length, 1,
     prompts.length === 0
-      ? 'the missing-entries prompt line is gone from the Step 5 draft'
+      ? flatSkill.includes(PROMPT_LINE)
+        ? 'the missing-entries prompt line is wrapped across more than one line. '
+          + 'It still reads correctly once the wrap is ignored, and it is still '
+          + 'wrong: it sits in a fenced draft, so the break is what the user is '
+          + 'shown. Put it back on one line'
+        : 'no single line in the Step 5 draft starts "so say which ones you want.". '
+          + 'Either the line is gone, or it has been wrapped across lines and '
+          + 'reworded as well, and this cannot tell which from here'
       : `${prompts.length} lines in audit-deps start "so say which ones you want.". `
         + 'This check cannot tell which one Step 5 shows the user, so it is not '
         + 'checking anything until there is one'
   );
   assert.strictEqual(
     flat(prompts[0]),
-    'so say which ones you want. all / none / name them. Default: none.',
+    PROMPT_LINE,
     'the line the user answers no longer says what it said. Spacing within the '
     + 'line is already ignored, but this line is matched as one line and lives '
     + 'inside a fenced draft, so wrapping it across two is a change to what the '
