@@ -381,6 +381,49 @@ check('a hard-wrapped plan showing a code sample is still a document',
 check('...and is still asked who owns it',
   checkSpec(WRAPPED_WITH_CODE).some((f) => f.name === 'no-owner-and-no-date'), true);
 
+// Devin round 5. The measure that fixed the string table broke markdown, because
+// `*` opens a JSDoc continuation line and also every markdown bullet and every
+// `**Bold.**` paragraph. The same plan, changing only the bullet character, went
+// from a document to source and lost both checks. Written as one fixture rendered
+// three ways so that nothing but the bullet differs between the rows.
+console.log('\na plan is a plan whichever bullet it is written with');
+// No cut-line word anywhere in this fixture, deliberately. The first draft said
+// "the smallest one first", which is one, so the cut-line row stayed quiet for
+// every bullet style and would have passed as evidence about bullets.
+const PLAN_BODY = 'We will build the reconciliation in three passes. The plan is to run it\n'
+  + 'region by region, and the deliverable is a report naming each disagreement.\n\n'
+  + '```js\nfunction reconcile(index, disk) { return index.filter((e) => !disk.has(e)); }\n```\n\n';
+const planWith = (lead) => PLAN_BODY + Array.from({ length: 14 },
+  (_, i) => `${lead} Step ${i + 1}: we should check the entry and implement the comparison.`).join('\n');
+const DASH_PLAN = planWith('-');
+const STAR_PLAN = planWith('*');
+const BOLD_PLAN = PLAN_BODY + Array.from({ length: 14 },
+  (_, i) => `**Point ${i + 1}.** We should check the entry and implement the comparison here.`).join('\n');
+
+check('the bullet fixtures clear the length gate',
+  Math.min(DASH_PLAN.length, STAR_PLAN.length, BOLD_PLAN.length) > 800, true);
+check('the dash-bullet plan is a document, as it always was',
+  codeShare(DASH_PLAN) < 0.30, true);
+check('the star-bullet plan is a document too',
+  codeShare(STAR_PLAN) < 0.30, true);
+check('...and so is the one whose paragraphs open in bold',
+  codeShare(BOLD_PLAN) < 0.30, true);
+check('the star-bullet plan is still asked who owns it',
+  checkSpec(STAR_PLAN).some((f) => f.name === 'no-owner-and-no-date'), true);
+check('...and the bold-led one is too',
+  checkSpec(BOLD_PLAN).some((f) => f.name === 'no-owner-and-no-date'), true);
+check('the star-bullet plan is still asked what it is not doing',
+  checkOverplanned(STAR_PLAN).some((f) => f.name === 'never-says-what-it-is-not-doing'), true);
+// The direction the fix could have broken. Dropping the continuation line takes
+// characters off every source file carrying a block comment, so the file with the
+// most of them has to be checked, not assumed. This one passes either way and is
+// here to fail if a later change to the measure leans on `*` again.
+check('a source file behind a block comment is still source',
+  codeShare('/**\n * Reconcile the index against disk.\n * @param {object[]} index\n'
+    + ' * @param {Set<string>} disk\n * @returns {object[]}\n */\n'
+    + 'function reconcile(index, disk) {\n  return index.filter((e) => !disk.has(e.path));\n}\n'
+    + 'module.exports = { reconcile };\n') > 0.30, true);
+
 // The numbers written into the threshold comments, recomputed here. Two review
 // rounds each caught a figure in a comment that no longer matched the fixture it
 // came from, so the figures are asserted rather than noted.

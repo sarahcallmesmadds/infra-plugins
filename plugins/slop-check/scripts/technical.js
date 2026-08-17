@@ -367,14 +367,34 @@ function leanedOn(text, pattern) {
 // the line also holds a quote or a closing bracket: that is a string-table row,
 // and it is not a wrapped sentence.
 //
-// Measured over this repository's own files. Documents that get as far as
-// `looksLikeCode` reach 6.5 per cent, and the lowest source file is the slop-check
-// suite at 91.5 per cent. Thirty sits in the middle of that gap rather than in the
-// thirteen-point one the previous version had. Both bounds are asserted in
-// tests/slop-check.test.js against real files here.
+// Measured over this repository's own files, every `.js` and `.md` over 400
+// characters. Documents that get as far as `looksLikeCode` reach 14.2 per cent,
+// and the lowest source file is plugins/guardrails/hooks/resource-owner-guard.js
+// at 69.8 per cent.
+//
+// The figures this replaces were 6.5 and 91.5, and both were wrong when written.
+// Re-measuring on the commit that stated them gives 29.2 and 69.8, so the real
+// margin was 40 points where the comment claimed 85, and one document in this
+// repository sat 0.8 points under the threshold rather than 23.5 clear of it.
+// That is the third figure in a comment in this pull request to have drifted from
+// what the code did, and the third by the same route: measured once, then quoted
+// after the thing it measured changed.
+//
+// What is asserted rather than stated: tests/slop-check.test.js pins this file
+// and the slop-check suite above the threshold, and the wrapped-plan and
+// bullet-style fixtures below it. The repository-wide extremes above are not
+// pinned, so treat them as of this commit rather than as a standing guarantee.
 const CODE_ENDING = /[;{}[\]()]$/;
 const LIST_ROW = /["'`\])}][^"'`]*,$/;
-const COMMENT_LINE = /^\s*(\/\/|\*|\/\*)/;
+// No bare `*`. It was here for the continuation line of a `/* */` block, and it
+// is also the markdown bullet and the opener of `**Bold.**`, both of which start
+// a line far more often than a JSDoc body does. Counting them read a plan written
+// with `* ` bullets as source at 78 per cent against 6 for the same plan written
+// with `- `, so it got neither document check while its prose was reported
+// over-commented. A comment opener still counts; its continuation lines do not,
+// and they do not need to, because the declarations and braces around any real
+// block comment already carry the file well past the threshold.
+const COMMENT_LINE = /^\s*(\/\/|\/\*)/;
 
 function codeShare(text) {
   const lines = text.split('\n').filter((line) => line.trim());
