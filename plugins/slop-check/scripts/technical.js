@@ -230,6 +230,34 @@ function checkOverbuilt(text) {
   return found;
 }
 
+// --- is this text a plan at all -------------------------------------------
+//
+// Two checks below are absence checks: nothing says who owns this, and nothing
+// says what is being left out. An absence only means something where the thing
+// was expected, and neither is expected in ordinary writing. A blog post, a
+// newsletter and a LinkedIn draft are all long, all unowned and all proposing
+// nothing, and both checks fired on all of them.
+//
+// Counted distinctly in both cases, because the failure was a single common word
+// standing in for a whole genre. "build" appears in any writing about making
+// something, and "scope" and "timeline" are ordinary English on their own.
+
+const PROPOSAL_MARKERS = /\b(we (?:will|should|could)|the plan|approach|proposal|implement|build|deliverable)\b/gi;
+
+const PLANNING_TERMS = /\b(scopes?|out of scope|requirements?|deliverables?|milestones?|acceptance criteria|success criteria|timelines?|stakeholders?|sign-?off|roadmaps?|sprints?|backlog|key results?|rollout plan|migration plan|project plan|objectives?)\b/gi;
+
+function distinct(text, pattern) {
+  return new Set((text.match(pattern) || []).map((m) => m.toLowerCase())).size;
+}
+
+// A document proposing work, or a document laying out a plan. Either is the kind
+// of thing that should say who owns it. Planning vocabulary alone would not do:
+// a proposal can be written entirely in the language of doing the work, and the
+// fixture for the check below is exactly that.
+function readsAsAPlan(text) {
+  return distinct(text, PROPOSAL_MARKERS) >= 2 || distinct(text, PLANNING_TERMS) >= 2;
+}
+
 // The same failure in a plan rather than in code: a build heavier than the
 // thing being built.
 function checkOverplanned(text) {
@@ -266,9 +294,16 @@ function checkOverplanned(text) {
   // The single most useful question of a proposal: what is it NOT doing.
   // Work that names no cut line has not been thought about, it has been
   // enumerated. A first version is defined by what it leaves out.
-  const proposes = /\b(we (?:will|should|could)|the plan|approach|proposal|implement|build|deliverable)\b/i.test(text);
+  //
+  // Two distinct markers, not one. A single one of these words is not a
+  // proposal, and the commonest of them is "build". Any writing longer than 700
+  // characters that mentioned building something once matched, so this fired on
+  // a LinkedIn draft whose only qualifying word was "build", in the phrase "what
+  // I am going to build next", and told its writer their post had never declared
+  // a cut line. A document actually proposing something reaches two easily: the
+  // fixture for this row holds four.
   const namesACut = /\b(out of scope|not (?:doing|building|in scope)|v2|version 2|later|deferred|explicitly excluded|won'?t (?:do|build|include)|minimum|smallest|first (?:cut|version|pass)|mvp)\b/i.test(text);
-  if (proposes && !namesACut && text.length > 700) {
+  if (distinct(text, PROPOSAL_MARKERS) >= 2 && !namesACut && text.length > 700) {
     found.push(tag({ name: 'never-says-what-it-is-not-doing' }));
   }
 
@@ -394,12 +429,14 @@ function checkSpec(text) {
 
   // Nobody's name on it, and no date. Unowned work is unreviewed work.
   //
-  // Documents only. Every group runs on every input now, and source files
-  // never carry an owner field, so without this guard it fired on all of them
-  // and said nothing.
+  // Documents only, and plans among those. Every group runs on every input now,
+  // so without the code guard this fired on every source file, and without the
+  // plan guard it fired on every piece of long prose that was never a document
+  // in the first place. Both exclusions are for the same reason: the field it
+  // reports missing was never going to be present.
   const hasOwner = /\b(owner|dri|accountable|assigned to|author|lead)\b\s*[:\-]/i.test(text);
   const hasDate = /\b(20\d\d-\d\d-\d\d|\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+\d{1,2})/i.test(text);
-  if (text.length > 800 && !hasOwner && !hasDate && !looksLikeCode(text)) {
+  if (text.length > 800 && !hasOwner && !hasDate && !looksLikeCode(text) && readsAsAPlan(text)) {
     found.push({ name: 'no-owner-and-no-date' });
   }
 

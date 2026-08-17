@@ -110,6 +110,73 @@ check('handing back the reader their own context is caught',
   checkOverplanned('As you mentioned, this is manual. To recap, it is slow.')
     .some((f) => f.name === 'restates-what-you-already-said'), true);
 
+// The document checks used to fire on writing that was never a document.
+//
+// Both of these are absence checks, and an absence is only a finding where the
+// thing was expected. One qualifying word was enough to make ordinary prose
+// count as a proposal, and "build" is the commonest word in writing about making
+// anything. A post ran through the skill came back reporting that it named no
+// owner and declared no cut line, neither of which a post has.
+//
+// The positive rows below matter more than the negative ones here. A guard added
+// to stop a false positive is one edit away from silencing the real finding, and
+// the shape it protects, a plan written entirely in the language of doing the
+// work rather than in planning vocabulary, is the one a vocabulary test misses.
+console.log('\ndocument checks stay off writing that is not a document');
+const POST = 'Six months ago I stopped writing my own status updates by hand. Not because '
+  + 'I got lazy, but because every update I wrote was answering a question nobody had '
+  + 'asked. I would spend forty minutes explaining what I had done, and the person '
+  + 'reading it wanted one thing, which was to know whether they had to do anything. '
+  + 'So I changed the shape of them. Each one now opens with the action, or with a '
+  + 'plain sentence saying no action is needed, and the explanation goes underneath '
+  + 'where the people who want it can find it. Replies went up rather than down, '
+  + 'which surprised me. What I am going to build next is a small template for it, '
+  + 'because I keep rewriting the same shape by hand every week. The part I did not '
+  + 'expect was how much easier the writing got once the first line had to carry the '
+  + 'whole point, since there is nowhere to hide a sentence you have not thought '
+  + 'through. If you write these for a living, take the last one you sent and move '
+  + 'the ask to the top, then read both versions out loud and listen to which one '
+  + 'sounds like it was written by somebody who knew what they wanted.';
+check('a post is longer than the threshold',
+  POST.length > 800, true);
+check('a post is not reported as an unowned document',
+  checkSpec(POST).some((f) => f.name === 'no-owner-and-no-date'), false);
+check('a post is not reported as a proposal with no cut line',
+  checkOverplanned(POST).some((f) => f.name === 'never-says-what-it-is-not-doing'), false);
+// Parenthesised on purpose. Written without the brackets, `.repeat` binds to the
+// second literal alone, and the result lands at 468 characters, under the 700 the
+// check requires. The row then passed against the code it was written to catch,
+// and passed for a reason that had nothing to do with the fix.
+const ONE_MARKER = ('I want to build something better than the thing we have now, and I '
+  + 'keep coming back to why that turns out to be harder than it sounds. ').repeat(6);
+check('the one-marker fixture is past the length threshold',
+  ONE_MARKER.length > 700, true);
+check('one mention of building something is not a proposal',
+  checkOverplanned(ONE_MARKER).some((f) => f.name === 'never-says-what-it-is-not-doing'), false);
+
+const PLAN = '# Migration to the new billing service\n\n'
+  + 'Scope covers the subscription records, the invoice generator and the dunning '
+  + 'emails. Requirements are that no customer sees a gap in service and that every '
+  + 'historical invoice stays retrievable at the address it already has. The timeline '
+  + 'runs across three regions, each getting a week of dual running before the old '
+  + 'path is switched off. Stakeholders in support get a briefing the week before '
+  + 'their own region moves. Success criteria are that the error rate stays where it '
+  + 'is today and that support volume does not rise above its current weekly mean. '
+  + 'The reconciliation report runs nightly against both systems and lists every '
+  + 'account whose totals disagree, and that report is what tells us whether a region '
+  + 'is safe to cut over, so it lands before the first region moves rather than after '
+  + 'it. Anything touching tax calculation is held back until the three regions are '
+  + 'through, because the rules differ per region and getting one wrong is a refund '
+  + 'and an apology rather than a retry.';
+check('a plan document is still asked who owns it',
+  checkSpec(PLAN).some((f) => f.name === 'no-owner-and-no-date'), true);
+check('a proposal written without planning vocabulary is still asked too',
+  checkSpec('We will build the thing. The plan is to implement it across the team. '.repeat(12))
+    .some((f) => f.name === 'no-owner-and-no-date'), true);
+check('a document that names its owner is not asked twice',
+  checkSpec(`Owner: the billing team\n\n${PLAN}`)
+    .some((f) => f.name === 'no-owner-and-no-date'), false);
+
 console.log('\nthe two readings are separate');
 {
   // Two signals is "somewhat heavier", not a verdict. Three stacks into one.
@@ -612,6 +679,39 @@ check('a real hard rule still reads BROKEN',
 // author genuinely is the person whose rules these are.
 check('--hard-only still reports the house rule',
   runCli(['--hard-only'], BANNED).includes('phrases ruled out for this author'), true);
+
+// SKILL.md: "By default it runs both halves. Whichever half does not apply
+// reports nothing, which is why one command handles a LinkedIn draft and a pull
+// request equally." That was a promise the code did not keep. The technical half
+// printed unconditionally, so a post came back with a heading calling it a spec,
+// a verdict on whether it had been reviewed and a closing explanation of what
+// the check does not claim.
+//
+// Silence here is conditional on there being no findings, never on the guessed
+// kind. `checkTechnical` runs every group over every input on purpose, and the
+// comment in it records what happened the last time a kind decided what ran.
+console.log('\nthe half that does not apply prints nothing');
+{
+  const postReport = runCli([], POST);
+  check('a post gets no technical block',
+    postReport.includes('Technical check'), false);
+  check('and no separator rule above the one it would have had',
+    postReport.includes('-'.repeat(60)), false);
+  check('the prose half is still reported in full',
+    postReport.includes('Little sign of machine-writing habits'), true);
+
+  const planReport = runCli([], PLAN);
+  check('a document with real findings still gets its technical block',
+    planReport.includes('Technical check'), true);
+  check('and the finding itself is still named',
+    planReport.includes('no-owner-and-no-date'), true);
+
+  // Asking for a half and getting silence is its own failure. The caller asked.
+  check('an explicit --technical prints even with nothing to say',
+    runCli(['--technical'], POST).includes('Technical check'), true);
+  check('...and says so rather than printing an empty heading',
+    runCli(['--technical'], POST).includes('Nothing else worth flagging'), true);
+}
 
 console.log(`\n${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);
