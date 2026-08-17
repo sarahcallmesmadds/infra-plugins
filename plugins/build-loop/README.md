@@ -785,6 +785,18 @@ old versions, so that session instead carries on running the code it started
 with, which is the same fact failing in the other direction. Since 0.10.7 the
 hooks say which has happened rather than failing with a bare error code.
 
+The two hosts need that sentence delivered differently, which is why since
+0.10.8 each hook checks which one it is in. Claude Code shows the first line a
+hook writes to stderr when it exits non-zero, so that is what it gets. Codex
+discards stderr on any non-zero exit and shows a bare number instead, so there
+it gets the one route Codex does surface: a zero exit carrying the sentence as
+structured output, which Codex renders and passes to the model. The two are
+told apart by `PLUGIN_ROOT` and `CLAUDE_PLUGIN_ROOT` both being set and
+agreeing. Codex sets the pair to the same value and Claude Code sets only the
+prefixed one. Both are required because `PLUGIN_ROOT` carries no vendor prefix,
+so on its own a shell profile exporting that name would put a Claude Code hook
+on the Codex branch and lose the sentence.
+
 ## Licence
 
 MIT. See `LICENSE` at the repository root.
