@@ -298,7 +298,7 @@ After applying the approved additions/removals/changes:
 
    It would also have taken 3 more that are not one-sided at all, being explained by a transitive chain. Those are the rows the definition in Step 3 now excludes. The live map has none of either shape as of 2026-08-15, which is the state this step is meant to keep it in rather than evidence the step is no longer needed.
 
-   A one-sided edge is usually a **missing `depends_on`, not a stale dependent.** `run-all` lists every test as a dependent while its own `depends_on` is empty, and the relationship is real either way. Deleting the only record of it is the one option that loses information.
+   A one-sided edge is usually a **missing `depends_on`, not a stale dependent.** The case that established this was `run-all`, which on 2026-08-11 listed every test suite under `dependents` while its own `depends_on` sat empty. The relationship was real whichever side recorded it, and it was later made whole by adding the missing forward edges rather than by deleting the rows. As of 2026-08-16 it carries both directions, so do not go looking for it in the state described here. Deleting the only record of a relationship is the one option that loses information.
 
    **Do not ask here.** The ONE-SIDED bucket was worked out in Step 3 and put to the user in Step 5, along with everything else they approved. Apply the answer they already gave:
 
