@@ -791,8 +791,11 @@ hook writes to stderr when it exits non-zero, so that is what it gets. Codex
 discards stderr on any non-zero exit and shows a bare number instead, so there
 it gets the one route Codex does surface: a zero exit carrying the sentence as
 structured output, which Codex renders and passes to the model. The two are
-told apart by `PLUGIN_ROOT`, which Codex sets alongside the `CLAUDE_`-prefixed
-aliases and Claude Code does not set at all.
+told apart by `PLUGIN_ROOT` and `CLAUDE_PLUGIN_ROOT` both being set and
+agreeing. Codex sets the pair to the same value and Claude Code sets only the
+prefixed one. Both are required because `PLUGIN_ROOT` carries no vendor prefix,
+so on its own a shell profile exporting that name would put a Claude Code hook
+on the Codex branch and lose the sentence.
 
 ## Licence
 

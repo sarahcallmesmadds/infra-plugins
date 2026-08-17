@@ -201,8 +201,20 @@ const notRunnableMessage = (target) => `Plugin hooks are off because ${target} i
 // carrying either is a guarded hook. A hook carrying neither is not.
 const CODEX_EXIT = 0;
 
+// PLUGIN_ROOT alone is not enough to identify the host. It carries no vendor
+// prefix, so a shell profile that exports it, or any other tool that calls its
+// own install directory that, would put a Claude Code hook on the Codex branch,
+// where it exits 0 and writes to stdout. PostToolUse sends that to the debug
+// log, so the sentence would reach nobody: the exact regression the exit-code
+// reasoning above exists to prevent, arriving through a variable name instead
+// of a number.
+//
+// So both names have to be present and agree. Codex sets them to the identical
+// value, measured from a hook's environment on 2026-08-17, and a stray
+// PLUGIN_ROOT from anywhere else will not happen to equal a versioned plugin
+// path. The non-empty test comes first because two unset variables are equal.
 function sayFor(event) {
-  return 'say(){ if [ -n "${PLUGIN_ROOT}" ]; then printf '
+  return 'say(){ if [ -n "${PLUGIN_ROOT}" ] && [ "${PLUGIN_ROOT}" = "${CLAUDE_PLUGIN_ROOT}" ]; then printf '
     + `'{"hookSpecificOutput":{"hookEventName":"${event}","additionalContext":"%s"}}' "$1"; `
     + `exit ${CODEX_EXIT}; fi; echo "$1" >&2; exit ${GUARD_EXIT}; }; `;
 }
@@ -234,7 +246,7 @@ const GUARD_RE = new RegExp(
 // instead of silently accepted. Codex validates that name, so a wrong one is a
 // hook whose message is thrown away for a second reason.
 const SAY_GUARD_RE = new RegExp(
-  '^say\\(\\)\\{ if \\[ -n "\\$\\{PLUGIN_ROOT\\}" \\]; then printf '
+  '^say\\(\\)\\{ if \\[ -n "\\$\\{PLUGIN_ROOT\\}" \\] && \\[ "\\$\\{PLUGIN_ROOT\\}" = "\\$\\{CLAUDE_PLUGIN_ROOT\\}" \\]; then printf '
   + '\'\\{"hookSpecificOutput":\\{"hookEventName":"(\\w+)","additionalContext":"%s"\\}\\}\' "\\$1"; '
   + 'exit (\\d+); fi; echo "\\$1" >&2; exit (\\d+); \\}; '
   + '\\[ -n "\\$\\{CLAUDE_PLUGIN_ROOT\\}" \\] \\|\\| say "([^"]*)"; '
@@ -862,6 +874,17 @@ check('the guard actually fires, and only when it should', () => {
       `${shell}: off Codex the announcing guard said ${JSON.stringify(elsewhere.err)} on stderr`);
     assert.strictEqual(elsewhere.out, '',
       `${shell}: off Codex the announcing guard wrote ${JSON.stringify(elsewhere.out)} to stdout, where the message is fed to the model instead of shown`);
+
+    // A PLUGIN_ROOT that came from somewhere other than Codex. This is the
+    // collision the two-name test exists to close, and with the old one-name
+    // test it took the Codex branch and lost the line entirely.
+    const collided = sayRun({ ...withoutCodex, PLUGIN_ROOT: '/opt/some-other-tool' });
+    assert.strictEqual(collided.code, GUARD_EXIT,
+      `${shell}: a PLUGIN_ROOT that disagrees with CLAUDE_PLUGIN_ROOT was read as Codex, and exiting ${collided.code} sends the sentence to the debug log`);
+    assert.strictEqual(collided.err.trim(), GONE_MESSAGE,
+      `${shell}: with an unrelated PLUGIN_ROOT the guard said ${JSON.stringify(collided.err)} on stderr`);
+    assert.strictEqual(collided.out, '',
+      `${shell}: with an unrelated PLUGIN_ROOT the guard wrote ${JSON.stringify(collided.out)} to stdout`);
 
     const inCodex = sayRun({ ...withoutCodex, PLUGIN_ROOT: path.join(os.tmpdir(), 'no-such-plugin-0.0.0') });
     assert.strictEqual(inCodex.code, CODEX_EXIT,
