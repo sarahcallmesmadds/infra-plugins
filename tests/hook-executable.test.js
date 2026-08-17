@@ -155,6 +155,14 @@ function sayFor(event) {
     + `exit ${CODEX_EXIT}; fi; printf '%s\\n' "$1" >&2; exit ${GUARD_EXIT}; }; `;
 }
 
+// The stderr-only branch below still writes `echo`, and knowingly. /bin/sh and
+// /bin/zsh interpret a backslash in its argument, so it mangles a path holding
+// one exactly as the announcing branch did before this change. It is left alone
+// because that shape is carried by this plugin's PostToolUse hooks and by all
+// four other plugins, and a fix for one plugin does not ride along in another's
+// pull request. Nothing here is exercised against an awkward plugin root for the
+// stderr-only shape, so that defect is live and untested rather than covered.
+// Named in review on 2026-08-17 so the printf change is not read as repo-wide.
 function clausesFor(target, say) {
   const fire = (message, announced) => {
     if (!say) return `{ echo "${message}" >&2; exit ${GUARD_EXIT}; }`;
@@ -999,6 +1007,20 @@ check('the three command forms are told apart', () => {
     'a directly-invoked hook does not resolve to itself, so it escapes the shebang checks');
   assert.strictEqual(directly.viaInterpreter, false);
 
+  // Both guard shapes, built by the generator and read back by the recogniser.
+  // Without this the two can drift by one character and nothing notices: a
+  // converted hook stops matching, gets reported as unguarded, and worse, comes
+  // back from parseCommand with executed: null, so every executable and shebang
+  // check downstream goes green over an empty list. That is the failure this
+  // file exists to keep out, and it would arrive through the parser rather than
+  // through a manifest. Raised in review of the tests on 2026-08-17, when the
+  // say shape existed in the generator and no assertion had ever read one.
+  // Both targets, not just the one every manifest happens to use today. A target
+  // outside the plugin directory has no relative form, so the generator writes
+  // one argument to say() instead of two, and a recogniser that insisted on two
+  // read it as no guard at all. That is the drift this loop exists to catch and
+  // it was live in the first version of this change: the case is here because
+  // review found it, not because the earlier loop could have.
   for (const [what, event] of [['announcing', 'PostToolUse'], ['stderr-only', undefined]]) {
     for (const [kind, target] of [
       ['under the plugin directory', '${CLAUDE_PLUGIN_ROOT}/bin/hook-node'],
