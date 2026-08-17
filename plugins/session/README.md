@@ -565,11 +565,25 @@ session, and most are never touched before the conversation goes somewhere else.
 
 ## Codex
 
-The skills work in Codex. The hook does not, because Codex plugin manifests do
-not accept hooks. Hooks are enforcement and skills are advice, so a Codex
-install gets the advice: `/wrap`, `/pickup`, `/status-bar` and `/core-tools` all
-run, and the date line and parallel session warning do not fire on their own.
+The skills and the hooks both work in Codex. `/wrap`, `/pickup`, `/status-bar`
+and `/core-tools` all run, and the date line and parallel session warning fire
+on their own as they do in Claude Code.
+
+**This said the opposite until 2026-08-16.** It claimed the hooks do not run,
+because Codex plugin manifests do not accept hooks, and drew a tidy line from
+there: hooks are enforcement, skills are advice, so Codex gets the advice. The
+line was tidy and false. `.codex-plugin/plugin.json` having no hooks field says
+what the manifest can declare, not what the host reads. Measured with a probe
+hook added to the Codex-installed copy: Codex has its own hooks engine, reads
+each installed plugin's `hooks/hooks.json`, and runs the commands.
+
 Both runtimes share one copy of the logic in `scripts/`.
+
+The real difference is what an update does to a session that is already open.
+Codex replaces the plugin's version folder, so that session is left pointing at
+a folder that has gone and its hooks stop until you restart. Claude Code keeps
+old versions, so the session carries on with the code it started with instead.
+Since 0.8.18 the hooks say which of the two has happened.
 
 ## Install
 
@@ -591,6 +605,21 @@ That list exists because an app launched from the Dock never reads your shell
 profile, so it starts with a bare `PATH` that has none of those directories
 on it. Before 0.8.6 every hook here exited 127 under Codex for that reason,
 and silently, because a failed hook does not interrupt your session.
+
+These hooks run in both Claude Code and Codex.
+
+Updating a plugin while a session is already open stops the hooks a second
+way, unrelated to finding Node. The session is still pointing at the version
+folder it started in, and Codex deletes that folder on update, so every hook in
+that session fails until you restart. Each hook now checks that the file it is
+about to run is still there. If it has gone, it prints one line saying hooks
+are off until you restart, and steps aside. That does not keep the hooks
+working, which nothing in the plugin can do from a folder that has been
+deleted, but it tells you why they stopped instead of leaving you a bare error
+code. If the file is there and has simply lost its execute bit, which a zip
+download or a checkout without file modes can do, it says that instead and
+names the file, because a restart will not fix that one. The line shows up in
+the transcript once per hook per event, and blocks nothing.
 
 If your Node is somewhere else, name it:
 

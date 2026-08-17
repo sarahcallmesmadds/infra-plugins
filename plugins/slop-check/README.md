@@ -1,6 +1,6 @@
 # slop-check
 
-Catch what nobody edited, and rewrite what did not land.
+Catch what nobody edited, and rewrite what did not land, in either host.
 
 The useful question about a piece of work is not whether a machine touched it.
 Almost everything has been touched by one, and no tool can honestly tell you
@@ -208,6 +208,21 @@ That list exists because an app launched from the Dock never reads your shell
 profile, so it starts with a bare `PATH` that has none of those directories
 on it. Before 0.3.2 every hook here exited 127 under Codex for that reason,
 and silently, because a failed hook does not interrupt your session.
+
+These hooks run in both Claude Code and Codex.
+
+Updating a plugin while a session is already open stops the hooks a second
+way, unrelated to finding Node. The session is still pointing at the version
+folder it started in, and Codex deletes that folder on update, so every hook in
+that session fails until you restart. Each hook now checks that the file it is
+about to run is still there. If it has gone, it prints one line saying hooks
+are off until you restart, and steps aside. That does not keep the hooks
+working, which nothing in the plugin can do from a folder that has been
+deleted, but it tells you why they stopped instead of leaving you a bare error
+code. If the file is there and has simply lost its execute bit, which a zip
+download or a checkout without file modes can do, it says that instead and
+names the file, because a restart will not fix that one. The line shows up in
+the transcript once per hook per event, and blocks nothing.
 
 If your Node is somewhere else, name it:
 

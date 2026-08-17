@@ -151,6 +151,21 @@ profile, so it starts with a bare `PATH` that has none of those directories
 on it. Before 0.3.7 every hook here exited 127 under Codex for that reason,
 and silently, because a failed hook does not interrupt your session.
 
+These hooks run in both Claude Code and Codex.
+
+Updating a plugin while a session is already open stops the hooks a second
+way, unrelated to finding Node. The session is still pointing at the version
+folder it started in, and Codex deletes that folder on update, so every hook in
+that session fails until you restart. Each hook now checks that the file it is
+about to run is still there. If it has gone, it prints one line saying hooks
+are off until you restart, and steps aside. That does not keep the hooks
+working, which nothing in the plugin can do from a folder that has been
+deleted, but it tells you why they stopped instead of leaving you a bare error
+code. If the file is there and has simply lost its execute bit, which a zip
+download or a checkout without file modes can do, it says that instead and
+names the file, because a restart will not fix that one. The line shows up in
+the transcript once per hook per event, and blocks nothing.
+
 If your Node is somewhere else, name it:
 
 ```
@@ -274,9 +289,18 @@ identical.
 
 ## Codex
 
-Codex plugins cannot register hooks, so on Codex you get `/stale-branches` and
-not the session notice. The command is the same code either way. Nothing else
-is degraded.
+Both `/stale-branches` and the session notice work in Codex. The command is the
+same code either way.
+
+**This said the session notice does not run there, because Codex plugins cannot
+register hooks.** Corrected 2026-08-16. The manifest having no hooks field says
+what it can declare, not what the host reads, and a probe hook added to the
+Codex-installed copy showed Codex reading `hooks/hooks.json` and running the
+command.
+
+The one thing to know is that Codex replaces a plugin's version folder when it
+updates, so a session already open when that happens loses its hooks until you
+restart. Since 0.3.8 the notice says so instead of failing silently.
 
 ## Licence
 

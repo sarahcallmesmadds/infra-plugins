@@ -1,6 +1,6 @@
 # guardrails
 
-Catch the mistakes that don't undo.
+Catch the mistakes that don't undo, in either host.
 
 Most guidance for AI coding tools assumes an engineer who already knows not to
 commit to main, not to run `rm -rf` outside a build directory, and not to trust
@@ -51,22 +51,38 @@ Edit, NotebookEdit or common shell write into that folder is denied until the
 document has been opened in that session. Nothing is governed by default; you
 add your own.
 
-## Claude Code gets enforcement, Codex gets advice
-
-This is a real limitation and worth knowing before you install.
+## The guards run in both Claude Code and Codex
 
 | | Claude Code | Codex |
 |---|---|---|
-| Automatic prompting and blocking | Yes, via hooks | No |
+| Automatic prompting and blocking | Yes, via hooks | Yes, via hooks |
 | On-demand scanning | Yes | Yes |
 
-Codex plugins cannot register hooks. Its plugin manifest accepts skills, MCP
-servers, and apps, and nothing else. So in Codex the same checks exist as two
-skills you invoke, `injection-scan` and `undo-possible`, rather than as guards
-that fire whether or not the model cooperates.
+**This section said the opposite until 2026-08-16, and the correction is worth
+stating plainly rather than quietly swapping a table cell.** It said Codex
+plugins cannot register hooks, so Codex got the same checks only as skills you
+invoke by hand. That was wrong, and wrong in the direction that matters for a
+plugin whose job is to stop things: it told a Codex user they had no automatic
+protection when they had it.
+
+The claim came from the manifest. `.codex-plugin/plugin.json` has no hooks
+field, and the inference was that a host whose manifest cannot declare hooks
+does not run them. Measured directly instead, by adding a probe hook to the
+Codex-installed copy: Codex has its own hooks engine, reads each installed
+plugin's `hooks/hooks.json`, knows the full event vocabulary including
+`PreToolUse` and `PostToolUse`, and runs every command through a login shell.
+The guards fire there. What the manifest declares and what the host reads are
+two different questions.
 
 Both runtimes call the same code in `scripts/`. The detection logic exists once,
-so a verdict reads identically wherever it came from. Only the trigger differs.
+so a verdict reads identically wherever it came from.
+
+One difference that is real, and is about updates rather than about hooks:
+Codex replaces a plugin's version folder when it updates, so a session that was
+already open is left pointing at a folder that has gone and its guards stop
+until you restart. Claude Code keeps old versions, so the same session keeps
+running the code it started with. Either way the guards say so rather than
+failing silently. See the section on how a hook finds Node.
 
 ## Install
 
@@ -89,6 +105,21 @@ That list exists because an app launched from the Dock never reads your shell
 profile, so it starts with a bare `PATH` that has none of those directories
 on it. Before 0.5.3 every hook here exited 127 under Codex for that reason,
 and silently, because a failed hook does not interrupt your session.
+
+These hooks run in both Claude Code and Codex.
+
+Updating a plugin while a session is already open stops the hooks a second
+way, unrelated to finding Node. The session is still pointing at the version
+folder it started in, and Codex deletes that folder on update, so every hook in
+that session fails until you restart. Each hook now checks that the file it is
+about to run is still there. If it has gone, it prints one line saying hooks
+are off until you restart, and steps aside. That does not keep the hooks
+working, which nothing in the plugin can do from a folder that has been
+deleted, but it tells you why they stopped instead of leaving you a bare error
+code. If the file is there and has simply lost its execute bit, which a zip
+download or a checkout without file modes can do, it says that instead and
+names the file, because a restart will not fix that one. The line shows up in
+the transcript once per hook per event, and blocks nothing.
 
 If your Node is somewhere else, name it:
 

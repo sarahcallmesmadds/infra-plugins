@@ -657,20 +657,33 @@ check('the hook is executable', () => {
   fs.accessSync(HOOK, fs.constants.X_OK);
 });
 
-check('the README does not claim build-loop ships no hooks', () => {
-  // It said exactly that from 0.3.0, while shipping four. CONTRIBUTING requires
-  // a documented fallback whenever only one runtime can automate something, and
-  // a claim that there is nothing to fall back from satisfies it on paper only.
+check('the README names every hook build-loop ships', () => {
+  // It claimed the plugin shipped no hooks from 0.3.0, while shipping four.
+  //
+  // This check used to require, for each hook, a line saying what a Codex user
+  // does instead of it, because Codex was believed not to run hooks. That belief
+  // was disproved by probe on 2026-08-16, so the requirement was retired: there
+  // is no "instead" to document when the hook runs on both runtimes. Retired
+  // rather than deleted, because the effect it was having was still worth
+  // keeping. Removing the table it was guarding took the only documentation
+  // capture-event and notice-correction had with it, and this is what noticed.
+  //
+  // So the rule is now the plain one underneath: a hook that ships is a hook the
+  // README describes.
   const readme = fs.readFileSync(
     path.join(__dirname, '..', 'plugins', 'build-loop', 'README.md'), 'utf8');
   assert.ok(!/this plugin does not use any/.test(readme),
     'the Codex section still claims the plugin registers no hooks');
+
   const shipped = fs.readdirSync(path.join(__dirname, '..', 'plugins', 'build-loop', 'hooks'))
-    .filter((f) => f.endsWith('.js'));
-  for (const hook of shipped) {
-    const name = hook.replace(/\.js$/, '');
-    assert.ok(readme.includes(name), `the Codex section does not say what a Codex user does instead of ${name}`);
-  }
+    .filter((f) => f.endsWith('.js') || f.endsWith('.sh'));
+  assert.ok(shipped.length >= 4, `only ${shipped.length} hooks found, so this is checking almost nothing`);
+
+  const undocumented = shipped
+    .map((hook) => hook.replace(/\.(js|sh)$/, ''))
+    .filter((name) => !readme.includes(name));
+  assert.deepStrictEqual(undocumented, [],
+    `build-loop ships a hook its README never mentions: ${undocumented.join(', ')}`);
 });
 
 check('the Codex manifest does not advertise the hook-only write', () => {
