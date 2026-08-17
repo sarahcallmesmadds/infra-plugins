@@ -16,7 +16,7 @@ const { execFileSync } = require('child_process');
 
 const base = path.join(__dirname, '..', 'plugins', 'slop-check', 'scripts');
 const { checkHard, checkAll } = require(path.join(base, 'tells.js'));
-const { checkCode, checkData, checkSpec, checkTechnical, checkOverbuilt, checkOverplanned } = require(path.join(base, 'technical.js'));
+const { checkCode, checkData, checkSpec, checkTechnical, checkOverbuilt, checkOverplanned, markerDensity, codeShare } = require(path.join(base, 'technical.js'));
 const simpleSkill = fs.readFileSync(path.join(__dirname, '..', 'plugins', 'slop-check', 'skills', 'say-it-simply', 'SKILL.md'), 'utf8');
 
 const EM = String.fromCharCode(0x2014);
@@ -281,6 +281,87 @@ check('code carrying sixty "we will" comments is not a proposal',
     .some((f) => f.name === 'never-says-what-it-is-not-doing'), false);
 check('...and the same text is not reported as an unowned document either',
   checkSpec(CODE_WITH_COMMENTS).some((f) => f.name === 'no-owner-and-no-date'), false);
+
+// Devin review round 3 on #137.
+//
+// "We should" is not a commitment, and putting it with "we will" brought the
+// original bug back for a fourth time: an opinion post opening "We should stop
+// pretending" and saying "build" once further down scored three and was reported
+// as an unowned plan. The first row is the reviewer's own input and the second is
+// a realistic post, kept separate because one is the reported case and the other
+// is the shape it would actually arrive in.
+console.log('\n"we should" is an opinion, not a commitment');
+const SHOULD_POST = ('We should not overstate how much a small feature can matter. '
+  + 'People often say they want to build something, but the work is always harder. ').repeat(12);
+check('the reviewer fixture clears both gates',
+  SHOULD_POST.length > 800, true);
+check('"we should" plus "build" is not an unowned plan',
+  checkSpec(SHOULD_POST).some((f) => f.name === 'no-owner-and-no-date'), false);
+check('...and is not a proposal with no cut line',
+  checkOverplanned(SHOULD_POST)
+    .some((f) => f.name === 'never-says-what-it-is-not-doing'), false);
+
+const OPINION_POST = 'We should stop pretending that the office is what made those teams work. '
+  + ('I have watched the same argument play out in four companies now, and the part nobody '
+    + 'wants to say out loud is that the good years had nothing to do with the building. They '
+    + 'had to do with who was in the room and whether anybody felt able to disagree with them. '
+    + 'You cannot build that back by insisting on attendance, and the attempt tends to drive '
+    + 'out exactly the people who made it work in the first place. ').repeat(2);
+check('the opinion-post fixture clears both gates',
+  OPINION_POST.length > 800, true);
+check('an opinion post is not an unowned plan',
+  checkSpec(OPINION_POST).some((f) => f.name === 'no-owner-and-no-date'), false);
+check('...and "we will" is still a commitment where it appears',
+  checkSpec(`We will ${OPINION_POST.slice(3)}`)
+    .some((f) => f.name === 'no-owner-and-no-date'), true);
+
+// A document that shows a code sample is still a document. One pasted line used to
+// make the whole thing source and silence both checks, while a real source file
+// must keep being skipped. Only a proportion separates those two.
+console.log('\na document showing code is still a document');
+const PROPOSAL = 'We will build the thing. The plan is to implement it across the team. '.repeat(12);
+check('the proposal fires before any code is added to it',
+  checkSpec(PROPOSAL).some((f) => f.name === 'no-owner-and-no-date'), true);
+check('one pasted code line does not turn a proposal into source',
+  checkSpec(`${PROPOSAL}\nfunction go() { return 1; }\n`)
+    .some((f) => f.name === 'no-owner-and-no-date'), true);
+check('...nor does a fenced block',
+  checkSpec(`${PROPOSAL}\n\`\`\`\nfunction go() { return 1; }\nconst x = 2;\n\`\`\`\n`)
+    .some((f) => f.name === 'no-owner-and-no-date'), true);
+check('...and the cut-line check agrees with the owner check',
+  checkOverplanned(`${PROPOSAL}\nfunction go() { return 1; }\n`)
+    .some((f) => f.name === 'never-says-what-it-is-not-doing'), true);
+
+// Both bounds of that proportion, pinned against real files in this repository
+// rather than against invented ones. The tighter side is source, so a suite that
+// grows enough prose to drop under the threshold fails here rather than quietly
+// becoming a document that gets asked who owns it.
+const THIS_SUITE = fs.readFileSync(__filename, 'utf8');
+const TECHNICAL_JS = fs.readFileSync(path.join(base, 'technical.js'), 'utf8');
+check('this suite is still read as source, not as a document',
+  codeShare(THIS_SUITE) > 0.30, true);
+check('so is the file it tests',
+  codeShare(TECHNICAL_JS) > 0.30, true);
+check('and neither is reported as an unowned document',
+  checkSpec(THIS_SUITE).concat(checkSpec(TECHNICAL_JS))
+    .some((f) => f.name === 'no-owner-and-no-date'), false);
+check('a proposal carrying one code line is under the source threshold',
+  codeShare(`${PROPOSAL}\nfunction go() { return 1; }\n`) < 0.30, true);
+
+// The numbers written into the threshold comments, recomputed here. Two review
+// rounds each caught a figure in a comment that no longer matched the fixture it
+// came from, so the figures are asserted rather than noted.
+console.log('\nthe documented thresholds match the fixtures they came from');
+check('the densest fixture that must stay quiet is above the density ceiling',
+  markerDensity(PRODUCT_ESSAY).proposal > 60, true);
+check('...and it is the essay, at one marker per 119 characters',
+  Math.round(markerDensity(PRODUCT_ESSAY).proposal), 119);
+check('the repeated proposal is inside the band, at one per 33',
+  Math.round(markerDensity(REPEATED_PROPOSAL).proposal), 33);
+check('the repeated scope statement is inside the band, at one per 18',
+  Math.round(markerDensity(REPEATED_SCOPE).planning), 18);
+check('the heading list is below the floor, at one per 6',
+  Math.round(markerDensity(SCOPE_LIST).planning), 6);
 
 console.log('\nthe two readings are separate');
 {

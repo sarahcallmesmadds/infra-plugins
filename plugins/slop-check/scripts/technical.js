@@ -292,8 +292,18 @@ function checkOverbuilt(text) {
 // combined proposal pattern is the two halves joined rather than a third copy of
 // the same words, because three lists that must agree is three chances to edit
 // one and not the others, and nothing here would report the disagreement.
-const COMMITMENT_WORDS = ['we (?:will|should|could)', 'the plan', 'proposal', 'deliverable'];
-const WORK_WORDS = ['approach', 'implement', 'build'];
+// `we will` only. Leaving `we (?:will|should|could)` here while adding "we should"
+// below would have matched it in both lists and scored it three on its own, which
+// is worse than the defect being fixed.
+const COMMITMENT_WORDS = ['we will', 'the plan', 'proposal', 'deliverable'];
+// "We should" and "we could" are not commitments. Putting them here was the
+// round-2 answer and round 3 broke it in one line: "We should stop pretending that
+// the office is what made those teams work", plus one "build" further down, scored
+// three and got an opinion post reported as an unowned plan with no cut line. That
+// is the original bug of this pull request, arriving for the fourth time through
+// its own fix. "We will" commits somebody to doing something. "We should" is how
+// commentary opens.
+const WORK_WORDS = ['we should', 'we could', 'approach', 'implement', 'build'];
 
 function anyOf(words) {
   return new RegExp(`\\b(${words.join('|')})\\b`, 'gi');
@@ -322,6 +332,61 @@ function leanedOn(text, pattern) {
   if (total === 0) return false;
   const perMarker = text.length / total;
   return perMarker <= 60 && perMarker >= 12;
+}
+
+// Source, as opposed to a document that shows some code.
+//
+// `looksLikeCode` answers "is there code in here". That is the right question for
+// the code checks and the wrong one for the two document checks, because one
+// `function go() { return 1; }` line pasted onto a twelve-paragraph proposal made
+// the whole thing source and silenced both. It is also the question that has to
+// stay answered for source itself: a function carrying sixty "we will" comments
+// must not be told it declared no cut line, which is why the guard was added.
+//
+// Those two pull in opposite directions and only a proportion separates them, so
+// the existing test stays as a necessary condition and a share is added on top.
+// Characters, not lines: a proposal built by repeating one sentence is a single
+// 840-character line, so a code line appended to it is half the lines and three
+// per cent of the text.
+//
+// Measured over this repository's own files by scratchpad/measure-codeshare.js.
+// The margin is not wide and the tighter side is source: documents reach 22 per
+// cent at most, which is this repository's CLAUDE.md and its code fences, while
+// the lowest source file is the slop-check suite at 35 per cent, low because it is
+// mostly prose fixtures. Thirty sits between them. Both bounds are pinned by tests
+// against real files in this repository, so a suite that grows more prose trips a
+// row here rather than quietly becoming a document.
+const CODE_LINE = /^\s*(\/\/|\*|\/\*)/;
+const BRACE_LINE = /^\s*[{}()[\];]+\s*$/;
+
+function codeShare(text) {
+  const lines = text.split('\n').filter((line) => line.trim());
+  let code = 0;
+  let all = 0;
+  for (const line of lines) {
+    all += line.length;
+    // No `#`. It is a comment in shell and Python and a heading in markdown, and
+    // counting it made every structured document look like source.
+    if (looksLikeCode(line) || CODE_LINE.test(line) || BRACE_LINE.test(line)) {
+      code += line.length;
+    }
+  }
+  return all ? code / all : 0;
+}
+
+function isSourceRatherThanDocument(text) {
+  return looksLikeCode(text) && codeShare(text) > 0.30;
+}
+
+// Characters per marker, for each of the two vocabularies. Infinity when the text
+// holds none, which is the honest answer and keeps a caller from dividing by zero.
+// Exported so the numbers written into the comments above can be asserted.
+function markerDensity(text) {
+  const per = (pattern) => {
+    const { total } = markers(text, pattern);
+    return total ? text.length / total : Infinity;
+  };
+  return { proposal: per(PROPOSAL_MARKERS), planning: per(PLANNING_TERMS) };
 }
 
 // Commitment words count double, work words single, three to qualify.
@@ -394,7 +459,7 @@ function checkOverplanned(text) {
   // line. The two checks ask the same question about the same kind of document,
   // and only one of them was answering it about documents.
   const namesACut = /\b(out of scope|not (?:doing|building|in scope)|v2|version 2|later|deferred|explicitly excluded|won'?t (?:do|build|include)|minimum|smallest|first (?:cut|version|pass)|mvp)\b/i.test(text);
-  if (proposesWork(text) && !namesACut && text.length > 700 && !looksLikeCode(text)) {
+  if (proposesWork(text) && !namesACut && text.length > 700 && !isSourceRatherThanDocument(text)) {
     found.push(tag({ name: 'never-says-what-it-is-not-doing' }));
   }
 
@@ -527,7 +592,7 @@ function checkSpec(text) {
   // reports missing was never going to be present.
   const hasOwner = /\b(owner|dri|accountable|assigned to|author|lead)\b\s*[:\-]/i.test(text);
   const hasDate = /\b(20\d\d-\d\d-\d\d|\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+\d{1,2})/i.test(text);
-  if (text.length > 800 && !hasOwner && !hasDate && !looksLikeCode(text) && readsAsAPlan(text)) {
+  if (text.length > 800 && !hasOwner && !hasDate && !isSourceRatherThanDocument(text) && readsAsAPlan(text)) {
     found.push({ name: 'no-owner-and-no-date' });
   }
 
@@ -594,4 +659,14 @@ function checkTechnical(text, kind) {
   return { hard, soft, over, categories: all.length, reading, weight };
 }
 
-module.exports = { checkTechnical, checkCode, checkData, checkSpec, checkOverbuilt, checkOverplanned, guessKind };
+// `markerDensity` and `codeShare` are exported for the tests and for nothing else.
+// The thresholds above are documented with numbers, and the last two review rounds
+// both caught a number in a comment that no longer matched the fixture it came
+// from. A figure nothing can check is a figure that drifts, so the rows in
+// tests/slop-check.test.js recompute these and assert the bounds, which means
+// editing a fixture past a threshold fails the suite rather than quietly making a
+// comment false.
+module.exports = {
+  checkTechnical, checkCode, checkData, checkSpec, checkOverbuilt, checkOverplanned, guessKind,
+  markerDensity, codeShare,
+};
