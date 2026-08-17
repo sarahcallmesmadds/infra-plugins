@@ -442,12 +442,32 @@ check('every hook command says so when its plugin directory has gone', () => {
 check('the guard actually fires, and only when it should', () => {
   // The assertion above passes on a healthy tree whether the guard works or
   // not: it compares two strings and never asks a shell what they do. This runs
-  // the real thing under the three states that matter. sh and zsh both, because
-  // Codex runs a hook through `$SHELL -lc` and this machine's shell is zsh,
-  // while bin/hook-node's own shebang is #!/bin/sh.
+  // the real thing under the three states that matter.
+  //
+  // More than one shell, because the guard is read by whichever one the host
+  // uses and they are not the same program. Codex runs a hook through
+  // `$SHELL -lc`, which on this machine is zsh; bin/hook-node's own shebang is
+  // #!/bin/sh, which on a Linux runner is dash and on macOS is not.
+  //
+  // Which shells exist is a property of the machine, not of the work. Naming
+  // /bin/zsh unconditionally failed CI on 2026-08-16, because the Ubuntu runner
+  // does not have it. So the list is filtered by what is installed, and the two
+  // ways that could quietly go wrong are both closed: /bin/sh is required
+  // outright, since a machine without it cannot run a hook at all and a run
+  // that skipped everything would otherwise report a pass, and whatever was
+  // skipped is printed. A check that silently examines an empty list is the
+  // failure this suite exists to prevent, and it does not stop being that
+  // because the empty list came from a missing shell.
   const probe = `${GUARD}echo RAN`;
+  const CANDIDATES = ['/bin/sh', '/bin/zsh', '/bin/bash'];
+  const shells = CANDIDATES.filter((s) => fs.existsSync(s));
+  const absent = CANDIDATES.filter((s) => !fs.existsSync(s));
 
-  for (const shell of ['/bin/sh', '/bin/zsh']) {
+  assert.ok(shells.includes('/bin/sh'),
+    '/bin/sh is not on this machine, so the guard was not exercised at all');
+  if (absent.length) console.log(`        (not installed here, so unchecked: ${absent.join(', ')})`);
+
+  for (const shell of shells) {
     const run = (env) => {
       try {
         return execFileSync(shell, ['-lc', probe], { env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
