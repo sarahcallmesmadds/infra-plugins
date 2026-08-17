@@ -238,6 +238,14 @@ const unquote = (token) => token.replace(/"/g, '');
 // with itself and proves nothing about the form nobody has written yet, which
 // is where the next instance of this bug will arrive.
 function parseCommand(command, pluginDir) {
+  // Step over the guard before tokenising. Without this the first token is `[`,
+  // which resolves to no file in the repository, so `executed` comes back null
+  // and every check built on it passes by having nothing to look at. That is
+  // not hypothetical: adding the guard turned eight of these checks green while
+  // they examined an empty list, and only the launcher check, which asserts it
+  // found at least five, noticed. Checks that pass by finding nothing are the
+  // failure this suite exists to prevent, so the parser has to see through the
+  // guard rather than be defeated by it.
   const guard = matchGuard(command);
   const work = guard ? command.slice(guard.matched.length) : command;
   const tokens = work
@@ -652,12 +660,6 @@ check('the guard actually fires, and only when it should', () => {
   // passed to a shell: `sh -c` on macOS and Linux, Git Bash on Windows, or
   // PowerShell when Git Bash isn't installed." A user's login shell never sees
   // it, so fish and csh are not reachable on this host at all.
-  //
-  // "Almost certainly" is doing real work in that sentence. It is an inference
-  // from fish's documented syntax, not a measurement, because fish is not
-  // installed on this machine. Anyone who does have it can settle it in one
-  // line. It is recorded as unproven rather than folded into the reasoning as
-  // though it were checked.
   //
   // The states are four, not three. The fourth, a plugin directory that is still
   // there while the launcher inside it is not, is the one a directory test
