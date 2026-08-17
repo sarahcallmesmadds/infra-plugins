@@ -903,6 +903,44 @@ check('the guard actually fires, and only when it should', () => {
     assert.strictEqual(announced.hookSpecificOutput.additionalContext, GONE_MESSAGE,
       `${shell}: the announcement carried ${JSON.stringify(announced.hookSpecificOutput.additionalContext)} rather than the sentence`);
 
+    // The unset state against the announcing shape, which the legacy probe
+    // covers and this one did not until a review of #129 said so.
+    //
+    // It is asserted as stderr rather than fixed, and the asymmetry is
+    // deliberate. The Codex branch is reached by the two names agreeing, and
+    // when CLAUDE_PLUGIN_ROOT is empty they cannot agree unless PLUGIN_ROOT is
+    // empty too, so this one message has no Codex delivery path. Loosening it
+    // to trust PLUGIN_ROOT alone would put a hook on the Codex branch on the
+    // word of an unprefixed variable, in the one state where the host has
+    // already proved it does not set the names this guard reads. That is the
+    // collision the round before this closed, and it costs more than it buys:
+    // Codex sets both names, measured, so the state is not reachable there,
+    // and where it is reachable the fallback is a bare number, which is what
+    // every host did before any of this existed.
+    for (const [what, extra] of [
+      ['unset', {}],
+      ['empty', { CLAUDE_PLUGIN_ROOT: '' }],
+    ]) {
+      const env = { ...process.env, ...extra };
+      if (what === 'unset') delete env.CLAUDE_PLUGIN_ROOT;
+
+      for (const [host, root] of [['off Codex', null], ['with PLUGIN_ROOT set', '/opt/some-other-tool']]) {
+        const withHost = { ...env };
+        delete withHost.PLUGIN_ROOT;
+        if (root) withHost.PLUGIN_ROOT = root;
+
+        const noRoot = sayRun(withHost);
+        assert.strictEqual(noRoot.code, GUARD_EXIT,
+          `${shell}: ${host}, with CLAUDE_PLUGIN_ROOT ${what}, the announcing guard exited ${noRoot.code} rather than ${GUARD_EXIT}`);
+        assert.strictEqual(noRoot.err.trim(), UNSET_MESSAGE,
+          `${shell}: ${host}, with CLAUDE_PLUGIN_ROOT ${what}, it said ${JSON.stringify(noRoot.err)}`);
+        assert.strictEqual(noRoot.out, '',
+          `${shell}: ${host}, with CLAUDE_PLUGIN_ROOT ${what}, it wrote ${JSON.stringify(noRoot.out)} to stdout`);
+        assert.notStrictEqual(noRoot.err.trim(), GONE_MESSAGE,
+          `${shell}: ${host}, a host that never set CLAUDE_PLUGIN_ROOT was told a plugin had been updated and to restart`);
+      }
+    }
+
     // Healthy under Codex too. A guard that announces on every event would put
     // this line in front of the reader constantly and mean nothing when it is
     // real.
