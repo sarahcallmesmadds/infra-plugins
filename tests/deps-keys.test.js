@@ -560,42 +560,56 @@ check('the summary does not report work that did not happen', () => {
 // entries. Nothing in this skill can tell a live target from a retired one, so
 // the default has to be the answer that writes nothing.
 //
-// Three assertions, all positive, and all three read the two paragraphs that
-// instruct. The prompt line is what the user reads at the moment they answer,
-// and the instruction paragraph is what an implementation consults when the
-// answer comes back bare. Either one alone leaves the skill telling the reader
-// and the implementation different things, so both are pinned.
+// Two places instruct, and both are pinned, because either one alone leaves the
+// skill telling the reader and the implementation different things. The prompt
+// line in the Step 5 draft is what the user reads at the moment they answer. The
+// paragraph beginning "For missing entries" is what an implementation consults
+// when the answer comes back bare.
 //
-// Nothing here reads the paragraph underneath, which records that ALL was tried
-// first and what it cost. That is deliberate and it is the point worth keeping:
-// a check anchored in a history paragraph makes the history load-bearing, so
-// rewording it fails a suite while the behaviour is perfectly correct, and the
-// cheapest way to go green is to delete the record of why the rule exists. The
-// first version of this check did exactly that, pinning the closing clause of
-// that paragraph, and Devin caught it on the pull request. The summary-template
-// check above documents the same trap from the other direction.
+// Nothing here reads the paragraph after it, which records that ALL was tried
+// first and what it cost. That is deliberate. A check anchored in a history
+// paragraph makes the history load-bearing, so rewording it fails a suite while
+// the behaviour is perfectly correct, and the cheapest way back to green is
+// deleting the record of why the rule exists. The first version of this check
+// did exactly that. The summary-template check above documents the same trap
+// from the other direction.
 //
-// The prompt-line assertion is anchored to the end of the line rather than
-// matching the default anywhere on it. Also from that review: a substring test
-// passes against `Default: none. If the user gives a bare response, add all
-// missing entries.`, which states the opposite on the same line and is a more
-// likely edit than flipping the word, because it reads as a clarification.
+// Two things here are stricter than they first look, and both are answers to
+// review findings on this pull request rather than caution for its own sake.
+//
+// The prompt line is matched whole rather than searched for a default. An
+// override reading as a clarification is a likelier edit than flipping the word
+// none to all, and it defeats a substring test wherever it sits: appended after
+// the default, or inserted before it, which is the same hole twice. Any
+// insertion changes what the line tells the user, so the line is pinned entire.
+// Rewording it means moving this assertion, which is the intended cost.
+//
+// The other two search the instruction paragraph rather than the whole file. Run
+// against the file they pass on a phrase sitting anywhere in it, including in
+// the history paragraph this check is written to keep out of, so the scoping is
+// what makes the paragraph claim above true rather than merely intended.
 check('the new-items bucket defaults to adding nothing', () => {
   const skill = SKILLS['audit-deps'];
+
   const prompt = skill.match(/^\s*so say which ones you want\..*$/m);
   assert.ok(prompt, 'the missing-entries prompt line is gone from the Step 5 draft');
+  assert.strictEqual(
+    prompt[0].trim(),
+    'so say which ones you want. all / none / name them.   Default: none.',
+    'the line the user answers no longer reads exactly as it did. If this is a '
+    + 'deliberate rewording, move this assertion with it. If it is an added '
+    + 'clause, it changes what the draft tells the user a bare answer does'
+  );
+
+  const instruction = skill.match(/^For missing entries,[\s\S]*?(?=\n\n)/m);
+  assert.ok(instruction, 'the "For missing entries" instruction paragraph is gone');
   assert.ok(
-    /Default: none\.\s*$/.test(prompt[0]),
-    'the draft asks which new entries to add and does not end by defaulting to '
-    + `none, so a bare yes writes every one of them: ${prompt[0].trim()}`
+    /\*\*Default is NONE\.\*\*/.test(instruction[0]),
+    'the instruction paragraph no longer states that the missing bucket adds '
+    + 'nothing by default, so an unanswered draft writes entries nobody chose'
   );
   assert.ok(
-    /\*\*Default is NONE\.\*\*/.test(skill),
-    'audit-deps no longer states that the missing bucket adds nothing by '
-    + 'default, so an unanswered draft writes entries nobody chose'
-  );
-  assert.ok(
-    /the one bucket whose approval creates entries/.test(skill),
+    /the one bucket whose approval creates entries/.test(instruction[0]),
     'the instruction no longer says why this bucket defaults differently from '
     + 'the other three, so the default reads as arbitrary and gets flipped back'
   );
