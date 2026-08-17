@@ -570,21 +570,20 @@ check('the summary does not report work that did not happen', () => {
 // first and what it cost. That is deliberate. A check anchored in a history
 // paragraph makes the history load-bearing, so rewording it fails a suite while
 // the behaviour is perfectly correct, and the cheapest way back to green is
-// deleting the record of why the rule exists. The first version of this check
-// did exactly that. The summary-template check above documents the same trap
-// from the other direction.
+// deleting the record of why the rule exists. The summary-template check above
+// documents the same trap from the other direction.
 //
 // Both are compared whole rather than searched for the phrases that matter, and
-// that is the part worth explaining, because searching was tried three times and
-// failed the same way each time. A test for the presence of `Default: none.`
-// says nothing about what sits beside it. Three review rounds on this pull
-// request each defeated the previous version with one more sentence rather than
-// a changed one: appended after the default, inserted before it, and finally
-// appended to the end of the instruction paragraph, every time leaving the
-// pinned phrase intact and the meaning reversed. An override reading as a
-// clarification is a likelier edit than flipping the word none to all, and no
-// amount of anchoring makes a presence test able to say "and nothing here
-// contradicts it". Only comparing the whole text does that.
+// that is the part worth explaining, because a presence test is the obvious
+// simplification and it does not work here. Asking whether `Default: none.` is
+// present says nothing about what sits beside it, and the edit to expect is not
+// none being changed to all, it is a sentence added that reads as a
+// clarification: "If the user gives a bare response, add all missing entries."
+// That defeats a presence test appended after the default, inserted before it,
+// or added to the end of the instruction paragraph, leaving the pinned phrase
+// intact and the meaning reversed every time. Anchoring the phrase more tightly
+// moves which of those three works. Only comparing the whole text refuses all of
+// them.
 //
 // Whitespace is flattened before comparing, so part of the cost of that
 // strictness is refunded. A markdown reflow, a rewrap across two lines, a change
@@ -600,13 +599,13 @@ check('the summary does not report work that did not happen', () => {
 // it says to update the expected text when that was deliberate. A check that
 // fails without saying what to do about it gets deleted rather than answered.
 //
-// What this does not do, written down because five review rounds each found one
-// more version of it and the sixth would have too. It pins what these two
-// passages say. It cannot show that nothing else in the file contradicts them: a
-// paragraph inserted anywhere outside both spans, saying that a bare answer adds
-// everything, passes this untouched. Widening the spans moves that boundary
-// rather than removing it, because the file is prose and the property wanted is
-// semantic, and every widening costs tolerance somewhere a reflow will find.
+// What this does not do, written down because it looks like a gap worth closing
+// and closing it is a trap. It pins what these two passages say. It cannot show
+// that nothing else in the file contradicts them: a paragraph inserted anywhere
+// outside both spans, saying that a bare answer adds everything, passes this
+// untouched. Widening the spans moves that boundary rather than removing it,
+// because the file is prose and the property wanted is semantic, and every
+// widening costs tolerance somewhere a reflow will find.
 //
 // So the boundary is where it is on purpose. This catches the edit that actually
 // happens, someone changing the default where the default is written. Two
@@ -670,10 +669,9 @@ check('the new-items bucket defaults to adding nothing', () => {
   // read alike in a failure message and are not the same thing: an emphasis
   // change loses the phrase and keeps the meaning.
   //
-  // Split from moved, which the count above cannot tell apart: a phrase absent
-  // from the paragraph but present in the file means what was read stopped early,
-  // and blaming that on the wording sends the reader looking for a deletion that
-  // never happened.
+  // Absent from the file is worth telling apart from absent from the paragraph,
+  // which the count above cannot do: blaming the second on the wording sends the
+  // reader looking for a deletion that never happened.
   const missing = claims.filter(([, re]) => !re.test(instruction));
   const elsewhere = missing.filter(([, re]) => re.test(skill)).map(([name]) => name);
   const gone = missing.filter(([, re]) => !re.test(skill)).map(([name]) => name);
@@ -683,16 +681,22 @@ check('the new-items bucket defaults to adding nothing', () => {
       ? `${gone.join(' and ')} ${gone.length > 1 ? 'no longer appear' : 'no longer appears'} `
         + 'in this form anywhere in audit-deps'
       : '',
-    // Two causes, and this cannot tell them apart, so it names both rather than
-    // picking. What it knows is where the phrase is not: the paragraph read
-    // stopped before it, which happens when a blank line splits the paragraph and
-    // equally when the phrase is moved somewhere else in the file. Asserting the
-    // split is a cause inferred from evidence that does not reach it, which is
-    // the fault this whole check exists to make hard to commit.
+    // This knows exactly two things: the phrase is not in the text that was
+    // extracted, and it is somewhere in the file. It does not know why, so it
+    // reports the two and lists what would explain them without picking one.
+    //
+    // Naming a single cause here is the tempting version and it is wrong twice
+    // over. "A blank line has split the paragraph" is false when the phrase was
+    // moved. Offering a split or a move is still a closed set, and it is false
+    // when the phrase was deleted from the paragraph while an unrelated copy sits
+    // elsewhere, which satisfies neither. Both read as more helpful than the two
+    // bare facts and send the reader looking for something that did not happen.
     elsewhere.length
-      ? `${elsewhere.join(' and ')} ${elsewhere.length > 1 ? 'are' : 'is'} still in the file but `
-        + 'outside the paragraph that was read. Either a blank line has split that paragraph and '
-        + 'only the part above it was checked, or the phrase has moved out of it'
+      ? `${elsewhere.join(' and ')} ${elsewhere.length > 1 ? 'are' : 'is'} not in the paragraph `
+        + `that was read, but ${elsewhere.length > 1 ? 'are' : 'is'} present somewhere else in `
+        + 'audit-deps. Those two facts have several explanations: a blank line splitting the '
+        + 'paragraph so only the part above it was checked, the phrase having moved, or a second '
+        + 'copy sitting somewhere unrelated'
       : '',
   ].filter(Boolean).map(sentence).join('. ');
   assert.strictEqual(
