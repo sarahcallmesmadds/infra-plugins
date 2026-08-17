@@ -802,6 +802,43 @@ where the hook is reported as having completed and the message goes nowhere. So
 this plugin's `PostToolUse` hooks keep the stderr form, as do the other plugins,
 and any future conversion measures its own event first.
 
+The sentence Codex is told names no path, and since 0.10.10 that is deliberate.
+The structured output is JSON built by pasting the message into a `printf`
+format, and the shell has no idea it is writing JSON, so anything expanded into
+it can break the syntax. A plugin directory holding a double quote, a backslash,
+a tab or a newline all do, and they spoil it in two ways. A quote, or a raw
+control character, or a backslash that begins no JSON escape, make the output
+unreadable, so Codex is handed nothing. A backslash that does begin one, and
+`\n`, `\t` and `\b` in a path all do, produces output that reads perfectly and
+says something other than what was written: a directory named `back\nbreak`
+announced a path with a real line break inside it. Either way the hook is
+reported as having completed, and the second is the worse of the two because it
+looks delivered. That is the failure this whole guard exists to end.
+
+Escaping it in the shell was the first answer and the wrong one, because it needs
+`sed`, which needs `PATH`, and a broken `PATH` is one of the things these hooks
+have to be able to complain about. So the sentence Codex is told names the file
+relative to the plugin directory, which is fixed text in the manifest and cannot
+be corrupted by whatever the directory happens to be called.
+
+**A Codex reader does not get the absolute path at all, and that is the cost.**
+The Codex branch exits as soon as it has written its JSON, so it never reaches
+the stderr line, and the only field Codex surfaces is the sentence itself. What
+that reader gets is the file's name and its place inside the plugin directory,
+which is enough to find it, and not the full path they could paste into a `chmod`.
+Claude Code, which reads the stderr line, still gets the whole path. The trade is
+deliberate: on the Codex side the alternative was not a longer message but no
+message, since that is what a malformed announcement delivers.
+
+The stderr line in these two hooks uses `printf` rather than `echo` for a related
+reason. `/bin/sh` and `/bin/zsh` both interpret a backslash in `echo`'s argument,
+so a plugin directory named `back\nbreak` reached the reader with a real line
+break in the middle of the path, and only the first line of stderr is shown.
+**This is fixed in the two prompt hooks only.** The `PostToolUse` hooks here, and
+the guards in the other four plugins, still use `echo` and still mangle a path
+holding a backslash. Changing those means changing five plugins at once, so it is
+not in this version.
+
 ## Licence
 
 MIT. See `LICENSE` at the repository root.
