@@ -290,6 +290,10 @@ answer, not its conclusion.
 opinion about whether something is any good, and it will not rewrite anything
 you did not complain about.
 
+`type:` is checked rather than required on purpose. 11 of the 23 skills
+here do not set it, and reporting 11 files that are fine is how a check
+teaches you to ignore it.
+
 ## Codex
 
 **The eleven commands are identical on both runtimes.** Everything you invoke by
@@ -321,10 +325,6 @@ rather than corrected. What the hooks are, on both runtimes:
 | `capture-event` | Records the shape of the hook payloads it sees, so a test fixture can be a real captured event rather than one written from memory. |
 | `deps-watch` | Reports in the conversation when a file calls a mapped target with no recorded edge. It never writes an edge itself; `/audit-deps` is the only way to record one. |
 | `hook-health-probe` | Runs on every prompt and names the interpreter a hook could not find, at the moment it goes missing rather than a week later. |
-
-`type:` is checked rather than required on purpose. 11 of the 23 skills
-here do not set it, and reporting 11 files that are fine is how a check
-teaches you to ignore it.
 
 **What is actually different is updating, not hooks.** Codex replaces a plugin's
 version folder on update, so a session that was already open points at a folder
