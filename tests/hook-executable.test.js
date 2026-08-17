@@ -147,8 +147,23 @@ function indexMode(file) {
 //
 // The not-runnable message names the path, which the shell expands, because
 // unlike "restart" the remedy needs to say what to chmod.
+// Every README that ships hooks has to carry this sentence.
+//
+// Three of them said the opposite until 2026-08-16: that Codex plugins cannot
+// register hooks, so the hooks are Claude Code only. build-loop said it twice,
+// in opposite directions. The inference behind it every time was that
+// `.codex-plugin/plugin.json` has no hooks field, therefore Codex ignores
+// hooks, which reads the manifest and calls it the host. A probe hook added to
+// the Codex-installed copy showed Codex reading each plugin's hooks/hooks.json
+// and running the commands.
+//
+// It mattered most in guardrails, which told a reader they had no automatic
+// protection in a host where the guards do fire. That is the wrong direction to
+// be wrong about a plugin whose job is to stop things.
+const RUNS_IN_CODEX = 'These hooks run in both Claude Code and Codex.';
+
 const GUARD_EXIT = 3;
-const GONE_MESSAGE = 'Plugin hooks are off in this session because a plugin was updated after it started. Restart to switch them back on.';
+const GONE_MESSAGE ='Plugin hooks are off in this session because a plugin was updated after it started. Restart to switch them back on.';
 const notRunnableMessage = (target) => `Plugin hooks are off because ${target} is not executable. A restart will not help. Restore its execute bit with chmod +x.`;
 
 function guardFor(target) {
@@ -758,6 +773,50 @@ check('every plugin that ships a JavaScript hook documents how node is found', (
     // conversation", which the guard had just made false.
     if (!/while a session is already open/i.test(text)) {
       problems.push(`${dir}/README.md does not say what happens when the plugin is updated mid-session`);
+    }
+
+    // The claim that Codex does not run these hooks. It has been written into
+    // build-loop's README twice, in opposite directions, and into three others
+    // once each, always from the same inference: `.codex-plugin/plugin.json`
+    // has no hooks field, therefore Codex ignores hooks. That reads the manifest
+    // and calls it the host. A probe hook added to the Codex-installed copy on
+    // 2026-08-16 showed Codex reading each plugin's hooks/hooks.json and running
+    // the commands.
+    //
+    // It matters most in guardrails, where it told a reader they had no
+    // automatic protection in a host where they had it, which is the wrong
+    // direction to be wrong about a plugin whose job is to stop things.
+    //
+    // Checked rather than trusted to stay fixed, because it came back once
+    // already while being corrected.
+    //
+    // Stated as something each README must say, not as a phrase it must avoid.
+    // The banning form was tried first and was wrong: these READMEs keep the
+    // superseded claim on the record on purpose, so "Codex plugins cannot
+    // register hooks" appears in all four as a sentence about what they used to
+    // say. A blanket ban cannot tell an assertion from a quotation and failed
+    // against the very correction it was written to protect.
+    // One exact sentence rather than a pattern over prose. The pattern version
+    // was tried and made the test the author of the documentation: three
+    // READMEs said the right thing in their own words and failed anyway, and
+    // the way to pass would have been to bend each one's wording to suit a
+    // regex. A single required sentence is checkable without deciding how the
+    // rest of the page reads.
+    if (!text.includes(RUNS_IN_CODEX)) {
+      problems.push(`${dir}/README.md does not carry the sentence "${RUNS_IN_CODEX}", which a probe `
+        + 'established on 2026-08-16 and which three of these READMEs previously denied');
+    }
+  }
+
+  // The same claim as a section heading rather than a sentence. Kept as a ban
+  // because a heading is an assertion in a way a sentence need not be, and no
+  // historical note needs to be phrased as one.
+  const guardrailsReadme = path.join(ROOT, 'plugins', 'guardrails', 'README.md');
+  if (fs.existsSync(guardrailsReadme)) {
+    const text = fs.readFileSync(guardrailsReadme, 'utf8');
+    if (/^#+ .*Codex gets advice/m.test(text)) {
+      problems.push('plugins/guardrails/README.md still headlines that Codex gets advice rather than '
+        + 'enforcement, which tells a reader they are unprotected in a host where the guards do fire');
     }
   }
 

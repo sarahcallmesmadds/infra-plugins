@@ -209,6 +209,8 @@ profile, so it starts with a bare `PATH` that has none of those directories
 on it. Before 0.3.2 every hook here exited 127 under Codex for that reason,
 and silently, because a failed hook does not interrupt your session.
 
+These hooks run in both Claude Code and Codex.
+
 Updating a plugin while a session is already open stops the hooks a second
 way, unrelated to finding Node. The session is still pointing at the version
 folder it started in, and Codex deletes that folder on update, so every hook in

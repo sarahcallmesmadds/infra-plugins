@@ -142,6 +142,8 @@ profile, so it starts with a bare `PATH` that has none of those directories
 on it. Before 0.9.8 every hook here exited 127 under Codex for that reason,
 and silently, because a failed hook does not interrupt your session.
 
+These hooks run in both Claude Code and Codex.
+
 Updating a plugin while a session is already open stops the hooks a second
 way, unrelated to finding Node. The session is still pointing at the version
 folder it started in, and Codex deletes that folder on update, so every hook in
@@ -465,8 +467,8 @@ check". Collapsing them is what made an early version of this hook mark files as
 verified that it had never opened. The third is a real gap, and retiring the
 brief's mtime comparison outright belongs with the Session plugin.
 
-**This release is Claude Code only.** See the Codex section below, which
-explains why that costs a Codex user nothing rather than leaving them worse off.
+**Superseded: this release was described as Claude Code only, on the belief that
+Codex does not run plugin hooks. It does.** See the Codex section below.
 
 **`DEPS.json` moves to schema v4.** The only change is the new
 `last_auto_checked` field, which is simply absent on an older map, so nothing
@@ -749,28 +751,39 @@ One line saying the log returned nothing is the only thing that separates
 **The eleven commands are identical on both runtimes.** Everything you invoke by
 name behaves the same way, reads the same queue, and writes the same files.
 
-**The five hooks are Claude Code only**, because Codex plugins cannot register
-hooks. This section previously said the plugin used none, which stopped being
-true at 0.3.0 and is worth stating plainly rather than leaving as a claim that
-quietly aged.
+**The hooks run in Codex too.** This section has now been wrong twice in
+opposite directions, which is worth leaving on the record rather than tidying
+away. It first said the plugin used no hooks, which stopped being true at 0.3.0.
+It was then corrected to say the hooks are Claude Code only, because Codex
+plugins cannot register them. That is also wrong, and it was wrong from the day
+it was written.
 
-| Hook | What a Codex user does instead |
+The mistake both times was reading the manifest instead of the host.
+`.codex-plugin/plugin.json` has no hooks field, and the inference drawn was that
+Codex therefore ignores hooks. Measured on 2026-08-16 with a probe hook added to
+the Codex-installed copy: Codex has its own hooks engine, reads each installed
+plugin's `hooks/hooks.json`, knows the full event vocabulary including
+`SessionStart`, `UserPromptSubmit` and `PostToolUse`, and runs every command
+through a login shell. All five hooks fire.
+
+A table used to sit here listing what a Codex user should do by hand instead of
+each hook. Every row answered a question that does not arise, so it is replaced
+rather than corrected. What the hooks are, on both runtimes:
+
+| Hook | What it does |
 |---|---|
-| `skill-md-check` | Run `/find-skill`, or rely on the repository's `skill-md-check` test suite, which checks the same frontmatter rules. |
-| `notice-correction` | Invoke `/flag-issue` directly when something misbehaves. It is the same skill; the hook only suggests it. |
-| `capture-event` | Nothing is lost. It records hook payload shapes, which only exist where hooks run. |
-| `deps-watch` | Run `/audit-deps`. See below, because the trade is smaller than it looks. |
-| `hook-health-probe` | Nothing is lost. It reports which interpreter a hook could not find, and where no hooks run there is no such failure to name. |
+| `skill-md-check` | Checks a `SKILL.md` you just wrote or edited against the frontmatter rules, and says what is wrong. |
+| `notice-correction` | Notices when you have corrected something you built and suggests `/flag-issue` once, at the end. It only suggests; it never writes. |
+| `capture-event` | Records the shape of the hook payloads it sees, so a test fixture can be a real captured event rather than one written from memory. |
+| `deps-watch` | Reports in the conversation when a file calls a mapped target with no recorded edge. It never writes an edge itself; `/audit-deps` is the only way to record one. |
+| `hook-health-probe` | Runs on every prompt and names the interpreter a hook could not find, at the moment it goes missing rather than a week later. |
 
-**`deps-watch` costs a Codex user nothing, and here is why.** What it reports in
-the conversation, a file calling a mapped target with no recorded edge, is the
-half worth having, and it is the half a Codex user is giving up. It is a
-convenience: `/audit-deps` finds the same missing edges, and it is the only way
-to record one on either runtime, since the hook never writes an edge itself.
-This used to say the warning `deps-watch` exists to quiet is printed by the
-session brief, which never runs under Codex, so both halves went missing
-together. That reasoning is retired rather than reworded: session 0.8.7 removed
-the warning, so there is no longer a second half to be absent.
+**What is actually different is updating, not hooks.** Codex replaces a plugin's
+version folder on update, so a session that was already open points at a folder
+that has gone and every hook in it stops until you restart. Claude Code keeps
+old versions, so that session instead carries on running the code it started
+with, which is the same fact failing in the other direction. Since 0.10.7 the
+hooks say which has happened rather than failing with a bare error code.
 
 ## Licence
 
