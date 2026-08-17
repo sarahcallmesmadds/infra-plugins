@@ -79,8 +79,14 @@ a plugin directory holding a quote or a control character breaks the syntax and 
 nothing, and one holding a valid JSON escape such as `\n` parses and delivers a corrupted
 sentence, which is worse because it looks delivered. Keep the absolute path on the stderr line,
 which only Claude Code reads, and have the announced sentence name the file relative to the
-plugin directory as fixed text. Print it with `printf`, never `echo`, which `/bin/sh` and
-`/bin/zsh` both let mangle a backslash.
+plugin directory as fixed text.
+
+**Print either message with `printf`, never `echo`.** This one is not about the announced
+message alone. `/bin/sh` and `/bin/zsh` both let `echo` interpret a backslash, and the stderr
+line is the one still carrying an absolute path, so it is the more exposed of the two. Eleven
+hook commands across five plugins still use `echo` on that line. They cannot fire on the current
+install paths, and correcting them costs a release per plugin, so they are logged rather than
+scheduled. The rule is here to stop the twelfth being written.
 
 **Release notes go in the plugin's `CHANGELOG.md`, never in its README.** A README is what
 somebody reads to install and use the plugin, and upgrade notes for versions nobody is running
