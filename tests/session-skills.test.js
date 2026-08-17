@@ -398,6 +398,37 @@ check('wrap keeps the rule in the handoff when the project is not reachable', ()
   );
 });
 
+// Added in review round 4. Two findings, both about the move having no brakes.
+// The instruction wrote into a committed, shared file with no point where the
+// user was asked, which nothing else in this skill does outside the handoff and
+// the durable notes. And it collided with Step 3, which already claims anything
+// staying true beyond this week, so one rule could be filed in both places and
+// the two copies could then disagree.
+check('wrap asks before writing into a project instructions file', () => {
+  const text = skill('wrap');
+  assert.match(
+    text,
+    /Ask before writing into a project'?s instructions file, every time/i,
+    'the approval gate is gone, so a routine wrap silently edits a committed file '
+    + 'that everybody working in the repository shares'
+  );
+  assert.match(
+    text,
+    /No answer is a no/i,
+    'the default on silence is gone, so an unanswered prompt can be read as consent'
+  );
+});
+
+check('wrap separates the project file from the durable notes', () => {
+  const text = skill('wrap');
+  assert.match(
+    text,
+    /This is not Step 3, and the two must not both take the same rule/i,
+    'the split is gone, so this section and Step 3 both claim rules that outlive '
+    + 'the work and one rule can be filed in both'
+  );
+});
+
 // Added in review round 3. The qualification test named a file pairing,
 // AGENTS.md beside CLAUDE.md, rather than the outcome it was after. A project
 // holding its rules in AGENTS.md alone is the same situation and failed the

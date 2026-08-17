@@ -145,6 +145,15 @@ are documentation, and they belong in that project's own instructions file. A
 handoff constraint is for what is true this week and false next: which checkout
 is shared right now, what is half migrated, what is waiting on somebody.
 
+**This is not Step 3, and the two must not both take the same rule.** The
+durable notes hold what stays true about the work and the person across every
+project, and load every session wherever it starts. A project's instructions
+file holds what governs work inside that one project, and loads when the work is
+in it. So a rule naming a repository, a path, a branch or a deploy target goes to
+the project; a rule about how to work, or about the person, goes to the notes in
+Step 3. Sending one rule to both is how two copies come to disagree, which is the
+thing this whole section exists to stop.
+
 **Check the destination is reachable from the runtime before moving anything.**
 Claude Code loads a project's `CLAUDE.md` on its own once work moves into the
 folder. Codex does not, and this plugin ships a Codex manifest, so a rule filed
@@ -169,6 +178,19 @@ Carrying a permanent fact forward instead is how a document about one thing
 accumulates the rules of everything. Measured on 2026-08-16, a handoff about a
 writing skill carried 26 rules, and 21 of them belonged to a project rather than
 to the work that session was doing.
+
+**Ask before writing into a project's instructions file, every time.** That file
+is committed and shared with everybody who works in the repository, and a wrap is
+not the moment to change one unasked. Show the rule and the file it would go
+into, and move it only on an explicit yes:
+
+> This rule outlives the work, so it belongs in `<file>` rather than the handoff.
+> Move it there? <the rule, quoted>
+
+No answer is a no. Without one the rule stays in the handoff, the same fallback
+as a project the runtime cannot reach. Nothing else in this skill writes outside
+the handoff and the durable notes without being asked, and this is not the
+exception.
 
 **Write it into the project file first, then retire it here.** A move is a
 retirement and uses the same line, so the trace survives:
