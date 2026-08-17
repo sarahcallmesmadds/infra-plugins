@@ -366,6 +366,28 @@ check('wrap requires the destination be reachable from the runtime', () => {
   );
 });
 
+// Added in review round 2. The retirement template hardcoded <project>/CLAUDE.md
+// while the rule above it qualifies a project on carrying AGENTS.md. Coherent
+// only where AGENTS.md is the pointer and CLAUDE.md holds the rules, which is
+// the common arrangement but not the only one. A project keeping its rules in
+// AGENTS.md would get a note naming a file the rule was never written into,
+// which is the failure the next paragraph describes rather than a wording nit.
+check('the retirement note names the file the rule actually landed in', () => {
+  const text = skill('wrap');
+  assert.doesNotMatch(
+    text,
+    /because it is now recorded in <project>\/CLAUDE\.md/,
+    'the retirement template hardcodes CLAUDE.md again, so a project holding its '
+    + 'rules anywhere else gets a note pointing at a file the rule is not in'
+  );
+  assert.match(
+    text,
+    /Name the file the rule landed in, not the file that made the project/i,
+    'the instruction distinguishing where the rule went from what made the project '
+    + 'qualify is gone, so the two get conflated in the note'
+  );
+});
+
 check('wrap keeps the rule in the handoff when the project is not reachable', () => {
   const text = skill('wrap');
   assert.match(

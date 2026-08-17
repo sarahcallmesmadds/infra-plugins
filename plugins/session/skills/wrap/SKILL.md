@@ -166,8 +166,16 @@ to the work that session was doing.
 retirement and uses the same line, so the trace survives:
 
 ```
-- Retired this session: <the constraint, quoted exactly as it was written>, because it is now recorded in <project>/CLAUDE.md.
+- Retired this session: <the constraint, quoted exactly as it was written>, because it is now recorded in <the path of the file it was actually written into>.
 ```
+
+**Name the file the rule landed in, not the file that made the project
+qualify.** Those are usually different. In the common arrangement the rules sit
+in `CLAUDE.md` and `AGENTS.md` is the pointer that makes them reachable from
+Codex, so the note names `CLAUDE.md`. A project that keeps its rules in
+`AGENTS.md` instead is named that way. Writing the wrong one produces a note
+pointing at a file the rule was never written into, which is the failure
+described immediately below rather than a cosmetic slip.
 
 The order is not a preference. A retirement written before the destination
 exists deletes the rule and leaves a note saying it was filed somewhere it is
