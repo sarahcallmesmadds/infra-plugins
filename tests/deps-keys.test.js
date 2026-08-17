@@ -586,9 +586,16 @@ check('the summary does not report work that did not happen', () => {
 // them.
 //
 // Whitespace is flattened before comparing, so part of the cost of that
-// strictness is refunded. A markdown reflow, a rewrap across two lines, a change
-// to the three spaces before Default: none of those are the default changing,
-// and none of them fail this.
+// strictness is refunded. A change to the three spaces before Default, and a
+// rewrap of the instruction paragraph, are not the default changing and do not
+// fail this.
+//
+// The prompt line is the exception and it is not an oversight. It is matched as a
+// single line, so wrapping it across two fails even with the wording intact. That
+// line sits inside a fenced draft, where the break is not layout: it is what the
+// user is shown at the moment they answer. The message says so rather than
+// claiming reflow is free, which is a worse failure than the strictness, because
+// it tells the reader to go looking for a wording change that is not there.
 //
 // The rest of the cost is real and is accepted rather than solved. Flattening
 // leaves case, emphasis and punctuation load-bearing, so writing `**Default is
@@ -613,8 +620,11 @@ check('the summary does not report work that did not happen', () => {
 // detectable by pinning text, and it wants its own check rather than a wider
 // version of this one.
 check('the new-items bucket defaults to adding nothing', () => {
-  const skill = SKILLS['audit-deps'];
-  // Layout is not meaning. Everything below compares flattened text.
+  // Normalised first. The paragraph match below ends on a blank line, which is
+  // two newlines and is three characters under CRLF, so a file saved with
+  // Windows endings would find no paragraph at all and report it as missing.
+  const skill = SKILLS['audit-deps'].replace(/\r\n/g, '\n');
+  // Spacing is not meaning. Everything below compares flattened text.
   const flat = (s) => s.replace(/\s+/g, ' ').trim();
 
   // Every passage is counted, not just found. A first match is not necessarily
@@ -635,10 +645,12 @@ check('the new-items bucket defaults to adding nothing', () => {
   assert.strictEqual(
     flat(prompts[0]),
     'so say which ones you want. all / none / name them. Default: none.',
-    'the line the user answers no longer says what it said. Reflow and spacing '
-    + 'are already ignored, so this is a wording or formatting change. If it was '
-    + 'deliberate, update the expected text here. If it is an added clause, it '
-    + 'changes what the draft tells the user a bare answer does'
+    'the line the user answers no longer says what it said. Spacing within the '
+    + 'line is already ignored, but this line is matched as one line and lives '
+    + 'inside a fenced draft, so wrapping it across two is a change to what the '
+    + 'user is shown and fails here too. Update the expected text if the rewording '
+    + 'or the wrap was deliberate. If it is an added clause, it changes what the '
+    + 'draft tells the user a bare answer does'
   );
 
   // To the next blank line. A blank line inserted inside the paragraph truncates
@@ -646,7 +658,11 @@ check('the new-items bucket defaults to adding nothing', () => {
   // report it and does not try to. The comparison below tells that case apart
   // instead, by asking whether a phrase missing from what was read is still
   // somewhere in the file.
-  const paragraphs = skill.match(/^For missing entries,[\s\S]*?(?=\n\n)/gm) || [];
+  // Ends at a blank line or at the end of the file. Requiring the blank line
+  // alone means the paragraph is unfindable if it is ever the last thing in the
+  // file, which reports as the paragraph being missing rather than as the end of
+  // the file arriving early.
+  const paragraphs = skill.match(/^For missing entries,[\s\S]*?(?=\n\n|(?![\s\S]))/gm) || [];
   assert.strictEqual(
     paragraphs.length, 1,
     paragraphs.length === 0
