@@ -198,7 +198,7 @@ Inside a `plugin-repo` root, an edge also carries `plugin`:
 |-------|------|----------|-------------|
 | `target` | string | yes | Name of the related thing. **Bare, never `plugin/name`.** Called `skill` before v2. |
 | `plugin` | string | no | Which plugin inside a `plugin-repo` root holds it. Required when `repo` names a `plugin-repo` root, absent otherwise. |
-| `kind` | string | yes | What sort of thing it is. Defaults to `"skill"` when absent. |
+| `kind` | string | yes | What sort of thing it is. Defaults to `"skill"` when absent, for v1 files. |
 | `repo` | string | yes | Root that owns it. |
 | `reason` | string | yes | One sentence, plain language, on what the relationship is. |
 | `confidence` | string | no | Include only when flagging an uncertain relationship. Value: `"low"`. |
