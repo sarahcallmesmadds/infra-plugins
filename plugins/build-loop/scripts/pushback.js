@@ -221,12 +221,12 @@ function scan(since, root) {
       const text = userText(record);
       if (text === null) continue;
       if (isPasted(text)) continue;
+      const at = record.timestamp ? new Date(record.timestamp).getTime() : 0;
+      if (at < since) continue;
       if (text.length > MAX_PUSHBACK_LENGTH) {
         overlong += 1;
         continue;
       }
-      const at = record.timestamp ? new Date(record.timestamp).getTime() : 0;
-      if (at < since) continue;
 
       const entry = { at: record.timestamp, text, answer: previousAnswer, file: path.basename(file) };
       typed.push(entry);

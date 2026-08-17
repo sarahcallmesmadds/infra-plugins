@@ -228,6 +228,7 @@ check('the window cutoff excludes older messages', () => {
   const future = new Date('2026-08-17T00:00:00Z').getTime();
   const r = P.scan(future, tmp);
   assert.strictEqual(r.typed.length, 0);
+  assert.strictEqual(r.overlong, 0, 'old long messages leaked into the window-scoped skip count');
 });
 
 check('scan refuses a missing or non-directory transcript root', () => {
