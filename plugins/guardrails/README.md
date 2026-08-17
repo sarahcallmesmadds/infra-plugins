@@ -1,6 +1,6 @@
 # guardrails
 
-Catch the mistakes that don't undo.
+Catch the mistakes that don't undo, in either host.
 
 Most guidance for AI coding tools assumes an engineer who already knows not to
 commit to main, not to run `rm -rf` outside a build directory, and not to trust

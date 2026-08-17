@@ -162,12 +162,31 @@ function indexMode(file) {
 // be wrong about a plugin whose job is to stop things.
 const RUNS_IN_CODEX = 'These hooks run in both Claude Code and Codex.';
 
+// Three clauses, not two. The third was added last and is the one the guard
+// itself got wrong.
+//
+// With CLAUDE_PLUGIN_ROOT unset or empty, the earlier two-clause guard tested
+// `[ -e "/bin/hook-node" ]`, which fails, and told the reader a plugin had been
+// updated and to restart. A restart does not fix a host that never set the
+// variable. That is a confident wrong cause, which is the exact failure this
+// whole guard exists to end, reintroduced by the guard.
+//
+// Worse than an oversight: the shell probe below already exercised the unset
+// state and deliberately asserted only the exit code, so the wrong message was
+// covered by a test that had been written not to look at it. Caught in review
+// on 2026-08-16. The probe now asserts the message in every state.
+//
+// The unset clause names no path, because there is no path to name: that is the
+// whole condition. It also promises no remedy, because there is not one a reader
+// can apply. Saying so is still better than blaming an update.
 const GUARD_EXIT = 3;
+const UNSET_MESSAGE = 'Plugin hooks are off because this host did not tell the hook where the plugin is installed. A restart will not help.';
 const GONE_MESSAGE ='Plugin hooks are off in this session because a plugin was updated after it started. Restart to switch them back on.';
 const notRunnableMessage = (target) => `Plugin hooks are off because ${target} is not executable. A restart will not help. Restore its execute bit with chmod +x.`;
 
 function guardFor(target) {
-  return `[ -e "${target}" ] || { echo "${GONE_MESSAGE}" >&2; exit ${GUARD_EXIT}; }; `
+  return `[ -n "\${CLAUDE_PLUGIN_ROOT}" ] || { echo "${UNSET_MESSAGE}" >&2; exit ${GUARD_EXIT}; }; `
+    + `[ -e "${target}" ] || { echo "${GONE_MESSAGE}" >&2; exit ${GUARD_EXIT}; }; `
     + `[ -x "${target}" ] || { echo "${notRunnableMessage(target)}" >&2; exit ${GUARD_EXIT}; }; `;
 }
 
@@ -175,7 +194,8 @@ function guardFor(target) {
 // the wrong ones is still recognised as a guard and reported as wrong, rather
 // than not matching and being reported as absent.
 const GUARD_RE = new RegExp(
-  '^\\[ -e "([^"]+)" \\] \\|\\| \\{ echo "([^"]*)" >&2; exit (\\d+); \\}; '
+  '^\\[ -n "\\$\\{CLAUDE_PLUGIN_ROOT\\}" \\] \\|\\| \\{ echo "([^"]*)" >&2; exit (\\d+); \\}; '
+  + '\\[ -e "([^"]+)" \\] \\|\\| \\{ echo "([^"]*)" >&2; exit (\\d+); \\}; '
   + '\\[ -x "([^"]+)" \\] \\|\\| \\{ echo "([^"]*)" >&2; exit (\\d+); \\}; ',
 );
 
@@ -534,8 +554,10 @@ check('every hook command guards the file it is about to run', () => {
       continue;
     }
 
-    const [matched, gonePath, goneMessage, goneCode, execPath, execMessage, execCode] = guard;
+    const [matched, unsetMessage, unsetCode, gonePath, goneMessage, goneCode, execPath, execMessage, execCode] = guard;
 
+    if (unsetMessage !== UNSET_MESSAGE) wrong.push(`${where}: the unset message is ${JSON.stringify(unsetMessage)}`);
+    if (Number(unsetCode) !== GUARD_EXIT) wrong.push(`${where}: the unset clause exits ${unsetCode}, not ${GUARD_EXIT}`);
     if (goneMessage !== GONE_MESSAGE) wrong.push(`${where}: the gone message is ${JSON.stringify(goneMessage)}`);
     if (execMessage !== notRunnableMessage(execPath)) {
       wrong.push(`${where}: the not-runnable message is ${JSON.stringify(execMessage)}, which does not name ${execPath}`);
@@ -693,13 +715,25 @@ check('the guard actually fires, and only when it should', () => {
       fs.rmSync(partial, { recursive: true, force: true });
     }
 
-    const withoutRoot = { ...process.env };
-    delete withoutRoot.CLAUDE_PLUGIN_ROOT;
-    const unset = run(withoutRoot);
-    assert.strictEqual(unset.out, '',
-      `${shell}: the hook body ran with CLAUDE_PLUGIN_ROOT unset, which expands the path to nothing`);
-    assert.strictEqual(unset.code, GUARD_EXIT,
-      `${shell}: the guard exited ${unset.code} rather than ${GUARD_EXIT} with the variable unset`);
+    // Unset, and empty, which are different inputs that must not produce
+    // different answers. This used to assert the exit code and nothing else,
+    // which let the guard blame an update for a variable the host never set and
+    // kept a wrong cause covered by a test written not to look at it.
+    for (const [what, env] of [
+      ['unset', (() => { const e = { ...process.env }; delete e.CLAUDE_PLUGIN_ROOT; return e; })()],
+      ['empty', { ...process.env, CLAUDE_PLUGIN_ROOT: '' }],
+    ]) {
+      const noRoot = run(env);
+      assert.strictEqual(noRoot.out, '',
+        `${shell}: the hook body ran with CLAUDE_PLUGIN_ROOT ${what}`);
+      assert.strictEqual(noRoot.code, GUARD_EXIT,
+        `${shell}: the guard exited ${noRoot.code} rather than ${GUARD_EXIT} with the variable ${what}`);
+      assert.strictEqual(noRoot.err.trim(), UNSET_MESSAGE,
+        `${shell}: with the variable ${what} the guard said ${JSON.stringify(noRoot.err)}`);
+      assert.notStrictEqual(noRoot.err.trim(), GONE_MESSAGE,
+        `${shell}: a host that never set CLAUDE_PLUGIN_ROOT was told a plugin had been updated and to `
+        + 'restart, which will not help and is the wrong cause this guard exists to stop handing back');
+    }
 
     // One line, because the transcript shows the first line of stderr and
     // discards the rest. A message that grew a second line would lose it here
@@ -883,7 +917,8 @@ check('the three command forms are told apart', () => {
   // A guard whose message or exit code is wrong is still a guard, and has to be
   // stepped over so the check above can report it as wrong rather than absent.
   const wrongEverything = parseCommand(
-    `[ -e "\${CLAUDE_PLUGIN_ROOT}/bin/hook-node" ] || { echo "other" >&2; exit 9; }; `
+    `[ -n "\${CLAUDE_PLUGIN_ROOT}" ] || { echo "nope" >&2; exit 7; }; `
+    + `[ -e "\${CLAUDE_PLUGIN_ROOT}/bin/hook-node" ] || { echo "other" >&2; exit 9; }; `
     + `[ -x "\${CLAUDE_PLUGIN_ROOT}/bin/hook-node" ] || { echo "different" >&2; exit 8; }; `
     + `"\${CLAUDE_PLUGIN_ROOT}"/bin/hook-node "\${CLAUDE_PLUGIN_ROOT}"/hooks/x.js`, dir);
   assert.strictEqual(wrongEverything.executed, 'plugins/example/bin/hook-node',
@@ -894,11 +929,22 @@ check('the three command forms are told apart', () => {
   // and must not be stepped over as though it were. Otherwise the command
   // behind a half-guard parses fine and the missing clause is never reported.
   const halfGuard = parseCommand(
-    `[ -e "\${CLAUDE_PLUGIN_ROOT}/bin/hook-node" ] || { echo "${GONE_MESSAGE}" >&2; exit ${GUARD_EXIT}; }; `
+    `[ -n "\${CLAUDE_PLUGIN_ROOT}" ] || { echo "${UNSET_MESSAGE}" >&2; exit ${GUARD_EXIT}; }; `
+    + `[ -e "\${CLAUDE_PLUGIN_ROOT}/bin/hook-node" ] || { echo "${GONE_MESSAGE}" >&2; exit ${GUARD_EXIT}; }; `
     + `"\${CLAUDE_PLUGIN_ROOT}"/bin/hook-node "\${CLAUDE_PLUGIN_ROOT}"/hooks/x.js`, dir);
   assert.strictEqual(halfGuard.executed, null,
     'a guard missing its not-runnable clause was treated as complete, so the command behind it '
     + 'would be reported as fine rather than as half-guarded');
+
+  // And missing the first clause, which is the one that was absent for four
+  // rounds and whose absence produced a confidently wrong cause.
+  const noUnsetClause = parseCommand(
+    `[ -e "\${CLAUDE_PLUGIN_ROOT}/bin/hook-node" ] || { echo "${GONE_MESSAGE}" >&2; exit ${GUARD_EXIT}; }; `
+    + `[ -x "\${CLAUDE_PLUGIN_ROOT}/bin/hook-node" ] || { echo "${notRunnableMessage('${CLAUDE_PLUGIN_ROOT}/bin/hook-node')}" >&2; exit ${GUARD_EXIT}; }; `
+    + `"\${CLAUDE_PLUGIN_ROOT}"/bin/hook-node "\${CLAUDE_PLUGIN_ROOT}"/hooks/x.js`, dir);
+  assert.strictEqual(noUnsetClause.executed, null,
+    'a guard with no unset clause was treated as complete, so an unset CLAUDE_PLUGIN_ROOT would be '
+    + 'blamed on a plugin update with nothing reporting it');
 });
 
 check('an unfindable interpreter is actually caught', () => {

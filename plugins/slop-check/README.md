@@ -1,6 +1,6 @@
 # slop-check
 
-Catch what nobody edited, and rewrite what did not land.
+Catch what nobody edited, and rewrite what did not land, in either host.
 
 The useful question about a piece of work is not whether a machine touched it.
 Almost everything has been touched by one, and no tool can honestly tell you

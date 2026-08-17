@@ -10,9 +10,14 @@ inside a plugin.
   installation; a skill should earn a place in the user's tool list.
 - Search the marketplace for an existing plugin or skill that already owns the
   job. Extend the existing owner when the new behavior has the same purpose.
-- Decide which runtimes the feature supports. Claude Code can register hooks;
-  Codex cannot. Document a real fallback when only one runtime can automate the
-  behavior.
+- Decide which runtimes the feature supports, and establish it rather than
+  inferring it from a manifest. This list said Claude Code can register hooks
+  and Codex cannot, which was wrong from the day it was written: the Codex
+  manifest has no hooks field, but Codex reads each installed plugin's
+  `hooks/hooks.json` and runs the commands, measured by probe on 2026-08-16.
+  What a manifest can declare and what a host reads are two questions. Document
+  a real fallback when only one runtime can automate the behavior, and confirm
+  that it is only one.
 - Identify user-specific state. Shipped files are immutable product code;
   machine-specific choices belong in `~/.claude/<plugin>.config.json` or an
   equivalent documented user-owned location.

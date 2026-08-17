@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "[ -e \"${CLAUDE_PLUGIN_ROOT}/bin/hook-node\" ] || { echo \"Plugin hooks are off in this session because a plugin was updated after it started. Restart to switch them back on.\" >&2; exit 3; }; [ -x \"${CLAUDE_PLUGIN_ROOT}/bin/hook-node\" ] || { echo \"Plugin hooks are off because ${CLAUDE_PLUGIN_ROOT}/bin/hook-node is not executable. A restart will not help. Restore its execute bit with chmod +x.\" >&2; exit 3; }; \"${CLAUDE_PLUGIN_ROOT}\"/bin/hook-node \"${CLAUDE_PLUGIN_ROOT}\"/hooks/session-notice.js"
+            "command": "[ -n \"${CLAUDE_PLUGIN_ROOT}\" ] || { echo \"Plugin hooks are off because this host did not tell the hook where the plugin is installed. A restart will not help.\" >&2; exit 3; }; [ -e \"${CLAUDE_PLUGIN_ROOT}/bin/hook-node\" ] || { echo \"Plugin hooks are off in this session because a plugin was updated after it started. Restart to switch them back on.\" >&2; exit 3; }; [ -x \"${CLAUDE_PLUGIN_ROOT}/bin/hook-node\" ] || { echo \"Plugin hooks are off because ${CLAUDE_PLUGIN_ROOT}/bin/hook-node is not executable. A restart will not help. Restore its execute bit with chmod +x.\" >&2; exit 3; }; \"${CLAUDE_PLUGIN_ROOT}\"/bin/hook-node \"${CLAUDE_PLUGIN_ROOT}\"/hooks/session-notice.js"
           }
         ]
       }

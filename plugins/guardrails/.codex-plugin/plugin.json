@@ -1,7 +1,7 @@
 {
   "name": "guardrails",
   "version": "0.5.5",
-  "description": "Safety rails for people building with AI who aren't systems engineers. Flags prompt injection in content, and assesses shell commands for irreversible damage before they run.",
+  "description": "Safety rails for people building with AI who aren't systems engineers. Blocks commits to protected branches, asks before commands that cannot be undone, flags prompt injection, and can require a governing document be read before a directory is written.",
   "author": {
     "name": "Sarah Madden",
     "url": "https://github.com/sarahcallmesmadds"
@@ -19,8 +19,8 @@
   "skills": "./skills/",
   "interface": {
     "displayName": "Guardrails",
-    "shortDescription": "Catch the mistakes that don't undo",
-    "longDescription": "Most guidance for AI coding tools assumes you already know not to commit to main, not to run rm -rf, and not to trust text a webpage handed you. Guardrails packages that knowledge for people who are building anyway. It scans content for prompt injection before you act on it, and assesses shell commands for irreversible damage before they run. In Claude Code it also installs hooks that enforce these automatically; in Codex it runs on request, because Codex plugins cannot register hooks.",
+    "shortDescription": "Catch the mistakes that don't undo, in either host",
+    "longDescription": "Most guidance for AI coding tools assumes you already know not to commit to main, not to run rm -rf, and not to trust text a webpage handed you. Guardrails packages that knowledge for people who are building anyway. It scans content for prompt injection before you act on it, and assesses shell commands for irreversible damage before they run. It installs hooks that enforce these automatically, in Codex as well as in Claude Code, and the same checks are also available on request as the injection-scan and undo-possible skills.",
     "developerName": "Sarah Madden",
     "category": "Engineering",
     "capabilities": [
