@@ -177,6 +177,63 @@ check('a document that names its owner is not asked twice',
   checkSpec(`Owner: the billing team\n\n${PLAN}`)
     .some((f) => f.name === 'no-owner-and-no-date'), false);
 
+// Devin review round 1 on #137. Counting two distinct markers was wrong in both
+// directions, and these rows pin both directions.
+//
+// Too quiet: a document that leans on one marker over and over is proposing work
+// as plainly as one that uses two different words once each. Counting distinct
+// words cannot see repetition at all.
+//
+// Too loud: "build" and "approach" are two distinct markers and both turn up in
+// any ordinary essay about product work, so two was still enough to flag writing
+// that proposes nothing. That one was not in the review. It was found by
+// measuring marker density across the fixtures while choosing the threshold the
+// review's first two findings needed.
+console.log('\none marker leaned on is a plan; two ordinary words are not');
+const REPEATED_PROPOSAL = 'We will fix the billing service. '.repeat(50);
+check('the repeated-proposal fixture is long enough to reach both checks',
+  REPEATED_PROPOSAL.length > 800, true);
+check('a document that says "we will" fifty times is asked who owns it',
+  checkSpec(REPEATED_PROPOSAL).some((f) => f.name === 'no-owner-and-no-date'), true);
+check('...and is asked what it is not doing',
+  checkOverplanned(REPEATED_PROPOSAL)
+    .some((f) => f.name === 'never-says-what-it-is-not-doing'), true);
+
+const REPEATED_SCOPE = 'Scope is limited. '.repeat(60);
+check('the repeated-scope fixture is long enough',
+  REPEATED_SCOPE.length > 800, true);
+check('a scope statement repeated sixty times is asked who owns it',
+  checkSpec(REPEATED_SCOPE).some((f) => f.name === 'no-owner-and-no-date'), true);
+
+const PRODUCT_ESSAY = ('I spent four years building the wrong thing before I understood why. '
+  + 'Every time we shipped, I would build the feature somebody asked for loudest, and '
+  + 'the approach felt responsive at the time. What I could not see was that each build '
+  + 'made the next one harder, because none of them shared a shape. The team that took '
+  + 'over stopped building for two months and wrote down what the product refused to do. '
+  + 'That list was shorter than any roadmap I had made and it decided more. If I were '
+  + 'starting again I would build that list first and treat the approach as the thing to '
+  + 'get right rather than the speed. ').repeat(2);
+check('the essay fixture is long enough to reach both checks',
+  PRODUCT_ESSAY.length > 800, true);
+check('an essay using "build" and "approach" is not an unowned plan',
+  checkSpec(PRODUCT_ESSAY).some((f) => f.name === 'no-owner-and-no-date'), false);
+check('...and is not a proposal with no cut line',
+  checkOverplanned(PRODUCT_ESSAY)
+    .some((f) => f.name === 'never-says-what-it-is-not-doing'), false);
+
+// Singular and plural of one word are one marker. Without normalising, "scope"
+// and "scopes" counted as two and carried a document over the threshold on the
+// strength of an inflection rather than on anything it said.
+const SPARSE_INFLECTION = 'The scope of the change is small. '
+  + ('Everything else here is ordinary narrative prose that runs on at some length '
+    + 'without proposing anything, because the point of it is to be long rather than '
+    + 'to be a plan. ').repeat(6)
+  + 'Scopes of this kind are common. ';
+check('the inflection fixture is long enough, and thin on markers',
+  SPARSE_INFLECTION.length > 800, true);
+check('"scope" and "scopes" are one marker, not two',
+  checkSpec(SPARSE_INFLECTION).some((f) => f.name === 'no-owner-and-no-date'), false);
+
 console.log('\nthe two readings are separate');
 {
   // Two signals is "somewhat heavier", not a verdict. Three stacks into one.

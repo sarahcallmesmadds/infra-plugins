@@ -238,24 +238,56 @@ function checkOverbuilt(text) {
 // newsletter and a LinkedIn draft are all long, all unowned and all proposing
 // nothing, and both checks fired on all of them.
 //
-// Counted distinctly in both cases, because the failure was a single common word
-// standing in for a whole genre. "build" appears in any writing about making
-// something, and "scope" and "timeline" are ordinary English on their own.
+// One word is not a genre, and neither is two. "build" and "approach" both turn
+// up in any post about making something, so counting two distinct words flagged a
+// perfectly ordinary essay about product work. Three separates that essay from a
+// real plan, measured rather than picked: across the fixtures below, writing that
+// must stay quiet reaches one or two, and a genuine plan reaches four or five.
+//
+// Repetition is the second route, and it is the one counting distinct words
+// misses entirely. A document saying "we will" fifty times in 1650 characters is
+// proposing work as plainly as one that says it once alongside "the deliverable",
+// and a scope statement repeated sixty times is a scope document. The measured
+// gap is wide: writing that must stay quiet runs one marker per 137 characters at
+// its densest, and the repeated cases run one per 18 to 33. Sixty sits between
+// them with room on both sides.
+//
+// Multi-word alternatives come before their own substrings. `out of scope` is
+// still reachable after `scopes?` today, because a search starting at the word
+// boundary before "out" cannot match `scopes?` there, but that is a property of
+// where the engine happens to start rather than anything this file states. Order
+// them and it stops depending on that.
 
-const PROPOSAL_MARKERS = /\b(we (?:will|should|could)|the plan|approach|proposal|implement|build|deliverable)\b/gi;
+const PROPOSAL_MARKERS = /\b(we (?:will|should|could)|the plan|proposal|deliverable|approach|implement|build)\b/gi;
 
-const PLANNING_TERMS = /\b(scopes?|out of scope|requirements?|deliverables?|milestones?|acceptance criteria|success criteria|timelines?|stakeholders?|sign-?off|roadmaps?|sprints?|backlog|key results?|rollout plan|migration plan|project plan|objectives?)\b/gi;
+const PLANNING_TERMS = /\b(out of scope|acceptance criteria|success criteria|rollout plan|migration plan|project plan|key results?|scopes?|requirements?|deliverables?|milestones?|timelines?|stakeholders?|sign-?off|roadmaps?|sprints?|backlog|objectives?)\b/gi;
 
-function distinct(text, pattern) {
-  return new Set((text.match(pattern) || []).map((m) => m.toLowerCase())).size;
+// Singular and plural of one term are one term. Without this, "scope" and
+// "scopes" counted as two markers, so a document leaning on a single concept in
+// both forms reached the threshold on the strength of an inflection.
+function markers(text, pattern) {
+  const all = (text.match(pattern) || [])
+    .map((m) => m.toLowerCase().replace(/s$/, ''));
+  return { distinct: new Set(all).size, total: all.length };
 }
 
-// A document proposing work, or a document laying out a plan. Either is the kind
-// of thing that should say who owns it. Planning vocabulary alone would not do:
-// a proposal can be written entirely in the language of doing the work, and the
-// fixture for the check below is exactly that.
+// Three distinct markers, or one leaned on hard enough to be the subject.
+//
+// The density term needs a length to divide by, and both callers already require
+// more than 700 characters, so it is never asked about a short string where two
+// markers would look dense.
+function saturated(text, pattern) {
+  const { distinct, total } = markers(text, pattern);
+  if (distinct >= 3) return true;
+  return total > 0 && text.length / total <= 60;
+}
+
+// A document proposing work is the same question as whether it is a plan, for the
+// purpose of asking who owns it. Both routes are needed: a proposal can be
+// written entirely in the language of doing the work and never say "scope", and a
+// plan can be laid out in planning vocabulary and never say "we will".
 function readsAsAPlan(text) {
-  return distinct(text, PROPOSAL_MARKERS) >= 2 || distinct(text, PLANNING_TERMS) >= 2;
+  return saturated(text, PROPOSAL_MARKERS) || saturated(text, PLANNING_TERMS);
 }
 
 // The same failure in a plan rather than in code: a build heavier than the
@@ -295,15 +327,18 @@ function checkOverplanned(text) {
   // Work that names no cut line has not been thought about, it has been
   // enumerated. A first version is defined by what it leaves out.
   //
-  // Two distinct markers, not one. A single one of these words is not a
-  // proposal, and the commonest of them is "build". Any writing longer than 700
-  // characters that mentioned building something once matched, so this fired on
-  // a LinkedIn draft whose only qualifying word was "build", in the phrase "what
-  // I am going to build next", and told its writer their post had never declared
-  // a cut line. A document actually proposing something reaches two easily: the
-  // fixture for this row holds four.
+  // A single one of these words is not a proposal, and the commonest of them is
+  // "build". Any writing longer than 700 characters that mentioned building
+  // something once matched, so this fired on a LinkedIn draft whose only
+  // qualifying word was "build", in the phrase "what I am going to build next",
+  // and told its writer their post had never declared a cut line.
+  //
+  // `saturated` rather than a count of two, for the reasons above it. Two was the
+  // first correction and it was still wrong in both directions: it flagged an
+  // essay about product work that happened to say "build" and "approach", and it
+  // stayed silent on a document that said "we will" fifty times.
   const namesACut = /\b(out of scope|not (?:doing|building|in scope)|v2|version 2|later|deferred|explicitly excluded|won'?t (?:do|build|include)|minimum|smallest|first (?:cut|version|pass)|mvp)\b/i.test(text);
-  if (distinct(text, PROPOSAL_MARKERS) >= 2 && !namesACut && text.length > 700) {
+  if (saturated(text, PROPOSAL_MARKERS) && !namesACut && text.length > 700) {
     found.push(tag({ name: 'never-says-what-it-is-not-doing' }));
   }
 
