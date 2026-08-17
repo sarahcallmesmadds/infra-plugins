@@ -184,10 +184,40 @@ const UNSET_MESSAGE = 'Plugin hooks are off because this host did not tell the h
 const GONE_MESSAGE ='Plugin hooks are off in this session because a plugin was updated after it started. Restart to switch them back on.';
 const notRunnableMessage = (target) => `Plugin hooks are off because ${target} is not executable. A restart will not help. Restore its execute bit with chmod +x.`;
 
-function guardFor(target) {
-  return `[ -n "\${CLAUDE_PLUGIN_ROOT}" ] || { echo "${UNSET_MESSAGE}" >&2; exit ${GUARD_EXIT}; }; `
-    + `[ -e "${target}" ] || { echo "${GONE_MESSAGE}" >&2; exit ${GUARD_EXIT}; }; `
-    + `[ -x "${target}" ] || { echo "${notRunnableMessage(target)}" >&2; exit ${GUARD_EXIT}; }; `;
+// Codex discards stderr on any non-zero exit, so the guard above is a bare
+// number there and the sentence reaches nobody. Measured on 2026-08-17 by
+// running a Codex turn against a plugin whose launcher had been removed: the
+// exit-3 hook was reported as `Failed` with no text, and a hook that exited 0
+// carrying structured output had its message rendered and handed to the model,
+// quoted back verbatim on request.
+//
+// So the newer shape keeps the stderr line exactly as it was and adds the one
+// route Codex surfaces. PLUGIN_ROOT is the discriminator: Codex's plugin
+// runtime sets it alongside the CLAUDE_-prefixed aliases, and Claude Code sets
+// only the aliases. Dumping a hook's environment under both hosts on
+// 2026-08-17 is what established that, rather than reading either one's docs.
+//
+// Both shapes are live while this rolls out one plugin at a time, so a hook
+// carrying either is a guarded hook. A hook carrying neither is not.
+const CODEX_EXIT = 0;
+
+function sayFor(event) {
+  return 'say(){ if [ -n "${PLUGIN_ROOT}" ]; then printf '
+    + `'{"hookSpecificOutput":{"hookEventName":"${event}","additionalContext":"%s"}}' "$1"; `
+    + `exit ${CODEX_EXIT}; fi; echo "$1" >&2; exit ${GUARD_EXIT}; }; `;
+}
+
+function clausesFor(target, say) {
+  const fire = (message) => (say ? `say "${message}"` : `{ echo "${message}" >&2; exit ${GUARD_EXIT}; }`);
+  return `[ -n "\${CLAUDE_PLUGIN_ROOT}" ] || ${fire(UNSET_MESSAGE)}; `
+    + `[ -e "${target}" ] || ${fire(GONE_MESSAGE)}; `
+    + `[ -x "${target}" ] || ${fire(notRunnableMessage(target))}; `;
+}
+
+// event omitted gives the stderr-only shape, which is what the plugins that
+// have not been converted yet still carry.
+function guardFor(target, event) {
+  return event ? sayFor(event) + clausesFor(target, true) : clausesFor(target, false);
 }
 
 // Deliberately loose about the messages and the codes, so that a guard carrying
@@ -198,6 +228,43 @@ const GUARD_RE = new RegExp(
   + '\\[ -e "([^"]+)" \\] \\|\\| \\{ echo "([^"]*)" >&2; exit (\\d+); \\}; '
   + '\\[ -x "([^"]+)" \\] \\|\\| \\{ echo "([^"]*)" >&2; exit (\\d+); \\}; ',
 );
+
+// Same looseness for the newer shape, and the event name is captured rather
+// than fixed so a hook declaring one event and announcing another is reported
+// instead of silently accepted. Codex validates that name, so a wrong one is a
+// hook whose message is thrown away for a second reason.
+const SAY_GUARD_RE = new RegExp(
+  '^say\\(\\)\\{ if \\[ -n "\\$\\{PLUGIN_ROOT\\}" \\]; then printf '
+  + '\'\\{"hookSpecificOutput":\\{"hookEventName":"(\\w+)","additionalContext":"%s"\\}\\}\' "\\$1"; '
+  + 'exit (\\d+); fi; echo "\\$1" >&2; exit (\\d+); \\}; '
+  + '\\[ -n "\\$\\{CLAUDE_PLUGIN_ROOT\\}" \\] \\|\\| say "([^"]*)"; '
+  + '\\[ -e "([^"]+)" \\] \\|\\| say "([^"]*)"; '
+  + '\\[ -x "([^"]+)" \\] \\|\\| say "([^"]*)"; ',
+);
+
+// One reading for either shape, so every check below asks the same questions of
+// both and a hook cannot escape a check by being written in the other one.
+function matchGuard(command) {
+  const say = SAY_GUARD_RE.exec(command);
+  if (say) {
+    const [matched, event, codexExit, exitCode, unset, gonePath, gone, execPath, notRunnable] = say;
+    return {
+      matched, event, codexExit: Number(codexExit), announces: true,
+      unsetMessage: unset, goneMessage: gone, execMessage: notRunnable,
+      gonePath, execPath,
+      unsetCode: Number(exitCode), goneCode: Number(exitCode), execCode: Number(exitCode),
+    };
+  }
+  const legacy = GUARD_RE.exec(command);
+  if (!legacy) return null;
+  const [matched, unset, unsetCode, gonePath, gone, goneCode, execPath, notRunnable, execCode] = legacy;
+  return {
+    matched, event: null, codexExit: null, announces: false,
+    unsetMessage: unset, goneMessage: gone, execMessage: notRunnable,
+    gonePath, execPath,
+    unsetCode: Number(unsetCode), goneCode: Number(goneCode), execCode: Number(execCode),
+  };
+}
 
 // `"${CLAUDE_PLUGIN_ROOT}"/bin/hook-node` and `"${CLAUDE_PLUGIN_ROOT}/bin/hook-node"`
 // are the same path written two ways, and the two appear in the same command.
@@ -225,8 +292,8 @@ function parseCommand(command, pluginDir) {
   // found at least five, noticed. Checks that pass by finding nothing are the
   // failure this suite exists to prevent, so the parser has to see through the
   // guard rather than be defeated by it.
-  const guard = GUARD_RE.exec(command);
-  const work = guard ? command.slice(guard[0].length) : command;
+  const guard = matchGuard(command);
+  const work = guard ? command.slice(guard.matched.length) : command;
   const tokens = work
     .replace(/"?\$\{CLAUDE_PLUGIN_ROOT\}"?/g, '<ROOT>')
     .split(/\s+/).filter(Boolean);
@@ -258,7 +325,7 @@ function declaredHooks() {
     } catch (error) {
       throw new Error(`${manifest} is not valid JSON: ${error.message}`);
     }
-    for (const groups of Object.values(parsed.hooks || {})) {
+    for (const [event, groups] of Object.entries(parsed.hooks || {})) {
       for (const group of groups) {
         for (const hook of group.hooks || []) {
           const command = hook.command || '';
@@ -269,6 +336,7 @@ function declaredHooks() {
             manifest,
             pluginDir,
             command,
+            event,
             file: path.posix.join(pluginDir, 'hooks', named[1]),
             ...parseCommand(command, pluginDir),
           });
@@ -547,14 +615,28 @@ check('every hook command guards the file it is about to run', () => {
   const wrong = [];
   for (const h of hooks) {
     const where = `${h.file} in ${h.manifest}`;
-    const guard = GUARD_RE.exec(h.command);
+    const guard = matchGuard(h.command);
 
     if (!guard) {
       wrong.push(`${where}: no guard, so it exits 127 with nothing and reads as an interpreter failure`);
       continue;
     }
 
-    const [matched, unsetMessage, unsetCode, gonePath, goneMessage, goneCode, execPath, execMessage, execCode] = guard;
+    const {
+      matched, unsetMessage, unsetCode, gonePath, goneMessage, goneCode, execPath, execMessage, execCode,
+    } = guard;
+
+    // The event a hook announces has to be the event it is declared under.
+    // Codex validates the name, so getting it wrong throws the message away
+    // again, and it would do so while every other assertion here still passed.
+    if (guard.announces) {
+      if (guard.event !== h.event) {
+        wrong.push(`${where}: declared under ${h.event} but announces itself as ${guard.event}, so Codex discards the message`);
+      }
+      if (guard.codexExit !== CODEX_EXIT) {
+        wrong.push(`${where}: the Codex branch exits ${guard.codexExit}, and Codex reads any non-zero exit as a failure and drops what the hook said`);
+      }
+    }
 
     if (unsetMessage !== UNSET_MESSAGE) wrong.push(`${where}: the unset message is ${JSON.stringify(unsetMessage)}`);
     if (Number(unsetCode) !== GUARD_EXIT) wrong.push(`${where}: the unset clause exits ${unsetCode}, not ${GUARD_EXIT}`);
@@ -754,6 +836,58 @@ check('the guard actually fires, and only when it should', () => {
       `${shell}: a healthy hook exited ${healthy.code}, so every hook would report an error on every event`);
     assert.strictEqual(healthy.err, '',
       `${shell}: a healthy hook wrote ${JSON.stringify(healthy.err)} to stderr, which the transcript would show as an error`);
+
+    // The newer shape, run rather than compared. Both branches matter and they
+    // fail in opposite directions: the Codex branch going missing leaves the
+    // reader on a bare number again, and the Codex branch firing everywhere
+    // takes away the stderr line Claude Code does show. So each is asserted
+    // under an environment that differs only by PLUGIN_ROOT.
+    const EVENT = 'UserPromptSubmit';
+    const sayProbe = `${guardFor('${CLAUDE_PLUGIN_ROOT}/bin/hook-node', EVENT)}echo RAN`;
+    const sayRun = (env) => {
+      const result = spawnSync(shell, ['-lc', sayProbe], { env, encoding: 'utf8' });
+      if (result.error) throw new Error(`${shell} could not be run: ${result.error.message}`);
+      return { code: result.status, out: result.stdout, err: result.stderr };
+    };
+    // Deleted rather than left alone, because running this suite from inside a
+    // Codex session would otherwise put PLUGIN_ROOT in both environments and
+    // the two branches would stop being told apart.
+    const withoutCodex = { ...process.env, CLAUDE_PLUGIN_ROOT: path.join(os.tmpdir(), 'no-such-plugin-0.0.0') };
+    delete withoutCodex.PLUGIN_ROOT;
+
+    const elsewhere = sayRun(withoutCodex);
+    assert.strictEqual(elsewhere.code, GUARD_EXIT,
+      `${shell}: off Codex the announcing guard exited ${elsewhere.code} rather than ${GUARD_EXIT}, so Claude Code stops showing the line`);
+    assert.strictEqual(elsewhere.err.trim(), GONE_MESSAGE,
+      `${shell}: off Codex the announcing guard said ${JSON.stringify(elsewhere.err)} on stderr`);
+    assert.strictEqual(elsewhere.out, '',
+      `${shell}: off Codex the announcing guard wrote ${JSON.stringify(elsewhere.out)} to stdout, where the message is fed to the model instead of shown`);
+
+    const inCodex = sayRun({ ...withoutCodex, PLUGIN_ROOT: path.join(os.tmpdir(), 'no-such-plugin-0.0.0') });
+    assert.strictEqual(inCodex.code, CODEX_EXIT,
+      `${shell}: under Codex the guard exited ${inCodex.code}, and Codex drops what a hook said on any non-zero exit`);
+    assert.strictEqual(inCodex.err, '',
+      `${shell}: under Codex the guard wrote ${JSON.stringify(inCodex.err)} to stderr, which Codex discards`);
+
+    let announced;
+    try {
+      announced = JSON.parse(inCodex.out);
+    } catch (error) {
+      throw new Error(`${shell}: under Codex the guard wrote ${JSON.stringify(inCodex.out)}, which is not the JSON Codex parses: ${error.message}`);
+    }
+    assert.strictEqual(announced.hookSpecificOutput.hookEventName, EVENT,
+      `${shell}: the announcement names ${announced.hookSpecificOutput.hookEventName}, and Codex rejects output whose event is not the one that fired`);
+    assert.strictEqual(announced.hookSpecificOutput.additionalContext, GONE_MESSAGE,
+      `${shell}: the announcement carried ${JSON.stringify(announced.hookSpecificOutput.additionalContext)} rather than the sentence`);
+
+    // Healthy under Codex too. A guard that announces on every event would put
+    // this line in front of the reader constantly and mean nothing when it is
+    // real.
+    const healthyInCodex = sayRun({ ...process.env, CLAUDE_PLUGIN_ROOT: healthyRoot, PLUGIN_ROOT: healthyRoot });
+    assert.strictEqual(healthyInCodex.out.trim(), 'RAN',
+      `${shell}: under Codex the guard blocked a hook whose plugin is present`);
+    assert.strictEqual(healthyInCodex.code, 0,
+      `${shell}: under Codex a healthy hook exited ${healthyInCodex.code}`);
   }
 });
 
