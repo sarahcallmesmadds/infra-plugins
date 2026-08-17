@@ -53,7 +53,7 @@ const SKILLS = {
 // should be noticed. So the count is derived AND compared, and this constant
 // has to move when a check is added or removed. Forgetting now fails the suite
 // instead of printing a smaller number nobody reads.
-const EXPECTED_CHECKS = 32;
+const EXPECTED_CHECKS = 33;
 
 let failed = 0;
 let ran = 0;
@@ -550,6 +550,45 @@ check('the summary does not report work that did not happen', () => {
     /One-sided dependents: \{J\}/.test(skill),
     'the summary never reports the one-sided bucket, and silence there reads '
     + 'as there having been none'
+  );
+});
+
+// The missing bucket is the only one whose approval creates entries, and it was
+// written with a default of ALL first. On 2026-08-16 a first scan of a newly
+// registered root returned 16 things, ten of them retired skills already
+// replaced by plugins, and one agreement put all ten into the map as ordinary
+// entries. Nothing in this skill can tell a live target from a retired one, so
+// the default has to be the answer that writes nothing.
+//
+// Both halves are pinned because they fail apart. The prompt line is what the
+// user reads at the moment they answer; the paragraph is what an implementation
+// consults when the answer comes back bare. Either one alone leaves the skill
+// telling the reader and the implementation different things.
+//
+// The negative here is written against the prompt line rather than against any
+// mention of ALL in the file. The paragraph below that line quotes the retired
+// default deliberately, to record that it was tried and what it cost, and a
+// check that cannot tell an instruction from its own history forces the history
+// to be deleted to go green. That trap already cost this file once, in the
+// summary-template check above.
+check('the new-items bucket defaults to adding nothing', () => {
+  const skill = SKILLS['audit-deps'];
+  const prompt = skill.match(/^\s*so say which ones you want\..*$/m);
+  assert.ok(prompt, 'the missing-entries prompt line is gone from the Step 5 draft');
+  assert.ok(
+    /Default: none\./.test(prompt[0]),
+    'the draft asks which new entries to add without defaulting to none, so a '
+    + `bare yes writes every one of them: ${prompt[0].trim()}`
+  );
+  assert.ok(
+    /\*\*Default is NONE\.\*\*/.test(skill),
+    'audit-deps no longer states that the missing bucket adds nothing by '
+    + 'default, so an unanswered draft writes entries nobody chose'
+  );
+  assert.ok(
+    /the reader has to choose, so make them choose/.test(skill),
+    'the reason a warning paragraph cannot stand in for a non-writing default '
+    + 'is gone, so the default reads as arbitrary and gets flipped back'
   );
 });
 
