@@ -951,6 +951,75 @@ check('both handoff header spellings give up the directory', () => {
     'handoffs written before the current template say Repository, and those are the old ones holding constraints');
 });
 
+check('a backticked aside after the path does not truncate it', () => {
+  // The capture used to stop at the first backtick wherever it fell, so a real
+  // handoff header carrying a backticked note read as `<home> (touched`, which
+  // is not a directory, matched no scope, and dropped that document's
+  // constraints without saying so. Found by writing a handoff, not by a test,
+  // which is why this one exists.
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'session-tick-'));
+  try {
+    assert.strictEqual(
+      handoffs.handoffDir(`**Working directory:** ${base} (touched \`~/Projects/plugins\`)`),
+      base,
+      'a backticked aside after an unquoted path truncates the directory'
+    );
+    // Same shape, but the path does not exist. The annotation still comes off,
+    // because grouping is by string there and the string has to match the one
+    // the next session writes.
+    assert.strictEqual(
+      handoffs.handoffDir('**Working directory:** /no/such/dir (touched `~/x`)'),
+      '/no/such/dir'
+    );
+  } finally {
+    fs.rmSync(base, { recursive: true, force: true });
+  }
+});
+
+check('an unclosed opening backtick still gives up the path', () => {
+  // Raised by Devin review round 1 on PR #139 as a regression in the fix, not in
+  // the original code. The single capture this replaced had an optional opening
+  // backtick, so it ate a stray one whether or not a closing one arrived. Split
+  // in two, an unclosed backtick fails the quoted branch and lands in the
+  // unquoted one, which would carry it into the path. That resolves nowhere and
+  // drops the constraints without a word, which is the failure the split was
+  // made to fix, reappearing inside the fix.
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'session-open-'));
+  try {
+    assert.strictEqual(
+      handoffs.handoffDir(`**Working directory:** \`${base}`),
+      base,
+      'a stray opening backtick is carried into the path'
+    );
+    assert.strictEqual(
+      handoffs.handoffDir('**Working directory:** `/no/such/dir'),
+      '/no/such/dir',
+      'the same, where the path does not resolve and grouping is by string'
+    );
+    // The strip has to run before the tilde rule, or `~ never reaches it.
+    assert.strictEqual(handoffs.handoffDir('**Working directory:** `~'), os.homedir());
+  } finally {
+    fs.rmSync(base, { recursive: true, force: true });
+  }
+});
+
+check('a quoted path keeps a bracket that is part of the folder name', () => {
+  // Quoting is how an author says the brackets are the name rather than an
+  // aside, so the parenthetical strip must not run on a quoted capture.
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'session-brk-'));
+  const weird = path.join(parent, 'Projects (archive)');
+  fs.mkdirSync(weird, { recursive: true });
+  try {
+    assert.strictEqual(
+      handoffs.handoffDir(`**Working directory:** \`${weird}\``),
+      weird,
+      'a quoted folder name ending in a bracket was truncated'
+    );
+  } finally {
+    fs.rmSync(parent, { recursive: true, force: true });
+  }
+});
+
 check('a handoff with no constraints section contributes nothing', () => {
   assert.deepStrictEqual(handoffs.constraintsIn('# H\n\n## Decisions made\n- a\n'), []);
 });

@@ -975,9 +975,44 @@ function scopeKey(dir) {
 // because the older ones are exactly the documents holding constraints nobody has
 // re-recorded yet.
 function handoffDir(text) {
-  const m = text.match(/^\*\*(?:Working directory|Repository|Repo):\*\*\s*`?([^`\n]+)`?/mi);
+  // Two shapes, and they have to be told apart rather than handled by one
+  // capture. A backtick-quoted path ends at its closing backtick. An unquoted
+  // one runs to the end of the line, prose and all.
+  //
+  // The single capture this replaces was `` `?([^`\n]+)`? ``, which stopped at
+  // the FIRST backtick wherever it fell. That is right for a quoted path and
+  // wrong for every unquoted one carrying a backticked aside:
+  //
+  //   **Working directory:** /Users/x (touched `~/Projects/plugins`)
+  //
+  // read as `/Users/x (touched`, which is not a directory, matches no scope,
+  // and silently drops that handoff's constraints. Silently is the problem: a
+  // dropped constraint looks exactly like a project that never had one.
+  const m = text.match(/^\*\*(?:Working directory|Repository|Repo):\*\*\s*(?:`([^`\n]+)`|([^\n]+))/mi);
   if (!m) return null;
-  const expand = (s) => s.trim().replace(/^~(?=\/|$)/, os.homedir()).replace(/[`,]+$/, '').trim();
+  const captured = m[1] !== undefined ? m[1] : m[2];
+  if (captured === undefined) return null;
+  // The leading strip is what keeps an UNCLOSED backtick from getting worse than
+  // it was. `**Working directory:** `/tmp/x` with no closing backtick fails the
+  // quoted branch and lands in the unquoted one, which would otherwise carry the
+  // stray backtick into the path, resolve nothing, and drop the constraints
+  // silently: the exact failure this function was changed to fix. The old single
+  // capture happened to survive it, because its optional opening backtick ate the
+  // character whether or not a closing one ever arrived.
+  //
+  // Stripping runs before the tilde expansion, because `` `~/x `` has to become
+  // `~/x` before the home-directory rule can see the tilde at the start.
+  const expand = (s) => s.trim()
+    .replace(/^`+/, '')
+    .replace(/^~(?=\/|$)/, os.homedir())
+    .replace(/[`,]+$/, '')
+    .trim();
+
+  // A quoted path is already delimited, so the parenthetical handling below
+  // must not run on it: `**Working directory:** `~/Projects/a (b)`` names a
+  // folder whose name really does end in a bracket, and the quoting is how the
+  // author said so.
+  if (m[1] !== undefined) return expand(captured) || null;
 
   // Handoff headers carry prose after the path often enough to matter:
   //   **Working directory:** /private/tmp/atf (git worktree of ~/Projects/x)
@@ -990,7 +1025,7 @@ function handoffDir(text) {
   // So take the whole line, and only strip a trailing parenthetical when the
   // full string is not a directory that exists. Existence is the evidence; the
   // bracket alone never was.
-  const whole = expand(m[1]);
+  const whole = expand(captured);
   try { if (fs.statSync(whole).isDirectory()) return whole; } catch (_) { /* not a directory */ }
 
   const trimmed = expand(whole.replace(/\s*\([^)]*\)\s*$/, ''));
