@@ -571,9 +571,31 @@ check('the guard actually fires, and only when it should', () => {
   // the real thing under the three states that matter.
   //
   // More than one shell, because the guard is read by whichever one the host
-  // uses and they are not the same program. Codex runs a hook through
-  // `$SHELL -lc`, which on this machine is zsh; bin/hook-node's own shebang is
+  // uses and they are not the same program. bin/hook-node's own shebang is
   // #!/bin/sh, which on a Linux runner is dash and on macOS is not.
+  //
+  // Which shell each host uses, looked up rather than assumed, because a review
+  // on 2026-08-16 raised that this guard would be a syntax error in fish and
+  // csh and so would switch off hooks that had been working:
+  //
+  // Claude Code uses `sh -c`. The docs are specific: "The `command` string is
+  // passed to a shell: `sh -c` on macOS and Linux, Git Bash on Windows, or
+  // PowerShell when Git Bash isn't installed." A user's login shell never sees
+  // it, so fish and csh are not reachable on this host at all.
+  //
+  // Codex uses `$SHELL -lc`, established from its binary on 2026-08-16, so a
+  // login shell does read it there. That is the case worth naming rather than
+  // waving away, and it is almost certainly already broken for a reason older
+  // than this guard: every command in these manifests, before and after, writes
+  // `${CLAUDE_PLUGIN_ROOT}`, and fish has no `${VAR}` form. Its equivalent is
+  // `{$VAR}`. csh and tcsh do not accept `-lc` at all, measured here. So a
+  // non-POSIX login shell could not have run these hooks before either.
+  //
+  // "Almost certainly" is doing real work in that sentence. It is an inference
+  // from fish's documented syntax, not a measurement, because fish is not
+  // installed on this machine. Anyone who does have it can settle it in one
+  // line. It is recorded as unproven rather than folded into the reasoning as
+  // though it were checked.
   //
   // Which shells exist is a property of the machine, not of the work. Naming
   // /bin/zsh unconditionally failed CI on 2026-08-16, because the Ubuntu runner
