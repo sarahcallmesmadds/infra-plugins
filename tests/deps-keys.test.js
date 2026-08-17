@@ -275,24 +275,40 @@ check('audit-deps Step 4 names every required edge field, with no ellipsis', () 
   // That is the correlation this check exists to keep.
   const t = SKILLS['audit-deps'];
 
-  assert.ok(
-    !/"plugin": "guardrails", \.\.\./.test(t),
-    'the edge example hides its remaining fields behind an ellipsis again, '
-    + 'which is exactly what left 118 edges without a repo'
-  );
+  // Anchored to the example block itself, not to the whole file. Checking that
+  // the field names appear "somewhere in the skill" passes while the example
+  // omits them, because the words occur in prose all over this file. Devin
+  // review round 1 on PR #136 caught that: the check was named for what it
+  // should prove and asserted something weaker.
+  const start = t.indexOf('"target": "hook-io"');
+  assert.ok(start !== -1, 'the Step 4 worked edge example is gone or renamed');
+  const open = t.lastIndexOf('{', start);
+  const close = t.indexOf('}', start);
+  assert.ok(open !== -1 && close !== -1 && close > open, 'the worked example is not a JSON object');
+  const example = t.slice(open, close + 1);
 
-  // Named in prose, so a reader who skims the example still learns the set.
   for (const field of ['target', 'kind', 'repo', 'reason']) {
     assert.ok(
-      new RegExp('`' + field + '`').test(t),
-      `Step 4 never names \`${field}\`, which SCHEMA-DEPS.md marks required on an edge`
+      new RegExp('"' + field + '"\\s*:').test(example),
+      `the Step 4 worked edge example omits "${field}", which SCHEMA-DEPS.md marks `
+      + 'required, so copying the example produces an invalid edge'
     );
   }
 
-  // Present in the worked example, so a reader who copies it gets a valid edge.
+  // No ellipsis anywhere in the example, however it is worded. The original
+  // defect was `{"target": "hook-io", "plugin": "guardrails", ...}`, and banning
+  // only that exact string lets a differently worded one back in.
   assert.ok(
-    /"repo":\s*"[^"]+"/.test(t),
-    'the worked edge example carries no repo, so copying it reproduces the bug'
+    !/\.\.\./.test(example),
+    'the worked edge example hides fields behind an ellipsis again, which is '
+    + 'exactly what left 118 edges without a repo'
+  );
+
+  // The prose has to name the set too, so a reader who skims the example still
+  // learns which fields are required rather than inferring it from one sample.
+  assert.ok(
+    /`target`, `kind`, `repo` and `reason`/.test(t),
+    'Step 4 no longer names the four required edge fields in prose'
   );
 });
 

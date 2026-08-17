@@ -215,16 +215,20 @@ Build the candidate entry with:
   exists in the key reads as nothing.
 - `depends_on`, inferred, may be empty. **Every edge carries four required
   fields, `target`, `kind`, `repo` and `reason`, plus a separate `plugin` field
-  when the root is a `plugin-repo`**, per the Dependency Edge Format in
-  SCHEMA-DEPS.md. Write all of them out, with nothing left implied:
+  when the edge's `repo` names a `plugin-repo` root**, per the Dependency Edge
+  Format in SCHEMA-DEPS.md. Write all of them out, with nothing left implied:
 
       {
         "target": "hook-io",
         "plugin": "guardrails",
         "kind": "script",
-        "repo": "infra-plugins",
+        "repo": "plugins",
         "reason": "bash-guard requires readEvent and block from the shared hook helper"
       }
+
+  `repo` is the root's configured `name`, not a repository or marketplace name.
+  This example uses `plugins` to match the edge example in SCHEMA-DEPS.md, so the
+  two can be read side by side. Your own root may be called something else.
 
   and never `{"target": "guardrails/hook-io"}`. `target` stays bare and `plugin`
   sits beside it, because different readers want different halves: the key wants
@@ -252,7 +256,7 @@ Missing (N):
     depends_on: [{brief list}]  (confidence: {level})
 
   Adding these is the one part of this draft that puts new things in the map,
-  so say which ones you want. all / none / name them.   Default: all.
+  so say which ones you want. all / none / name them.   Default: none.
 
 Orphaned (M):
   - {composite_key} - in map but no file found at {path}
@@ -284,9 +288,9 @@ On the user's response:
 
 **Never silent writes.** Ever.
 
-For missing entries, take the list whole or in part. `all` adds every one, `none` adds nothing, and naming them adds only those. Default is ALL, because a scan of a root that is already registered usually finds real work.
+For missing entries, take the list whole or in part. `all` adds every one, `none` adds nothing, and naming them adds only those. **Default is NONE.** This is the one bucket whose approval creates entries, and the other three all default to changing nothing, so this one does too.
 
-That default is safe only while the whole list is live work, and a newly registered root is where it is not. On 2026-08-16 a first scan of one returned 16 things, ten of which were retired skills already replaced by plugins, and one `y` put all ten in the map as ordinary entries. Nothing in this skill can tell a live target from a retired one, so the reader is the check: when a root is being scanned for the first time, read the list before agreeing to it rather than after.
+A default of ALL was written here first and was wrong. On 2026-08-16 a first scan of a newly registered root returned 16 things, ten of which were retired skills already replaced by plugins, and a single agreement put all ten in the map as ordinary entries. Nothing in this skill can tell a live target from a retired one. A warning paragraph does not fix that, because a default that writes is still a write: the reader has to choose, so make them choose.
 
 For orphaned entries specifically, ask explicitly: "Remove {composite_key} from DEPS.json, or leave it?" Default is LEAVE — do not remove unless the user confirms.
 
