@@ -11,6 +11,7 @@ const ROOT = path.resolve(__dirname, '..');
 const SKILL = path.join(ROOT, 'plugins/build-loop/skills/devin-review-response');
 const VALIDATOR = path.join(ROOT, 'plugins/build-loop/scripts/pre-push-check.js');
 const README = path.join(ROOT, 'plugins/build-loop/README.md');
+const CHANGELOG = path.join(ROOT, 'plugins/build-loop/CHANGELOG.md');
 let passed = 0;
 
 function check(name, fn) {
@@ -95,7 +96,9 @@ check('Build Loop documents the same command count for Claude and Codex', () => 
 });
 
 check('the renamed command has an explicit upgrade note', () => {
-  const readme = fs.readFileSync(README, 'utf8');
+  // Upgrade notes live in CHANGELOG.md, not the README. Same requirement, and
+  // the note still has to name both the old command and the new one.
+  const readme = fs.readFileSync(CHANGELOG, 'utf8');
   const note = readme.match(/^## Upgrading to 0\.8\.1\n([\s\S]*?)(?=^## |\z)/m);
   assert.ok(note, 'the 0.8.1 upgrade note is missing');
   assert.match(note[1], /\/address-devin-review/);
