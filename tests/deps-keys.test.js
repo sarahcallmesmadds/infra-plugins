@@ -53,7 +53,7 @@ const SKILLS = {
 // should be noticed. So the count is derived AND compared, and this constant
 // has to move when a check is added or removed. Forgetting now fails the suite
 // instead of printing a smaller number nobody reads.
-const EXPECTED_CHECKS = 31;
+const EXPECTED_CHECKS = 32;
 
 let failed = 0;
 let ran = 0;
@@ -263,6 +263,52 @@ check('audit-deps writes plugin beside target, and carries it to back-edges', ()
   assert.ok(
     /plugin: A\.plugin/.test(t),
     'the back-edge step drops plugin, so dependents lose it while depends_on keeps it'
+  );
+});
+
+check('audit-deps Step 4 names every required edge field, with no ellipsis', () => {
+  // The ellipsis is the whole defect. Step 4's edge example used to read
+  // `{"target": "hook-io", "plugin": "guardrails", ...}`, and everything behind
+  // the `...` went unwritten: 118 edges across 41 entries carried no `repo`,
+  // measured on 2026-08-17 and repaired the same day. `plugin` was named and so
+  // it was always present; `repo` was not named and so it was always absent.
+  // That is the correlation this check exists to keep.
+  const t = SKILLS['audit-deps'];
+
+  // Anchored to the example block itself, not to the whole file. Checking that
+  // the field names appear "somewhere in the skill" passes while the example
+  // omits them, because the words occur in prose all over this file. Devin
+  // review round 1 on PR #136 caught that: the check was named for what it
+  // should prove and asserted something weaker.
+  const start = t.indexOf('"target": "hook-io"');
+  assert.ok(start !== -1, 'the Step 4 worked edge example is gone or renamed');
+  const open = t.lastIndexOf('{', start);
+  const close = t.indexOf('}', start);
+  assert.ok(open !== -1 && close !== -1 && close > open, 'the worked example is not a JSON object');
+  const example = t.slice(open, close + 1);
+
+  for (const field of ['target', 'kind', 'repo', 'reason']) {
+    assert.ok(
+      new RegExp('"' + field + '"\\s*:').test(example),
+      `the Step 4 worked edge example omits "${field}", which SCHEMA-DEPS.md marks `
+      + 'required, so copying the example produces an invalid edge'
+    );
+  }
+
+  // No ellipsis anywhere in the example, however it is worded. The original
+  // defect was `{"target": "hook-io", "plugin": "guardrails", ...}`, and banning
+  // only that exact string lets a differently worded one back in.
+  assert.ok(
+    !/\.\.\./.test(example),
+    'the worked edge example hides fields behind an ellipsis again, which is '
+    + 'exactly what left 118 edges without a repo'
+  );
+
+  // The prose has to name the set too, so a reader who skims the example still
+  // learns which fields are required rather than inferring it from one sample.
+  assert.ok(
+    /`target`, `kind`, `repo` and `reason`/.test(t),
+    'Step 4 no longer names the four required edge fields in prose'
   );
 });
 

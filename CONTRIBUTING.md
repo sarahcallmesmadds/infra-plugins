@@ -66,6 +66,30 @@ Each skill lives at `plugins/<plugin>/skills/<skill>/SKILL.md`.
   Codex-facing display metadata belongs in `.codex-plugin/plugin.json` unless
   the runtime contract changes.
 
+### Where `${CLAUDE_PLUGIN_ROOT}` expands, and where it does not
+
+Write run lines in a `SKILL.md` as `node "${CLAUDE_PLUGIN_ROOT}"/scripts/x.js`.
+That is the correct form and it works in both runtimes, but they get there by
+different routes, and knowing which is which stops a fix being written for a bug
+that is not there.
+
+| Where | Expands? | By what |
+|---|---|---|
+| A `SKILL.md` body, in Claude Code | Yes | The harness replaces it with the installed path before the skill reaches the model |
+| A `SKILL.md` body, in Codex | No | Codex never delivers the body. It lists each skill by name, description and file path, and the model reads the file off disk and resolves the path from where it read it |
+| `hooks/hooks.json` | Yes | A manifest variable, resolved by the host at startup |
+| A user's own `settings.json` | No | Nothing expands it there, and a literal installed path rots on the next update because it carries a version number. Name an absolute interpreter instead |
+| Text printed to the user | No | It reaches them as the raw characters, which means nothing to a reader. Resolve it first or do not show it |
+
+Measured on 2026-08-17: across 286 Claude Code transcripts, 370 skill deliveries
+covering 24 skills contained no unexpanded placeholder, and across 37 Codex
+transcripts 98 commands naming a plugin script carried a fully resolved path and
+none carried the placeholder.
+
+**Never write the resolved path into a file that outlives the session.** It
+carries a version number, the old directory survives an update, and the setting
+keeps resolving to code nobody is running any more.
+
 ## Does this plugin need setup?
 
 Setup is conditional, not a standard tax on every installation. Ship a setup

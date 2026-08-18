@@ -3,18 +3,6 @@
 //
 // Run: node tests/hook-executable.test.js
 //
-// The bug, on 2026-08-04: consistency-lint.js shipped at mode 100644 while
-// every other hook in the repository was 100755. A hooks.json entry of
-// `"${CLAUDE_PLUGIN_ROOT}"/hooks/x.js` is a shell command, so it needs the
-// executable bit and a shebang. Without the bit the shell answers "Permission
-// denied", Claude Code discards the failure, and the hook does nothing for its
-// whole life while every test passes.
-//
-// It passed because the suite spawned the hook as `node <path>`, which is the
-// one way of running it that never consults the permission bit. That is the
-// same fault as the guardrails release that blocked nothing: the thing under
-// test and the thing the user runs were two different programs.
-//
 // This walks every hooks.json rather than naming files, so a hook added
 // tomorrow is covered without anyone remembering this exists. It checks the
 // mode in the git index and on disk: the index is what other people clone, so
@@ -63,29 +51,12 @@ function indexMode(file) {
 
 // The guard every hook command carries in front of the work it does.
 //
-// The bug, on 2026-08-16: updating a plugin while a session is open kills every
-// hook in that session until the host restarts. CLAUDE_PLUGIN_ROOT is resolved
-// once at startup and carries the version, so it names .../build-loop/0.10.0.
-// Codex deletes the old version directory on update rather than keeping it, the
-// running session still holds the old path, and from then on the shell answers
-// 127 for every hook. Claude Code is not exposed because it keeps every old
-// version, which is the same fact failing in the opposite direction: there a
-// running session quietly goes on using code that has been replaced.
-//
 // The guard cannot live in bin/hook-node, which is the obvious place for it.
 // The launcher is inside the directory that vanished, so it is not there to
 // run. It has to be in the command string, which the host builds from an
 // environment variable it still holds.
 //
 // The exit code is 3, and which code it is decides whether any of this works.
-//
-// This was written as exit 0 first, and exit 0 makes the whole guard pointless.
-// The hook docs are explicit: "Stderr from a hook that exits 0 goes to the debug
-// log only, never the transcript, and Claude never sees it." The message would
-// have gone nowhere, and the change would have been a no-op wearing the clothes
-// of a fix. Caught in review on 2026-08-16, after being argued for in a commit
-// message on the grounds that exiting 0 keeps the noise down. It does. It also
-// keeps the message down.
 //
 // Putting it on stdout instead does not work either. For most events stdout on
 // exit 0 also goes to the debug log rather than the transcript, and for the
@@ -115,15 +86,6 @@ function indexMode(file) {
 // What the guard tests is the file the command is about to run, not the plugin
 // directory holding it.
 //
-// It tested the directory first, on the reasoning that a deleted directory is
-// the failure being fixed and one identical wording everywhere is easy to check.
-// Both halves were wrong. A directory that survives while the launcher inside it
-// does not, from a partial update or an interrupted install, passes a directory
-// test and then answers 127 with no explanation, which is precisely the
-// ambiguity this exists to remove. And byte-identity was the weaker check
-// anyway: it proves thirteen commands say the same thing, not that any of them
-// says the right thing about itself.
-//
 // So the tested path varies per command and is required to equal that command's
 // own first token. The message and the exit code stay identical everywhere. That
 // is a stronger property than one shared string, because it couples each guard
@@ -132,49 +94,12 @@ function indexMode(file) {
 // Two clauses, not one, because `[ -x ]` alone is false for two different
 // reasons and they need different remedies.
 //
-// The file being gone is the mid-session update, and a restart fixes it. The
-// file being there but not runnable is a checkout that dropped its modes, a zip
-// download, a noexec mount or an interrupted install, and a restart fixes
-// nothing. A single -x test conflates them and the one message then states a
-// cause confidently and sometimes wrongly, sending somebody to restart when the
-// answer is chmod. This repository has already had the second case for real: on
-// 2026-08-04 consistency-lint.js shipped at mode 100644 and the shell refused
-// it, which is the bug at the top of this file.
-//
-// Handing back a confident wrong cause is the exact failure this whole guard
-// exists to end, so it would have been a poor thing to reintroduce while fixing
-// it. Caught in review on 2026-08-16.
-//
-// The not-runnable message names the path, which the shell expands, because
-// unlike "restart" the remedy needs to say what to chmod.
 // Every README that ships hooks has to carry this sentence.
 //
-// Three of them said the opposite until 2026-08-16: that Codex plugins cannot
-// register hooks, so the hooks are Claude Code only. build-loop said it twice,
-// in opposite directions. The inference behind it every time was that
-// `.codex-plugin/plugin.json` has no hooks field, therefore Codex ignores
-// hooks, which reads the manifest and calls it the host. A probe hook added to
-// the Codex-installed copy showed Codex reading each plugin's hooks/hooks.json
-// and running the commands.
-//
-// It mattered most in guardrails, which told a reader they had no automatic
-// protection in a host where the guards do fire. That is the wrong direction to
-// be wrong about a plugin whose job is to stop things.
 const RUNS_IN_CODEX = 'These hooks run in both Claude Code and Codex.';
 
 // Three clauses, not two. The third was added last and is the one the guard
 // itself got wrong.
-//
-// With CLAUDE_PLUGIN_ROOT unset or empty, the earlier two-clause guard tested
-// `[ -e "/bin/hook-node" ]`, which fails, and told the reader a plugin had been
-// updated and to restart. A restart does not fix a host that never set the
-// variable. That is a confident wrong cause, which is the exact failure this
-// whole guard exists to end, reintroduced by the guard.
-//
-// Worse than an oversight: the shell probe below already exercised the unset
-// state and deliberately asserted only the exit code, so the wrong message was
-// covered by a test that had been written not to look at it. Caught in review
-// on 2026-08-16. The probe now asserts the message in every state.
 //
 // The unset clause names no path, because there is no path to name: that is the
 // whole condition. It also promises no remedy, because there is not one a reader
@@ -184,10 +109,74 @@ const UNSET_MESSAGE = 'Plugin hooks are off because this host did not tell the h
 const GONE_MESSAGE ='Plugin hooks are off in this session because a plugin was updated after it started. Restart to switch them back on.';
 const notRunnableMessage = (target) => `Plugin hooks are off because ${target} is not executable. A restart will not help. Restore its execute bit with chmod +x.`;
 
-function guardFor(target) {
-  return `[ -n "\${CLAUDE_PLUGIN_ROOT}" ] || { echo "${UNSET_MESSAGE}" >&2; exit ${GUARD_EXIT}; }; `
-    + `[ -e "${target}" ] || { echo "${GONE_MESSAGE}" >&2; exit ${GUARD_EXIT}; }; `
-    + `[ -x "${target}" ] || { echo "${notRunnableMessage(target)}" >&2; exit ${GUARD_EXIT}; }; `;
+// Escaping it in shell was the first answer and the wrong one. It needs sed,
+// which means it needs PATH, and a broken PATH is a live case here rather than
+// a hypothetical: bin/hook-node searches six places for node precisely because
+// PATH cannot be trusted. With sed unreachable the escaped message came back
+// empty, which is valid JSON carrying nothing, so the fix would have reproduced
+// the fault it was written to cure.
+//
+// So nothing variable is announced at all. The announced message names the file
+// relative to the plugin directory, which is fixed text in the manifest.
+//
+// A target that is not under the plugin directory has no relative form, so one
+// message is used for both routes there. That is safe for the same reason: it is
+// fixed text in the manifest either way. The recogniser accepts one argument or
+// two for exactly this case, and the check below asserts the announced message
+// carries no expansion, no backslash and no control character whichever it is.
+const PLUGIN_ROOT_PREFIX = '${CLAUDE_PLUGIN_ROOT}/';
+const announcedNotRunnable = (target) => (target.startsWith(PLUGIN_ROOT_PREFIX)
+  ? notRunnableMessage(`${target.slice(PLUGIN_ROOT_PREFIX.length)} inside the plugin directory`)
+  : notRunnableMessage(target));
+
+// Both shapes are live while this rolls out one plugin at a time, so a hook
+// carrying either is a guarded hook. A hook carrying neither is not.
+// Which events can carry it at all, measured rather than assumed. Codex
+// validates the announced event name, but a name matching its declaration is
+// not the same question as whether that event delivers anything.
+//
+// PreToolUse, Stop and SessionStart are not on the list because they have not
+// been measured, not because they are known to fail. Anything converting a hook
+// under one of those measures it first and adds it here with the date.
+const ANNOUNCING_EVENTS = ['UserPromptSubmit'];
+
+const CODEX_EXIT = 0;
+
+// PLUGIN_ROOT alone is not enough to identify the host. It carries no vendor
+// prefix, so a shell profile that exports it, or any other tool that calls its
+// own install directory that, would put a Claude Code hook on the Codex branch,
+// where it exits 0 and writes to stdout. PostToolUse sends that to the debug
+// log, so the sentence would reach nobody: the exact regression the exit-code
+// reasoning above exists to prevent, arriving through a variable name instead
+// of a number.
+function sayFor(event) {
+  return 'say(){ if [ -n "${PLUGIN_ROOT}" ] && [ "${PLUGIN_ROOT}" = "${CLAUDE_PLUGIN_ROOT}" ]; then printf '
+    + `'{"hookSpecificOutput":{"hookEventName":"${event}","additionalContext":"%s"}}' "\${2:-$1}"; `
+    + `exit ${CODEX_EXIT}; fi; printf '%s\\n' "$1" >&2; exit ${GUARD_EXIT}; }; `;
+}
+
+// The stderr-only branch below still writes `echo`, and knowingly. /bin/sh and
+// /bin/zsh interpret a backslash in its argument, so it mangles a path holding
+// one exactly as the announcing branch did before this change. It is left alone
+// because that shape is carried by this plugin's PostToolUse hooks and by all
+// four other plugins, and a fix for one plugin does not ride along in another's
+// pull request. Nothing here is exercised against an awkward plugin root for the
+// stderr-only shape, so that defect is live and untested rather than covered.
+// Named in review on 2026-08-17 so the printf change is not read as repo-wide.
+function clausesFor(target, say) {
+  const fire = (message, announced) => {
+    if (!say) return `{ echo "${message}" >&2; exit ${GUARD_EXIT}; }`;
+    return announced && announced !== message ? `say "${message}" "${announced}"` : `say "${message}"`;
+  };
+  return `[ -n "\${CLAUDE_PLUGIN_ROOT}" ] || ${fire(UNSET_MESSAGE)}; `
+    + `[ -e "${target}" ] || ${fire(GONE_MESSAGE)}; `
+    + `[ -x "${target}" ] || ${fire(notRunnableMessage(target), announcedNotRunnable(target))}; `;
+}
+
+// event omitted gives the stderr-only shape, which is what the plugins that
+// have not been converted yet still carry.
+function guardFor(target, event) {
+  return event ? sayFor(event) + clausesFor(target, true) : clausesFor(target, false);
 }
 
 // Deliberately loose about the messages and the codes, so that a guard carrying
@@ -199,17 +188,57 @@ const GUARD_RE = new RegExp(
   + '\\[ -x "([^"]+)" \\] \\|\\| \\{ echo "([^"]*)" >&2; exit (\\d+); \\}; ',
 );
 
+// Same looseness for the newer shape, and the event name is captured rather
+// than fixed so a hook declaring one event and announcing another is reported
+// instead of silently accepted. Codex validates that name, so a wrong one is a
+// hook whose message is thrown away for a second reason.
+const SAY_GUARD_RE = new RegExp(
+  '^say\\(\\)\\{ if \\[ -n "\\$\\{PLUGIN_ROOT\\}" \\] && \\[ "\\$\\{PLUGIN_ROOT\\}" = "\\$\\{CLAUDE_PLUGIN_ROOT\\}" \\]; then printf '
+  + '\'\\{"hookSpecificOutput":\\{"hookEventName":"(\\w+)","additionalContext":"%s"\\}\\}\' "\\$\\{2:-\\$1\\}"; '
+  + 'exit (\\d+); fi; printf \'%s\\\\n\' "\\$1" >&2; exit (\\d+); \\}; '
+  + '\\[ -n "\\$\\{CLAUDE_PLUGIN_ROOT\\}" \\] \\|\\| say "([^"]*)"; '
+  + '\\[ -e "([^"]+)" \\] \\|\\| say "([^"]*)"; '
+  // Two arguments on this clause alone: the first names the absolute path and
+  // goes to stderr, the second is what Codex is told and names no path. Both are
+  // captured, because a guard that announced the path-carrying one would parse
+  // here and break only on the plugin roots nobody tests with.
+  + '\\[ -x "([^"]+)" \\] \\|\\| say "([^"]*)"(?: "([^"]*)")?; ',
+);
+
+// One reading for either shape, so every check below asks the same questions of
+// both and a hook cannot escape a check by being written in the other one.
+function matchGuard(command) {
+  const say = SAY_GUARD_RE.exec(command);
+  if (say) {
+    const [matched, event, codexExit, exitCode, unset, gonePath, gone, execPath, notRunnable, execAnnounced] = say;
+    return {
+      matched, event, codexExit: Number(codexExit), announces: true,
+      unsetMessage: unset, goneMessage: gone, execMessage: notRunnable,
+      // One argument means the announced message is the same one, which is what
+      // say() itself does with ${2:-$1}. Reading it the same way keeps this
+      // object describing the shell's behaviour rather than the regex's shape.
+      execAnnounced: execAnnounced === undefined ? notRunnable : execAnnounced,
+      gonePath, execPath,
+      unsetCode: Number(exitCode), goneCode: Number(exitCode), execCode: Number(exitCode),
+    };
+  }
+  const legacy = GUARD_RE.exec(command);
+  if (!legacy) return null;
+  const [matched, unset, unsetCode, gonePath, gone, goneCode, execPath, notRunnable, execCode] = legacy;
+  return {
+    matched, event: null, codexExit: null, announces: false,
+    unsetMessage: unset, goneMessage: gone, execMessage: notRunnable,
+    execAnnounced: null,
+    gonePath, execPath,
+    unsetCode: Number(unsetCode), goneCode: Number(goneCode), execCode: Number(execCode),
+  };
+}
+
 // `"${CLAUDE_PLUGIN_ROOT}"/bin/hook-node` and `"${CLAUDE_PLUGIN_ROOT}/bin/hook-node"`
 // are the same path written two ways, and the two appear in the same command.
 const unquote = (token) => token.replace(/"/g, '');
 
 // What a hooks.json command actually asks the shell to do.
-//
-// The shell executes the first token. Everything after it is an argument, and
-// an argument is read rather than executed, so the permission bit and the
-// shebang belong to the first token alone. Since 2026-08-13 that token is
-// bin/hook-node with the hook file passed to it, which is the point of the
-// launcher: the file carrying the shebang becomes one this repository controls.
 //
 // Split out from declaredHooks so the three forms can be exercised against
 // input this file makes up, rather than only against whatever the repository
@@ -225,8 +254,8 @@ function parseCommand(command, pluginDir) {
   // found at least five, noticed. Checks that pass by finding nothing are the
   // failure this suite exists to prevent, so the parser has to see through the
   // guard rather than be defeated by it.
-  const guard = GUARD_RE.exec(command);
-  const work = guard ? command.slice(guard[0].length) : command;
+  const guard = matchGuard(command);
+  const work = guard ? command.slice(guard.matched.length) : command;
   const tokens = work
     .replace(/"?\$\{CLAUDE_PLUGIN_ROOT\}"?/g, '<ROOT>')
     .split(/\s+/).filter(Boolean);
@@ -258,7 +287,7 @@ function declaredHooks() {
     } catch (error) {
       throw new Error(`${manifest} is not valid JSON: ${error.message}`);
     }
-    for (const groups of Object.values(parsed.hooks || {})) {
+    for (const [event, groups] of Object.entries(parsed.hooks || {})) {
       for (const group of groups) {
         for (const hook of group.hooks || []) {
           const command = hook.command || '';
@@ -269,6 +298,7 @@ function declaredHooks() {
             manifest,
             pluginDir,
             command,
+            event,
             file: path.posix.join(pluginDir, 'hooks', named[1]),
             ...parseCommand(command, pluginDir),
           });
@@ -410,18 +440,6 @@ function resolvesOnBarePath(interpreter) {
 }
 
 check('every executed hook names an interpreter a GUI-launched host can find', () => {
-  // The bug, on 2026-08-12: every hook here began `#!/usr/bin/env node`, and
-  // node on this machine lives at ~/.local/bin/node, put on PATH by a single
-  // line in ~/.zshrc. Codex is launched from the Dock and so never reads that
-  // file. env could not find node, the shell answered 127, Claude Code
-  // discarded the failure, and twelve of the thirteen declared hooks did
-  // nothing at all in that host for their whole life.
-  //
-  // This is the same shape as the 2026-08-04 permission-bit bug one level
-  // down. That one was "the shell may refuse to run this file"; this one is
-  // "the shell may not find what the file asks to be run by". The check above
-  // it asserts a shebang is present, which was true throughout and never the
-  // question.
   const unresolvable = executedFiles()
     .filter((file) => fs.existsSync(path.join(ROOT, file)))
     .map((file) => ({ file, interpreter: shebangInterpreter(file) }))
@@ -435,17 +453,6 @@ check('every executed hook names an interpreter a GUI-launched host can find', (
 });
 
 check('every JavaScript hook is invoked through the launcher, not directly', () => {
-  // The fix for the above, stated as a rule rather than left to whoever adds
-  // the next hook. A .js file invoked directly is a file whose shebang has to
-  // find node, which is the failure. Through bin/hook-node the shebang is
-  // `#!/bin/sh`, which is on every PATH there has ever been, and the search
-  // for node happens in a file this repository controls.
-  // Two forms fail this, and the second is the one that got away. A command
-  // written `node "${CLAUDE_PLUGIN_ROOT}"/hooks/x.js` has no repository file in
-  // its first token, so `executed` is null and an earlier version of this check
-  // skipped it entirely. It resolves node from PATH exactly as the shebang did,
-  // which is the whole defect this file exists to keep out, so it has to fail
-  // here rather than pass by not being noticed.
   const direct = declaredHooks()
     .filter((h) => h.file.endsWith('.js'))
     .flatMap((h) => {
@@ -469,14 +476,6 @@ check('no test suite depends on node being on PATH either', () => {
   // The same rule as the two checks above, applied to the suites rather than to
   // the hooks, and it lives here so there is one statement of it rather than
   // two that can disagree.
-  //
-  // Measured on 2026-08-15 by running all 42 suites under BARE_PATH: four
-  // failed, at 22 sites. Nineteen in stale-branches, one each in slop-check and
-  // skill-md-check, all spawning the interpreter by the name `node`, and one in
-  // resource-ownership executing a hook file so the kernel read its
-  // `#!/usr/bin/env node` and searched PATH. Seventeen suites already used
-  // process.execPath and were unaffected, so the rule was being followed by
-  // most of the repository and written down nowhere.
   //
   // This is the fourth instance of a suite answering by machine rather than by
   // the work, after the bash-guard suite in #102, built-check, and the probe
@@ -533,13 +532,6 @@ check('every hook command guards the file it is about to run', () => {
   // together, and the next hook somebody adds gets none. The suite already walks
   // every manifest, so a hook added tomorrow is covered without anyone
   // remembering this exists.
-  //
-  // The strong part is the last assertion, that the guarded path is the
-  // command's own first token. A guard naming some other path still reads as a
-  // guard, still passes any check that only looks for the words, and protects
-  // nothing. That is not hypothetical either: the first version of this guarded
-  // the plugin directory for every command, which is a path no command runs, and
-  // so let a present-but-incomplete install through to a bare 127.
   const hooks = declaredHooks();
   assert.ok(hooks.length >= 13,
     `only ${hooks.length} hook commands found, so this is checking almost nothing`);
@@ -547,14 +539,59 @@ check('every hook command guards the file it is about to run', () => {
   const wrong = [];
   for (const h of hooks) {
     const where = `${h.file} in ${h.manifest}`;
-    const guard = GUARD_RE.exec(h.command);
+    const guard = matchGuard(h.command);
 
     if (!guard) {
       wrong.push(`${where}: no guard, so it exits 127 with nothing and reads as an interpreter failure`);
       continue;
     }
 
-    const [matched, unsetMessage, unsetCode, gonePath, goneMessage, goneCode, execPath, execMessage, execCode] = guard;
+    const {
+      matched, unsetMessage, unsetCode, gonePath, goneMessage, goneCode, execPath, execMessage, execCode,
+    } = guard;
+
+    // The event a hook announces has to be the event it is declared under.
+    // Codex validates the name, so getting it wrong throws the message away
+    // again, and it would do so while every other assertion here still passed.
+    if (guard.announces) {
+      if (guard.event !== h.event) {
+        wrong.push(`${where}: declared under ${h.event} but announces itself as ${guard.event}, so Codex discards the message`);
+      }
+      if (!ANNOUNCING_EVENTS.includes(guard.event)) {
+        wrong.push(`${where}: announces under ${guard.event}, which is not measured to deliver anything in Codex, `
+          + `so the sentence is discarded while the hook reports success. Measured to work: ${ANNOUNCING_EVENTS.join(', ')}`);
+      }
+      if (guard.codexExit !== CODEX_EXIT) {
+        wrong.push(`${where}: the Codex branch exits ${guard.codexExit}, and Codex reads any non-zero exit as a failure and drops what the hook said`);
+      }
+
+      // The announced message is pasted into a JSON string by a shell that does
+      // not know it is writing JSON, so two separate things can spoil it and
+      // both are checked.
+      for (const [which, announced] of [
+        ['unset', guard.unsetMessage],
+        ['gone', guard.goneMessage],
+        ['not-runnable', guard.execAnnounced],
+      ]) {
+        if (/[$`]/.test(announced)) {
+          wrong.push(`${where}: the ${which} message announced to Codex is ${JSON.stringify(announced)}, which the shell `
+            + 'expands. Whatever the expansion holds is pasted in unescaped, so a quote breaks the JSON outright and a '
+            + 'backslash or a control character corrupts the sentence, and Codex reports the hook Completed either way. '
+            + 'Announce fixed text and keep the absolute path on the stderr line');
+        }
+        // eslint-disable-next-line no-control-regex
+        if (/[\\\x00-\x1f]/.test(announced)) {
+          wrong.push(`${where}: the ${which} message announced to Codex is ${JSON.stringify(announced)}, which holds a `
+            + 'backslash or a control character. JSON reads it as an escape, so the sentence either fails to parse or '
+            + 'parses into something other than what it says, and the second is worse because it looks delivered');
+        }
+      }
+
+      if (guard.execAnnounced !== announcedNotRunnable(guard.execPath)) {
+        wrong.push(`${where}: the not-runnable message announced to Codex is ${JSON.stringify(guard.execAnnounced)}, `
+          + `rather than ${JSON.stringify(announcedNotRunnable(guard.execPath))}`);
+      }
+    }
 
     if (unsetMessage !== UNSET_MESSAGE) wrong.push(`${where}: the unset message is ${JSON.stringify(unsetMessage)}`);
     if (Number(unsetCode) !== GUARD_EXIT) wrong.push(`${where}: the unset clause exits ${unsetCode}, not ${GUARD_EXIT}`);
@@ -600,6 +637,22 @@ check('the guard exits on a code that reaches the reader and blocks nothing', ()
 
   assert.ok(Number.isInteger(GUARD_EXIT) && GUARD_EXIT > 0 && GUARD_EXIT < 126,
     `${GUARD_EXIT} is not a plain non-zero exit status a shell will report unchanged`);
+
+  // The Codex branch inverts every one of those reasons, so it is stated here
+  // rather than left as a number chosen inside a builder. A raised review of
+  // the guard read exit 0 there as the fault this suite refuses above, which is
+  // the right instinct and the wrong host: 0 buries the message on Claude Code
+  // and is the only code that delivers it on Codex, which discards stderr on
+  // every non-zero exit.
+  //
+  // What it costs is real and is accepted. Codex marks that hook as having run
+  // fine when it did not. Nothing is hidden from the reader, who gets the
+  // sentence, which is the entire point; what is lost is the `Failed` label,
+  // and that label is what this whole change exists to stop relying on, since
+  // it arrives as a bare number nobody can act on.
+  assert.strictEqual(CODEX_EXIT, 0,
+    `the Codex branch exits ${CODEX_EXIT}, and Codex discards what a hook said on any non-zero exit, `
+    + 'so anything but 0 there is the silent failure this guard was written to end');
 });
 
 check('the guard actually fires, and only when it should', () => {
@@ -611,38 +664,10 @@ check('the guard actually fires, and only when it should', () => {
   // uses and they are not the same program. bin/hook-node's own shebang is
   // #!/bin/sh, which on a Linux runner is dash and on macOS is not.
   //
-  // Which shell each host uses, looked up rather than assumed, because a review
-  // on 2026-08-16 raised that this guard would be a syntax error in fish and
-  // csh and so would switch off hooks that had been working:
-  //
   // Claude Code uses `sh -c`. The docs are specific: "The `command` string is
   // passed to a shell: `sh -c` on macOS and Linux, Git Bash on Windows, or
   // PowerShell when Git Bash isn't installed." A user's login shell never sees
   // it, so fish and csh are not reachable on this host at all.
-  //
-  // Codex uses `$SHELL -lc`, established from its binary on 2026-08-16, so a
-  // login shell does read it there. That is the case worth naming rather than
-  // waving away, and it is almost certainly already broken for a reason older
-  // than this guard: every command in these manifests, before and after, writes
-  // `${CLAUDE_PLUGIN_ROOT}`, and fish has no `${VAR}` form. Its equivalent is
-  // `{$VAR}`. csh and tcsh do not accept `-lc` at all, measured here. So a
-  // non-POSIX login shell could not have run these hooks before either.
-  //
-  // "Almost certainly" is doing real work in that sentence. It is an inference
-  // from fish's documented syntax, not a measurement, because fish is not
-  // installed on this machine. Anyone who does have it can settle it in one
-  // line. It is recorded as unproven rather than folded into the reasoning as
-  // though it were checked.
-  //
-  // Which shells exist is a property of the machine, not of the work. Naming
-  // /bin/zsh unconditionally failed CI on 2026-08-16, because the Ubuntu runner
-  // does not have it. So the list is filtered by what is installed, and the two
-  // ways that could quietly go wrong are both closed: /bin/sh is required
-  // outright, since a machine without it cannot run a hook at all and a run
-  // that skipped everything would otherwise report a pass, and whatever was
-  // skipped is printed. A check that silently examines an empty list is the
-  // failure this suite exists to prevent, and it does not stop being that
-  // because the empty list came from a missing shell.
   //
   // The states are four, not three. The fourth, a plugin directory that is still
   // there while the launcher inside it is not, is the one a directory test
@@ -697,8 +722,6 @@ check('the guard actually fires, and only when it should', () => {
       assert.strictEqual(incomplete.err.trim(), GONE_MESSAGE,
         `${shell}: a half-installed plugin said ${JSON.stringify(incomplete.err)}`);
 
-      // There, and not executable. The mode this repository actually shipped by
-      // accident on 2026-08-04.
       fs.writeFileSync(launcher, '#!/bin/sh\n');
       fs.chmodSync(launcher, 0o644);
       const notRunnable = run({ ...process.env, CLAUDE_PLUGIN_ROOT: partial });
@@ -715,10 +738,6 @@ check('the guard actually fires, and only when it should', () => {
       fs.rmSync(partial, { recursive: true, force: true });
     }
 
-    // Unset, and empty, which are different inputs that must not produce
-    // different answers. This used to assert the exit code and nothing else,
-    // which let the guard blame an update for a variable the host never set and
-    // kept a wrong cause covered by a test written not to look at it.
     for (const [what, env] of [
       ['unset', (() => { const e = { ...process.env }; delete e.CLAUDE_PLUGIN_ROOT; return e; })()],
       ['empty', { ...process.env, CLAUDE_PLUGIN_ROOT: '' }],
@@ -754,6 +773,150 @@ check('the guard actually fires, and only when it should', () => {
       `${shell}: a healthy hook exited ${healthy.code}, so every hook would report an error on every event`);
     assert.strictEqual(healthy.err, '',
       `${shell}: a healthy hook wrote ${JSON.stringify(healthy.err)} to stderr, which the transcript would show as an error`);
+
+    // The newer shape, run rather than compared. Both branches matter and they
+    // fail in opposite directions: the Codex branch going missing leaves the
+    // reader on a bare number again, and the Codex branch firing everywhere
+    // takes away the stderr line Claude Code does show. So each is asserted
+    // under an environment that differs only by PLUGIN_ROOT.
+    const EVENT = 'UserPromptSubmit';
+    const sayProbe = `${guardFor('${CLAUDE_PLUGIN_ROOT}/bin/hook-node', EVENT)}echo RAN`;
+    const sayRun = (env) => {
+      const result = spawnSync(shell, ['-lc', sayProbe], { env, encoding: 'utf8' });
+      if (result.error) throw new Error(`${shell} could not be run: ${result.error.message}`);
+      return { code: result.status, out: result.stdout, err: result.stderr };
+    };
+    // Deleted rather than left alone, because running this suite from inside a
+    // Codex session would otherwise put PLUGIN_ROOT in both environments and
+    // the two branches would stop being told apart.
+    const withoutCodex = { ...process.env, CLAUDE_PLUGIN_ROOT: path.join(os.tmpdir(), 'no-such-plugin-0.0.0') };
+    delete withoutCodex.PLUGIN_ROOT;
+
+    const elsewhere = sayRun(withoutCodex);
+    assert.strictEqual(elsewhere.code, GUARD_EXIT,
+      `${shell}: off Codex the announcing guard exited ${elsewhere.code} rather than ${GUARD_EXIT}, so Claude Code stops showing the line`);
+    assert.strictEqual(elsewhere.err.trim(), GONE_MESSAGE,
+      `${shell}: off Codex the announcing guard said ${JSON.stringify(elsewhere.err)} on stderr`);
+    assert.strictEqual(elsewhere.out, '',
+      `${shell}: off Codex the announcing guard wrote ${JSON.stringify(elsewhere.out)} to stdout, where the message is fed to the model instead of shown`);
+
+    // A PLUGIN_ROOT that came from somewhere other than Codex. This is the
+    // collision the two-name test exists to close, and with the old one-name
+    // test it took the Codex branch and lost the line entirely.
+    const collided = sayRun({ ...withoutCodex, PLUGIN_ROOT: '/opt/some-other-tool' });
+    assert.strictEqual(collided.code, GUARD_EXIT,
+      `${shell}: a PLUGIN_ROOT that disagrees with CLAUDE_PLUGIN_ROOT was read as Codex, and exiting ${collided.code} sends the sentence to the debug log`);
+    assert.strictEqual(collided.err.trim(), GONE_MESSAGE,
+      `${shell}: with an unrelated PLUGIN_ROOT the guard said ${JSON.stringify(collided.err)} on stderr`);
+    assert.strictEqual(collided.out, '',
+      `${shell}: with an unrelated PLUGIN_ROOT the guard wrote ${JSON.stringify(collided.out)} to stdout`);
+
+    const inCodex = sayRun({ ...withoutCodex, PLUGIN_ROOT: path.join(os.tmpdir(), 'no-such-plugin-0.0.0') });
+    assert.strictEqual(inCodex.code, CODEX_EXIT,
+      `${shell}: under Codex the guard exited ${inCodex.code}, and Codex drops what a hook said on any non-zero exit`);
+    assert.strictEqual(inCodex.err, '',
+      `${shell}: under Codex the guard wrote ${JSON.stringify(inCodex.err)} to stderr, which Codex discards`);
+
+    let announced;
+    try {
+      announced = JSON.parse(inCodex.out);
+    } catch (error) {
+      throw new Error(`${shell}: under Codex the guard wrote ${JSON.stringify(inCodex.out)}, which is not the JSON Codex parses: ${error.message}`);
+    }
+    assert.strictEqual(announced.hookSpecificOutput.hookEventName, EVENT,
+      `${shell}: the announcement names ${announced.hookSpecificOutput.hookEventName}, and Codex rejects output whose event is not the one that fired`);
+    assert.strictEqual(announced.hookSpecificOutput.additionalContext, GONE_MESSAGE,
+      `${shell}: the announcement carried ${JSON.stringify(announced.hookSpecificOutput.additionalContext)} rather than the sentence`);
+
+    // A plugin root the shell is happy with and JSON is not. Every character
+    // here is legal in a POSIX path, and the three spoil the announcement in two
+    // different ways, which is why the assertion below compares the delivered
+    // sentence rather than only parsing it.
+    //
+    // The quote closes the string early and the raw tab is a control character
+    // JSON forbids, so both make the output unparseable and Codex is handed
+    // nothing. The backslash in `back\nbreak` begins a valid JSON escape, so that
+    // one parses and delivers a path with a real line break inside it. Checking
+    // only that it parsed would call that a pass. Run rather than reasoned about,
+    // because the released 0.10.8 passed every other assertion in this suite
+    // while doing both.
+    for (const awkward of ['quote"root', 'back\\nbreak', 'tab\there']) {
+      const odd = fs.mkdtempSync(path.join(os.tmpdir(), 'odd-plugin-'));
+      const oddRoot = path.join(odd, awkward);
+      fs.mkdirSync(path.join(oddRoot, 'bin'), { recursive: true });
+      const oddLauncher = path.join(oddRoot, 'bin', 'hook-node');
+      fs.writeFileSync(oddLauncher, '#!/bin/sh\n');
+      fs.chmodSync(oddLauncher, 0o644);
+      try {
+        const oddCodex = sayRun({ ...process.env, CLAUDE_PLUGIN_ROOT: oddRoot, PLUGIN_ROOT: oddRoot });
+        assert.strictEqual(oddCodex.code, CODEX_EXIT,
+          `${shell}: with ${JSON.stringify(awkward)} in the plugin root the guard exited ${oddCodex.code}, and Codex drops what a hook said on any non-zero exit`);
+
+        let oddAnnounced;
+        try {
+          oddAnnounced = JSON.parse(oddCodex.out);
+        } catch (error) {
+          throw new Error(`${shell}: with ${JSON.stringify(awkward)} in the plugin root the guard wrote `
+            + `${JSON.stringify(oddCodex.out)}, which Codex cannot parse, so it reports the hook Completed and the `
+            + `reader is told nothing: ${error.message}`);
+        }
+        // Compared, not merely parsed. A backslash that begins a valid JSON
+        // escape produces output that parses and says something else, and a test
+        // that stopped at JSON.parse would pass over it.
+        if (typeof oddAnnounced?.hookSpecificOutput?.additionalContext !== 'string') {
+          throw new Error(`${shell}: with ${JSON.stringify(awkward)} in the plugin root the announcement carried no `
+            + `sentence at all: ${JSON.stringify(oddCodex.out)}`);
+        }
+        assert.strictEqual(oddAnnounced.hookSpecificOutput.additionalContext, announcedNotRunnable('${CLAUDE_PLUGIN_ROOT}/bin/hook-node'),
+          `${shell}: with ${JSON.stringify(awkward)} in the plugin root the announcement carried `
+          + `${JSON.stringify(oddAnnounced.hookSpecificOutput.additionalContext)}`);
+
+        // The stderr line still names the absolute path. That is what makes the
+        // announced message allowed to drop it for the reader who does see this
+        // line, which is the Claude Code one. The Codex reader does not, and this
+        // assertion does not pretend otherwise: it runs the guard again with
+        // PLUGIN_ROOT removed, which is the Claude Code environment.
+        const oddStderr = sayRun({ ...withoutCodex, CLAUDE_PLUGIN_ROOT: oddRoot });
+        assert.strictEqual(oddStderr.err.trim(), notRunnableMessage(oddLauncher),
+          `${shell}: with ${JSON.stringify(awkward)} in the plugin root the stderr line was ${JSON.stringify(oddStderr.err)}, `
+          + 'so Claude Code lost the path as well and nobody can act on it');
+      } finally {
+        fs.rmSync(odd, { recursive: true, force: true });
+      }
+    }
+
+    // The unset state against the announcing shape, which the legacy probe
+    // covers and this one did not until a review of #129 said so.
+    for (const [what, extra] of [
+      ['unset', {}],
+      ['empty', { CLAUDE_PLUGIN_ROOT: '' }],
+    ]) {
+      const env = { ...process.env, ...extra };
+      if (what === 'unset') delete env.CLAUDE_PLUGIN_ROOT;
+
+      for (const [host, root] of [['off Codex', null], ['with PLUGIN_ROOT set', '/opt/some-other-tool']]) {
+        const withHost = { ...env };
+        delete withHost.PLUGIN_ROOT;
+        if (root) withHost.PLUGIN_ROOT = root;
+
+        const noRoot = sayRun(withHost);
+        assert.strictEqual(noRoot.code, GUARD_EXIT,
+          `${shell}: ${host}, with CLAUDE_PLUGIN_ROOT ${what}, the announcing guard exited ${noRoot.code} rather than ${GUARD_EXIT}`);
+        assert.strictEqual(noRoot.err.trim(), UNSET_MESSAGE,
+          `${shell}: ${host}, with CLAUDE_PLUGIN_ROOT ${what}, it said ${JSON.stringify(noRoot.err)}`);
+        assert.strictEqual(noRoot.out, '',
+          `${shell}: ${host}, with CLAUDE_PLUGIN_ROOT ${what}, it wrote ${JSON.stringify(noRoot.out)} to stdout`);
+      }
+    }
+
+    // Healthy under Codex too. A guard that announces on every event would put
+    // this line in front of the reader constantly and mean nothing when it is
+    // real.
+    const healthyInCodex = sayRun({ ...process.env, CLAUDE_PLUGIN_ROOT: healthyRoot, PLUGIN_ROOT: healthyRoot });
+    assert.strictEqual(healthyInCodex.out.trim(), 'RAN',
+      `${shell}: under Codex the guard blocked a hook whose plugin is present`);
+    assert.strictEqual(healthyInCodex.code, 0,
+      `${shell}: under Codex a healthy hook exited ${healthyInCodex.code}`);
   }
 });
 
@@ -772,12 +935,6 @@ check('every launcher copy is identical', () => {
 });
 
 check('every plugin that ships a JavaScript hook documents how node is found', () => {
-  // The 2026-08-13 review: $CLAUDE_HOOK_NODE shipped as a user-facing setting
-  // documented nowhere, while two READMEs still told people node had to be on
-  // PATH or the hooks would fail silently. Both halves were wrong at once, so
-  // somebody following the instructions would neither find the supported way
-  // to point at their Node nor understand why it worked without it.
-  //
   // CONTRIBUTING.md requires each plugin README to cover configuration and
   // runtime limits. How a hook finds its interpreter is both of those.
   const dirs = [...new Set(declaredHooks()
@@ -793,49 +950,14 @@ check('every plugin that ships a JavaScript hook documents how node is found', (
     const absent = ['CLAUDE_HOOK_NODE', 'bin/hook-node'].filter((s) => !text.includes(s));
     if (absent.length) problems.push(`${dir}/README.md never mentions ${absent.join(' or ')}`);
 
-    // The claim that replaced. It is worse than silence, because it sends
-    // somebody to fix a PATH that was never the problem.
     if (/`?node`? has to be on your/.test(text)) {
       problems.push(`${dir}/README.md still says node has to be on your PATH, which stopped being true`);
     }
 
-    // The guard is a runtime side effect a reader meets without asking for it:
-    // a line in the transcript, once per hook per event, after an update they
-    // may not connect it to. CONTRIBUTING requires READMEs to cover exactly
-    // that. Added after review found the guard shipped documented nowhere while
-    // build-loop's README still promised its probe "prints nothing to the
-    // conversation", which the guard had just made false.
     if (!/while a session is already open/i.test(text)) {
       problems.push(`${dir}/README.md does not say what happens when the plugin is updated mid-session`);
     }
 
-    // The claim that Codex does not run these hooks. It has been written into
-    // build-loop's README twice, in opposite directions, and into three others
-    // once each, always from the same inference: `.codex-plugin/plugin.json`
-    // has no hooks field, therefore Codex ignores hooks. That reads the manifest
-    // and calls it the host. A probe hook added to the Codex-installed copy on
-    // 2026-08-16 showed Codex reading each plugin's hooks/hooks.json and running
-    // the commands.
-    //
-    // It matters most in guardrails, where it told a reader they had no
-    // automatic protection in a host where they had it, which is the wrong
-    // direction to be wrong about a plugin whose job is to stop things.
-    //
-    // Checked rather than trusted to stay fixed, because it came back once
-    // already while being corrected.
-    //
-    // Stated as something each README must say, not as a phrase it must avoid.
-    // The banning form was tried first and was wrong: these READMEs keep the
-    // superseded claim on the record on purpose, so "Codex plugins cannot
-    // register hooks" appears in all four as a sentence about what they used to
-    // say. A blanket ban cannot tell an assertion from a quotation and failed
-    // against the very correction it was written to protect.
-    // One exact sentence rather than a pattern over prose. The pattern version
-    // was tried and made the test the author of the documentation: three
-    // READMEs said the right thing in their own words and failed anyway, and
-    // the way to pass would have been to bend each one's wording to suit a
-    // regex. A single required sentence is checkable without deciding how the
-    // rest of the page reads.
     if (!text.includes(RUNS_IN_CODEX)) {
       problems.push(`${dir}/README.md does not carry the sentence "${RUNS_IN_CODEX}", which a probe `
         + 'established on 2026-08-16 and which three of these READMEs previously denied');
@@ -884,6 +1006,49 @@ check('the three command forms are told apart', () => {
   assert.strictEqual(directly.executed, 'plugins/example/hooks/x.js',
     'a directly-invoked hook does not resolve to itself, so it escapes the shebang checks');
   assert.strictEqual(directly.viaInterpreter, false);
+
+  // Both guard shapes, built by the generator and read back by the recogniser.
+  // Without this the two can drift by one character and nothing notices: a
+  // converted hook stops matching, gets reported as unguarded, and worse, comes
+  // back from parseCommand with executed: null, so every executable and shebang
+  // check downstream goes green over an empty list. That is the failure this
+  // file exists to keep out, and it would arrive through the parser rather than
+  // through a manifest. Raised in review of the tests on 2026-08-17, when the
+  // say shape existed in the generator and no assertion had ever read one.
+  // Both targets, not just the one every manifest happens to use today. A target
+  // outside the plugin directory has no relative form, so the generator writes
+  // one argument to say() instead of two, and a recogniser that insisted on two
+  // read it as no guard at all. That is the drift this loop exists to catch and
+  // it was live in the first version of this change: the case is here because
+  // review found it, not because the earlier loop could have.
+  for (const [what, event] of [['announcing', 'PostToolUse'], ['stderr-only', undefined]]) {
+    for (const [kind, target] of [
+      ['under the plugin directory', '${CLAUDE_PLUGIN_ROOT}/bin/hook-node'],
+      ['not under it', 'node'],
+    ]) {
+      const built = `${guardFor(target, event)}"\${CLAUDE_PLUGIN_ROOT}"/bin/hook-node "\${CLAUDE_PLUGIN_ROOT}"/hooks/x.js`;
+      const read = matchGuard(built);
+      assert.ok(read, `the ${what} guard the generator writes for a target ${kind} is not recognised by the `
+        + 'guard reader, so a hook carrying it would be reported as having no guard at all');
+      assert.strictEqual(read.announces, Boolean(event),
+        `the ${what} guard for a target ${kind} was read back as announces:${read.announces}`);
+      assert.strictEqual(read.goneMessage, GONE_MESSAGE,
+        `the ${what} guard for a target ${kind} was read back carrying ${JSON.stringify(read.goneMessage)}`);
+      assert.strictEqual(read.execMessage, notRunnableMessage(target),
+        `the ${what} guard for a target ${kind} was read back with the stderr message `
+        + `${JSON.stringify(read.execMessage)}`);
+      if (event) {
+        assert.strictEqual(read.event, event,
+          `the ${what} guard for a target ${kind} was built for ${event} and read back as ${read.event}`);
+        assert.strictEqual(read.execAnnounced, announcedNotRunnable(target),
+          `the ${what} guard for a target ${kind} was read back announcing `
+          + `${JSON.stringify(read.execAnnounced)}`);
+      }
+      assert.strictEqual(parseCommand(built, dir).executed, 'plugins/example/bin/hook-node',
+        `the parser did not see through the ${what} guard for a target ${kind}, so the file it protects `
+        + 'escapes every check built on the parser while those checks report a pass over nothing');
+    }
+  }
 
   const bare = parseCommand('node "${CLAUDE_PLUGIN_ROOT}"/hooks/x.js', dir);
   assert.strictEqual(bare.executed, null,

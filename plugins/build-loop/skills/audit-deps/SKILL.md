@@ -213,14 +213,34 @@ Build the candidate entry with:
   edge format. Storing the plugin only inside the composite key is not enough:
   Step 6 builds back-edges by reading fields off an entry, and a field that only
   exists in the key reads as nothing.
-- `depends_on`, inferred, may be empty. **Each edge carries a bare `target` plus
-  a separate `plugin` field when the root is a `plugin-repo`**, per the
-  Dependency Edge Format in SCHEMA-DEPS.md. Write `{"target": "hook-io",
-  "plugin": "guardrails", ...}` and never `{"target": "guardrails/hook-io"}`.
-  Both halves are needed and they are needed by different readers: the key wants
+- `depends_on`, inferred, may be empty. **Every edge carries four required
+  fields, `target`, `kind`, `repo` and `reason`, plus a separate `plugin` field
+  when the edge's `repo` names a `plugin-repo` root**, per the Dependency Edge
+  Format in SCHEMA-DEPS.md. Write all of them out, with nothing left implied:
+
+      {
+        "target": "hook-io",
+        "plugin": "guardrails",
+        "kind": "script",
+        "repo": "plugins",
+        "reason": "bash-guard requires readEvent and block from the shared hook helper"
+      }
+
+  `repo` is the root's configured `name`, not a repository or marketplace name.
+  This example uses `plugins` to match the edge example in SCHEMA-DEPS.md, so the
+  two can be read side by side. Your own root may be called something else.
+
+  and never `{"target": "guardrails/hook-io"}`. `target` stays bare and `plugin`
+  sits beside it, because different readers want different halves: the key wants
   the plugin, and `/flag-issue` copies `target` straight into a queue entry,
   where it has to be a name that resolves to a file on disk. Nothing on disk is
   called `guardrails/hook-io`.
+
+  **`repo` is the field this step used to leave out**, and an ellipsis in the
+  example is what hid it. Measured against the live map on 2026-08-17: following
+  the old wording had written 118 edges across 41 of 141 entries with no `repo`
+  at all, every one of them on the hand-written side, which is why there is no
+  ellipsis here.
 - `dependents: []`, recomputed in Step 6
 - `confidence`, default `medium`, `high` on strong signals, `low` when uncertain
 - `last_updated`, current UTC ISO-8601
@@ -236,6 +256,9 @@ Changes I'd make to DEPS.json:
 Missing (N):
   + personal:{target} - {one-line reason or "standalone"}
     depends_on: [{brief list}]  (confidence: {level})
+
+  Adding these is the one part of this draft that puts new things in the map,
+  so say which ones you want. all / none / name them.   Default: none.
 
 Orphaned (M):
   - {composite_key} - in map but no file found at {path}
@@ -266,6 +289,10 @@ On the user's response:
 - `skip`, `no` — respond "Skipped, nothing written." and stop
 
 **Never silent writes.** Ever.
+
+For missing entries, take the list whole or in part. `all` adds every one, `none` adds nothing, and naming them adds only those. **Default is NONE.** This is the one bucket whose approval creates entries, and the other three all default to changing nothing, so this one does too.
+
+A default of ALL was written here first and was wrong. On 2026-08-16 a first scan of a newly registered root returned 16 things, ten of which were retired skills already replaced by plugins, and a single agreement put all ten in the map as ordinary entries. Nothing in this skill can tell a live target from a retired one. A warning paragraph does not fix that, because a default that writes is still a write: the reader has to choose, so make them choose.
 
 For orphaned entries specifically, ask explicitly: "Remove {composite_key} from DEPS.json, or leave it?" Default is LEAVE — do not remove unless the user confirms.
 
