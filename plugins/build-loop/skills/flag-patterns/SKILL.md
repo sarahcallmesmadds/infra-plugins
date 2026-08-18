@@ -1,7 +1,7 @@
 ---
-name: whats-breaking
+name: flag-patterns
 type: human
-description: A weekly report on what broke, what got fixed, and what keeps coming back. Reads the bug queue, finds the things corrected three or more times on three or more separate occasions, writes the report to ~/.claude/build-loop/summaries/YYYY-WW.md, and offers to post it to Slack. Use when the user asks "what keeps breaking", "what's breaking", "what did I fix this week", "show me the patterns", or explicitly invokes /whats-breaking. Runs on a local machine only, never in a cloud runtime.
+description: A weekly report on what broke, what got fixed, and what keeps coming back. Reads the bug queue, finds the things corrected three or more times on three or more separate occasions, writes the report to ~/.claude/build-loop/summaries/YYYY-WW.md, and offers to post it to Slack. Use when the user asks "what keeps breaking", "what's breaking", "what did I fix this week", "show me the patterns", or explicitly invokes /flag-patterns. Runs on a local machine only, never in a cloud runtime.
 allowed-tools: [Read, Write, Bash, mcp__slack__*]
 ---
 
