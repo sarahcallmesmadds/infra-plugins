@@ -625,6 +625,44 @@ check('link syntax shown in a code span does not swallow a rule on the same line
   assert.deepStrictEqual(found[0].lines, [5], 'the breach line moved');
 });
 
+check('an index entry does not state the rule either, so a breach elsewhere goes unreported', () => {
+  // The other half of the pair, and the only case that pins it. Every test
+  // above would still pass if the line were skipped before the breach test
+  // alone and still counted as a statement, because an index on its own has no
+  // other breach to report. Here it does: the prose line is a genuine em dash.
+  // If the entry counted as stating the rule, that line would be reported
+  // against a rule this document never set.
+  const indexPlusProse = [
+    '# Index',
+    '',
+    '- [Writing style rules](writing-style-rules.md) — no em dashes, plain English',
+    '',
+    'It ran — and finished.',
+    '',
+  ].join('\n');
+  assert.deepStrictEqual(brokenOwnRule(indexPlusProse), [],
+    'an index entry was counted as setting a rule for the file listing it');
+});
+
+check('an image in a list item is not a link to another document', () => {
+  // The bracket has to be the link's, not an image's. The `.*` ahead of it
+  // swallowed the `!`, so a captioned screenshot was read as an index entry and
+  // its caption stopped being checked.
+  const caption = '# Rules\n\nNo em dashes.\n\n- ![a screenshot](shot.png) — the caption\n';
+  assert.strictEqual(brokenOwnRule(caption).length, 1,
+    'an image caption was skipped as though it were an index entry');
+});
+
+check('adding an index entry is not adding a rule', () => {
+  // ruleChange asks the same two questions through ruleLines, so it inherits
+  // the exclusion. Pinned separately because nothing else here would notice if
+  // the two ever stopped sharing a path.
+  assert.deepStrictEqual(
+    ruleChange('em-dash', '# Index\n', '# Index\n\n- [Style](style.md) — no em dashes\n'),
+    { addedRule: false, addedBreach: false },
+    'listing a document that has a rule read as giving the index that rule');
+});
+
 check('a prose sentence containing a link still states the file\'s own rule', () => {
   // The exclusion is scoped to list items on purpose, and this is what pins
   // that. An implementation that skipped any line holding a link would pass

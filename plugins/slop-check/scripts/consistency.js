@@ -591,12 +591,23 @@ function withoutBackticks(line) {
 // `[Title](file.md)`` shows the syntax rather than linking anywhere, and
 // matching it swallowed a rule stated on the same line.
 //
+// An image is not a link to a document. `- ![alt](shot.png) - the caption` was
+// matched because the `.*` before the bracket happily swallowed the `!`, which
+// silenced captions rather than index entries, so the bracket may not be an
+// image's.
+//
+// What this costs, stated plainly because it is broader than the case it was
+// written for: any bulleted line carrying a non-anchor link is skipped whole,
+// so an em dash used in earnest on such a line goes unreported. That is the
+// price of the pair being answered together, and it is the right way round. A
+// missed breach on one bullet is quiet. The report it replaced named 45 lines
+// that no edit could ever clear, and that is what gets a hook switched off.
+//
 // Not handled, deliberately: a bullet that links elsewhere and also states a
 // rule for this file. Telling those apart means reading the sentence to decide
 // whose rule it is, and every attempt in this file to decide a document's
-// nature from its wording has been reverted. Missing that rule is quiet; the
-// index false positive was not.
-const LINKS_ELSEWHERE = /^\s*(?:[-*+]|\d+[.)])\s+.*\[[^\]]*\]\(\s*(?!#)[^)]+\)/;
+// nature from its wording has been reverted.
+const LINKS_ELSEWHERE = /^\s*(?:[-*+]|\d+[.)])\s+.*(?<!!)\[[^\]]*\]\(\s*(?!#)[^)]+\)/;
 
 function describesAnotherDocument(line) {
   return LINKS_ELSEWHERE.test(withoutCodeSpans(line));
