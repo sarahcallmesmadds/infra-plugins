@@ -607,7 +607,14 @@ function withoutBackticks(line) {
 // rule for this file. Telling those apart means reading the sentence to decide
 // whose rule it is, and every attempt in this file to decide a document's
 // nature from its wording has been reverted.
-const LINKS_ELSEWHERE = /^\s*(?:[-*+]|\d+[.)])\s+.*(?<!!)\[[^\]]*\]\(\s*(?!#)[^)]+\)/;
+// The lookahead covers the whole leading run, not one position inside it.
+// Written as `\(\s*(?!#)` the `\s*` backtracks until the lookahead is happy, so
+// `](  #style)` matched: the engine gave back a space, found another space
+// rather than a `#`, and declared the target was not an anchor. An angle
+// bracket target, `](<#style>)`, slipped through the same way. Both are links
+// into this same document, and skipping them drops the file's own rule without
+// saying anything was skipped.
+const LINKS_ELSEWHERE = /^\s*(?:[-*+]|\d+[.)])\s+.*(?<!!)\[[^\]]*\]\((?!\s*[#<])\s*[^)]+\)/;
 
 function describesAnotherDocument(line) {
   return LINKS_ELSEWHERE.test(withoutCodeSpans(line));

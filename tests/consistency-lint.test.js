@@ -644,6 +644,18 @@ check('an index entry does not state the rule either, so a breach elsewhere goes
     'an index entry was counted as setting a rule for the file listing it');
 });
 
+check('an anchor is still an anchor with space or angle brackets around it', () => {
+  // The lookahead has to cover the whole leading run. Checking one position
+  // inside it lets the whitespace backtrack until the test passes, so `(  #x)`
+  // read as a link somewhere else and the rule on that line was dropped with
+  // nothing said. `(<#x>)` went the same way.
+  for (const target of ['#style', '  #style', '<#style>']) {
+    const text = `# Rules\n\n- [See below](${target}) no em dashes here.\n\nIt ran — and finished.\n`;
+    assert.strictEqual(brokenOwnRule(text).length, 1,
+      `a same-document anchor written as (${target}) was treated as pointing elsewhere`);
+  }
+});
+
 check('an image in a list item is not a link to another document', () => {
   // The bracket has to be the link's, not an image's. The `.*` ahead of it
   // swallowed the `!`, so a captioned screenshot was read as an index entry and
