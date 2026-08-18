@@ -135,13 +135,17 @@ check('the trust-skip command is written outside the skill\'s own grant', () => 
   // and the claim in the document quietly stops being true.
   const whole = fs.readFileSync(path.join(SKILL, 'SKILL.md'), 'utf8');
   const front = whole.split(/^---$/m)[1] || '';
-  const prefix = (front.match(/Bash\((devin [^:)]*):\*\)/) || [])[1];
-  assert.ok(prefix, 'the skill no longer grants the recovery command');
+  // Every devin grant, not the first one found. Reading one prefix means a
+  // second, broader grant added later leaves this passing while the sentence it
+  // checks has become false, which is the failure it exists to catch.
+  const prefixes = [...front.matchAll(/Bash\((devin\b[^:)]*):?\*?\)/g)].map((m) => m[1].trim());
+  assert.ok(prefixes.length, 'the skill no longer grants the recovery command');
 
   const documented = (whole.match(/^\s*devin .*--respect-workspace-trust.*$/m) || [])[0];
   assert.ok(documented, 'the skill no longer shows how to run it in an untrusted workspace');
-  assert.ok(!documented.trim().startsWith(prefix),
-    `the documented trust-skip command starts with the granted prefix "${prefix}", so it runs without asking`);
+  const covered = prefixes.filter((p) => documented.trim().startsWith(p));
+  assert.deepStrictEqual(covered, [],
+    `the documented trust-skip command is covered by ${JSON.stringify(covered)}, so it runs without asking`);
 });
 
 check('validator uses the plugin-level scripts convention', () => {
