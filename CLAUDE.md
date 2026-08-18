@@ -54,6 +54,40 @@ place, because git keeps all three. **When it is not clear which of the two a co
 it.** Deleting is the direction that loses information, so it carries the burden of proof, and
 the first pass at this rule cut two warnings that a reviewer had to put back.
 
+**A hook that needs to warn the reader writes one line to stderr and exits 3.** Claude Code
+surfaces the first line of stderr and nothing else, so that line carries the whole message. Any
+non-zero code works except two: 2 is a blocking error and blocks the tool call on `PreToolUse`,
+and 127 is what the shell says for a command it cannot find, which is also what `bin/hook-node`
+reports for its own interpreter failure. Exiting 0 on this route sends the message to the debug
+log, where nobody reads it.
+
+**Codex never sees a stderr warning.** It discards stderr on every non-zero exit and prints the
+number alone. The one route it surfaces is `hookSpecificOutput.additionalContext` on stdout with
+exit 0, and only for events measured to deliver it. Measure the event before converting a hook
+to announce under it: `UserPromptSubmit` was measured on 2026-08-17 to deliver it and
+`PostToolUse` to discard it while still reporting the hook `Completed`, which is worse than a
+failure because both the reader and the test suite read it as working. `PreToolUse`, `Stop` and
+`SessionStart` are unmeasured rather than known to fail.
+
+**Identify the host by `PLUGIN_ROOT` and `CLAUDE_PLUGIN_ROOT` both being set and agreeing.**
+Codex sets the pair to the same value and Claude Code sets only the prefixed one. Both halves of
+the test are load-bearing, because `PLUGIN_ROOT` carries no vendor prefix, so reading it alone
+puts a Claude Code hook on the Codex branch and loses the message entirely.
+
+**Nothing the shell expands may reach an announced message.** That JSON is built by pasting, so
+a plugin directory holding a quote or a control character breaks the syntax and Codex is handed
+nothing, and one holding a valid JSON escape such as `\n` parses and delivers a corrupted
+sentence, which is worse because it looks delivered. Keep the absolute path on the stderr line,
+which only Claude Code reads, and have the announced sentence name the file relative to the
+plugin directory as fixed text.
+
+**Print either message with `printf`, never `echo`.** This one is not about the announced
+message alone. `/bin/sh` and `/bin/zsh` both let `echo` interpret a backslash, and the stderr
+line is the one still carrying an absolute path, so it is the more exposed of the two. Eleven
+hook commands across five plugins still use `echo` on that line. They cannot fire on the current
+install paths, and correcting them costs a release per plugin, so they are logged rather than
+scheduled. The rule is here to stop the twelfth being written.
+
 **Release notes go in the plugin's `CHANGELOG.md`, never in its README.** A README is what
 somebody reads to install and use the plugin, and upgrade notes for versions nobody is running
 push that to the bottom of a long file. build-loop is the worked example. `guardrails` and
