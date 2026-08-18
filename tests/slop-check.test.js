@@ -242,8 +242,17 @@ check('an empty options object leaves them off',
   unowned(PLAIN_PLAN, {}), false);
 check('documentChecks false leaves them off',
   unowned(PLAIN_PLAN, { documentChecks: false }), false);
-check('and the same three for the cut line',
-  noCut(PLAIN_PLAN) || noCut(PLAIN_PLAN, {}) || noCut(PLAIN_PLAN, { documentChecks: false }), false);
+check('no options at all leaves the cut line off',
+  noCut(PLAIN_PLAN), false);
+check('an empty options object leaves the cut line off',
+  noCut(PLAIN_PLAN, {}), false);
+check('documentChecks false leaves the cut line off',
+  noCut(PLAIN_PLAN, { documentChecks: false }), false);
+// The six rows above are absence assertions and would all hold against a check
+// that had been deleted. This is the row that says there is still something
+// there to be switched off.
+check('...and all six of those are off rather than gone',
+  unowned(PLAIN_PLAN, ASKED) && noCut(PLAIN_PLAN, ASKED), true);
 
 console.log('\nwhat the checks look at, once they are asked');
 check('a document naming its owner is not asked again',
@@ -263,13 +272,28 @@ check('the floor is a length, not a judgement about the text',
 check('source code is not excluded once the caller has called it a spec',
   unowned(SHELL_PROPOSAL, ASKED), true);
 
-console.log('\nnothing infers the switch from the text');
-// The failure this whole change exists to stop is a guess selecting checks. If
-// anything ever reads the switch off the input, these two diverge.
-check('two texts of different shapes agree while unasked',
-  unowned(PLAIN_PLAN) === unowned(SHELL_PROPOSAL), true);
-check('...and agree again once asked',
-  unowned(PLAIN_PLAN, ASKED) === unowned(SHELL_PROPOSAL, ASKED), true);
+console.log('\nthe kind label never selects the checks, only the switch does');
+// `kind` selecting which groups ran is the defect recorded above checkTechnical,
+// and `kind === 'spec'` quietly standing in for the switch is the obvious way to
+// rebuild it. So these go through checkTechnical rather than through the two
+// checks directly, because that is the boundary where it would be reintroduced.
+//
+// Written as four explicit values rather than as two texts agreeing with each
+// other. Equality between them holds just as well when both checks are gone,
+// which is a row that passes while measuring nothing, and this suite has shipped
+// that mistake before.
+const viaTechnical = (t, kind, opts) => {
+  const r = checkTechnical(t, kind, opts);
+  return [...r.hard, ...r.soft, ...r.over].some((f) => f.name === 'no-owner-and-no-date');
+};
+check('kind spec on its own does not turn the check on',
+  viaTechnical(PLAIN_PLAN, 'spec'), false);
+check('...nor does kind spec with the switch explicitly false',
+  viaTechnical(PLAIN_PLAN, 'spec', { documentChecks: false }), false);
+check('the switch turns it on under kind spec',
+  viaTechnical(PLAIN_PLAN, 'spec', ASKED), true);
+check('...and under kind code too, because the label is not the gate',
+  viaTechnical(PLAIN_PLAN, 'code', ASKED), true);
 
 
 console.log('\nthe two readings are separate');
