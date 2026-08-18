@@ -6,14 +6,16 @@
 // It prints one line, the absolute path of a directory that did not exist a
 // moment ago. Nothing else is printed, so a caller can use the output directly.
 //
-// Why this exists. Six skills each carried the same instruction in prose, and
-// three of them had already been reworded: 22 lines in four of them, 30 in
-// flag-issue, 12 in revert-fix. All three wordings were trying to say the same
-// two things, and a reader comparing two of them could not tell whether the
-// difference was deliberate. This is the third time the same move has been made
-// here, after roots.js for the config check and queue.js for writes, and the
-// reason is the one roots.js gives: a rule that has to hold everywhere cannot be
-// six paragraphs that each drift on their own, because prose has no compiler.
+// Why this exists. Seven skills each made a private directory and explained how
+// in their own prose, and the explanations had already diverged: 22 lines and
+// byte-identical in four of them, 30 in flag-issue, 12 in revert-fix, and
+// devin-review-response with its own wording and its own directory prefix. Every
+// version was trying to say the same two things, and a reader comparing two of
+// them could not tell whether the difference was deliberate. This is the third
+// time the same move has been made here, after roots.js for the config check and
+// queue.js for writes, and the reason is the one roots.js gives: a rule that has
+// to hold everywhere cannot be seven paragraphs that each drift on their own,
+// because prose has no compiler.
 //
 // The two things those paragraphs were protecting, now enforced rather than
 // described:
@@ -24,7 +26,7 @@
 // from it fails somewhere else with a message about the wrong thing. Calling
 // fs.mkdtempSync instead removes the split entirely: there is one implementation
 // and it behaves the same on both, which is why this is a script and not a
-// corrected shell one-liner repeated six times.
+// corrected shell one-liner repeated seven times.
 //
 // Never a fixed name under /tmp. Two reasons and the second is the one that has
 // bitten this machine. A fixed name is world-readable and another local user can
@@ -63,7 +65,10 @@ Prints one line, the absolute path. The directory is created 0700 and is not
 removed by this script.`;
 
 function main(argv) {
-  if (argv.includes('--help') || argv.includes('-h')) {
+  // Length first, then the value. Testing for --help anywhere in argv meant
+  // `scratch.js --help --list` printed help and exited 0, which is this script
+  // answering a command it does not have while claiming it takes no arguments.
+  if (argv.length === 1 && (argv[0] === '--help' || argv[0] === '-h')) {
     process.stdout.write(USAGE + '\n');
     return 0;
   }

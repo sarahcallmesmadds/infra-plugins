@@ -25,7 +25,9 @@ Create one private temporary directory for the round:
 node "${CLAUDE_PLUGIN_ROOT}/scripts/scratch.js"
 ```
 
-Use the path it prints as `{scratch}`. Create a JSON round record at
+Use the path it prints as `{scratch}`. If it exits non-zero it printed why
+instead of a path, so say what it said and stop rather than treating that
+sentence as a directory. Create a JSON round record at
 `{scratch}/round.json` from
 [references/round-record.example.json](references/round-record.example.json).
 Set `review_outcome` to `findings` when the review contains findings, or `clean`

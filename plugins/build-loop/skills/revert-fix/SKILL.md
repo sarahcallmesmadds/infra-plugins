@@ -223,7 +223,8 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/scratch.js"
 
 Use the path it prints, written as `{scratch}` here, and never a fixed name
 under `/tmp`, which another live session can overwrite between the Write and
-the call.
+the call. If it exits non-zero it printed why instead of a path, so say
+what it said and stop rather than treating that sentence as a directory.
 
 Write the answer to that directory, `wont_fix` for declined and `obsolete` for
 no longer relevant, then hand both over in one call:

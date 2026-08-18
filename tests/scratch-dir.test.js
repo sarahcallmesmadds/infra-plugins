@@ -75,9 +75,19 @@ check('prints one line, and it is a directory that now exists', () => {
 });
 
 check('two runs never return the same directory', () => {
-  const a = run().stdout.trim();
-  const b = run().stdout.trim();
+  // Both codes and both directories are asserted, not just that the two lines
+  // differ. Two runs that failed with different error text also produce two
+  // different lines, and this check would have passed with neither directory
+  // existing.
+  const first = run();
+  const second = run();
+  assert.strictEqual(first.code, 0);
+  assert.strictEqual(second.code, 0);
+  const a = first.stdout.trim();
+  const b = second.stdout.trim();
   made.push(a, b);
+  assert.ok(fs.statSync(a).isDirectory(), `not a directory: ${a}`);
+  assert.ok(fs.statSync(b).isDirectory(), `not a directory: ${b}`);
   assert.notStrictEqual(a, b);
 });
 
@@ -115,6 +125,15 @@ check('--help explains itself and exits zero', () => {
   assert.match(out.stdout, /not\s+removed by this script/);
 });
 
+check('--help alongside another argument is still refused', () => {
+  // Testing for --help anywhere in argv made this print help and exit 0, so the
+  // script answered a command it does not have while its own help text said it
+  // takes no arguments.
+  const out = run(['--help', '--list']);
+  assert.strictEqual(out.code, 1);
+  assert.match(out.stdout, /takes no arguments/);
+});
+
 console.log('\nthe skills no longer carry their own copy');
 
 check('no build-loop skill runs mktemp', () => {
@@ -124,25 +143,46 @@ check('no build-loop skill runs mktemp', () => {
   assert.deepStrictEqual(offenders.map((o) => o.name), []);
 });
 
-check('every skill that uses {scratch} also calls scratch.js', () => {
+// The runnable command, not a mention of the path. Matching the bare string
+// `scripts/scratch.js` also counted the sentence in apply-fix that names the
+// script while explaining why not to make a directory any other way, so deleting
+// that skill's actual command block left both checks below passing.
+const CALL = /```bash\nnode "\$\{CLAUDE_PLUGIN_ROOT\}\/scripts\/scratch\.js"\n```/;
+
+check('every skill that uses {scratch} also runs the command that makes one', () => {
   const offenders = skillFiles()
     .filter(({ text }) => text.includes('{scratch}'))
-    .filter(({ text }) => !text.includes('scripts/scratch.js'))
+    .filter(({ text }) => !CALL.test(text))
     .map(({ name }) => name);
   assert.deepStrictEqual(offenders, [], `use {scratch} without making one: ${offenders.join(', ')}`);
 });
 
-check('every skill that calls scratch.js says what to call the path', () => {
+check('every skill that runs it says what to call the path', () => {
   // flag-issue is why this is here. Its copy of the block dropped the sentence
   // that names `{scratch}`, and it then used the placeholder eleven lines later.
   const offenders = skillFiles()
-    .filter(({ text }) => text.includes('scripts/scratch.js'))
+    .filter(({ text }) => CALL.test(text))
     .filter(({ text }) => !/written as `\{scratch\}`|prints as `\{scratch\}`/.test(text))
     .map(({ name }) => name);
   assert.deepStrictEqual(offenders, []);
 });
 
 console.log('\nthe warning that cannot become a script call');
+
+// Pinned, not discovered. The first version of the check below found its
+// subjects by searching for the warning, so deleting the warning deleted the
+// thing being tested: removing it from six of these eight files passed clean.
+// A list has to be edited on purpose, which is the whole point of the guard.
+const TILDE_WARNING_CARRIERS = [
+  'apply-fix', 'audit-deps', 'built-check', 'flag-issue',
+  'revert-fix', 'to-build', 'verify-fix', 'whats-breaking',
+];
+
+check('the tilde-paths warning is in every file expected to carry it', () => {
+  const marker = 'Paths in this file are written with `~` for readability.';
+  const carrying = skillFiles().filter(({ text }) => text.includes(marker)).map(({ name }) => name);
+  assert.deepStrictEqual(carrying.sort(), [...TILDE_WARNING_CARRIERS].sort());
+});
 
 check('every copy of the tilde-paths warning is byte-identical', () => {
   // This one is an instruction to the model about writing a path, so there is
@@ -152,7 +192,7 @@ check('every copy of the tilde-paths warning is byte-identical', () => {
   // without one.
   const marker = 'Paths in this file are written with `~` for readability.';
   const carriers = skillFiles().filter(({ text }) => text.includes(marker));
-  assert.ok(carriers.length >= 2, `expected several carriers, found ${carriers.length}`);
+  assert.strictEqual(carriers.length, TILDE_WARNING_CARRIERS.length);
 
   const block = ({ text }) => {
     const start = text.indexOf('> **' + marker);
