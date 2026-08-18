@@ -44,10 +44,12 @@ file, and a config holding `skillRoots` and no `roots` has already been read as
 roots of kind `skill`. Do not rewrite that file. It predates schema v2 and still
 works.
 
-**`list` prints JSON and nothing else, so it is never the thing you relay.**
-`check` is where the sentences live, deliberately, so that six callers cannot
-describe a missing directory six ways. Reading the roots out of `list` and the
-wording out of `check` is what keeps both true. The exit codes below are the
+**`list` prints JSON on every exit code except 1, so it is not the thing you
+relay for a missing root.** `check` is where those sentences live, deliberately,
+so that six callers cannot describe a missing directory six ways. Reading the
+roots out of `list` and the wording out of `check` is what keeps both true.
+Exit 1 is the exception in both: the config could not be read at all, and both
+commands print that one sentence rather than JSON. The exit codes below are the
 ones `check` gives, and `list` returns the same code, so they do not disagree.
 
 - Exit 0, every root exists. Nothing to relay, carry on.

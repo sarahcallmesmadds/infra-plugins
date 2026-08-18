@@ -357,8 +357,11 @@ If `git -C` still fails, the root exists and is not a git repository, which is a
 different problem with its own handling below. Do not read it as the root being
 absent.
 
-Look up the entry's `repo` in `roots` to get that root's path. Then work out
-what to stage, as the path of `target_path` relative to that root. Do NOT
+Use the `path` from the call at the top of this step. Do not look the entry's
+`repo` up in a collection of roots: `--name` already returned the one root this
+entry names, and going back to a wider list is the working-it-out this step
+stopped doing. Then work out what to stage, as the path of `target_path`
+relative to that root. Do NOT
 assume it ends in `SKILL.md`, because the target may be a hook or a script:
 
 ```bash

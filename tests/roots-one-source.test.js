@@ -62,10 +62,15 @@ check('roots.js still exports a non-empty DEFAULT_ROOTS', () => {
 });
 
 check('no skill writes out a default root path', () => {
+  // Whitespace is collapsed before matching. A path wrapped across two lines,
+  // which is ordinary in prose this width, would otherwise slip past a plain
+  // substring test and the check would report success while the copy was back.
   const offenders = [];
   for (const { name, text } of skillFiles()) {
+    const flat = text.replace(/\s+/g, ' ');
     for (const root of DEFAULT_ROOTS) {
-      if (text.includes(root.path)) offenders.push(`${name} names ${root.path}`);
+      const wrapped = root.path.replace(/\s+/g, ' ');
+      if (flat.includes(wrapped)) offenders.push(`${name} names ${root.path}`);
     }
   }
   assert.deepStrictEqual(offenders, [],
@@ -79,8 +84,12 @@ check('no skill writes out a default root name', () => {
   const offenders = [];
   for (const { name, text } of skillFiles()) {
     for (const root of DEFAULT_ROOTS) {
-      const quoted = new RegExp(`["\`']${root.name}["\`'][^\\n]*\\b(path|kind)\\b`);
-      if (quoted.test(text)) offenders.push(`${name} names the ${root.name} root with its shape`);
+      // Also whitespace-collapsed, and the window is a fixed number of
+      // characters rather than "the rest of the line", so a default root
+      // written across three lines as JSON is still caught.
+      const flat = text.replace(/\s+/g, ' ');
+      const quoted = new RegExp(`["\`']${root.name}["\`'].{0,120}?\\b(path|kind)\\b`);
+      if (quoted.test(flat)) offenders.push(`${name} names the ${root.name} root with its shape`);
     }
   }
   assert.deepStrictEqual(offenders, [], offenders.join('\n        '));
@@ -97,7 +106,8 @@ check('a skill that resolves roots asks the script for them', () => {
 
 check('a skill that promises to relay a roots message calls check, not just list', () => {
   // `check` writes the sentences that name a dead root, its path and the
-  // remedy. `list` writes JSON and nothing else. Three skills were switched
+  // remedy. `list` writes JSON for those, and only matches `check` on exit 1,
+  // where the config could not be read at all. Three skills were switched
   // from one to the other while keeping instructions that said "print what it
   // said", which would have dumped a JSON object at the user in place of the
   // sentence, and each still carried the line promising every message arrives

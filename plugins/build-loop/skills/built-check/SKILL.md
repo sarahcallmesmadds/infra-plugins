@@ -117,9 +117,11 @@ Every root comes back with an absolute `path`, its `kind`, and whether it
 `exists`, with the defaults already applied when there is no config file and a
 pre-v2 `skillRoots` config already read as roots of kind `skill`.
 
-**`list` prints JSON and nothing else, so it is never the thing you relay.** The
-sentences that name a missing root and its path live in `check`, on purpose, so
-six callers cannot word the same condition six ways. The exit codes below are
+**`list` prints JSON on every exit code except 1, so it is not the thing you
+relay for a missing root.** The sentences that name a missing root and its path
+live in `check`, on purpose, so six callers cannot word the same condition six
+ways. Exit 1 is the exception in both: the config could not be read at all, and
+both print that one sentence rather than JSON. The exit codes below are
 `check`'s, and `list` returns the same ones.
 
 - Exit 0, carry on.

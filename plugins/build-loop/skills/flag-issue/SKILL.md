@@ -90,9 +90,11 @@ You show this in the draft at Step 2, so a wrong guess costs nothing. Asking abo
    `exists`. The defaults are already applied when there is no config file, and
    a pre-v2 `skillRoots` config has already been read as roots of kind `skill`.
 
-   **`list` prints JSON and nothing else, so it is never the thing you relay.**
-   The sentence naming a missing root and its path lives in `check`, on purpose,
-   so six callers cannot word the same condition six ways. The exit codes below
+   **`list` prints JSON on every exit code except 1, so it is not the thing you
+   relay for a missing root.** The sentence naming a missing root and its path
+   lives in `check`, on purpose, so six callers cannot word the same condition
+   six ways. Exit 1 is the exception in both: the config could not be read at
+   all, and both print that one sentence rather than JSON. The exit codes below
    are `check`'s, and `list` returns the same ones.
 
    - Exit 0, carry on.

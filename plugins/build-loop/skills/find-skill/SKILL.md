@@ -162,6 +162,19 @@ if not any(r.get("exists") for r in roots):
         "`roots.js check` to see which paths were expected."
     )
 
+# A root in scope that is not on disk is skipped below, and skipping it quietly
+# is how a partial inventory reads as a complete one. The preflight check above
+# reports it, but this block prints the answer, so it says so here too rather
+# than relying on the reader having joined the two.
+absent = [r for r in roots if not r.get("exists")]
+if absent:
+    print(
+        "Incomplete: skipped "
+        + ", ".join(f"{r['name']} ({r['path']})" for r in absent)
+        + ", which are configured but not on disk. The inventory below is what "
+        "the remaining roots hold, not everything installed."
+    )
+
 seen, skills = set(), []
 for root in roots:
     base = root["path"]
