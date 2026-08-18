@@ -199,7 +199,7 @@ When listing the full inventory (no $ARGUMENTS) or when showing close-second opt
 - **Daily / personal HQ** — `request-create`, `daily-brief`, `daily-scratch`, `daily-reflect`, anything with "daily" or "morning" or "HQ" in name/description
 - **Personal projects + IP** — `project-create-or-update`, `register-ip`, `job-scanner` (a.k.a. `portfolio-ops-application`), anything with "project", "IP asset", "cover letter" in description
 - **Session management** — `wrap`, `pickup`, `find-skill`, anything with "handoff", "resume", "wrap up", "skill discovery"
-- **Build loop (meta)** — `flag-issue`, `list-bugs`, `apply-fix`, `verify-fix`, `revert-fix`, `audit-deps`, `whats-breaking`, `to-build`, `built-check`, `find-skill`, anything with "build loop", "queue", "correction", "to-build", "DEPS.json" in description
+- **Build loop (meta)** — `flag-issue`, `list-bugs`, `apply-fix`, `verify-fix`, `revert-fix`, `audit-deps`, `flag-patterns`, `to-build`, `built-check`, `find-skill`, anything with "build loop", "queue", "correction", "to-build", "DEPS.json" in description
 - **Other** — anything that doesn't fit above
 
 If a skill spans two categories, pick the dominant one. If a skill is brand new and you can't classify it, put it under **Other** — that's also a signal the description could be sharper.
