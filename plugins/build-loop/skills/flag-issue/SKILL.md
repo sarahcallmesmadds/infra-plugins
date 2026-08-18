@@ -73,13 +73,29 @@ You show this in the draft at Step 2, so a wrong guess costs nothing. Asking abo
 
 **3. target_path** — the absolute path to the file a fix would edit. Resolve it this way:
 
-1. Read the roots from `~/.claude/build-loop.config.json`. If that file does not exist, use the three defaults from SCHEMA.md: `personal` at `~/.claude/skills` (kind `skill`), `hooks` at `~/.claude/hooks` (kind `hook`), and `commands` at `~/.claude/commands` (kind `command`). If the config has `skillRoots` and no `roots`, read each of those as a root of kind `skill`.
-
-   Then check they still exist, before searching them:
+1. Two calls before you search anything, answering different questions. First,
+   whether the roots are there, which is the one you relay:
 
    ```bash
    node "${CLAUDE_PLUGIN_ROOT}/scripts/roots.js" check
    ```
+
+   Then, for the roots themselves:
+
+   ```bash
+   node "${CLAUDE_PLUGIN_ROOT}/scripts/roots.js" list
+   ```
+
+   Every root comes back with an absolute `path`, its `kind`, and whether it
+   `exists`. The defaults are already applied when there is no config file, and
+   a pre-v2 `skillRoots` config has already been read as roots of kind `skill`.
+
+   **`list` prints JSON on every exit code except 1, so it is not the thing you
+   relay for a missing root.** The sentence naming a missing root and its path
+   lives in `check`, on purpose, so six callers cannot word the same condition
+   six ways. Exit 1 is the exception in both: the config could not be read at
+   all, and both print that one sentence rather than JSON. The exit codes below
+   are `check`'s, and `list` returns the same ones.
 
    - Exit 0, carry on.
    - Exit 3, a root someone configured is gone. Relay that before asking the
@@ -93,7 +109,9 @@ You show this in the draft at Step 2, so a wrong guess costs nothing. Asking abo
      path, rather than searching roots that are not there.
    - Exit 1, the config could not be read. Relay it and ask for a path.
 
-   Every one of those messages arrives on stdout, including exit 1.
+   Every one of those messages arrives on stdout, including exit 1. That is true
+   of `check`. `list` prints its JSON there too, so relay the one and read the
+   other.
 
 2. Search the roots whose `kind` matches `target_kind`, in configured order, first hit wins:
    - kind `skill`: `ls <root.path>/{target}/SKILL.md`, then `ls <root.path>/{target}/skill/SKILL.md`

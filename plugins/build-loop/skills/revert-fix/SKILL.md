@@ -130,18 +130,7 @@ Proceed? (yes / no)
 
 ## Step 5 — Run git revert
 
-Determine `repo_root` by looking up the entry's `repo` field in `roots` in
-`~/.claude/build-loop.config.json` and taking that root's `path`. With no config
-file there are the three defaults from SCHEMA.md: `personal` at
-`~/.claude/skills`, `hooks` at `~/.claude/hooks`, and `commands` at
-`~/.claude/commands`. A config holding `skillRoots` and no `roots` is read as
-roots of kind `skill`. If `repo` is
-`"unknown"`, or names a root that is no longer configured, stop and say so.
-Never guess a repository to run a revert in.
-
-A root that is still configured may no longer be on disk, which is a different
-thing and reads the same from here. Ask about the one this entry names, before
-running anything:
+Ask whether the root this entry names is there, before taking a path from it:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/scripts/roots.js" check --name {repo}
@@ -150,7 +139,23 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/roots.js" check --name {repo}
 Exit 0 means that root exists. Anything else means it does not, or is not
 configured at all: relay what the check printed and stop. A revert is the one
 operation here where guessing at a repository would rewrite work in the wrong
-place, so "the other roots are fine" is not a good enough answer.
+place, so "the other roots are fine" is not a good enough answer. If `repo` is
+`"unknown"`, stop and say so without running anything. Never guess a repository
+to run a revert in.
+
+Then take `repo_root` from the same root:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/roots.js" list --name {repo}
+```
+
+Use the absolute `path` it prints. The defaults are already applied when there
+is no config file, and a pre-v2 `skillRoots` config has already been read as
+roots of kind `skill`.
+
+**The check comes first and this does not relay.** `list` prints JSON, so the
+sentence naming a missing root has to come from `check`, and it has to arrive
+before a path is taken rather than after one already has been.
 
 Run:
 ```bash

@@ -18,27 +18,39 @@ You are maintaining the dependency map at `~/.claude/build-loop/DEPS.json`. The 
 
 The things you build live in more than one place: skills installed for daily
 use, hooks the harness fires, slash commands, and any separate repository you
-develop them in. Read the roots from `~/.claude/build-loop.config.json`. If that
-file does not exist, use the three defaults:
+develop them in. Two calls, and they answer different questions.
 
-```json
-{ "roots": [
-  { "name": "personal", "path": "~/.claude/skills",   "kind": "skill" },
-  { "name": "hooks",    "path": "~/.claude/hooks",    "kind": "hook" },
-  { "name": "commands", "path": "~/.claude/commands", "kind": "command" }
-] }
-```
-
-A config holding `skillRoots` and no `roots` is read as roots of kind `skill`.
-Do not rewrite that file. It predates schema v2 and still works.
-
-**Check the roots before scanning, and relay what it says.** The check is a
-script rather than a paragraph, because the same rule has to hold in every skill
-that reads this config, and six paragraphs drift where one script cannot:
+**First, whether the roots are there, and relay what it says:**
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/scripts/roots.js" check
 ```
+
+**This is a script rather than a paragraph, because the same rule has to hold in
+every skill that reads this config, and six paragraphs drift where one script
+cannot.** That sentence used to sit directly beneath a copy of the default roots
+written out here in full, which is the drift it was warning about, one paragraph
+away from itself.
+
+**Then, for the roots themselves:**
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/roots.js" list
+```
+
+It prints every root as JSON, each with an absolute `path`, its `kind`, and
+whether it `exists`. The defaults are already applied when there is no config
+file, and a config holding `skillRoots` and no `roots` has already been read as
+roots of kind `skill`. Do not rewrite that file. It predates schema v2 and still
+works.
+
+**`list` prints JSON on every exit code except 1, so it is not the thing you
+relay for a missing root.** `check` is where those sentences live, deliberately,
+so that six callers cannot describe a missing directory six ways. Reading the
+roots out of `list` and the wording out of `check` is what keeps both true.
+Exit 1 is the exception in both: the config could not be read at all, and both
+commands print that one sentence rather than JSON. The exit codes below are the
+ones `check` gives, and `list` returns the same code, so they do not disagree.
 
 - Exit 0, every root exists. Nothing to relay, carry on.
 - Exit 3, a root someone configured is gone. Print what it said, then scan the
@@ -50,7 +62,8 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/roots.js" check
   of nothing looks identical to a scan that found nothing.
 - Exit 1, the config itself could not be read. Print what it said and stop.
 
-Every one of those messages arrives on stdout, including exit 1.
+Every one of those messages arrives on stdout, including exit 1. That is true of
+`check`. `list` prints its JSON there too, so relay the one and read the other.
 
 On exit 3, do not offer to remove the orphans a dead root produced. Step 3 will
 bucket everything the map held under that root as ORPHANED, which reads as "these

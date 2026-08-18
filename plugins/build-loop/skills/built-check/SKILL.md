@@ -100,13 +100,29 @@ Collect from four places. Gather all four before judging anything, because the s
 
 ### 3a — The git log of every configured root
 
-Read the roots from `~/.claude/build-loop.config.json`. With no config file, use the three defaults from SCHEMA.md: `personal` at `~/.claude/skills` (kind `skill`), `hooks` at `~/.claude/hooks` (kind `hook`), and `commands` at `~/.claude/commands` (kind `command`). If the config has `skillRoots` and no `roots`, read those as roots of kind `skill`.
-
-Check they exist before reading any git log:
+Two calls before any git log, and they answer different questions. First,
+whether the roots are there, which is the one you relay:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/scripts/roots.js" check
 ```
+
+Then, for the roots themselves:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/roots.js" list
+```
+
+Every root comes back with an absolute `path`, its `kind`, and whether it
+`exists`, with the defaults already applied when there is no config file and a
+pre-v2 `skillRoots` config already read as roots of kind `skill`.
+
+**`list` prints JSON on every exit code except 1, so it is not the thing you
+relay for a missing root.** The sentences that name a missing root and its path
+live in `check`, on purpose, so six callers cannot word the same condition six
+ways. Exit 1 is the exception in both: the config could not be read at all, and
+both print that one sentence rather than JSON. The exit codes below are
+`check`'s, and `list` returns the same ones.
 
 - Exit 0, carry on.
 - Exit 3, a root someone configured is gone. Relay what it said and use the
@@ -119,7 +135,8 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/roots.js" check
 - Exit 1, the config itself could not be read. Relay what it said and carry on
   with session evidence alone, saying that is all you have.
 
-Every one of those messages arrives on stdout, including exit 1.
+Every one of those messages arrives on stdout, including exit 1. That is true of
+`check`. `list` prints its JSON there too, so relay the one and read the other.
 
 Whichever of these applies, do not report "no sign of it" for everything as
 though you had looked, when there was nowhere to look.
