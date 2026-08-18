@@ -53,7 +53,7 @@ const SKILLS = {
 // should be noticed. So the count is derived AND compared, and this constant
 // has to move when a check is added or removed. Forgetting now fails the suite
 // instead of printing a smaller number nobody reads.
-const EXPECTED_CHECKS = 32;
+const EXPECTED_CHECKS = 33;
 
 let failed = 0;
 let ran = 0;
@@ -550,6 +550,260 @@ check('the summary does not report work that did not happen', () => {
     /One-sided dependents: \{J\}/.test(skill),
     'the summary never reports the one-sided bucket, and silence there reads '
     + 'as there having been none'
+  );
+});
+
+// The missing bucket is the only one whose approval creates entries, and it was
+// written with a default of ALL first. On 2026-08-16 a first scan of a newly
+// registered root returned 16 things, ten of them retired skills already
+// replaced by plugins, and one agreement put all ten into the map as ordinary
+// entries. Nothing in this skill can tell a live target from a retired one, so
+// the default has to be the answer that writes nothing.
+//
+// Two places instruct, and both are pinned, because either one alone leaves the
+// skill telling the reader and the implementation different things. The prompt
+// line in the Step 5 draft is what the user reads at the moment they answer. The
+// paragraph beginning "For missing entries" is what an implementation consults
+// when the answer comes back bare.
+//
+// Nothing here reads the paragraph after it, which records that ALL was tried
+// first and what it cost. That is deliberate. A check anchored in a history
+// paragraph makes the history load-bearing, so rewording it fails a suite while
+// the behaviour is perfectly correct, and the cheapest way back to green is
+// deleting the record of why the rule exists. The summary-template check above
+// documents the same trap from the other direction.
+//
+// Both are compared whole rather than searched for the phrases that matter, and
+// that is the part worth explaining, because a presence test is the obvious
+// simplification and it does not work here. Asking whether `Default: none.` is
+// present says nothing about what sits beside it, and the edit to expect is not
+// none being changed to all, it is a sentence added that reads as a
+// clarification: "If the user gives a bare response, add all missing entries."
+// That defeats a presence test appended after the default, inserted before it,
+// or added to the end of the instruction paragraph, leaving the pinned phrase
+// intact and the meaning reversed every time. Anchoring the phrase more tightly
+// moves which of those three works. Only comparing the whole text refuses all of
+// them.
+//
+// Whitespace is flattened before comparing, so part of the cost of that
+// strictness is refunded. A change to the three spaces before Default, and a
+// rewrap of the instruction paragraph, are not the default changing and do not
+// fail this.
+//
+// The prompt line is the exception and it is not an oversight. It is matched as a
+// single line, so wrapping it across two fails even with the wording intact. That
+// line sits inside a fenced draft, where the break is not layout: it is what the
+// user is shown at the moment they answer. The message says so rather than
+// claiming reflow is free, which is a worse failure than the strictness, because
+// it tells the reader to go looking for a wording change that is not there.
+//
+// A blank line inserted inside the instruction paragraph fails too, for the same
+// reason rather than by accident. A blank line in markdown does not wrap a
+// paragraph, it ends one and starts another, so the second half stops being part
+// of the instruction that governs and becomes a separate paragraph that happens
+// to sit underneath it. The message reports where the missing phrase went instead
+// of calling it deleted.
+//
+// The rest of the cost is real and is accepted rather than solved. Flattening
+// leaves case, emphasis and punctuation load-bearing, so writing `**Default is
+// none.**` in place of NONE fails a check whose subject has not changed. Making
+// those tolerant too would mean deciding which characters carry meaning in a
+// sentence whose entire job is to carry one, and the failure message is the
+// cheaper answer: it says reflow is already ignored, which leaves rewording, and
+// it says to update the expected text when that was deliberate. A check that
+// fails without saying what to do about it gets deleted rather than answered.
+//
+// What this does not do, written down because it looks like a gap worth closing
+// and closing it is a trap. It pins what these two passages say. It cannot show
+// that nothing else in the file contradicts them: a paragraph inserted anywhere
+// outside both spans, saying that a bare answer adds everything, passes this
+// untouched. Widening the spans moves that boundary rather than removing it,
+// because the file is prose and the property wanted is semantic, and every
+// widening costs tolerance somewhere a reflow will find.
+//
+// So the boundary is where it is on purpose. This catches the edit that actually
+// happens, someone changing the default where the default is written. Two
+// instructions in one file disagreeing is a different fault, it is not
+// detectable by pinning text, and it wants its own check rather than a wider
+// version of this one.
+check('the new-items bucket defaults to adding nothing', () => {
+  // Normalised first. The paragraph match below ends on a blank line, which is
+  // two newlines and four characters under CRLF, so a file saved with Windows
+  // endings would find no paragraph at all and report it as missing.
+  const skill = SKILLS['audit-deps'].replace(/\r\n?/g, '\n');
+  // Spacing is not meaning. Everything below compares flattened text.
+  const flat = (s) => s.replace(/\s+/g, ' ').trim();
+  // Indentation, not any whitespace. `\s*` spans newlines, so an anchor built
+  // from it is not the line-start anchor the name suggests.
+  const INDENT = '[ \\t]*';
+
+  // Which passage governs is settled by where it sits, before anything asks what
+  // it says. Finding it by its opening words anywhere in the file cannot tell the
+  // instruction that governs from a copy of it, and counting the matches does not
+  // help: planting a correct copy earlier and wrapping the real line so it no
+  // longer starts one leaves exactly one match, the copy, and the comparison
+  // passes against text nobody runs while the draft the user reads says
+  // `Default: all.`
+  //
+  // So the draft is located structurally. Step 5 is the section that shows it,
+  // its fenced block is the draft itself, and the instruction paragraph is the
+  // prose under that fence. A decoy has to be inside the real draft to be read,
+  // and one there is not a decoy, it is a second prompt line in the block the
+  // user sees, which the count below refuses.
+  const section = skill.match(/^## Step 5\b[\s\S]*?(?=\n## |(?![\s\S]))/m);
+  assert.ok(
+    section,
+    'audit-deps has no "## Step 5" section, so there is no way to tell which '
+    + 'draft governs. If the step was renamed or renumbered, move this with it'
+  );
+  const step5 = section[0];
+
+  const fenced = step5.match(/^```[\s\S]*?^```/gm) || [];
+  const drafts = fenced.filter((f) => f.includes("Changes I'd make to DEPS.json:"));
+  assert.strictEqual(
+    drafts.length, 1,
+    drafts.length === 0
+      ? 'no fenced block in Step 5 contains "Changes I\'d make to DEPS.json:", so '
+        + 'the draft the user answers cannot be identified'
+      : `${drafts.length} fenced blocks in Step 5 contain "Changes I'd make to `
+        + 'DEPS.json:", so which one the user is shown is ambiguous'
+  );
+  const draft = drafts[0];
+  const belowDraft = step5.slice(step5.indexOf(draft) + draft.length);
+
+  const PROMPT_LINE = 'so say which ones you want. all / none / name them. Default: none.';
+  const prompts = draft.match(new RegExp(`^${INDENT}so say which ones you want\\..*$`, 'gm')) || [];
+  // Zero matches has two causes and a line matcher cannot tell them apart. A wrap
+  // that splits the opening phrase itself leaves nothing to find, and calling
+  // that gone sends the reader looking for a deleted line that is on screen in
+  // front of them. Flattening the whole file settles the one case worth naming:
+  // the exact sentence surviving there means the line is present and broken
+  // across lines, wherever the break falls.
+  //
+  // Only the whole sentence is used for that, never a shorter opening. Flattening
+  // joins every line to the one after it, so it invents adjacencies that exist
+  // nowhere in the file: a different fenced example in this same step wraps as
+  // "so say" then "which ones you want. Nothing was stamped as reviewed", which
+  // flattens into the exact opening phrase of the line being looked for. Scoping
+  // to the draft leaves that particular neighbour outside, and the reasoning
+  // holds for any other, so the full sentence stays the discriminator.
+  //
+  // So when the full sentence is absent, both causes stay on the table and the
+  // message says so rather than choosing.
+  const flatDraft = flat(draft);
+  const flatSkill = flat(skill);
+  assert.strictEqual(
+    prompts.length, 1,
+    prompts.length === 0
+      ? flatDraft.includes(PROMPT_LINE)
+        ? 'no single line of the Step 5 draft matches, and the whole sentence does '
+          + 'appear once the draft is flattened. That is what a line wrapped across '
+          + 'two looks like, and it is worth fixing either way, because the break '
+          + 'is inside a fenced draft and is what the user is shown. Rule out '
+          + 'first: flattening joins every line to the next, so two neighbouring '
+          + 'lines can read that way without either being the draft line'
+        : 'no single line of the Step 5 draft starts "so say which ones you want.". '
+          + 'Either the line is gone, or it has been wrapped across lines and '
+          + 'reworded as well, and this cannot tell which from here'
+      : `${prompts.length} lines of the Step 5 draft start "so say which ones you `
+        + 'want.". This check cannot tell which one the user answers, so it is not '
+        + 'checking anything until there is one'
+  );
+  assert.strictEqual(
+    flat(prompts[0]),
+    PROMPT_LINE,
+    'the line the user answers no longer says what it said. Spacing within the '
+    + 'line is already ignored, but this line is matched as one line and lives '
+    + 'inside a fenced draft, so wrapping it across two is a change to what the '
+    + 'user is shown and fails here too. Update the expected text if the rewording '
+    + 'or the wrap was deliberate. If it is an added clause, it changes what the '
+    + 'draft tells the user a bare answer does'
+  );
+
+  // To the next blank line. A blank line inserted inside the paragraph truncates
+  // what is read without changing how many paragraphs match, so the count cannot
+  // report it and does not try to. The comparison below tells that case apart
+  // instead, by asking whether a phrase missing from what was read is still
+  // somewhere in the file.
+  // Ends at a blank line or at the end of the file. Requiring the blank line
+  // alone means the paragraph is unfindable if it is ever the last thing in the
+  // file, which reports as the paragraph being missing rather than as the end of
+  // the file arriving early.
+  // Indentation tolerated for the same reason the prompt matcher tolerates it,
+  // so a paragraph under a numbered step is still found, and searched below the
+  // draft rather than across the file, so a copy elsewhere cannot stand in for
+  // the one that governs.
+  const paragraphs = belowDraft.match(
+    new RegExp(`^${INDENT}For missing entries,[\\s\\S]*?(?=\\n\\n|(?![\\s\\S]))`, 'gm')
+  ) || [];
+  assert.strictEqual(
+    paragraphs.length, 1,
+    paragraphs.length === 0
+      ? 'no paragraph starting "For missing entries," was found under the Step 5 '
+        + 'draft. Either it is gone, a reflow moved that opening phrase off the '
+        + 'start of a line, or it has moved out of Step 5 entirely'
+      : `${paragraphs.length} paragraphs under the Step 5 draft start "For missing `
+        + 'entries,", so this check cannot tell which one an implementation reads'
+  );
+  const instruction = flat(paragraphs[0]);
+  const claims = [
+    ['the default', /\*\*Default is NONE\.\*\*/],
+    ['the reason it differs from the other three', /the one bucket whose approval creates entries/],
+  ];
+  // Said before the whole-paragraph comparison speaks, because "this long string
+  // differs from that long string" sends the reader to a character diff to answer
+  // a question the check already knows the answer to.
+  //
+  // Each is a phrase rather than an idea, so what it can honestly report is that
+  // the phrase is not there in that form, not that the thought is gone. The two
+  // read alike in a failure message and are not the same thing: an emphasis
+  // change loses the phrase and keeps the meaning.
+  //
+  // Absent from the file is worth telling apart from absent from the paragraph,
+  // which the count above cannot do: blaming the second on the wording sends the
+  // reader looking for a deletion that never happened.
+  const missing = claims.filter(([, re]) => !re.test(instruction));
+  // Against the flattened file, not the raw one. A claim reflowed across two
+  // physical lines is still in the file, and testing the raw text calls it gone,
+  // which is the more alarming of the two messages and the wrong one.
+  const elsewhere = missing.filter(([, re]) => re.test(flatSkill)).map(([name]) => name);
+  const gone = missing.filter(([, re]) => !re.test(flatSkill)).map(([name]) => name);
+  const sentence = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+  const diagnosis = [
+    gone.length
+      ? `${gone.join(' and ')} ${gone.length > 1 ? 'no longer appear' : 'no longer appears'} `
+        + 'in this form anywhere in audit-deps'
+      : '',
+    // This knows exactly two things: the phrase is not in the text that was
+    // extracted, and it is somewhere in the file. It does not know why, so it
+    // reports the two and lists what would explain them without picking one.
+    //
+    // Naming a single cause here is the tempting version and it is wrong twice
+    // over. "A blank line has split the paragraph" is false when the phrase was
+    // moved. Offering a split or a move is still a closed set, and it is false
+    // when the phrase was deleted from the paragraph while an unrelated copy sits
+    // elsewhere, which satisfies neither. Both read as more helpful than the two
+    // bare facts and send the reader looking for something that did not happen.
+    elsewhere.length
+      ? `${elsewhere.join(' and ')} ${elsewhere.length > 1 ? 'are' : 'is'} not in the paragraph `
+        + `that was read, but ${elsewhere.length > 1 ? 'are' : 'is'} present somewhere else in `
+        + 'audit-deps. Those two facts have several explanations: a blank line splitting the '
+        + 'paragraph so only the part above it was checked, the phrase having moved, or a second '
+        + 'copy sitting somewhere unrelated'
+      : '',
+  ].filter(Boolean).map(sentence).join('. ');
+  assert.strictEqual(
+    instruction,
+    'For missing entries, take the list whole or in part. `all` adds every one, '
+    + '`none` adds nothing, and naming them adds only those. **Default is NONE.** '
+    + 'This is the one bucket whose approval creates entries, and the other three '
+    + 'all default to changing nothing, so this one does too.',
+    diagnosis
+      || 'the paragraph an implementation reads for the default still contains both '
+        + 'phrases but no longer says what it said. Reflow is already ignored, so '
+        + 'this is a wording or formatting change. A sentence added to the end of '
+        + 'it is the specific edit this is here to catch, because it leaves every '
+        + 'phrase worth grepping for in place'
   );
 });
 
