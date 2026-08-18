@@ -13,7 +13,7 @@
 //   reached it. Not the default, not `open`, not `in progress`. So rejecting a
 //   diff at the verify gate removed the entry from every view that lists
 //   outstanding work, and the entry stayed on disk being counted by
-//   /whats-breaking while invisible to the person who filed it.
+//   /flag-patterns while invisible to the person who filed it.
 //
 //   The oldest copy of the skill, in claude-skills, DID show it, and said why:
 //   "failed-fix entries need re-attention so they stay in the default view

@@ -512,7 +512,7 @@ Unlike primary dedup, this is NOT time-limited. The same `parent_id` plus depend
 
 **File location:** `~/.claude/build-loop/pattern-flags.json`
 
-**Purpose:** Records targets that have accumulated enough closed corrections to indicate a structural problem rather than a one-off. Written by `/whats-breaking`. Never written by `/flag-issue` or `/apply-fix`.
+**Purpose:** Records targets that have accumulated enough closed corrections to indicate a structural problem rather than a one-off. Written by `/flag-patterns`. Never written by `/flag-issue` or `/apply-fix`.
 
 ### File-level schema
 
@@ -526,7 +526,7 @@ Unlike primary dedup, this is NOT time-limited. The same `parent_id` plus depend
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `$schema_version` | int | yes | Version for this file. Currently 3. Moved from 2 in 0.9.6 for the `session_count` to `occurrence_count` rename, under the bump rule above. A v2 file still reads correctly: the mapping in `/whats-breaking` Step 3 keys off the missing field rather than this number, so the bump makes the file say which name it carries rather than being what makes the old one readable. |
+| `$schema_version` | int | yes | Version for this file. Currently 3. Moved from 2 in 0.9.6 for the `session_count` to `occurrence_count` rename, under the bump rule above. A v2 file still reads correctly: the mapping in `/flag-patterns` Step 3 keys off the missing field rather than this number, so the bump makes the file say which name it carries rather than being what makes the old one readable. |
 | `last_updated` | string | yes | ISO-8601 timestamp of the most recent write. |
 | `flags` | array | yes | One entry per flagged target. Max one entry per target, updated in place. |
 
@@ -540,7 +540,7 @@ Unlike primary dedup, this is NOT time-limited. The same `parent_id` plus depend
 | `target_path` | string | yes | Absolute path to the file. Called `skill_path` before v5. |
 | `flagged_at` | string | yes | ISO-8601 timestamp when this first crossed the threshold. Never updated after creation. |
 | `correction_count` | int | yes | Total closed primary corrections. Updated each run. |
-| `occurrence_count` | int | yes | How many separate occasions the target was corrected on, by the counting rule in `/whats-breaking` Step 2b. Not a count of sessions: a typed correction counts on its own, so several filed in one sitting are several occurrences and one session. Updated each run. Called `session_count` before 0.9.6, and read under the old name when a flags file still carries it. |
+| `occurrence_count` | int | yes | How many separate occasions the target was corrected on, by the counting rule in `/flag-patterns` Step 2b. Not a count of sessions: a typed correction counts on its own, so several filed in one sitting are several occurrences and one session. Updated each run. Called `session_count` before 0.9.6, and read under the old name when a flags file still carries it. |
 | `status` | string | yes | See Flag Status Enum below. |
 | `diagnosis` | string | yes | Plain-language description of the recurring issue. 500 characters max, three to five sentences. Names the problem and a structural cause hypothesis. NOT a fix prescription. |
 | `example_entries` | array | yes | Up to 5 queue entry IDs evidencing the pattern. |
@@ -558,7 +558,7 @@ A flags file written before v2 stores each entry's identifier under `skill` and 
 
 **This mapping is load-bearing, not cosmetic.** Flags are matched by `target` to decide whether one already exists. An unmapped pre-v2 flag has no `target`, so it never matches, and a second entry is appended for something already flagged. That breaks the one-entry-per-target rule and splits the correction history the file exists to preserve. Everywhere else a missed mapping produces a visible error; here it produces a plausible-looking duplicate.
 
-The file is not rewritten on read. `/whats-breaking` writes every flag back under the v2 names on its next normal run, which converts the file as a side effect, so no migration is ever run separately and none can half-finish.
+The file is not rewritten on read. `/flag-patterns` writes every flag back under the v2 names on its next normal run, which converts the file as a side effect, so no migration is ever run separately and none can half-finish.
 
 ### Flag Status Enum
 
@@ -574,7 +574,7 @@ Group by `target`. Three or more closed primary corrections for the same target,
 
 The counting token comes from `source`. A `slash-capture` entry counts by `id`, one occurrence each, because somebody typed it. Anything else, including `manual` and a missing `source`, counts by `session_id || id`, so a stop-hook firing repeatedly in one sitting counts once. Do not read this off an empty `session_id`: that coupling is what broke on PR #96 the moment `/flag-issue` started filling the field in.
 
-**Occurrences are not sessions, and the report must not call them sessions.** Several `slash-capture` corrections typed in one sitting are several occurrences and one session, so naming them sessions tells the reader a problem recurred across occasions it did not. `/whats-breaking` records the number as `occurrence_count` for that reason.
+**Occurrences are not sessions, and the report must not call them sessions.** Several `slash-capture` corrections typed in one sitting are several occurrences and one session, so naming them sessions tells the reader a problem recurred across occasions it did not. `/flag-patterns` records the number as `occurrence_count` for that reason.
 
 ### Write rule
 

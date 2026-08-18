@@ -53,7 +53,7 @@ them are things you forget you meant to fix.
   fixes.
 - `/audit-deps` — scan every configured root and reconcile what is on disk
   against the dependency map.
-- `/whats-breaking` — a weekly view of what broke, what got fixed, and what
+- `/flag-patterns` — a weekly view of what broke, what got fixed, and what
   keeps coming back. It also reports a pushback rate, described below.
 - `/find-skill` — route an intent to the right skill, by scanning what is
   actually installed rather than a list someone maintained by hand.
@@ -65,7 +65,7 @@ other half: the times an answer did not land and you said so in the conversation
 rather than filing anything. Those are already written down, because Claude Code
 keeps a transcript of every session on disk.
 
-`/whats-breaking` reads them and reports one number, pushbacks per hundred
+`/flag-patterns` reads them and reports one number, pushbacks per hundred
 eligible typed messages, broken down by kind. Pasted material and messages over
 the detector's 800-character classification boundary are excluded from both
 sides; the report states how many long messages it skipped. You can also run it directly:

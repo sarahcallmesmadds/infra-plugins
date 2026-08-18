@@ -175,7 +175,7 @@ console.log('\nthe warning that cannot become a script call');
 // A list has to be edited on purpose, which is the whole point of the guard.
 const TILDE_WARNING_CARRIERS = [
   'apply-fix', 'audit-deps', 'built-check', 'flag-issue',
-  'revert-fix', 'to-build', 'verify-fix', 'whats-breaking',
+  'flag-patterns', 'revert-fix', 'to-build', 'verify-fix',
 ];
 
 check('the tilde-paths warning is in every file expected to carry it', () => {

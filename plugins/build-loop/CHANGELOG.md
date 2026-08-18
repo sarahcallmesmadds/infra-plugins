@@ -3,6 +3,29 @@
 Upgrade notes for past versions, moved out of the README so that file says what
 the plugin is and how to use it. Nothing here is needed to install or run it.
 
+## Upgrading to 0.10.13
+
+**`/whats-breaking` is now `/flag-patterns`.** The old command no longer exists.
+Nothing else changed: same report, same weekly cadence, same file at
+`~/.claude/build-loop/summaries/YYYY-WW.md`.
+
+The old name was a question rather than a thing, and it did not say that the
+output is a report about patterns. The new one sits next to `/flag-issue`, which
+is the command it belongs with: `/flag-issue` records one correction as it
+happens, and `/flag-patterns` reads the accumulated corrections once a week and
+names the targets that keep coming back.
+
+You do not have to change how you ask for it. The phrases that reach it are
+unchanged, including "what keeps breaking" and "what's breaking". Only the slash
+command is different.
+
+If you scheduled the old name, update the job. Note that this report can only run
+on a local machine: a cloud runtime cannot see `~/.claude/` and will report
+success having read nothing.
+
+Entries in this file for versions before 0.10.13 still say `/whats-breaking`,
+because that is what the command was called at the time.
+
 ## Upgrading to 0.10.0
 
 Nothing to do on upgrade. Two rules that the documents claimed and the code did

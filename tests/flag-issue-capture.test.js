@@ -39,7 +39,7 @@ const read = (...p) => fs.readFileSync(path.join(...p), 'utf8');
 
 const FLAG_ISSUE = read(BUILD_LOOP, 'skills', 'flag-issue', 'SKILL.md');
 const APPLY_FIX = read(BUILD_LOOP, 'skills', 'apply-fix', 'SKILL.md');
-const WHATS_BREAKING = read(BUILD_LOOP, 'skills', 'whats-breaking', 'SKILL.md');
+const FLAG_PATTERNS = read(BUILD_LOOP, 'skills', 'flag-patterns', 'SKILL.md');
 const TO_BUILD = read(BUILD_LOOP, 'skills', 'to-build', 'SKILL.md');
 const SCHEMA = read(BUILD_LOOP, 'reference', 'SCHEMA.md');
 const SCHEMA_BUILD = read(BUILD_LOOP, 'reference', 'SCHEMA-BUILD.md');
@@ -190,20 +190,20 @@ check('flag-issue and apply-fix agree on which field to fix', () => {
 // recurring problem. Nothing would have failed. The report would just have
 // quietly stopped naming things.
 
-check('whats-breaking counts from source, not from an empty session_id', () => {
+check('flag-patterns counts from source, not from an empty session_id', () => {
   assert.ok(
     !/Dedup token = `entry\.session_id` if it is a non-empty string, else `entry\.id`/
-      .test(WHATS_BREAKING),
+      .test(FLAG_PATTERNS),
     'the counting token still keys off session_id being empty, so filling the '
     + 'field in silently stops recurring problems being reported'
   );
   assert.ok(
-    /entry\.source/.test(WHATS_BREAKING),
-    'whats-breaking never reads source, which is the only field that says '
+    /entry\.source/.test(FLAG_PATTERNS),
+    'flag-patterns never reads source, which is the only field that says '
     + 'whether an entry was typed by a person or fired by a hook'
   );
   assert.ok(
-    /"slash-capture"/.test(WHATS_BREAKING),
+    /"slash-capture"/.test(FLAG_PATTERNS),
     'the counting rule does not name slash-capture, the one source whose '
     + 'behaviour the session_id fix changed'
   );
@@ -215,9 +215,9 @@ check('only slash-capture counts per entry', () => {
   // that, and the answer was none: only slash-capture was affected by filling
   // in session_id. The effect would have been to let a few hand-written entries
   // cross the threshold on their own. A behaviour here changes on a fault.
-  const rule = WHATS_BREAKING.slice(
-    WHATS_BREAKING.indexOf('Counting token, decided by'),
-    WHATS_BREAKING.indexOf('Build this map')
+  const rule = FLAG_PATTERNS.slice(
+    FLAG_PATTERNS.indexOf('Counting token, decided by'),
+    FLAG_PATTERNS.indexOf('Build this map')
   );
   assert.ok(rule.length > 0, 'the counting rule block moved and this check no longer reads it');
   const perEntry = rule.slice(0, rule.indexOf('anything else'));
@@ -237,19 +237,19 @@ check('the report does not call occurrences sessions', () => {
   // reported as three sittings, which is the overcounting the dedup half of the
   // rule exists to prevent, arriving through the label instead of the maths.
   assert.ok(
-    !/\{N\} corrections across \{M\} sessions/.test(WHATS_BREAKING),
+    !/\{N\} corrections across \{M\} sessions/.test(FLAG_PATTERNS),
     'the summary template still says the corrections span {M} sessions'
   );
   assert.ok(
-    !/has been corrected \{N\} times across \{M\} sessions/.test(WHATS_BREAKING),
+    !/has been corrected \{N\} times across \{M\} sessions/.test(FLAG_PATTERNS),
     'the diagnosis template still says the corrections span {M} sessions'
   );
   assert.ok(
-    !/Threshold is exactly 3 unique sessions/.test(WHATS_BREAKING),
+    !/Threshold is exactly 3 unique sessions/.test(FLAG_PATTERNS),
     'the threshold is still stated in sessions'
   );
   assert.ok(
-    /occurrence_count/.test(WHATS_BREAKING),
+    /occurrence_count/.test(FLAG_PATTERNS),
     'the count has no name of its own, so it will be described as whatever the '
     + 'nearest sentence happens to say'
   );
@@ -260,7 +260,7 @@ check('the renamed count can still be read from an older flags file', () => {
   // the only history of what has been flagged, so a rename that cannot read it
   // silently restarts every counter at zero.
   assert.ok(
-    /Missing `occurrence_count` → read `session_count` instead/.test(WHATS_BREAKING),
+    /Missing `occurrence_count` → read `session_count` instead/.test(FLAG_PATTERNS),
     'nothing maps the old session_count key on read, so a flags file written '
     + 'before 0.9.6 loses its counts'
   );
@@ -271,11 +271,11 @@ check('the renamed count can still be read from an older flags file', () => {
   );
 });
 
-check('whats-breaking loads the field its counting rule reads', () => {
+check('flag-patterns loads the field its counting rule reads', () => {
   // Step 2b reads `source`. Step 1 lists the fields to collect off each entry.
   // A rule reading a field the loader never mentions is the shape that makes a
   // skill work in testing and quietly misbehave against a real queue.
-  const step1 = WHATS_BREAKING.slice(0, WHATS_BREAKING.indexOf('## Step 2'));
+  const step1 = FLAG_PATTERNS.slice(0, FLAG_PATTERNS.indexOf('## Step 2'));
   assert.ok(
     /^source: string/m.test(step1),
     'Step 2b counts by `source` but Step 1 never loads it'
@@ -342,7 +342,7 @@ check('no prose names a build-loop version this branch does not ship', () => {
   const [maj, min] = shipped.split('.');
   const offenders = [];
   for (const [name, text] of Object.entries({
-    'whats-breaking/SKILL.md': WHATS_BREAKING,
+    'flag-patterns/SKILL.md': FLAG_PATTERNS,
     'flag-issue/SKILL.md': FLAG_ISSUE,
     'to-build/SKILL.md': TO_BUILD,
     'SCHEMA.md': SCHEMA,
@@ -375,7 +375,7 @@ check('the pattern-flags rename bumped the file it lives in', () => {
   // row records that. Round 2 renamed session_count and left the version at 2,
   // so a file written with the new name was indistinguishable from one written
   // with the old.
-  const writer = WHATS_BREAKING.slice(WHATS_BREAKING.indexOf('## Step 5'));
+  const writer = FLAG_PATTERNS.slice(FLAG_PATTERNS.indexOf('## Step 5'));
   assert.ok(
     /"\$schema_version": 3/.test(writer),
     'the pattern-flags writer still stamps a version that predates the '
@@ -429,7 +429,7 @@ check('every step cross-reference names a step that mentions the field', () => {
 
   for (const [name, text] of Object.entries({
     'flag-issue/SKILL.md': FLAG_ISSUE,
-    'whats-breaking/SKILL.md': WHATS_BREAKING,
+    'flag-patterns/SKILL.md': FLAG_PATTERNS,
     'to-build/SKILL.md': TO_BUILD,
   })) {
     // Split into sections on the step headings the file actually declares.

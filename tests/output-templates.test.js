@@ -62,13 +62,13 @@ const ALLOWED = [
   { file: 'build-loop/skills/apply-fix/SKILL.md', contains: 'verbatim or close paraphrase' },
   // A fenced block describing the shape of a queue entry for the author's
   // benefit. Field notes, not a template that gets reproduced.
-  { file: 'build-loop/skills/whats-breaking/SKILL.md', contains: 'the name of the thing corrected' },
+  { file: 'build-loop/skills/flag-patterns/SKILL.md', contains: 'the name of the thing corrected' },
   // The session_id field note was excused here until 0.9.6. That line was
   // rewritten when the counting rule stopped reading an empty session_id, and
   // it carries no em dash now, so the exception went with it rather than
   // staying behind to excuse something else.
-  { file: 'build-loop/skills/whats-breaking/SKILL.md', contains: 'free text' },
-  { file: 'build-loop/skills/whats-breaking/SKILL.md', contains: 'absolute path to the file a fix would edit' },
+  { file: 'build-loop/skills/flag-patterns/SKILL.md', contains: 'free text' },
+  { file: 'build-loop/skills/flag-patterns/SKILL.md', contains: 'absolute path to the file a fix would edit' },
 ];
 
 // Fences holding text a skill reproduces. A `bash` or `json` fence is a command
