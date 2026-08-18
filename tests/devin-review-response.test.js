@@ -52,7 +52,9 @@ check('skill can search and create its private round directory without broad Bas
   assert.match(frontmatter, /allowed-tools:.*\bGrep\b/);
   assert.match(frontmatter, /allowed-tools:.*\bGlob\b/);
   assert.match(frontmatter, /allowed-tools:.*\bEdit\b/);
-  assert.match(frontmatter, /Bash\(mktemp:\*\)/);
+  // The round directory comes from scripts/scratch.js, so the grant that makes
+  // it possible is Bash(node:*) rather than Bash(mktemp:*).
+  assert.match(frontmatter, /Bash\(node:\*\)/);
   assert.doesNotMatch(frontmatter, /\bBash\b(?!\s*\()/);
   assert.doesNotMatch(frontmatter, /Bash\((?:git|gh):\*\)/);
   for (const grant of [

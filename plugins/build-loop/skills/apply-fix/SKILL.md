@@ -3,7 +3,7 @@ name: apply-fix
 type: human
 description: Applies a correction from the bug queue to an actual target file. Reads the queue entry, checks DEPS.json for dependents, reasons about the surgical fix, shows a plain-language before/after diff, waits for the user's approval (yes / no / retry), then writes the fix, commits to the correct repo, and updates the queue entry status to "fix applied, watching" with the commit hash stored. Never writes without explicit approval.
 argument-hint: "[queue-entry-id or target-name]"
-allowed-tools: Read, Write, Bash(ls:*), Bash(cat:*), Bash(date:*), Bash(mktemp:*), Bash(mkdir:*), Bash(mv:*), Bash(rm:*), Bash(node:*), Bash(git:*), Bash(grep:*), Bash(wc:*)
+allowed-tools: Read, Write, Bash(ls:*), Bash(cat:*), Bash(date:*), Bash(mkdir:*), Bash(mv:*), Bash(rm:*), Bash(node:*), Bash(git:*), Bash(grep:*), Bash(wc:*)
 ---
 
 You are applying a correction from the build loop bug queue to an actual target file. The schema is at `${CLAUDE_PLUGIN_ROOT}/reference/SCHEMA.md` and the dependency map is at `~/.claude/build-loop/DEPS.json`.
@@ -18,26 +18,17 @@ Eight steps. Do not reorder or skip steps. The diff gate (Step 6) must come befo
 
 ---
 
-**Scratch files go in a private directory, made once per run.** Before the first
-hand-off, create it and reuse it for the rest of the run:
+**Scratch files go in a private directory, made once per run.** Make it before
+the first hand-off and reuse it for the rest of the run:
 
 ```bash
-mktemp -d "${TMPDIR:-/tmp}/build-loop.XXXXXX"
+node "${CLAUDE_PLUGIN_ROOT}/scripts/scratch.js"
 ```
 
-Written out in full rather than as `mktemp -d -t build-loop`, which is BSD only.
-GNU coreutils wants at least six `X` characters in the template and exits 1 on
-the short form, so on Linux the directory is never created and every hand-off
-that reads from it fails. `built-check` pairs `date -u -v-{days}d` with a
-`date -u -d` fallback for the same reason.
-
-Use the path it prints, written as `{scratch}` below. Never a fixed name under
-`/tmp`. Two reasons, and the second is the one that bites on this machine. A
-fixed name is world-readable and another local user can replace it between the
-Write and the call, so what lands in the list is not what was composed. And a
-fixed name is shared between sessions: with two in flight, which is the premise
-of this whole change, one session's Write lands between the other's Write and
-its call, and the wrong text is recorded against the wrong item.
+Use the path it prints, written as `{scratch}` below, and never a fixed name
+under `/tmp`, which another live session can overwrite between the Write and
+the call. If it exits non-zero it printed why instead of a path, so say
+what it said and stop rather than treating that sentence as a directory.
 
 ---
 
@@ -401,9 +392,9 @@ true, in one call. The note is free text, so it goes through a file rather than 
 shell argument, the same as every other note this skill writes:
 
 Write the note to a scratch file in `{scratch}`, the per-run directory from the top
-of this skill, exactly as the Step 7 failure note does. Not a bare `mktemp`, which
-ignores the template this skill spells out in full for a stated reason, and not a
-fixed name under `/tmp`.
+of this skill, exactly as the Step 7 failure note does. Not a fixed name under
+`/tmp`, and not a directory made any other way: `scripts/scratch.js` is the only
+one that gets the permissions and the uniqueness right on both platforms.
 
 **The note must read exactly this, starting with `Not committed:`:**
 

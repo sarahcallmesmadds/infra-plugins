@@ -3,7 +3,7 @@ name: to-build
 type: human
 description: The to-build list, at ~/.claude/build-loop/to-build/. With an argument it writes down something the user plans to build (a skill, hook, command, plugin, or loose script), showing a draft and waiting for confirmation before writing. With no argument it shows the list. Use when the user says "I want to build", "we should build", "add that to the to-build list", "put that on the list", "remind me to build", "what's on the to-build list", "what was I going to build", "what's left to build", or explicitly invokes /to-build. Pre-fills what and why from the current session. Never writes without confirmation.
 argument-hint: "[what you want to build, or nothing to see the list]"
-allowed-tools: Read, Write, Bash(ls:*), Bash(cat:*), Bash(date:*), Bash(mkdir:*), Bash(mktemp:*), Bash(node:*)
+allowed-tools: Read, Write, Bash(ls:*), Bash(cat:*), Bash(date:*), Bash(mkdir:*), Bash(node:*)
 ---
 
 You are working with the to-build list at `~/.claude/build-loop/to-build/`. The schema is at `${CLAUDE_PLUGIN_ROOT}/reference/SCHEMA-BUILD.md`. Read it if you have not already in this session.
@@ -29,26 +29,17 @@ This is the list of things the user plans to build. It is not the bug queue. The
 
 ---
 
-**Scratch files go in a private directory, made once per run.** Before the first
-hand-off, create it and reuse it for the rest of the run:
+**Scratch files go in a private directory, made once per run.** Make it before
+the first hand-off and reuse it for the rest of the run:
 
 ```bash
-mktemp -d "${TMPDIR:-/tmp}/build-loop.XXXXXX"
+node "${CLAUDE_PLUGIN_ROOT}/scripts/scratch.js"
 ```
 
-Written out in full rather than as `mktemp -d -t build-loop`, which is BSD only.
-GNU coreutils wants at least six `X` characters in the template and exits 1 on
-the short form, so on Linux the directory is never created and every hand-off
-that reads from it fails. `built-check` pairs `date -u -v-{days}d` with a
-`date -u -d` fallback for the same reason.
-
-Use the path it prints, written as `{scratch}` below. Never a fixed name under
-`/tmp`. Two reasons, and the second is the one that bites on this machine. A
-fixed name is world-readable and another local user can replace it between the
-Write and the call, so what lands in the list is not what was composed. And a
-fixed name is shared between sessions: with two in flight, which is the premise
-of this whole change, one session's Write lands between the other's Write and
-its call, and the wrong text is recorded against the wrong item.
+Use the path it prints, written as `{scratch}` below, and never a fixed name
+under `/tmp`, which another live session can overwrite between the Write and
+the call. If it exits non-zero it printed why instead of a path, so say
+what it said and stop rather than treating that sentence as a directory.
 
 ---
 
