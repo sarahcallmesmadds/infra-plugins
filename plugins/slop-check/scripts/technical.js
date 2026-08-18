@@ -372,13 +372,12 @@ function leanedOn(text, pattern) {
 // and the lowest source file is plugins/guardrails/hooks/resource-owner-guard.js
 // at 69.8 per cent.
 //
-// The figures this replaces were 6.5 and 91.5, and both were wrong when written.
-// Re-measuring on the commit that stated them gives 29.2 and 69.8, so the real
-// margin was 40 points where the comment claimed 85, and one document in this
-// repository sat 0.8 points under the threshold rather than 23.5 clear of it.
-// That is the third figure in a comment in this pull request to have drifted from
-// what the code did, and the third by the same route: measured once, then quoted
-// after the thing it measured changed.
+// Re-measure before quoting these. They previously read 6.5 and 91.5 and were
+// wrong on the commit that stated them, where the true pair was 29.2 and 69.8: a
+// 40-point margin described as 85, with one real document in this repository
+// sitting 0.8 points under the threshold rather than 23.5 points clear of it. A
+// figure measured once and quoted after the thing it measured changed reads
+// exactly like a figure that is still true.
 //
 // What is asserted rather than stated: tests/slop-check.test.js pins this file
 // and the slop-check suite above the threshold, and the wrapped-plan and
