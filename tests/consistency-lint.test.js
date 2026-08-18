@@ -561,6 +561,41 @@ check('the edit test and the file scan ask the same question', () => {
     'the file scan changed its mind about the rule sentence, so the pairing above is now wrong');
 });
 
+// An index names what its entries are about, and that is not the same as
+// stating a rule for itself. Reported 2026-08-09 against MEMORY.md, which is
+// exactly this shape: 30 entries of `- [Title](file.md) — one line about it`,
+// one of them naming the no-em-dashes rule, and the format's own separator on
+// 45 of 66 lines. It fired on every edit and always would have.
+check('a rule named in a list item that links elsewhere is that document\'s rule, not this one\'s', () => {
+  const index = [
+    '# Index',
+    '',
+    '- [Handoff](HANDOFF.md) — where the live threads are',
+    '- [Writing style rules](writing-style-rules.md) — no em dashes, plain English',
+    '- [Hard rules](hard-rules.md) — never touch her email',
+    '',
+  ].join('\n');
+  assert.deepStrictEqual(brokenOwnRule(index), [],
+    'an index entry describing another document was read as a rule binding the index');
+});
+
+check('a rule in a plain list item is still this file\'s own rule', () => {
+  // The exclusion above turns on the link, not on the list item. Without that,
+  // any rule written as a bullet would stop counting, which is how most rules
+  // files write them.
+  const rules = '# Rules\n\n- No em dashes in prose.\n\nIt ran — and finished.\n';
+  const found = brokenOwnRule(rules);
+  assert.strictEqual(found.length, 1, 'a bulleted rule with no link stopped being a rule');
+  assert.deepStrictEqual(found[0].lines, [5], 'the breach line moved');
+});
+
+check('a link into this same document is not somewhere else', () => {
+  // An anchor points into the file stating it, so the rule is still its own.
+  const anchored = '# Rules\n\n- [See below](#style) no em dashes here.\n\nIt ran — and finished.\n';
+  assert.strictEqual(brokenOwnRule(anchored).length, 1,
+    'an anchor link was treated as pointing at another document');
+});
+
 check('adding an example does not re-report an untouched line', () => {
   // The seventh review finding, at the level it was reported. A file states the
   // rule and already breaks it on line 5. The edit appends a fenced example,

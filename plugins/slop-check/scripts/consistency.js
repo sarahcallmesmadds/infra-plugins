@@ -567,6 +567,27 @@ function withoutBackticks(line) {
   return line.replace(/`/g, '');
 }
 
+// A rule named inside a list item that links somewhere else belongs to the
+// document being linked to, not to the file naming it.
+//
+// An index states what its entries are about. MEMORY.md is one: every entry is
+// `- [Title](file.md) - one line about it`, and one of those entries names her
+// no-em-dashes rule. The separator in that format is the character the rule
+// bans, so the file read as stating a rule and breaking it on 45 of its 66
+// lines, and it did that on every single edit. A warning that can never be
+// cleared is one that teaches the reader to stop looking, which costs more than
+// the check earns.
+//
+// The link is what carries it, not the bullet. A plain list item saying "No em
+// dashes" is this file's own rule and still counts. So does a link into this
+// same document, because an anchor is not somewhere else, which is why the
+// target is required not to start with `#`.
+const LINKS_ELSEWHERE = /^\s*(?:[-*+]|\d+[.)])\s+.*\[[^\]]*\]\(\s*(?!#)[^)]+\)/;
+
+function describesAnotherDocument(line) {
+  return LINKS_ELSEWHERE.test(line);
+}
+
 // The only two places that decide what a line does about a rule.
 //
 // There used to be a second pair inside ruleChange, matching the raw line.
@@ -586,7 +607,11 @@ function withoutBackticks(line) {
 //
 // Why the two normalise differently is the whole point and is not an
 // oversight. See withoutCodeSpans and withoutBackticks.
+//
+// statesRule carries a third question, and describesAnotherDocument below is
+// where it is answered: whose rule is this.
 function statesRule(rule, line) {
+  if (describesAnotherDocument(line)) return false;
   return rule.states.test(withoutBackticks(line));
 }
 
