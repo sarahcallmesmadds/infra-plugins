@@ -77,6 +77,57 @@ check('inline review fallback is explicitly read-only', () => {
   assert.match(body, /method must be explicit/);
 });
 
+check('recovering a hidden finding comes before asking the user for it', () => {
+  // The skill used to say to stop and ask whenever the web interface held
+  // findings the API did not return. On one pull request that stopped a session
+  // dead, and the CLI then recovered the same finding unattended in two minutes,
+  // with a file and a line number. Escalating to a person is the fallback.
+  const whole = fs.readFileSync(path.join(SKILL, 'SKILL.md'), 'utf8');
+  // Past the frontmatter, or the allowed-tools grant names the same command and
+  // every ordering test measures against a position near the top of the file.
+  // That version of this check passed with the old wording still in place.
+  const body = whole.split(/^---$/m).slice(2).join('---');
+  assert.match(body, /devin --permission-mode auto -p/,
+    'the skill no longer names the command that recovers the findings');
+
+  // Whitespace-insensitive, because this file is hard-wrapped and the phrase
+  // lands across a line break as often as not. A version of this matching a
+  // literal space passed with the old wording restored, purely because the
+  // sentence it was looking for read "ask the\nuser".
+  const recover = body.indexOf('devin --permission-mode auto -p');
+  const escalate = body.search(/ask(?:ing)?\s+the\s+user/i);
+  assert.ok(escalate > -1, 'the skill no longer says when to involve a person at all');
+  assert.ok(escalate > recover,
+    'the skill puts asking the user ahead of recovering the findings, which is the bug');
+});
+
+check('the skill says to read the review body rather than the check status', () => {
+  // A green check has sat above a body reporting findings more than once, so a
+  // round called clean on the status alone is not established.
+  const body = fs.readFileSync(path.join(SKILL, 'SKILL.md'), 'utf8');
+  assert.match(body, /body, not the check status/i);
+  assert.match(body, /review body names findings/i,
+    'the hard stops no longer cover a body that disagrees with the check');
+});
+
+check('a clean review is scoped to the commit it ran against', () => {
+  // Three rounds went clean and three real findings landed after them, each on
+  // a commit answering the previous round.
+  const body = fs.readFileSync(path.join(SKILL, 'SKILL.md'), 'utf8');
+  assert.match(body, /evidence for the commit it ran against/);
+  assert.match(body, /no longer the head/,
+    'the hard stops no longer cover a review that ran against a stale SHA');
+});
+
+check('the recovery command is granted, not just described', () => {
+  // A skill naming a command its allowed-tools does not carry stops to ask on
+  // every run, which is the same interruption this change removes.
+  const body = fs.readFileSync(path.join(SKILL, 'SKILL.md'), 'utf8');
+  const front = body.split('---')[1] || '';
+  assert.match(front, /Bash\(devin --permission-mode auto -p:\*\)/,
+    'the CLI recovery is documented but not granted');
+});
+
 check('validator uses the plugin-level scripts convention', () => {
   assert.ok(fs.existsSync(VALIDATOR), 'plugin-level pre-push validator is missing');
   assert.ok(!fs.existsSync(path.join(SKILL, 'scripts/pre-push-check.js')),

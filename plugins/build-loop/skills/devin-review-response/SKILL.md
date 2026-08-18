@@ -1,7 +1,7 @@
 ---
 name: devin-review-response
 description: Resolve a complete Devin code-review round without point fixes. Use when Devin posts PR findings, the user asks to address or fix a Devin review, or a branch needs a final Devin-response pass before push or merge. Maps dependencies before editing, audits paired and adjacent files, classifies every finding, validates the round record, and produces one atomic commit per review round.
-allowed-tools: Read, Write, Edit, Grep, Glob, Bash(node:*), Bash(git branch --show-current:*), Bash(git diff:*), Bash(git log:*), Bash(git remote -v:*), Bash(git rev-parse:*), Bash(git status:*), Bash(gh auth status:*), Bash(gh pr view:*), Bash(gh api --method GET:*)
+allowed-tools: Read, Write, Edit, Grep, Glob, Bash(node:*), Bash(git branch --show-current:*), Bash(git diff:*), Bash(git log:*), Bash(git remote -v:*), Bash(git rev-parse:*), Bash(git status:*), Bash(gh auth status:*), Bash(gh pr view:*), Bash(gh api --method GET:*), Bash(devin --permission-mode auto -p:*)
 ---
 
 # Devin review response
@@ -15,9 +15,41 @@ Resolve the repository, PR, branch, head SHA, and review round. Confirm the chec
 Fetch every inline and top-level finding. Prefer the connected GitHub app. When
 it cannot return inline review comments, use `gh api --method GET` against the
 pull request's `reviews` and `comments` endpoints; the method must be explicit
-so the scoped grant cannot authorize a GitHub write. If Devin reports additional
-findings behind its web interface, stop and ask the user to provide them. An
-incomplete finding set cannot produce a clean round.
+so the scoped grant cannot authorize a GitHub write.
+
+**Read the review body, not the check status.** A green check has twice sat
+above a body saying it found something, so the status alone never establishes a
+clean round. The body is also where a count lives: "View in Devin Review to see
+1 additional finding" says the endpoints above returned fewer findings than
+exist.
+
+When the body names findings the endpoints did not return, recover them yourself
+before involving anyone. Run the CLI against the same head SHA, from a checkout
+of it:
+
+```bash
+devin --permission-mode auto -p "<what to review, and the specific questions>"
+```
+
+It answers in a couple of minutes with files and line numbers. Asking the user to
+open the web app and paste findings back is the fallback for when this returns
+nothing or refuses to run, not the first move.
+
+Two things stop that run, and neither means the route failed:
+
+- It refuses a workspace it has not been told to trust, and the trust prompt
+  needs a real terminal, so it cannot be answered from a tool call. Trust is
+  inherited, so a worktree created under an already-trusted parent runs without
+  one. Prefer that to asking someone to answer a prompt.
+- `--permission-mode auto` approves read-only tools only, and a review that
+  needs more than those exits saying it rejected a call rather than reviewing
+  nothing. Rerun it a single step up rather than reading that as no findings.
+
+A clean CLI round is evidence for the commit it ran against and no other. Re-run
+it on the final head before recording the round as clean, since later commits
+answering earlier findings are exactly where the next one appears.
+
+An incomplete finding set cannot produce a clean round.
 
 Create one private temporary directory for the round:
 
@@ -98,7 +130,10 @@ If a later Devin pass reports new findings, start a new record and a new atomic 
 
 Stop rather than claiming success when:
 
-- the finding set is incomplete or cannot be fetched;
+- the finding set is incomplete or cannot be fetched, and the CLI recovery in
+  step 1 has been tried;
+- the review body names findings that are not in the set, whatever the check says;
+- the authoritative review ran against a SHA that is no longer the head;
 - the local branch or head does not match the PR;
 - any finding lacks a disposition;
 - any fixed finding lacks dependency or paired-file audit evidence;
