@@ -768,20 +768,21 @@ console.log('\nhouse rules are reported as yours, not as the document being brok
 
 const CLI = path.join(__dirname, '..', 'plugins', 'slop-check', 'scripts', 'cli.js');
 
-function runCli(args, text) {
+function runCli(args, text, cwd) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'slop-cli-'));
   return execFileSync(process.execPath, [CLI, 'check', ...args], {
     input: text,
     encoding: 'utf8',
     env: { ...process.env, HOME: dir },
+    cwd,
   });
 }
 
 // execFileSync throws on a non-zero exit, so a row expecting a failing run has to
 // catch it or the whole suite dies with a stack trace instead of naming the row.
-function runCliAllowingFailure(args, text) {
+function runCliAllowingFailure(args, text, cwd) {
   try {
-    return runCli(args, text);
+    return runCli(args, text, cwd);
   } catch (e) {
     return `${e.stdout || ''}${e.stderr || ''}`;
   }
@@ -881,6 +882,18 @@ console.log('\nthe half that does not apply prints nothing');
   // `--file` is where the swallow is observable, because the value is opened.
   // `--file` with nothing usable after it is refused rather than read from stdin.
   //
+  // This asymmetry is deliberate. The equals form can name a file beginning
+  // with dashes, while the spaced form treats a following flag as a missing name.
+  const dashFileDir = fs.mkdtempSync(path.join(os.tmpdir(), 'slop-dash-file-'));
+  const dashFileName = '--prose-fixture.md';
+  fs.writeFileSync(path.join(dashFileDir, dashFileName), PLAN);
+  check('--file= reads a filename beginning with dashes and prints a report',
+    runCliAllowingFailure([`--file=${dashFileName}`, '--prose'], '', dashFileDir).includes('Hard rules'), true);
+  fs.rmSync(dashFileDir, { recursive: true });
+  check('--file=--prose reports that it cannot read that filename',
+    runCliAllowingFailure(['--file=--prose'], PLAN).includes('cannot read --prose'), true);
+  check('--file=--prose is not refused as a missing filename',
+    runCliAllowingFailure(['--file=--prose'], PLAN).includes('--file was given with no filename'), false);
   // These three rows previously asserted the opposite, and pinned a bug. The
   // value-swallow guard stopped `--prose` being opened as a filename and let the
   // run fall through to stdin instead, so the rows passed only because the test
