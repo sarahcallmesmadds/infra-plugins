@@ -100,8 +100,14 @@ Collect from four places. Gather all four before judging anything, because the s
 
 ### 3a — The git log of every configured root
 
-Ask for the roots rather than working them out. This prints them and checks
-them in one call, and it has to run before any git log:
+Two calls before any git log, and they answer different questions. First,
+whether the roots are there, which is the one you relay:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/roots.js" check
+```
+
+Then, for the roots themselves:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/scripts/roots.js" list
@@ -109,8 +115,12 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/roots.js" list
 
 Every root comes back with an absolute `path`, its `kind`, and whether it
 `exists`, with the defaults already applied when there is no config file and a
-pre-v2 `skillRoots` config already read as roots of kind `skill`. The exit code
-is the one `check` gives.
+pre-v2 `skillRoots` config already read as roots of kind `skill`.
+
+**`list` prints JSON and nothing else, so it is never the thing you relay.** The
+sentences that name a missing root and its path live in `check`, on purpose, so
+six callers cannot word the same condition six ways. The exit codes below are
+`check`'s, and `list` returns the same ones.
 
 - Exit 0, carry on.
 - Exit 3, a root someone configured is gone. Relay what it said and use the
@@ -123,7 +133,8 @@ is the one `check` gives.
 - Exit 1, the config itself could not be read. Relay what it said and carry on
   with session evidence alone, saying that is all you have.
 
-Every one of those messages arrives on stdout, including exit 1.
+Every one of those messages arrives on stdout, including exit 1. That is true of
+`check`. `list` prints its JSON there too, so relay the one and read the other.
 
 Whichever of these applies, do not report "no sign of it" for everything as
 though you had looked, when there was nowhere to look.

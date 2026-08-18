@@ -95,6 +95,29 @@ check('a skill that resolves roots asks the script for them', () => {
     `only ${resolvers.length} skills call roots.js; the copies were removed without a replacement`);
 });
 
+check('a skill that promises to relay a roots message calls check, not just list', () => {
+  // `check` writes the sentences that name a dead root, its path and the
+  // remedy. `list` writes JSON and nothing else. Three skills were switched
+  // from one to the other while keeping instructions that said "print what it
+  // said", which would have dumped a JSON object at the user in place of the
+  // sentence, and each still carried the line promising every message arrives
+  // on stdout. That line is the tell, so it is what this keys on.
+  //
+  // to-build is the counter-example that shows the rule is about the promise
+  // and not about calling both: it uses `list` alone and deliberately says it
+  // relays only on exit 1, so it makes no claim to keep.
+  const PROMISE = 'arrives on stdout';
+  const claimants = skillFiles().filter(({ text }) => text.includes(PROMISE));
+  assert.ok(claimants.length >= 3,
+    `only ${claimants.length} skills make the relay promise; this check has stopped finding its subjects`);
+
+  const offenders = claimants
+    .filter(({ text }) => !/roots\.js"? check/.test(text))
+    .map(({ name }) => name);
+  assert.deepStrictEqual(offenders, [],
+    `these promise to relay a roots message but only call list, which prints JSON: ${offenders.join(', ')}`);
+});
+
 check('no skill reads build-loop.config.json itself', () => {
   // find-skill did, in Python, with its own copy of the defaults underneath.
   // Naming the config file is fine in prose; opening it is not.

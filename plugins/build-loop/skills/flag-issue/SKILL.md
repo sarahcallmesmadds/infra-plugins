@@ -73,8 +73,14 @@ You show this in the draft at Step 2, so a wrong guess costs nothing. Asking abo
 
 **3. target_path** — the absolute path to the file a fix would edit. Resolve it this way:
 
-1. Ask for the roots rather than working them out. This prints them and checks
-   they still exist in one call, and it runs before you search any of them:
+1. Two calls before you search anything, answering different questions. First,
+   whether the roots are there, which is the one you relay:
+
+   ```bash
+   node "${CLAUDE_PLUGIN_ROOT}/scripts/roots.js" check
+   ```
+
+   Then, for the roots themselves:
 
    ```bash
    node "${CLAUDE_PLUGIN_ROOT}/scripts/roots.js" list
@@ -83,7 +89,11 @@ You show this in the draft at Step 2, so a wrong guess costs nothing. Asking abo
    Every root comes back with an absolute `path`, its `kind`, and whether it
    `exists`. The defaults are already applied when there is no config file, and
    a pre-v2 `skillRoots` config has already been read as roots of kind `skill`.
-   The exit code is the one `check` gives.
+
+   **`list` prints JSON and nothing else, so it is never the thing you relay.**
+   The sentence naming a missing root and its path lives in `check`, on purpose,
+   so six callers cannot word the same condition six ways. The exit codes below
+   are `check`'s, and `list` returns the same ones.
 
    - Exit 0, carry on.
    - Exit 3, a root someone configured is gone. Relay that before asking the
@@ -97,7 +107,9 @@ You show this in the draft at Step 2, so a wrong guess costs nothing. Asking abo
      path, rather than searching roots that are not there.
    - Exit 1, the config could not be read. Relay it and ask for a path.
 
-   Every one of those messages arrives on stdout, including exit 1.
+   Every one of those messages arrives on stdout, including exit 1. That is true
+   of `check`. `list` prints its JSON there too, so relay the one and read the
+   other.
 
 2. Search the roots whose `kind` matches `target_kind`, in configured order, first hit wins:
    - kind `skill`: `ls <root.path>/{target}/SKILL.md`, then `ls <root.path>/{target}/skill/SKILL.md`
