@@ -94,6 +94,23 @@ function fromTranscript(transcript) {
 
 // The prose to judge, preferring the value the event handed over directly.
 //
+// Asking the transcript first was the bug, and the ordering here is the fix, so
+// the evidence travels with it. The file is written a beat behind the
+// conversation, so at Stop time the finished turn is usually not in it yet and
+// the walk lands on the message before. The guard then blocked a clean turn for
+// the previous one's count, while the turn that really broke the rule went out
+// unchecked.
+//
+// Measured on 2026-08-15 over 116 real blocks in the saved sessions: 70 linted
+// the wrong text. A live probe over five firings found the event correct every
+// time and the transcript short every time. On one firing the hook saw 11 lines
+// and 66794 bytes of a file that ends at 14 lines and 68998 bytes, with the
+// reply stamped 60ms before the read and still not written.
+//
+// That is why the direct field wins and the walk is a last resort, rather than
+// the two being interchangeable sources. Reordering them reintroduces a guard
+// that complains about the wrong piece of writing.
+//
 // `last_assistant_message` is documented on both Stop and SubagentStop and is
 // present in the captured shape of each. The walk stays as a fallback so the
 // guard degrades to its old behaviour rather than to nothing if that changes.

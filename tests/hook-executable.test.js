@@ -1172,11 +1172,13 @@ check('the guard survives a plugin root holding a backslash', () => {
   const launcher = path.join(root, 'bin', 'hook-node');
   fs.writeFileSync(launcher, '#!/bin/sh\n', { mode: 0o644 });   // present, not executable
 
-  const guard = guardFor('${CLAUDE_PLUGIN_ROOT}/bin/hook-node');
-  const stderr = spawnSync('/bin/sh', ['-c', guard], {
+  const fire = (command) => spawnSync('/bin/sh', ['-c', command], {
     encoding: 'utf8',
     env: Object.assign({}, process.env, { CLAUDE_PLUGIN_ROOT: root }),
-  }).stderr.replace(/\n$/, '');
+  });
+
+  const good = fire(guardFor('${CLAUDE_PLUGIN_ROOT}/bin/hook-node'));
+  const stderr = good.stderr.replace(/\n$/, '');
 
   assert.strictEqual(stderr.split('\n').length, 1,
     `the guard message split across lines, so the reader sees only "${stderr.split('\n')[0]}" `
@@ -1185,6 +1187,32 @@ check('the guard survives a plugin root holding a backslash', () => {
     'the guard message no longer carries the path it is about');
   assert.ok(stderr.includes('chmod +x'),
     'the guard message lost the instruction that tells the reader what to do');
+  // A guard that printed the right sentence and then let the hook run would
+  // pass every assertion above while guarding nothing.
+  assert.strictEqual(good.status, GUARD_EXIT,
+    'the guard printed its message and then exited on a code that stops nothing');
+
+  // The other half, and the reason this file cannot simply be switched over.
+  //
+  // `guardFor` emits the converted shape now, so the three assertions above
+  // exercise `printf` and nothing else. The defect being guarded against is
+  // carried by the eleven commands that have NOT been converted, and running
+  // the new shape says nothing about those. So the old shape is run here too,
+  // and pinned to the behaviour that makes it a defect: it splits, and the
+  // first line is all a reader ever sees.
+  //
+  // This is deliberately an assertion that the old form is broken rather than a
+  // description of it. When a plugin converts, this fails and tells whoever did
+  // it that the last echo is gone, which is a better prompt than a comment.
+  const legacy = fire(guardFor('${CLAUDE_PLUGIN_ROOT}/bin/hook-node')
+    .split(`printf '%s\\n' `).join('echo '));
+  const legacyErr = legacy.stderr.replace(/\n$/, '');
+
+  assert.strictEqual(legacyErr.split('\n').length, 2,
+    'the echo form no longer splits on a backslash root. If every command has '
+    + 'been converted, delete this half and the queue entry it belongs to');
+  assert.ok(!legacyErr.split('\n')[0].includes('chmod +x'),
+    'the echo form split somewhere harmless, so this no longer demonstrates the defect');
 
   fs.rmSync(dir, { recursive: true, force: true });
 });

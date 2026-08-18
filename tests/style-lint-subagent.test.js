@@ -110,11 +110,20 @@ check('a clean subagent report is not blocked', () => {
 });
 
 check('stop_hook_active suppresses the block, so a rewrite cannot loop', () => {
-  assert.strictEqual(run(SUBAGENT_HOOK, {
+  const event = {
     hook_event_name: 'SubagentStop',
     last_assistant_message: DIRTY,
     stop_hook_active: true,
-  }), null);
+  };
+  assert.strictEqual(run(SUBAGENT_HOOK, event), null);
+
+  // The same event with the flag cleared, because "returns nothing" is also
+  // what an inert hook returns. Without this the case passes just as well
+  // against a hook that never blocks anything, and its name would be claiming
+  // the flag did the work.
+  const withoutFlag = run(SUBAGENT_HOOK, Object.assign({}, event, { stop_hook_active: false }));
+  assert.ok(withoutFlag && withoutFlag.decision === 'block',
+    'the same event without the flag did not block, so the case above proves nothing');
 });
 
 // ---------------------------------------- which transcript the walk reads ----
@@ -134,6 +143,18 @@ check('the fallback reads the subagent transcript, not the session transcript', 
   });
   assert.strictEqual(out, null,
     'blocked on the session transcript, so the hook linted the wrong writer');
+
+  // Same call with the two transcripts swapped. Silence above is only evidence
+  // if the hook would have spoken had the subagent's own transcript been the
+  // dirty one, and an inert hook is silent either way.
+  const swapped = run(SUBAGENT_HOOK, {
+    hook_event_name: 'SubagentStop',
+    transcript_path: agent,
+    agent_transcript_path: session,
+    stop_hook_active: false,
+  });
+  assert.ok(swapped && swapped.decision === 'block',
+    'swapping the two paths did not block either, so this hook reads no transcript at all');
 });
 
 check('the fallback still catches a dirty subagent transcript', () => {
@@ -203,6 +224,11 @@ check('the Stop hook falls back to transcript_path', () => {
     stop_hook_active: false,
   });
   assert.ok(out, 'the Stop fallback stopped reading transcript_path');
+  // Truthiness alone would accept any JSON at all, including a shape the
+  // harness ignores, which is the failure this whole suite is modelled on.
+  assert.strictEqual(out.decision, 'block');
+  assert.match(out.reason, /the response just written/);
+  assert.match(out.reason, /em dash/);
 });
 
 console.log(`\n${ran} checks, ${failed} failed`);
