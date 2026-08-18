@@ -426,16 +426,44 @@ check('every skill that calls roots.js is allowed to run it', () => {
 });
 
 check('a skill that commits into one root asks about that root by name', () => {
-  // apply-fix and revert-fix both run git inside the root named by the entry's
-  // repo field. A bare check answers about every root, and "the others are
-  // fine" is not an answer about the one you are about to write into. That gap
-  // is how an absent default reached a git command as an all-clear.
-  const offending = ['apply-fix', 'revert-fix'].filter((name) =>
+  // apply-fix runs git inside the root named by the entry's repo field, in both
+  // of its modes: apply mode to record the fix, revert mode to undo it. A bare
+  // check answers about every root, and "the others are fine" is not an answer
+  // about the one you are about to write into. That gap is how an absent default
+  // reached a git command as an all-clear.
+  //
+  // revert-fix was the second name here until it folded into apply-fix as revert
+  // mode. Both call sites survived the fold and both are inside the one file now,
+  // so the check below would pass on a file that had lost one of them. The
+  // call-site count guards that.
+  const offending = ['apply-fix'].filter((name) =>
     !/roots\.js"? check --name/.test(skillText(name)));
   assert.deepStrictEqual(
     offending, [],
     `these run git inside one root and do not ask about it by name: ${offending.join(', ')}`
   );
+});
+
+check('apply-fix asks by name once per mode, not once in total', () => {
+  // The guard the comment above promises. Folding revert-fix in turned two files
+  // each holding one call site into one file holding two, and a single-match
+  // regex cannot tell four from two. Apply mode asks at Step 2, before anything
+  // is written; revert mode asks at Step R5, because Step 2 never ran on that
+  // path. Losing either one puts a git command behind an unasked question.
+  //
+  // Counted, not matched: the failure this replaces is a check that passed while
+  // half of what it named was gone.
+  const text = skillText('apply-fix');
+  const asks = (text.match(/roots\.js"? check --name/g) || []).length;
+  assert.strictEqual(asks, 2,
+    `apply-fix asks about a root by name ${asks} times; expected one per mode, `
+    + 'apply at Step 2 and revert at Step R5. A mode that stopped asking runs git '
+    + 'inside a root nothing confirmed.');
+
+  const takes = (text.match(/roots\.js"? list --name/g) || []).length;
+  assert.strictEqual(takes, 2,
+    `apply-fix takes a root path by name ${takes} times; expected one per mode. `
+    + 'A path taken without the matching check is the ordering bug both modes name.');
 });
 
 check('no skill claims a bare check proves a particular root exists', () => {

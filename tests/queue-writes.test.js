@@ -37,7 +37,7 @@ const SKILLS = path.join(__dirname, '..', 'plugins', 'build-loop', 'skills');
 const QUEUE_JS = path.join(__dirname, '..', 'plugins', 'build-loop', 'scripts', 'queue.js');
 
 // Skills that change an entry that already exists.
-const UPDATERS = ['apply-fix', 'verify-fix', 'revert-fix'];
+const UPDATERS = ['apply-fix', 'verify-fix'];
 
 // Skills that create entries. /flag-issue was deliberately absent from the old
 // list, because it only ever wrote new files and there was nothing on disk to
@@ -471,7 +471,7 @@ check('the checks would catch one', () => {
 
 // Counted as they run and then compared. This line was once a formula that
 // looked derived and was not, and it reported 10 while 13 ran.
-const EXPECTED_CHECKS = 29;
+const EXPECTED_CHECKS = 27;
 if (ran !== EXPECTED_CHECKS) {
   failed += 1;
   console.log(

@@ -32,7 +32,7 @@ them are things you forget you meant to fix.
   show a plain-language before and after. Nothing is written until you say yes.
   The fix is committed so it can be undone.
 - `/verify-fix` — confirm a fix actually worked before closing it.
-- `/revert-fix` — undo a fix that did not, with `git revert` rather than
+- `/apply-fix revert` — undo a fix that did not, with `git revert` rather than
   history rewriting, and put the entry back to open.
 
 **Remember what you meant to build**
@@ -290,7 +290,7 @@ answer, not its conclusion.
 opinion about whether something is any good, and it will not rewrite anything
 you did not complain about.
 
-`type:` is checked rather than required on purpose. 11 of the 23 skills
+`type:` is checked rather than required on purpose. 11 of the 22 skills
 here do not set it, and reporting 11 files that are fine is how a check
 teaches you to ignore it.
 

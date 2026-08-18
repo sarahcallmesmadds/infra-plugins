@@ -217,10 +217,10 @@ function readConfig() {
 // every root of the kind asked about was dead. A caller that asks about skill
 // roots is answering a question about skill roots, and find-skill was reporting
 // a missing hooks directory to someone who asked which skill to use.
-// `name` narrows to a single root, which is the question apply-fix and
-// revert-fix actually have: not "is everything well" but "is the one I am about
-// to commit into there". Asking the broad question and inferring the narrow
-// answer from it is what let an absent root through.
+// `name` narrows to a single root, which is the question apply-fix actually
+// has in both of its modes: not "is everything well" but "is the one I am about
+// to commit into, or revert inside, there". Asking the broad question and
+// inferring the narrow answer from it is what let an absent root through.
 function resolve({ kind, name } = {}) {
   const config = readConfig();
   const all = config.roots.map((r, i) => {

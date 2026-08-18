@@ -189,7 +189,7 @@ When /verify-fix is invoked directly (not from within /apply-fix), it works inde
 Check the loaded entry's status:
 
 - **"fix applied, watching"**, whose **last** note marker is `Committed:` and carries a hash: The fix was approved and committed. Say: "This fix was already committed at {commit-hash from notes}. Do you want to review the change retroactively? I can show you the diff from that commit." Wait for confirmation before proceeding.
-- **"fix applied, watching"** whose **last** note marker is **`Not committed:`**: `/apply-fix` Step 8 writes that marker when it wrote the file and had nowhere to commit it. Quote the reason from the note rather than restating it, since the note carries the actual `{target_path}` and `{repo}`. Say: "This fix was written and never committed. The entry records: {the Not committed: note}. There is no diff to show, so there is nothing to compare. I can show you what is in the file now. If the fix turns out to be wrong, /revert-fix {id} will offer to reopen the entry so /apply-fix can write a corrected one, since /apply-fix refuses an entry already at this status." Then go to **Step S2**, which re-presents what the fix was for, and on to S3.
+- **"fix applied, watching"** whose **last** note marker is **`Not committed:`**: `/apply-fix` Step 8 writes that marker when it wrote the file and had nowhere to commit it. Quote the reason from the note rather than restating it, since the note carries the actual `{target_path}` and `{repo}`. Say: "This fix was written and never committed. The entry records: {the Not committed: note}. There is no diff to show, so there is nothing to compare. I can show you what is in the file now. If the fix turns out to be wrong, /apply-fix revert {id} will offer to reopen the entry so a corrected fix can be written, since apply mode refuses an entry already at this status." Then go to **Step S2**, which re-presents what the fix was for, and on to S3.
 - **"fix applied, watching"** with **no** marker in any note: say "This entry is 'fix applied, watching' but records no commit and no reason. I can show you what is in the file now, though I cannot tell you whether it was committed." Then go to **Step S2** and on to S3.
 
   **Do not infer a cause from a missing hash.** Step S4's own standalone PASS path below promotes an `In Progress` entry to this status with a note and no hash, so hashless entries arise here as well as from a missing repository. Guessing tells someone their repository is not a git repository when it is. And read the notes before asserting a hash at all: printing `{commit-hash}` unsubstituted is the failure this skill forbids in Step S3.
@@ -280,7 +280,7 @@ Same three response types as Step V3:
 
   **Then offer a restore only if a `Committed:` note exists:**
 
-  > "Should I help restore the target file to its pre-fix state? To check what the file looked like before: git -C {repo_root} log --oneline -5, find the commit with [queue:{id}] in the message, then run /revert-fix {id} to undo it."
+  > "Should I help restore the target file to its pre-fix state? To check what the file looked like before: git -C {repo_root} log --oneline -5, find the commit with [queue:{id}] in the message, then run /apply-fix revert {id} to undo it."
 
   With a `Not committed:` note, there is no commit and `git log` cannot run usefully in
   a directory that is not a repository, so say this instead:

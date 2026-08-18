@@ -140,7 +140,7 @@ check('the writers actually write something, so the regex has not gone stale', (
 check('discovery finds every queue-status writer, not a subset', () => {
   // The gap this replaced: a hand-kept list held two of the three.
   const found = Object.keys(WRITERS).sort();
-  for (const expected of ['apply-fix', 'revert-fix', 'verify-fix']) {
+  for (const expected of ['apply-fix', 'verify-fix']) {
     assert.ok(found.includes(expected),
       `${expected} writes queue statuses and discovery missed it. Found: ${found.join(', ')}`);
   }

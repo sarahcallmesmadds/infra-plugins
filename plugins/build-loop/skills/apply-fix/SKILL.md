@@ -1,14 +1,19 @@
 ---
 name: apply-fix
 type: human
-description: Applies a correction from the bug queue to an actual target file. Reads the queue entry, checks DEPS.json for dependents, reasons about the surgical fix, shows a plain-language before/after diff, waits for the user's approval (yes / no / retry), then writes the fix, commits to the correct repo, and updates the queue entry status to "fix applied, watching" with the commit hash stored. Never writes without explicit approval.
-argument-hint: "[queue-entry-id or target-name]"
+description: Applies a correction from the bug queue to an actual target file, and undoes one that has already landed. Reads the queue entry, checks DEPS.json for dependents, reasons about the surgical fix, shows a plain-language before/after diff, waits for the user's approval (yes / no / retry), then writes the fix, commits to the correct repo, and updates the queue entry status to "fix applied, watching" with the commit hash stored. Run it as `revert {id}` to roll a committed fix back with a new undo commit, which never rewrites history and works whether or not the fix was pushed. Never writes without explicit approval.
+argument-hint: "[queue-entry-id or target-name] | revert [queue-entry-id or target-name]"
 allowed-tools: Read, Write, Bash(ls:*), Bash(cat:*), Bash(date:*), Bash(mkdir:*), Bash(mv:*), Bash(rm:*), Bash(node:*), Bash(git:*), Bash(grep:*), Bash(wc:*)
 ---
 
 You are applying a correction from the build loop bug queue to an actual target file. The schema is at `${CLAUDE_PLUGIN_ROOT}/reference/SCHEMA.md` and the dependency map is at `~/.claude/build-loop/DEPS.json`.
 
-Eight steps. Do not reorder or skip steps. The diff gate (Step 6) must come before the write (Step 7). No silent writes. Ever.
+Two modes. **Apply** is the default and runs Steps 1 to 8. **Revert** undoes a
+fix that already landed and runs Steps R1 to R6 instead. Pick the mode before
+anything else, at the section below.
+
+In apply mode: eight steps, and do not reorder or skip them. The diff gate (Step
+6) must come before the write (Step 7). No silent writes. Ever.
 
 
 > **Paths in this file are written with `~` for readability.** The Write tool and
@@ -29,6 +34,21 @@ Use the path it prints, written as `{scratch}` below, and never a fixed name
 under `/tmp`, which another live session can overwrite between the Write and
 the call. If it exits non-zero it printed why instead of a path, so say
 what it said and stop rather than treating that sentence as a directory.
+
+---
+
+## Pick the mode first
+
+If the first word of `$ARGUMENTS` is `revert`, strip it and run Steps R1 to R6 at
+the end of this file. Steps 1 to 8 do not run. Anything else, including an empty
+argument, is apply mode.
+
+`revert` is the only reserved word here. A target actually called `revert` has to
+be given by its full queue entry id.
+
+Both modes use the two blocks above, the `~` expansion and the scratch directory,
+and the rule at Step 2 that a queue entry is never edited with the Write tool.
+They are written once.
 
 ---
 
@@ -408,8 +428,8 @@ one that gets the permissions and the uniqueness right on both platforms.
 
 > Not committed: written to {target_path}, {repo} is not a git repository
 
-The prefix is load-bearing and is the counterpart to `Committed:`. `/verify-fix` and
-`/revert-fix` both branch on it, because `"fix applied, watching"` no longer implies a
+The prefix is load-bearing and is the counterpart to `Committed:`. `/verify-fix` and revert
+mode below both branch on it, because `"fix applied, watching"` no longer implies a
 commit and **the absence of a hash does not identify why.** `/verify-fix` Step S4's
 standalone PASS path also promotes an entry to this status with no hash, so a tool
 that guesses the reason from a missing hash will tell someone their repository is not
@@ -434,7 +454,7 @@ hand-written entry nothing can trust.
 
 Then say so plainly:
 
-> "The fix is written to {target_path}. There was no commit, because {root.path} is not a git repository, so there is nothing for /revert-fix to undo. The entry is 'fix applied, watching', which means /apply-fix will refuse it from here: if this fix needs changing, run /revert-fix {id} and it will offer to reopen the entry, or log the correction fresh with /flag-issue."
+> "The fix is written to {target_path}. There was no commit, because {root.path} is not a git repository, so there is nothing to undo. The entry is 'fix applied, watching', which means apply mode will refuse it from here: if this fix needs changing, run /apply-fix revert {id} and it will offer to reopen the entry, or log the correction fresh with /flag-issue."
 
 **Then go to "Surface dep-review entries" below, and stop after it.** Do not skip it.
 Step 7 wrote the file on this path exactly as it does on the commit path, so whatever
@@ -543,3 +563,223 @@ If the commit is on the repository's default branch rather than a feature branch
 that too, since it changes what pushing means:
 
 > "This committed straight onto {branch}. If you would rather it went through review, move it to a branch before pushing."
+
+---
+
+# Revert mode
+
+Undoes a fix that already landed, by adding a commit that reverses it. History is
+never rewritten, so it works whether or not the original was pushed and nobody
+needs to force-push.
+
+---
+
+## Step R1 — Locate the queue entry
+
+Step 1's three argument shapes, with `revert` stripped from the front, and one
+change: keep only entries at `"fix applied, watching"`, where Step 1 keeps `Open`
+and `In Progress`. When nothing matches a target name, say "No 'fix applied,
+watching' entries found for '{target}'. If the fix is in a different status, give
+me the full queue entry id." Stop.
+
+**Annotate every list this step shows, not just one of them.** Read each
+candidate's notes and label it by its **last** marker, since notes are
+append-only and an entry can carry both (see SCHEMA.md, note markers):
+
+| Last marker in note order | Label |
+|---|---|
+| `Committed:` | no label, this is the revertible case |
+| `Not committed:` | `(no commit, nothing to revert)` |
+| no marker at all | `(no commit recorded)` |
+
+`"fix applied, watching"` does not imply a commit. Step 8 lands there after
+writing a file whose root is not a git repository, and `/verify-fix` lands there
+after a standalone pass on an `In Progress` entry. Step R2's status guard passes
+for all of them, so an unlabelled list lets someone choose an entry Step R3 will
+then refuse. The point of labelling is that the refusal comes before the choice
+rather than after it.
+
+---
+
+## Step R2 — Guard on status
+
+Read the entry with the Read tool.
+
+- If `status` is NOT `"fix applied, watching"`: say "This entry has status
+  '{status}', not 'fix applied, watching'. Revert mode only undoes committed
+  fixes. To discard an in-progress attempt, run apply mode on it and reply 'no'
+  to the diff." Stop.
+- If `repo == "unknown"`: say "This entry has repo: unknown. I can't tell which
+  repository to undo this in. Resolve the repo field first." Stop.
+
+---
+
+## Step R3 — Find the commit hash
+
+Scan `notes[]` in order for text starting `"Committed:"` or `"Not committed:"`,
+and take the **last** one. Notes are append-only, so an entry written without a
+repository and later committed carries both, and the older `Not committed:`
+describes a state that has since changed. Deciding on the first match refuses to
+revert a commit that exists.
+
+The format is `"Committed: {hash} to {repo}"`, so `"Committed: abc1234 to
+personal"` gives `abc1234`.
+
+- **Last marker is `Committed:`** — take the hash and continue, even if an
+  earlier `Not committed:` note exists. The commit is the newer fact.
+
+- **Last marker is `Not committed:`** — nothing to revert. Step 8 writes that
+  marker when it wrote the file and the root was not a git repository. Quote the
+  note rather than restating its reason, which keeps this correct if the wording
+  gains other cases:
+
+  > "There is nothing to revert. The entry records: {the Not committed: note}. No
+  > commit exists, so there is no earlier version to restore, and undoing it means
+  > putting the file back by hand.
+  >
+  > Apply mode will not do it either: it stops on any entry already at 'fix
+  > applied, watching'. Shall I reopen this entry so a corrected fix can be
+  > proposed? Or log the reversal as its own correction with `/flag-issue`, which
+  > is the better record if the original fix was simply wrong."
+
+  If they say reopen, **run it yourself.** `${CLAUDE_PLUGIN_ROOT}` is set by the
+  plugin runtime and is empty in an ordinary shell, so a quoted command carrying
+  it expands to `node "/scripts/queue.js"` and fails. Never print that variable in
+  text addressed to the user, and substitute every value first where a command
+  genuinely has to be handed over.
+
+  ```bash
+  node "${CLAUDE_PLUGIN_ROOT}/scripts/queue.js" update {id} --status Open --note "Reopened to write a reverse change. The original was written without a commit, so there is nothing to revert."
+  ```
+
+  `--note` and not `--note-file`, by the rule at Step 7: fixed text with nothing
+  interpolated into it.
+
+  If the call exits non-zero, say what it printed and that the entry is still at
+  `fix applied, watching`. Stop either way. Writing the reverse change is apply
+  mode's job and a separate run. Do not suggest `git log`, which cannot run
+  usefully in a directory that is not a repository.
+
+- **No marker of either kind** — say "I can't find a commit hash in this entry's
+  notes, and nothing records why. The hash is normally stored by apply mode after
+  committing, and `/verify-fix` can also leave this status with no hash after a
+  standalone pass. You may need to find it by hand with: `git -C {repo_root} log
+  --oneline | head -10`" Stop.
+
+---
+
+## Step R4 — Confirm before reverting
+
+**Before running any git command, show exactly what will happen and wait.**
+
+```
+I'll run: git revert {hash} --no-edit in {repo_root}
+
+This creates a NEW undo commit. It does not delete or modify the original commit.
+The fix for {target} will be reversed.
+The queue entry will go back to Open.
+
+Proceed? (yes / no)
+```
+
+Affirmative goes to Step R5. Negative: say "Cancelled. Nothing changed." Stop,
+touching neither the repository nor the entry.
+
+---
+
+## Step R5 — Run the revert
+
+**Step 2's root guard has not run, so this is the only root check on this path.**
+Ask about the root this entry names before taking a path from it, for the reason
+Step 2 gives about `--name`:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/roots.js" check --name {repo}
+```
+
+Exit 0 means it exists. Anything else, relay what the check printed and stop. A
+revert is the one operation here where guessing at a repository would rewrite
+work in the wrong place.
+
+Then take the path:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/roots.js" list --name {repo}
+```
+
+**The check comes first and this does not relay.** `list` prints JSON, so the
+sentence naming a missing root has to come from `check`, and it has to arrive
+before a path is taken rather than after one already has been.
+
+Run:
+
+```bash
+git -C {repo_root} revert {commit-hash} --no-edit
+```
+
+**If it fails** (non-zero exit): say "git revert failed: {error output}. The queue
+entry has NOT been updated. The usual causes are that the commit was already
+reverted, or that newer commits conflict with the undo. Check with: `git -C
+{repo_root} log --oneline | head -10`" Stop.
+
+Then capture the undo commit, which is a different hash from the original fix:
+
+```bash
+git -C {repo_root} rev-parse HEAD
+```
+
+---
+
+## Step R6 — Update the queue entry and close
+
+Status and note in one call, for the reason Step 8 gives:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/queue.js" update {id} --status Open \
+  --note "Reverted: {revert-commit-hash}"
+```
+
+If it exits non-zero, say "The queue entry update failed. The revert DID succeed
+(undo commit: {revert-hash}), and the queue file was not updated: {what it
+printed}." A refusal usually means another session holds the lock, so running it
+again is the remedy rather than editing the file by hand.
+
+```
+Done. The fix for {target} has been reverted (undo commit: {revert-hash}).
+Queue entry is back to Open.
+The target file is restored to its pre-fix state.
+
+Do you want to try a different fix, or leave this Open for later?
+```
+
+Wait for the answer. If they say "Won't Fix" or "mark it closed", closing it means
+saying what closing it meant, and the status on its own is refused. Ask which it
+is, in one question:
+
+> "Closing this as Won't Fix. Was the correction declined on purpose, or has it
+> stopped being relevant?"
+
+Write the answer to `{scratch}`, `wont_fix` for declined and `obsolete` for no
+longer relevant:
+
+```json
+{
+  "outcome": "wont_fix",
+  "at": "{ISO-8601 now}",
+  "by": "user",
+  "summary": "{why they closed it, in their words. The fix was reverted, so say what happened to it}"
+}
+```
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/queue.js" update {id} --list queue \
+  --status "Won't Fix" --resolution {scratch}/resolution-{id}.json
+```
+
+Only those two outcomes are reachable from here, and `fix_applied` is refused
+against `Won't Fix`: the change was reverted, so nothing landed. The full outcome
+table is in SCHEMA.md under Resolution.
+
+If it exits non-zero, nothing was written and the entry is still `Open`. Report
+what it printed, report that the entry is still open, and stop. Never report an
+entry as closed when the call that would have closed it was refused.

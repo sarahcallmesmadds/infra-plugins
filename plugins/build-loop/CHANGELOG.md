@@ -3,6 +3,46 @@
 Upgrade notes for past versions, moved out of the README so that file says what
 the plugin is and how to use it. Nothing here is needed to install or run it.
 
+## Upgrading to 0.10.15
+
+**`/revert-fix` is gone. Undoing a fix is now `/apply-fix revert {id}`.** The
+old command stops existing on update, so a muscle-memory `/revert-fix` will not
+resolve. Everything it did survives, in the same order, as Steps R1 to R6 inside
+`/apply-fix`.
+
+Nothing else about reverting changed. It still adds an undo commit rather than
+rewriting history, still refuses an entry whose last note marker is
+`Not committed:`, still labels every candidate list by marker so a refusal comes
+before the choice, and still offers to reopen an entry that was written without a
+commit.
+
+**Why one skill instead of two.** Applying a fix and undoing one are the same
+motion read in two directions, and they shared a schema, a lock, a status
+vocabulary and a set of note markers. Four rules in two files means a rule fixed
+in one stays wrong in the other, which is the failure `scratch.js` and
+`roots.js` were each written to end.
+
+**What it did not save.** The honest number is 18 lines, 803 to 785. The audit
+that asked for this counted the whole of both skills as removable, and almost
+none of `/revert-fix` was duplication: it was reasoning about reverting, which
+has to live somewhere. The win here is one fewer skill to keep in sync and one
+fewer file that can drift, not a smaller corpus. Anyone planning the same move on
+another pair should measure before believing the line count.
+
+**The review gate stayed separate on purpose.** `/verify-fix` was the other half
+of this fold and is still its own skill, because its tool list deliberately
+withholds git so the thing that reviews a fix cannot commit one. Folding it in
+would have turned that boundary into a sentence asking itself not to, and a hook
+cannot restore it: a hook sees the command, not which mode the skill is in, so
+the skill would have to announce its own mode and the gate would fail silently
+the day it forgot.
+
+**One test changed shape.** `roots-check` used to name two skills that each
+asked about a root by name once. Both call sites now live in one file, where a
+single-match regex cannot tell two from one, so it counts them instead: apply
+mode asks at Step 2, revert mode at Step R5, and losing either puts a git command
+behind a question nobody asked.
+
 ## Upgrading to 0.10.14
 
 **`/devin-review-response` recovers a hidden finding instead of stopping to ask

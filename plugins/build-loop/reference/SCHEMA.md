@@ -422,7 +422,7 @@ readers must branch on the prefix rather than on whether a hash happens to be pr
 
 | Prefix | Written by | Means |
 |--------|-----------|-------|
-| `Committed:` | `/apply-fix` Step 8 | A commit exists. Format `Committed: {hash} to {repo}`. `/revert-fix` parses the hash out of this. |
+| `Committed:` | `/apply-fix` Step 8 | A commit exists. Format `Committed: {hash} to {repo}`. `/apply-fix` revert mode parses the hash out of this. |
 | `Not committed:` | `/apply-fix` Step 8 | The file was written and there was nowhere to commit it. Format `Not committed: written to {target_path}, {repo} is not a git repository`. Nothing to revert and no diff to show. |
 | neither | `/verify-fix` Step S4 standalone PASS | Promoted from `In Progress` on the user's say-so, with no commit either way. The reason is genuinely unknown. |
 
@@ -448,8 +448,8 @@ places that read them:
 - `/verify-fix` Step S1, choosing what to say and whether to offer a diff
 - `/verify-fix` Step S3, deciding whether to name a commit for a `plugin`-kind entry. Hash presence is not the test: an entry committed once and later re-applied into a root with no repository carries an old `Committed:` hash under a newer `Not committed:`, and printing that hash describes a state the file has left.
 - `/verify-fix` Step V4, choosing the `{file_state}` row written into the failure note. Getting this one wrong puts a false audit trail on the record someone reads when something has gone wrong. Pick by status first: an `In Progress` entry may never have been written at all.
-- `/revert-fix` Step 1, labelling **every** candidate list it shows, both the multi-match one and the empty-argument one, so a refusal comes before the choice rather than after it
-- `/revert-fix` Step 3, deciding whether there is a commit to find
+- `/apply-fix` Step R1, labelling **every** candidate list it shows, both the multi-match one and the empty-argument one, so a refusal comes before the choice rather than after it
+- `/apply-fix` Step R3, deciding whether there is a commit to find
 
 A local commit is also not a pushed one. `/apply-fix` never pushes, by deliberate
 decision, so an entry at this status with a `Committed:` note may still exist only on
