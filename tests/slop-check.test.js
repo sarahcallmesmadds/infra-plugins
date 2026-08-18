@@ -869,16 +869,25 @@ console.log('\nthe half that does not apply prints nothing');
   // no finding, which measured nothing: the swallowed value fails the `spec`
   // comparison either way, so the row passed against the unguarded code too.
   // `--file` is where the swallow is observable, because the value is opened.
-  check('a following flag is not swallowed as a value',
+  // `--file` with nothing usable after it is refused rather than read from stdin.
+  //
+  // These three rows previously asserted the opposite, and pinned a bug. The
+  // value-swallow guard stopped `--prose` being opened as a filename and let the
+  // run fall through to stdin instead, so the rows passed only because the test
+  // harness always feeds text in. Interactively the same command waits on a
+  // prompt nobody asked for.
+  check('--file with a flag after it is refused',
+    runCliAllowingFailure(['--file', '--prose'], PLAN).includes('--file was given with no filename'), true);
+  check('...and does not try to open the flag as a file',
     runCliAllowingFailure(['--file', '--prose'], PLAN).includes('cannot read --prose'), false);
-  // "Hard rules" appears on a default run too, so asserting it proved nothing
-  // about the file being rejected. The prose branch exits before the reminder,
-  // and the reminder is on every default run, so its absence is what separates
-  // them.
-  check('...and it is not the default path, which would have printed the reminder',
-    runCliAllowingFailure(['--file', '--prose'], PLAN).includes('Two checks did not run'), false);
-  check('...having actually checked the text it was given',
-    runCliAllowingFailure(['--file', '--prose'], PLAN).includes('Hard rules'), true);
+  check('...and prints no report, having been given no file',
+    runCliAllowingFailure(['--file', '--prose'], PLAN).includes('Hard rules'), false);
+  check('--file= is refused the same way',
+    runCliAllowingFailure(['--file='], PLAN).includes('--file was given with no filename'), true);
+  // Leaving --file out is still how stdin is requested, which the Stop hook and
+  // SKILL.md both rely on, so the refusal must not reach it.
+  check('no --file at all still reads stdin',
+    runCli(['--prose'], PLAN).includes('Hard rules'), true);
 
   // An unrecognised kind is refused, not guessed. Every one of these matched the
   // flag and then failed the kind comparison in silence before this.

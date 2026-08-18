@@ -187,7 +187,26 @@ function formatTechnical(result, kind) {
     process.exit(2);
   }
 
+  // `--file` with nothing usable after it is a typo, not a request to read stdin.
+  //
+  // The value-swallow guard added in round 1 of this review turned
+  // `--file --prose` from an exit 2 naming the mistake into a silent stdin read,
+  // and `--file=` does the same, because both produce a falsy value that is
+  // indistinguishable here from `--file` never having been passed. Interactively
+  // that hangs on a prompt nobody asked for; in a pipe it reports on whatever
+  // happened to be piped in. This is the third time on this branch that a fix for
+  // a silent failure has produced a different silent failure, so it is refused on
+  // the same principle as an unrecognised kind: the flag was given, its value was
+  // not, and that must not read as a clean report.
+  //
+  // Not passing `--file` at all is still how you ask for stdin, which is what
+  // SKILL.md documents and what the Stop hook relies on.
   const file = argValue('--file');
+  if (hasFlag('--file') && !file) {
+    process.stderr.write('--file was given with no filename after it\n');
+    process.stderr.write('name a file, or leave --file out entirely to read stdin\n');
+    process.exit(2);
+  }
   let text;
   if (file) {
     try {
