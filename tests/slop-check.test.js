@@ -12,7 +12,7 @@ const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { execFileSync } = require('child_process');
+const { execFileSync, spawnSync } = require('child_process');
 
 const base = path.join(__dirname, '..', 'plugins', 'slop-check', 'scripts');
 const { checkHard, checkAll } = require(path.join(base, 'tells.js'));
@@ -787,6 +787,16 @@ function runCliAllowingFailure(args, text) {
   }
 }
 
+// The ordinary helper always closes stdin with supplied text, which hid the
+// interactive wait caused by validating an option only after reading input.
+function runCliWithNoStdin(args) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'slop-cli-'));
+  return spawnSync(process.execPath, [CLI, 'check', ...args], {
+    encoding: 'utf8',
+    env: { ...process.env, HOME: dir },
+  });
+}
+
 const BANNED = 'This approach is worth stealing. The team shipped it last week and it held up well.';
 const report = runCli(['--prose'], BANNED);
 
@@ -899,6 +909,13 @@ console.log('\nthe half that does not apply prints nothing');
         || runCliAllowingFailure([bad], PLAN).includes('Softer tells')
         || runCliAllowingFailure([bad], PLAN).includes('Technical check'), false);
   }
+  const invalidWithoutInput = runCliWithNoStdin(['--technical=bogus']);
+  check('an invalid kind with no stdin names the invalid option',
+    invalidWithoutInput.stderr.includes('unrecognised kind for --technical: "bogus"'), true);
+  check('an invalid kind with no stdin does not report empty input',
+    invalidWithoutInput.stderr.includes('nothing to check'), false);
+  check('an invalid kind with no stdin exits with the option-error status',
+    invalidWithoutInput.status, 2);
   check('a bare --technical is still valid, not a typo',
     runCli(['--technical'], PLAN).includes('Technical check'), true);
 
