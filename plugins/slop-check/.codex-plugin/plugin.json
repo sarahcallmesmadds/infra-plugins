@@ -1,6 +1,6 @@
 {
   "name": "slop-check",
-  "version": "0.5.2",
+  "version": "0.6.0",
   "description": "Check any draft, document, pull request, chart or spec for the habits that mean nobody edited or reviewed it before it shipped, and name the specific lines. Also rewrites an answer that did not land into a shape the reader can act on. The em dash and choppy-run block runs here too, not only in Claude Code.",
   "author": {
     "name": "Sarah Madden",

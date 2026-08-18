@@ -162,7 +162,7 @@ function formatTechnical(result, kind) {
 (async () => {
   const command = process.argv[2];
   if (command !== 'check') {
-    process.stderr.write('usage: cli.js check [--file <path>] [--hard-only] [--technical [kind]]\n');
+    process.stderr.write('usage: cli.js check [--file <path>] [--hard-only] [--technical [code|data|spec]]\n');
     process.exit(2);
   }
 
@@ -189,8 +189,16 @@ function formatTechnical(result, kind) {
   const asked = argValue('--technical');
   const kind = ['code', 'data', 'spec'].includes(asked) ? asked : guessKind(file, text);
 
+  // The two absence checks run here and nowhere else. `--technical spec` is a
+  // person saying "this is a spec", which is the only thing that ever answered
+  // the question reliably; see the block above them in technical.js. A bare
+  // `--technical`, and `--technical code|data`, leave them off, because a guessed
+  // kind reaching this would be the guess arriving by a longer route.
+  const documentChecks = asked === 'spec';
+
   if (process.argv.includes('--technical')) {
-    process.stdout.write(formatTechnical(checkTechnical(text, kind), kind) + '\n');
+    process.stdout.write(
+      formatTechnical(checkTechnical(text, kind, { documentChecks }), kind) + '\n');
     process.exit(0);
   }
 
@@ -233,4 +241,14 @@ function formatTechnical(result, kind) {
     process.stdout.write('\n' + '-'.repeat(60) + '\n\n');
     process.stdout.write(formatTechnical(technical, kind) + '\n');
   }
+
+  // The two absence checks did not run, so say so once rather than leaving the
+  // reader to think they passed. Printed on every default run and never
+  // conditional on the text, which is the point: the moment this line decides
+  // whether the input looks like a plan, it is the deleted guess with a softer
+  // voice, and a wrong nudge is only cheaper than a wrong finding until somebody
+  // has to maintain it.
+  process.stdout.write(
+    '\nNot checked: whether this names an owner, a date and what it is not doing.'
+    + '\nIf it is a plan, a spec or a proposal, run again with --technical spec.\n');
 })();

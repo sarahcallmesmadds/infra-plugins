@@ -22,10 +22,35 @@ node "${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js check --file <path>
 ```
 
 Stdin works when there is no file. `--prose` or `--technical` narrows it to one
-half, and `--technical code|data|spec` forces the kind when the guess is wrong.
+half. `--technical code|data|spec` sets the label on the report heading. It does
+not otherwise change which checks run, with one exception: `spec` also turns on
+the two checks described below.
 
 By default it runs both halves. Whichever half does not apply reports nothing,
 which is why one command handles a LinkedIn draft and a pull request equally.
+
+### Ask before running the spec checks
+
+Two checks are off unless asked for: whether the document names an owner and a
+date, and whether it says what it is not doing. They are off because deciding in
+code whether a text was a plan was wrong in both directions for six review
+rounds. It flagged posts that proposed nothing, and stayed silent on a real plan
+with a real missing owner because that plan avoided the words on the list. The
+person running the command saying what the document is turned out to be the only
+reliable answer, so that is what the flag is now for.
+
+So when the thing in front of you could be a plan, a spec or a proposal, ask
+whether to run those two as well, and say what they add. Then run it again with
+`--technical spec` if they say yes.
+
+Ask rather than decide. Judging it yourself is the deleted guess coming back with
+a different mechanism, and the person who wrote the document already knows what
+it is. Skip the question only when it needs no answer, either because they
+already asked for a spec check or because the thing plainly is not one, such as a
+LinkedIn draft or an email.
+
+The default run ends by saying those two did not run, so a report with no such
+finding is never mistaken for a document that passed them.
 
 ## What it looks for
 
