@@ -181,7 +181,11 @@ check("Claude Code's own API error text is not linted as the subagent's prose", 
 
 // ------------------------------------------------ the Stop hook is intact ----
 
-check('the Stop hook still addresses a response and reads the session transcript', () => {
+// Named for what it actually feeds the hook. An earlier name claimed this
+// read the session transcript, which it does not: it supplies the direct
+// field and no path at all, so breaking the Stop fallback would not fail it.
+// The case below is the one that covers the fallback.
+check('the Stop hook still addresses a response, not a report', () => {
   const out = run(STOP_HOOK, {
     hook_event_name: 'Stop',
     last_assistant_message: DIRTY,
