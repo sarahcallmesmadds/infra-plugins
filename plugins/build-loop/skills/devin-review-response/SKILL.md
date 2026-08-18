@@ -1,7 +1,7 @@
 ---
 name: devin-review-response
 description: Resolve a complete Devin code-review round without point fixes. Use when Devin posts PR findings, the user asks to address or fix a Devin review, or a branch needs a final Devin-response pass before push or merge. Maps dependencies before editing, audits paired and adjacent files, classifies every finding, validates the round record, and produces one atomic commit per review round.
-allowed-tools: Read, Write, Edit, Grep, Glob, Bash(mktemp:*), Bash(node:*), Bash(git branch --show-current:*), Bash(git diff:*), Bash(git log:*), Bash(git remote -v:*), Bash(git rev-parse:*), Bash(git status:*), Bash(gh auth status:*), Bash(gh pr view:*), Bash(gh api --method GET:*)
+allowed-tools: Read, Write, Edit, Grep, Glob, Bash(node:*), Bash(git branch --show-current:*), Bash(git diff:*), Bash(git log:*), Bash(git remote -v:*), Bash(git rev-parse:*), Bash(git status:*), Bash(gh auth status:*), Bash(gh pr view:*), Bash(gh api --method GET:*)
 ---
 
 # Devin review response
@@ -22,10 +22,12 @@ incomplete finding set cannot produce a clean round.
 Create one private temporary directory for the round:
 
 ```bash
-mktemp -d "${TMPDIR:-/tmp}/devin-review.XXXXXX"
+node "${CLAUDE_PLUGIN_ROOT}/scripts/scratch.js"
 ```
 
-Use the path it prints as `{scratch}`. Create a JSON round record at
+Use the path it prints as `{scratch}`. If it exits non-zero it printed why
+instead of a path, so say what it said and stop rather than treating that
+sentence as a directory. Create a JSON round record at
 `{scratch}/round.json` from
 [references/round-record.example.json](references/round-record.example.json).
 Set `review_outcome` to `findings` when the review contains findings, or `clean`
