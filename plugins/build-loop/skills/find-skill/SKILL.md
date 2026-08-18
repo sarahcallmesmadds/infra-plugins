@@ -107,36 +107,37 @@ import os, re, glob, json, subprocess, sys
 # to refuse, and it already has above. Catching it here meant a corrupt config
 # was reported by the check and then quietly ignored one step later, so routing
 # went ahead against the default path and looked like it had worked.
-# Scoped the same way as the two checks above, and for the same reason. An
-# unscoped list reports on hook and command roots too, which this skill never
-# scans, so its exit code would answer a wider question than the one being
-# asked: skill roots all gone while a hooks directory survives would come back
-# as "some missing" and routing would go ahead against nothing.
-ROOTS_JS, KINDS = sys.argv[1], ("skill", "plugin-repo")
-NOWHERE = 4  # roots.js: nothing in scope to look at
+ROOTS_JS = sys.argv[1]
+CONFIG_UNREADABLE = 1  # the only roots.js code that prints a sentence, not JSON
 
-roots, codes = [], []
-for kind in KINDS:
-    run = subprocess.run(
-        ["node", ROOTS_JS, "list", "--kind", kind], capture_output=True, text=True
-    )
-    codes.append(run.returncode)
-    if run.returncode == NOWHERE:
-        continue  # no root of this kind is ordinary; one of the two usually is
-    if run.returncode not in (0, 3, 5):
-        # Exit 1 is the only code that prints a sentence rather than JSON, and
-        # it is the config being unreadable. Relay it as it came.
-        raise SystemExit(run.stdout.strip() or f"roots.js list --kind {kind} failed silently.")
-    roots += json.loads(run.stdout)["roots"]
 
-# Both empty is the case worth stopping for, and the message is the point of
-# stopping. An empty inventory reads as "nothing is installed" when what happened
-# is that there was nowhere to look, and those are different answers.
-if all(c == NOWHERE for c in codes):
-    raise SystemExit(
-        "No skill or plugin-repo root exists to scan, so there is nothing to route "
-        "from. This is not the same as having no skills installed. Run "
-        "`roots.js check` to see which paths were expected."
+def stop(message):
+    # stdout, then a non-zero exit. Not `raise SystemExit(message)`, which writes
+    # to stderr: this skill tells its reader that every message arrives on
+    # stdout, and roots.js says in its own source why it prints there rather
+    # than to stderr. Raising here put the one case that matters, the config
+    # being unreadable, somewhere the relay does not look, which is the same
+    # bug one level down.
+    print(message)
+    sys.exit(1)
+
+
+# One unscoped call, and the scope is applied here rather than by --kind. Two
+# scoped calls returned skill roots and plugin-repo roots as two lists, which
+# silently reordered them: config order became skill-roots-then-plugin-repos,
+# so for a file reachable through both the winning root label changed. Nothing
+# below needs the exit code to be scoped, because whether there is anywhere to
+# look is decided from the `exists` flags of the roots actually scanned.
+run = subprocess.run(["node", ROOTS_JS, "list"], capture_output=True, text=True)
+if run.returncode == CONFIG_UNREADABLE:
+    stop(run.stdout.strip() or run.stderr.strip() or "roots.js list failed and said nothing.")
+try:
+    listed = json.loads(run.stdout)["roots"]
+except (ValueError, KeyError):
+    # A traceback here would be this block's own bug reported as the user's.
+    stop(
+        "roots.js list did not return the roots. It said:\n"
+        + (run.stdout.strip() or run.stderr.strip() or "(nothing)")
     )
 
 # Skill roots and plugin-repo roots both hold SKILL.md files, in different
@@ -148,7 +149,18 @@ PATTERNS = {
     # <root>/plugins/<plugin>/skills/<skill>/SKILL.md
     "plugin-repo": ("plugins/*/skills/*/SKILL.md",),
 }
-roots = [r for r in roots if r.get("kind", "skill") in PATTERNS]
+roots = [r for r in listed if r.get("kind", "skill") in PATTERNS]
+
+# Decided from the roots this skill scans, not from an exit code covering hook
+# and command roots it never looks at. An empty inventory reads as "nothing is
+# installed" when what happened is that there was nowhere to look, and those are
+# different answers.
+if not any(r.get("exists") for r in roots):
+    stop(
+        "No skill or plugin-repo root exists to scan, so there is nothing to route "
+        "from. This is not the same as having no skills installed. Run "
+        "`roots.js check` to see which paths were expected."
+    )
 
 seen, skills = set(), []
 for root in roots:
