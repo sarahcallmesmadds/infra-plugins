@@ -1,0 +1,29 @@
+{
+  "source": "capture-event.js",
+  "hook_event_name": "SubagentStop",
+  "captured_at": "2026-08-18T21:43:37.872Z",
+  "keys_only": true,
+  "shape": {
+    "agent_id": "string",
+    "agent_transcript_path": "string",
+    "agent_type": "string",
+    "background_tasks": [
+      {
+        "agent_type": "string",
+        "description": "string",
+        "id": "string",
+        "status": "string",
+        "type": "string"
+      }
+    ],
+    "cwd": "string",
+    "hook_event_name": "string",
+    "last_assistant_message": "string",
+    "permission_mode": "string",
+    "prompt_id": "string",
+    "session_crons": [],
+    "session_id": "string",
+    "stop_hook_active": "boolean",
+    "transcript_path": "string"
+  }
+}

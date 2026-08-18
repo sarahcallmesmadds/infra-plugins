@@ -155,17 +155,21 @@ function sayFor(event) {
     + `exit ${CODEX_EXIT}; fi; printf '%s\\n' "$1" >&2; exit ${GUARD_EXIT}; }; `;
 }
 
-// The stderr-only branch below still writes `echo`, and knowingly. /bin/sh and
-// /bin/zsh interpret a backslash in its argument, so it mangles a path holding
-// one exactly as the announcing branch did before this change. It is left alone
-// because that shape is carried by this plugin's PostToolUse hooks and by all
-// four other plugins, and a fix for one plugin does not ride along in another's
-// pull request. Nothing here is exercised against an awkward plugin root for the
-// stderr-only shape, so that defect is live and untested rather than covered.
-// Named in review on 2026-08-17 so the printf change is not read as repo-wide.
+// The stderr-only branch below writes `printf`, as CLAUDE.md requires. It wrote
+// `echo` until 2026-08-18, knowingly, because /bin/sh and /bin/zsh both read a
+// backslash in an `echo` argument as an instruction, and that shape was carried
+// by four other plugins that a single pull request is not allowed to touch.
+//
+// What changed is only which form this generator emits, and so which one the
+// "Prefix each command with" hint teaches. GUARD_RE accepts both, so the eleven
+// unconverted commands still parse as guards and are still checked. Queue entry
+// 2026-08-17T18-32-15-hook-executable-test holds the agreement: each plugin's
+// share lands in that plugin's next release, and slop-check's landed in the
+// pull request that added the SubagentStop hook, where two reviewers
+// independently flagged the twelfth `echo` being written.
 function clausesFor(target, say) {
   const fire = (message, announced) => {
-    if (!say) return `{ echo "${message}" >&2; exit ${GUARD_EXIT}; }`;
+    if (!say) return `{ printf '%s\\n' "${message}" >&2; exit ${GUARD_EXIT}; }`;
     return announced && announced !== message ? `say "${message}" "${announced}"` : `say "${message}"`;
   };
   return `[ -n "\${CLAUDE_PLUGIN_ROOT}" ] || ${fire(UNSET_MESSAGE)}; `
@@ -179,13 +183,21 @@ function guardFor(target, event) {
   return event ? sayFor(event) + clausesFor(target, true) : clausesFor(target, false);
 }
 
+// Either printing form, because both are live and neither is wrong to find.
+// `printf '%s\\n'` is what CLAUDE.md requires of anything newly written. `echo`
+// is what the eleven commands predating that rule still carry, and they are
+// converted a plugin at a time as each plugin's next release comes round rather
+// than in one repo-wide change. Non-capturing on purpose: every group position
+// below this line is counted on by matchGuard.
+const PRINTER = "(?:echo|printf '%s\\\\n')";
+
 // Deliberately loose about the messages and the codes, so that a guard carrying
 // the wrong ones is still recognised as a guard and reported as wrong, rather
 // than not matching and being reported as absent.
 const GUARD_RE = new RegExp(
-  '^\\[ -n "\\$\\{CLAUDE_PLUGIN_ROOT\\}" \\] \\|\\| \\{ echo "([^"]*)" >&2; exit (\\d+); \\}; '
-  + '\\[ -e "([^"]+)" \\] \\|\\| \\{ echo "([^"]*)" >&2; exit (\\d+); \\}; '
-  + '\\[ -x "([^"]+)" \\] \\|\\| \\{ echo "([^"]*)" >&2; exit (\\d+); \\}; ',
+  '^\\[ -n "\\$\\{CLAUDE_PLUGIN_ROOT\\}" \\] \\|\\| \\{ ' + PRINTER + ' "([^"]*)" >&2; exit (\\d+); \\}; '
+  + '\\[ -e "([^"]+)" \\] \\|\\| \\{ ' + PRINTER + ' "([^"]*)" >&2; exit (\\d+); \\}; '
+  + '\\[ -x "([^"]+)" \\] \\|\\| \\{ ' + PRINTER + ' "([^"]*)" >&2; exit (\\d+); \\}; ',
 );
 
 // Same looseness for the newer shape, and the event name is captured rather
@@ -1142,6 +1154,68 @@ check('a hook with no executable bit is actually caught', () => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+
+check('the guard survives a plugin root holding a backslash', () => {
+  // The reason the printing form is a rule rather than a preference, exercised
+  // rather than asserted. /bin/sh and /bin/zsh both let `echo` read a backslash
+  // in its argument as an instruction, so a root named with one splits the
+  // message in two. Claude Code shows the first line of stderr and drops the
+  // rest, which means the reader is cut off before the part naming the file or
+  // saying to run chmod.
+  //
+  // Queue entry 2026-08-17T18-32-15-hook-executable-test recorded this as live
+  // and untested, because nothing here had ever been run against an awkward
+  // root. This is that test.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hook-awkward-'));
+  const root = path.join(dir, 'awk\\nward');           // one literal backslash, then n
+  fs.mkdirSync(path.join(root, 'bin'), { recursive: true });
+  const launcher = path.join(root, 'bin', 'hook-node');
+  fs.writeFileSync(launcher, '#!/bin/sh\n', { mode: 0o644 });   // present, not executable
+
+  const fire = (command) => spawnSync('/bin/sh', ['-c', command], {
+    encoding: 'utf8',
+    env: Object.assign({}, process.env, { CLAUDE_PLUGIN_ROOT: root }),
+  });
+
+  const good = fire(guardFor('${CLAUDE_PLUGIN_ROOT}/bin/hook-node'));
+  const stderr = good.stderr.replace(/\n$/, '');
+
+  assert.strictEqual(stderr.split('\n').length, 1,
+    `the guard message split across lines, so the reader sees only "${stderr.split('\n')[0]}" `
+    + 'and never reaches the file name or the chmod instruction');
+  assert.ok(stderr.includes(root),
+    'the guard message no longer carries the path it is about');
+  assert.ok(stderr.includes('chmod +x'),
+    'the guard message lost the instruction that tells the reader what to do');
+  // A guard that printed the right sentence and then let the hook run would
+  // pass every assertion above while guarding nothing.
+  assert.strictEqual(good.status, GUARD_EXIT,
+    'the guard printed its message and then exited on a code that stops nothing');
+
+  // The other half, and the reason this file cannot simply be switched over.
+  //
+  // `guardFor` emits the converted shape now, so the three assertions above
+  // exercise `printf` and nothing else. The defect being guarded against is
+  // carried by the eleven commands that have NOT been converted, and running
+  // the new shape says nothing about those. So the old shape is run here too,
+  // and pinned to the behaviour that makes it a defect: it splits, and the
+  // first line is all a reader ever sees.
+  //
+  // This is deliberately an assertion that the old form is broken rather than a
+  // description of it. When a plugin converts, this fails and tells whoever did
+  // it that the last echo is gone, which is a better prompt than a comment.
+  const legacy = fire(guardFor('${CLAUDE_PLUGIN_ROOT}/bin/hook-node')
+    .split(`printf '%s\\n' `).join('echo '));
+  const legacyErr = legacy.stderr.replace(/\n$/, '');
+
+  assert.strictEqual(legacyErr.split('\n').length, 2,
+    'the echo form no longer splits on a backslash root. If every command has '
+    + 'been converted, delete this half and the queue entry it belongs to');
+  assert.ok(!legacyErr.split('\n')[0].includes('chmod +x'),
+    'the echo form split somewhere harmless, so this no longer demonstrates the defect');
+
+  fs.rmSync(dir, { recursive: true, force: true });
+});
 
 console.log(`\n${ran} checks, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);
