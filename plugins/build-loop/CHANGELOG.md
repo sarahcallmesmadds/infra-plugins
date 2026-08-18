@@ -19,12 +19,16 @@ Two things it now tells the reader, both of which cost a real session:
   re-run it on the final head. Commits answering earlier findings are exactly
   where the next one turns up.
 
-One case still stops to ask you, on purpose. If the CLI refuses because the
-directory has not been trusted, the flag that skips that check is written ahead
-of `-p`, which puts it outside the skill's own permission grant, so you get to
-say yes. Written after `-p` the same flag would sit inside the grant and run
-unasked, which is why the skill spells out the order rather than leaving it to
-whoever types it.
+The prompt for that run is written to a file rather than passed on the command
+line. It is assembled from the review bodies the skill just fetched, and a
+pre-approved command's arguments are not a place to put text somebody else
+wrote.
+
+Two cases still stop to ask you, on purpose: skipping the workspace trust check,
+and raising what the review command may approve for itself. Both are written to
+fall outside the skill's own permission grant, so you get to say yes. The skill
+spells out where in the command each one goes, because a grant is a prefix and
+the same flag a few words later would run unasked.
 
 ## Upgrading to 0.10.13
 

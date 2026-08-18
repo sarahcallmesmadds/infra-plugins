@@ -87,14 +87,14 @@ check('recovering a hidden finding comes before asking the user for it', () => {
   // every ordering test measures against a position near the top of the file.
   // That version of this check passed with the old wording still in place.
   const body = whole.split(/^---$/m).slice(2).join('---');
-  assert.match(body, /devin --permission-mode auto -p/,
+  assert.match(body, /devin --permission-mode auto --prompt-file/,
     'the skill no longer names the command that recovers the findings');
 
   // Whitespace-insensitive, because this file is hard-wrapped and the phrase
   // lands across a line break as often as not. A version of this matching a
   // literal space passed with the old wording restored, purely because the
   // sentence it was looking for read "ask the\nuser".
-  const recover = body.indexOf('devin --permission-mode auto -p');
+  const recover = body.indexOf('devin --permission-mode auto --prompt-file');
   const escalate = body.search(/ask(?:ing)?\s+the\s+user/i);
   assert.ok(escalate > -1, 'the skill no longer says when to involve a person at all');
   assert.ok(escalate > recover,
@@ -124,15 +124,15 @@ check('the recovery command is granted, not just described', () => {
   // every run, which is the same interruption this change removes.
   const body = fs.readFileSync(path.join(SKILL, 'SKILL.md'), 'utf8');
   const front = body.split('---')[1] || '';
-  assert.match(front, /Bash\(devin --permission-mode auto -p:\*\)/,
+  assert.match(front, /Bash\(devin --permission-mode auto --prompt-file:\*\)/,
     'the CLI recovery is documented but not granted');
 });
 
 check('the trust-skip command is written outside the skill\'s own grant', () => {
   // The skill says skipping the workspace trust check stops to ask. A grant is
-  // a prefix, so that is only true while the flag sits ahead of `-p`: written
-  // after it the command still starts with the granted prefix and runs unasked,
-  // and the claim in the document quietly stops being true.
+  // a prefix, so that is only true while the flag sits ahead of everything the
+  // grant covers: written after that point the command still starts with the
+  // granted prefix and runs unasked, and the claim quietly stops being true.
   const whole = fs.readFileSync(path.join(SKILL, 'SKILL.md'), 'utf8');
   const front = whole.split(/^---$/m)[1] || '';
   // Every devin grant, not the first one found. Reading one prefix means a
@@ -146,6 +146,22 @@ check('the trust-skip command is written outside the skill\'s own grant', () => 
   const covered = prefixes.filter((p) => documented.trim().startsWith(p));
   assert.deepStrictEqual(covered, [],
     `the documented trust-skip command is covered by ${JSON.stringify(covered)}, so it runs without asking`);
+});
+
+check('the review prompt is passed as a file, never on the command line', () => {
+  // The granted tail is a wildcard, and this prompt is assembled from review
+  // bodies and PR text the skill just fetched. Inline, that is untrusted content
+  // on a command line nothing will ask about, where a `;` ends the invocation
+  // and starts another. A path is not text from the review.
+  const whole = fs.readFileSync(path.join(SKILL, 'SKILL.md'), 'utf8');
+  const commands = [...whole.matchAll(/^\s*devin .*$/gm)].map((m) => m[0].trim());
+  assert.ok(commands.length, 'the skill no longer shows the command at all');
+  for (const command of commands) {
+    assert.ok(/--prompt-file\s+\S/.test(command),
+      `"${command}" does not name a prompt file`);
+    assert.ok(!/-p\s+["'`]/.test(command),
+      `"${command}" passes the prompt inline, where review content reaches a granted command line`);
+  }
 });
 
 check('validator uses the plugin-level scripts convention', () => {
