@@ -3,7 +3,7 @@ name: revert-fix
 type: human
 description: Rolls back a committed fix. Reads the queue entry to find the commit hash, runs git revert in the correct repo (creates a new undo commit — does not delete or modify the original commit), resets the queue entry status back to Open, and stores the revert commit hash in notes. Works whether the commit has been pushed or not. The user does not need to know any git commands.
 argument-hint: "[queue-entry-id or target-name]"
-allowed-tools: Read, Write, Bash(ls:*), Bash(cat:*), Bash(date:*), Bash(mktemp:*), Bash(mv:*), Bash(node:*), Bash(git:*)
+allowed-tools: Read, Write, Bash(ls:*), Bash(cat:*), Bash(date:*), Bash(mv:*), Bash(node:*), Bash(git:*)
 ---
 
 You are rolling back a committed fix. The goal: undo a bad fix commit without rewriting history, and put the queue entry back to Open so another attempt can be made.
@@ -218,14 +218,12 @@ refused. Ask which it is, in one question:
 Make a private directory for it, once:
 
 ```bash
-mktemp -d "${TMPDIR:-/tmp}/build-loop.XXXXXX"
+node "${CLAUDE_PLUGIN_ROOT}/scripts/scratch.js"
 ```
 
-Written out in full rather than as `mktemp -d -t build-loop`, which is BSD only:
-GNU coreutils wants six `X` characters and exits 1 on the short form, so on Linux
-the directory is never created and the hand-off below fails. Use the path it
-prints, written as `{scratch}` here, and never a fixed name under `/tmp`, which
-another session or another local user can replace between the Write and the call.
+Use the path it prints, written as `{scratch}` here, and never a fixed name
+under `/tmp`, which another live session can overwrite between the Write and
+the call.
 
 Write the answer to that directory, `wont_fix` for declined and `obsolete` for
 no longer relevant, then hand both over in one call:

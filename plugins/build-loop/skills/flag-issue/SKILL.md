@@ -3,7 +3,7 @@ name: flag-issue
 type: human
 description: Logs a correction to the bug queue at ~/.claude/build-loop/queue/, against anything the user built — a skill, a hook, a slash command, a plugin, or a loose script. Use when the user says "that was wrong", "it should have", "next time", "don't do that", corrects anything of theirs by name, says the output was not what they wanted, or explicitly invokes /flag-issue. Reads the current session context to pre-fill what it was, what happened, what was expected, and a correct example; then shows a draft to the user and waits for confirmation before writing. Dedupes against queue entries from the last 10 minutes. After writing a primary entry, reads DEPS.json and auto-adds one dep-review queue entry per dependent listed in the map — so anything likely affected by the fix surfaces for review without the user having to remember.
 argument-hint: "[optional name of the thing that misbehaved]"
-allowed-tools: Read, Write, Bash(ls:*), Bash(cat:*), Bash(date:*), Bash(mkdir:*), Bash(mktemp:*), Bash(node:*)
+allowed-tools: Read, Write, Bash(ls:*), Bash(cat:*), Bash(date:*), Bash(mkdir:*), Bash(node:*)
 ---
 
 You are logging a correction to the build loop bug queue at `~/.claude/build-loop/queue/`. The schema is at `${CLAUDE_PLUGIN_ROOT}/reference/SCHEMA.md` — read it if you haven't already in this session.
@@ -26,26 +26,16 @@ You are logging a correction to the build loop bug queue at `~/.claude/build-loo
 > one lock, so nothing can land between them.
 
 
-**Scratch files go in a private directory, made once per run.** Before the first
-hand-off, create it and reuse it for the rest of the run:
+**Scratch files go in a private directory, made once per run.** Make it before
+the first hand-off and reuse it for the rest of the run:
 
 ```bash
-mktemp -d "${TMPDIR:-/tmp}/build-loop.XXXXXX"
+node "${CLAUDE_PLUGIN_ROOT}/scripts/scratch.js"
 ```
 
-Written out in full rather than as `mktemp -d -t build-loop`, which is BSD only.
-GNU coreutils wants at least six `X` characters in the template and exits 1 on
-the short form, so on Linux the directory is never created and every hand-off
-that reads from it fails. `built-check` pairs `date -u -v-{days}d` with a
-`date -u -d` fallback for the same reason.
-
-Use the path it prints. Never a fixed name under `/tmp`. Two reasons, and the
-second is the one that bites on this machine. A fixed name is world-readable and
-another local user can replace it between the Write and the call, so what lands
-in the queue is not what was composed. And a fixed name is shared between
-sessions: with two of them in flight, which is the premise of this whole change,
-one session's Write lands between the other's Write and its call, and the wrong
-text is recorded against the wrong entry.
+Use the path it prints, written as `{scratch}` below, and never a fixed name
+under `/tmp`, which another live session can overwrite between the Write and
+the call.
 
 ## Session context guard
 

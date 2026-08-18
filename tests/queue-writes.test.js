@@ -243,7 +243,8 @@ check('scratch files are not written to a fixed shared path', () => {
   // A hand-off staged at a fixed name under /tmp is two bugs. Another local
   // user can replace it between the Write and the call, and two sessions share
   // it, so one session's note can be recorded against the other's entry. Both
-  // are fixed the same way: a directory from mktemp, and names scoped to the id.
+  // are fixed the same way: a directory from scripts/scratch.js, which is
+  // unguessable and 0700, and names scoped to the id.
   const dirs = fs.readdirSync(SKILLS).filter((d) => fs.existsSync(path.join(SKILLS, d, 'SKILL.md')));
   for (const name of dirs) {
     const offending = skill(name).split('\n').filter((line) =>
@@ -251,22 +252,26 @@ check('scratch files are not written to a fixed shared path', () => {
     assert.deepStrictEqual(
       offending, [],
       `${name} stages a hand-off at a fixed path:\n        ${offending.join('\n        ')}\n`
-      + '        Use a directory from mktemp and name the file after the entry id.'
+      + '        Use a directory from scripts/scratch.js and name the file after the entry id.'
     );
   }
 });
 
-check('a skill that grants mktemp is one that uses it, and the other way round', () => {
+check('a skill that uses a scratch path can run the script that makes one', () => {
+  // This was a biconditional against Bash(mktemp:*), which worked because
+  // nothing else in these skills ran mktemp: granting it and never using a
+  // scratch path was therefore a real contradiction. The grant is now
+  // Bash(node:*), which most of these skills need anyway for queue.js and
+  // roots.js, so only the implication that matters is checkable here. The other
+  // direction has not gone unguarded: scratch-dir.test.js pins that a skill
+  // using {scratch} calls scratch.js and that no skill still runs mktemp.
   const dirs = fs.readdirSync(SKILLS).filter((d) => fs.existsSync(path.join(SKILLS, d, 'SKILL.md')));
   for (const name of dirs) {
     const text = skill(name);
+    if (!/\{scratch\}/.test(text)) continue;
     const frontmatter = text.slice(0, text.indexOf('---', 4));
-    const uses = /\{scratch\}/.test(text);
-    const granted = /Bash\(mktemp:\*\)/.test(frontmatter);
-    assert.strictEqual(uses, granted,
-      uses
-        ? `${name} uses a {scratch} path and does not grant Bash(mktemp:*), so it cannot make one`
-        : `${name} grants Bash(mktemp:*) and never uses a scratch path`);
+    assert.match(frontmatter, /Bash\(node:\*\)/,
+      `${name} uses a {scratch} path and does not grant Bash(node:*), so it cannot make one`);
   }
 });
 

@@ -3,7 +3,7 @@ name: verify-fix
 type: human
 description: Human-review verification gate for fixes. Presents the original failing scenario from the queue entry, shows the before/after diff, and asks the user whether the fix looks right. If yes — signals pass (apply-fix handles the commit). If no — leaves the queue entry Open with a note recording the rejected attempt, and restores the target file to its pre-fix state. Can be called from within /apply-fix or invoked standalone to re-verify a fix from a previous session.
 argument-hint: "[queue-entry-id or target-name]"
-allowed-tools: Read, Write, Bash(ls:*), Bash(cat:*), Bash(date:*), Bash(mktemp:*), Bash(mv:*), Bash(node:*)
+allowed-tools: Read, Write, Bash(ls:*), Bash(cat:*), Bash(date:*), Bash(mv:*), Bash(node:*)
 ---
 
 You are the human-review verification gate for the build loop. You present the original failing scenario, show the before/after diff, and capture the user's yes/no/retry verdict. You do NOT commit — committing is /apply-fix's responsibility.
@@ -18,26 +18,16 @@ Two modes of operation: Mode A (called from within /apply-fix at Step 6) and Mod
 
 ---
 
-**Scratch files go in a private directory, made once per run.** Before the first
-hand-off, create it and reuse it for the rest of the run:
+**Scratch files go in a private directory, made once per run.** Make it before
+the first hand-off and reuse it for the rest of the run:
 
 ```bash
-mktemp -d "${TMPDIR:-/tmp}/build-loop.XXXXXX"
+node "${CLAUDE_PLUGIN_ROOT}/scripts/scratch.js"
 ```
 
-Written out in full rather than as `mktemp -d -t build-loop`, which is BSD only.
-GNU coreutils wants at least six `X` characters in the template and exits 1 on
-the short form, so on Linux the directory is never created and every hand-off
-that reads from it fails. `built-check` pairs `date -u -v-{days}d` with a
-`date -u -d` fallback for the same reason.
-
-Use the path it prints, written as `{scratch}` below. Never a fixed name under
-`/tmp`. Two reasons, and the second is the one that bites on this machine. A
-fixed name is world-readable and another local user can replace it between the
-Write and the call, so what lands in the list is not what was composed. And a
-fixed name is shared between sessions: with two in flight, which is the premise
-of this whole change, one session's Write lands between the other's Write and
-its call, and the wrong text is recorded against the wrong item.
+Use the path it prints, written as `{scratch}` below, and never a fixed name
+under `/tmp`, which another live session can overwrite between the Write and
+the call.
 
 ---
 
