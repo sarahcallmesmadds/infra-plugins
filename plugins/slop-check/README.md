@@ -125,6 +125,10 @@ Generic risk lists, success criteria nobody can measure, estimates that are all
 identical or all round, no owner and no date, TBDs in a document presented as
 finished, and options laid out with no recommendation.
 
+Two of those, **no owner and no date** and **never saying what it is not doing**,
+run only when you ask for them with `--technical spec`. See "Asking for the spec
+checks" below for why.
+
 That last one is the most useful signal in the whole plugin. In a spec, the
 tell is not the prose. It is that the document decides nothing, which is the
 shape work takes when whatever produced it had no stake in the outcome.
@@ -149,6 +153,31 @@ is not doing**.
 That last check is the most useful question to ask of any proposal. A first
 version is defined by what it leaves out, so work that names no cut line has
 not been thought about, it has been enumerated.
+
+### Asking for the spec checks
+
+`no owner and no date` and `never saying what it is not doing` are off by
+default. Run `--technical spec` to turn them on:
+
+```bash
+node scripts/cli.js check --file <path> --technical spec
+```
+
+They are absence checks, and an absence only means something where the thing was
+expected. Neither is expected in a blog post, a newsletter or an email, all of
+which are long, unowned and proposing nothing.
+
+Deciding in code which of those a text was took six review rounds and never
+worked. It was wrong in both directions at once, flagging posts that committed
+to nothing while staying silent on a real plan with a real missing owner, because
+that plan happened to avoid the words on the list. The person running the command
+saying what the document is turned out to be the only reliable answer.
+
+So a default run does not report on these, and ends by saying so and naming the
+flag. A report with neither finding in it means they did not run, never that the
+document passed them. `--technical` on its own, `--technical code` and
+`--technical data` all leave them off: the label on the report heading has never
+selected which checks run, and it does not select these either.
 
 ## How to read a result
 

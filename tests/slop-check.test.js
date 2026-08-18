@@ -12,11 +12,11 @@ const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { execFileSync } = require('child_process');
+const { execFileSync, spawnSync } = require('child_process');
 
 const base = path.join(__dirname, '..', 'plugins', 'slop-check', 'scripts');
 const { checkHard, checkAll } = require(path.join(base, 'tells.js'));
-const { checkCode, checkData, checkSpec, checkTechnical, checkOverbuilt, checkOverplanned, markerDensity, codeShare } = require(path.join(base, 'technical.js'));
+const { checkCode, checkData, checkSpec, checkTechnical, checkOverbuilt, checkOverplanned } = require(path.join(base, 'technical.js'));
 const simpleSkill = fs.readFileSync(path.join(__dirname, '..', 'plugins', 'slop-check', 'skills', 'say-it-simply', 'SKILL.md'), 'utf8');
 
 const EM = String.fromCharCode(0x2014);
@@ -100,12 +100,15 @@ check('async with nothing to await is caught',
 check('async that actually awaits is not',
   checkOverbuilt('async function a() { await go(); }\nasync function b() { await go(); }\n')
     .some((f) => f.name === 'async-with-nothing-to-await'), false);
+// Both rows pass the switch. The second one has to: without it the check never
+// runs, so the row would pass whether or not "out of scope" still silences
+// anything, and it exists to test that it does.
 check('a plan that names no cut line is caught',
-  checkOverplanned('We will build the thing. The plan is to implement it across the team. '.repeat(12))
-    .some((f) => f.name === 'never-says-what-it-is-not-doing'), true);
+  checkOverplanned('We will build the thing. The plan is to implement it across the team. '.repeat(12),
+    { documentChecks: true }).some((f) => f.name === 'never-says-what-it-is-not-doing'), true);
 check('a plan that says what it is NOT doing is not',
-  checkOverplanned('We will build the thing. The plan is to implement it. Out of scope: everything else. '.repeat(12))
-    .some((f) => f.name === 'never-says-what-it-is-not-doing'), false);
+  checkOverplanned('We will build the thing. The plan is to implement it. Out of scope: everything else. '.repeat(12),
+    { documentChecks: true }).some((f) => f.name === 'never-says-what-it-is-not-doing'), false);
 check('handing back the reader their own context is caught',
   checkOverplanned('As you mentioned, this is manual. To recap, it is slow.')
     .some((f) => f.name === 'restates-what-you-already-said'), true);
@@ -122,7 +125,23 @@ check('handing back the reader their own context is caught',
 // to stop a false positive is one edit away from silencing the real finding, and
 // the shape it protects, a plan written entirely in the language of doing the
 // work rather than in planning vocabulary, is the one a vocabulary test misses.
-console.log('\ndocument checks stay off writing that is not a document');
+console.log('\nthe two absence checks are off unless the caller asks');
+
+// Deciding in code whether a text was a plan is gone; see the block above the
+// checks in technical.js. What replaces it is the caller saying so, and that is
+// what these rows pin.
+//
+// Every "does not fire" row is paired with the same input under
+// { documentChecks: true }. Alone, an absence assertion cannot tell a check that
+// is correctly quiet from a check that is no longer wired up, and this suite has
+// shipped exactly that: eight rows in skill-md-check passed against a hook that
+// had stopped running, because all eight asserted absence. The pair is the only
+// thing that makes either row mean anything.
+
+const ASKED = { documentChecks: true };
+const unowned = (t, opts) => checkSpec(t, opts).some((f) => f.name === 'no-owner-and-no-date');
+const noCut = (t, opts) => checkOverplanned(t, opts).some((f) => f.name === 'never-says-what-it-is-not-doing');
+
 const POST = 'Six months ago I stopped writing my own status updates by hand. Not because '
   + 'I got lazy, but because every update I wrote was answering a question nobody had '
   + 'asked. I would spend forty minutes explaining what I had done, and the person '
@@ -137,22 +156,6 @@ const POST = 'Six months ago I stopped writing my own status updates by hand. No
   + 'through. If you write these for a living, take the last one you sent and move '
   + 'the ask to the top, then read both versions out loud and listen to which one '
   + 'sounds like it was written by somebody who knew what they wanted.';
-check('a post is longer than the threshold',
-  POST.length > 800, true);
-check('a post is not reported as an unowned document',
-  checkSpec(POST).some((f) => f.name === 'no-owner-and-no-date'), false);
-check('a post is not reported as a proposal with no cut line',
-  checkOverplanned(POST).some((f) => f.name === 'never-says-what-it-is-not-doing'), false);
-// Parenthesised on purpose. Written without the brackets, `.repeat` binds to the
-// second literal alone, and the result lands at 468 characters, under the 700 the
-// check requires. The row then passed against the code it was written to catch,
-// and passed for a reason that had nothing to do with the fix.
-const ONE_MARKER = ('I want to build something better than the thing we have now, and I '
-  + 'keep coming back to why that turns out to be harder than it sounds. ').repeat(6);
-check('the one-marker fixture is past the length threshold',
-  ONE_MARKER.length > 700, true);
-check('one mention of building something is not a proposal',
-  checkOverplanned(ONE_MARKER).some((f) => f.name === 'never-says-what-it-is-not-doing'), false);
 
 const PLAN = '# Migration to the new billing service\n\n'
   + 'Scope covers the subscription records, the invoice generator and the dunning '
@@ -168,276 +171,130 @@ const PLAN = '# Migration to the new billing service\n\n'
   + 'it. Anything touching tax calculation is held back until the three regions are '
   + 'through, because the rules differ per region and getting one wrong is a refund '
   + 'and an apology rather than a retry.';
-check('a plan document is still asked who owns it',
-  checkSpec(PLAN).some((f) => f.name === 'no-owner-and-no-date'), true);
-check('a proposal written without planning vocabulary is still asked too',
-  checkSpec('We will build the thing. The plan is to implement it across the team. '.repeat(12))
-    .some((f) => f.name === 'no-owner-and-no-date'), true);
-check('a document that names its owner is not asked twice',
-  checkSpec(`Owner: the billing team\n\n${PLAN}`)
-    .some((f) => f.name === 'no-owner-and-no-date'), false);
 
-// Devin review round 1 on #137. Counting two distinct markers was wrong in both
-// directions, and these rows pin both directions.
+// The opinion post from queue entry 2026-08-18T12-37-38. It commits to nothing
+// and was flagged anyway, because "we should", "we could", "approach" and
+// "build" are four ordinary words that reached the threshold between them.
+const OPINION_POST = 'We should stop pretending that the office is what made those teams '
+  + 'work. It was not the building. It was that the people in it had worked together long '
+  + 'enough to know who to ask, and nobody has found a cheap way to manufacture that. The '
+  + 'approach most companies took was to recreate the surface of the thing: standing '
+  + 'meetings, a channel per team, a calendar invite called Coffee. All of it reproduces '
+  + 'the schedule of an office and none of it reproduces what the schedule was for. We '
+  + 'could argue about whether that is fixable. I think it partly is, but not by anyone '
+  + 'whose plan starts with attendance. What seemed to work, in the two places I have '
+  + 'watched it work, was giving people a reason to need each other answers. Not a ritual, '
+  + 'a dependency. The rest of it, the badge counts and the mandates and the carefully '
+  + 'worded memos about collaboration, is a way of not saying that we do not know how to '
+  + 'build trust at a distance and would rather not find out.';
+
+// The shell script from queue entry 2026-08-18T12-37-36, whose comments use
+// ordinary proposal language. Parenthesised, because `.repeat` binds to the
+// second literal alone without the brackets and the fixture lands under the
+// threshold, which is how a row in this file once passed against the code it was
+// written to catch.
+const SHELL_PROPOSAL = '#!/bin/bash\n# The plan is to rebuild the index in one pass.\n'
+  + ('# We will handle the records written before the reformat separately, because\n'
+    + '# their shape differs and the approach that works for the rest does not.\n').repeat(12)
+  + 'set -euo pipefail\necho "starting"\n';
+
+// Queue entry 2026-08-18T12-46-29, and the row that matters most here. A real
+// migration plan, no owner, no date, and it says outright that finance ops have
+// not been consulted. The word-list version returned nothing at all on it,
+// purely because it is written in plain English. Silence on a true finding is
+// the failure that ended the guessing, so this fixture stays whatever else moves.
+const PLAIN_PLAN = 'Moving the billing records off the old ledger happens in three '
+  + 'stages, and the order matters because stage two cannot start until every historical '
+  + 'entry has been given a stable identifier. Stage one takes a copy of everything as it '
+  + 'stands today and parks it somewhere nobody writes to. It is cheap, and it is the only '
+  + 'thing standing between us and a very bad afternoon, so it happens first even though it '
+  + 'produces nothing anyone can see. Stage two walks every record and gives it an '
+  + 'identifier that will survive the move, roughly four hundred thousand rows. The ones '
+  + 'written before the 2023 reformat carry a different shape and have to be handled '
+  + 'separately, which is most of the work and nearly all of the risk. Stage three points '
+  + 'the reporting jobs at the new ledger and leaves the old one readable but frozen. '
+  + 'Finance ops have not been consulted on the timing of stage three, and their close '
+  + 'period would be a very poor week for it. Somebody needs to have that conversation '
+  + 'before a date gets written down anywhere.';
+
+for (const [name, text] of [['a LinkedIn post', POST], ['an opinion post', OPINION_POST],
+  ['a shell script', SHELL_PROPOSAL], ['a real plan', PLAIN_PLAN], ['a spec document', PLAN]]) {
+  check(`${name} is not asked who owns it unless the caller asks`,
+    unowned(text), false);
+  check(`...and ${name} is asked once the caller does`,
+    unowned(text, ASKED), true);
+}
+
+// The cut-line check has its own floor and its own escape, so it gets its own
+// pass rather than being assumed to follow the owner check.
+for (const [name, text] of [['a LinkedIn post', POST], ['an opinion post', OPINION_POST],
+  ['a shell script', SHELL_PROPOSAL], ['a real plan', PLAIN_PLAN]]) {
+  check(`${name} is not asked for a cut line unless the caller asks`,
+    noCut(text), false);
+  check(`...and ${name} is asked once the caller does`,
+    noCut(text, ASKED), true);
+}
+
+console.log('\nonly an explicit true turns them on');
+check('no options at all leaves them off',
+  unowned(PLAIN_PLAN), false);
+check('an empty options object leaves them off',
+  unowned(PLAIN_PLAN, {}), false);
+check('documentChecks false leaves them off',
+  unowned(PLAIN_PLAN, { documentChecks: false }), false);
+check('no options at all leaves the cut line off',
+  noCut(PLAIN_PLAN), false);
+check('an empty options object leaves the cut line off',
+  noCut(PLAIN_PLAN, {}), false);
+check('documentChecks false leaves the cut line off',
+  noCut(PLAIN_PLAN, { documentChecks: false }), false);
+// The six rows above are absence assertions and would all hold against a check
+// that had been deleted. This is the row that says there is still something
+// there to be switched off.
+check('...and all six of those are off rather than gone',
+  unowned(PLAIN_PLAN, ASKED) && noCut(PLAIN_PLAN, ASKED), true);
+
+console.log('\nwhat the checks look at, once they are asked');
+check('a document naming its owner is not asked again',
+  unowned(`Owner: the billing team\n\n${PLAIN_PLAN}`, ASKED), false);
+check('a document carrying a date is not asked either',
+  unowned(`Written 2026-08-18.\n\n${PLAIN_PLAN}`, ASKED), false);
+check('a document naming what it leaves out is not asked for a cut line',
+  noCut(`Tax calculation is explicitly excluded.\n\n${PLAIN_PLAN}`, ASKED), false);
+check('a short note is under the floor even when asked',
+  unowned('A short note with no owner on it at all.', ASKED), false);
+check('the floor is a length, not a judgement about the text',
+  unowned(('This sentence carries no owner and no date whatsoever. ').repeat(20), ASKED), true);
+
+// The exclusion for source code went with the guess. Asking is now the whole
+// answer, so a file reached only because somebody called it a spec is treated as
+// what they called it.
+check('source code is not excluded once the caller has called it a spec',
+  unowned(SHELL_PROPOSAL, ASKED), true);
+
+console.log('\nthe kind label never selects the checks, only the switch does');
+// `kind` selecting which groups ran is the defect recorded above checkTechnical,
+// and `kind === 'spec'` quietly standing in for the switch is the obvious way to
+// rebuild it. So these go through checkTechnical rather than through the two
+// checks directly, because that is the boundary where it would be reintroduced.
 //
-// Too quiet: a document that leans on one marker over and over is proposing work
-// as plainly as one that uses two different words once each. Counting distinct
-// words cannot see repetition at all.
-//
-// Too loud: "build" and "approach" are two distinct markers and both turn up in
-// any ordinary essay about product work, so two was still enough to flag writing
-// that proposes nothing. That one was not in the review. It was found by
-// measuring marker density across the fixtures while choosing the threshold the
-// review's first two findings needed.
-console.log('\none marker leaned on is a plan; two ordinary words are not');
-const REPEATED_PROPOSAL = 'We will fix the billing service. '.repeat(50);
-check('the repeated-proposal fixture is long enough to reach both checks',
-  REPEATED_PROPOSAL.length > 800, true);
-check('a document that says "we will" fifty times is asked who owns it',
-  checkSpec(REPEATED_PROPOSAL).some((f) => f.name === 'no-owner-and-no-date'), true);
-check('...and is asked what it is not doing',
-  checkOverplanned(REPEATED_PROPOSAL)
-    .some((f) => f.name === 'never-says-what-it-is-not-doing'), true);
+// Written as four explicit values rather than as two texts agreeing with each
+// other. Equality between them holds just as well when both checks are gone,
+// which is a row that passes while measuring nothing, and this suite has shipped
+// that mistake before.
+const viaTechnical = (t, kind, opts) => {
+  const r = checkTechnical(t, kind, opts);
+  return [...r.hard, ...r.soft, ...r.over].some((f) => f.name === 'no-owner-and-no-date');
+};
+check('kind spec on its own does not turn the check on',
+  viaTechnical(PLAIN_PLAN, 'spec'), false);
+check('...nor does kind spec with the switch explicitly false',
+  viaTechnical(PLAIN_PLAN, 'spec', { documentChecks: false }), false);
+check('the switch turns it on under kind spec',
+  viaTechnical(PLAIN_PLAN, 'spec', ASKED), true);
+check('...and under kind code too, because the label is not the gate',
+  viaTechnical(PLAIN_PLAN, 'code', ASKED), true);
 
-const REPEATED_SCOPE = 'Scope is limited. '.repeat(60);
-check('the repeated-scope fixture is long enough',
-  REPEATED_SCOPE.length > 800, true);
-check('a scope statement repeated sixty times is asked who owns it',
-  checkSpec(REPEATED_SCOPE).some((f) => f.name === 'no-owner-and-no-date'), true);
-
-const PRODUCT_ESSAY = ('I spent four years building the wrong thing before I understood why. '
-  + 'Every time we shipped, I would build the feature somebody asked for loudest, and '
-  + 'the approach felt responsive at the time. What I could not see was that each build '
-  + 'made the next one harder, because none of them shared a shape. The team that took '
-  + 'over stopped building for two months and wrote down what the product refused to do. '
-  + 'That list was shorter than any roadmap I had made and it decided more. If I were '
-  + 'starting again I would build that list first and treat the approach as the thing to '
-  + 'get right rather than the speed. ').repeat(2);
-check('the essay fixture is long enough to reach both checks',
-  PRODUCT_ESSAY.length > 800, true);
-check('an essay using "build" and "approach" is not an unowned plan',
-  checkSpec(PRODUCT_ESSAY).some((f) => f.name === 'no-owner-and-no-date'), false);
-check('...and is not a proposal with no cut line',
-  checkOverplanned(PRODUCT_ESSAY)
-    .some((f) => f.name === 'never-says-what-it-is-not-doing'), false);
-
-// Singular and plural of one word are one marker. Without normalising, "scope"
-// and "scopes" counted as two and carried a document over the threshold on the
-// strength of an inflection rather than on anything it said.
-const SPARSE_INFLECTION = 'The scope of the change is small. '
-  + ('Everything else here is ordinary narrative prose that runs on at some length '
-    + 'without proposing anything, because the point of it is to be long rather than '
-    + 'to be a plan. ').repeat(6)
-  + 'Scopes of this kind are common. ';
-check('the inflection fixture is long enough, and thin on markers',
-  SPARSE_INFLECTION.length > 800, true);
-check('"scope" and "scopes" are one marker, not two',
-  checkSpec(SPARSE_INFLECTION).some((f) => f.name === 'no-owner-and-no-date'), false);
-
-// Devin review round 2 on #137. Three of these are what the round found, and each
-// one is a case no count of distinct words could have got right.
-//
-// The proposal below is the one that broke counting for good. It uses two markers,
-// "we will" and "build", at a low density, which is exactly the shape of the essay
-// fixture above that must stay quiet. Two inputs, same marker count, opposite
-// answers, so the count is not the thing that separates them. What separates them
-// is that "we will" commits somebody and "build" only describes work.
-console.log('\ncommitment language separates a proposal from a retrospective');
-const SHORT_PLAN = 'We will build the billing service. '
-  + 'The first phase is to build the data model and the second is to build the API. '
-  + 'We will write tests as we build. We will also build a small admin panel. '
-  + 'The work will take several weeks and we will review it daily. '
-  + ('This paragraph carries ordinary context that is not planning language itself, '
-    + 'so the marker count stays low while the document passes the length gate. ').repeat(8);
-check('the short-plan fixture is long enough to reach both checks',
-  SHORT_PLAN.length > 800, true);
-check('a plain proposal using only "we will" and "build" is asked who owns it',
-  checkSpec(SHORT_PLAN).some((f) => f.name === 'no-owner-and-no-date'), true);
-check('...and is asked what it is not doing',
-  checkOverplanned(SHORT_PLAN)
-    .some((f) => f.name === 'never-says-what-it-is-not-doing'), true);
-check('the essay it shares a marker count with still stays quiet',
-  checkSpec(PRODUCT_ESSAY).some((f) => f.name === 'no-owner-and-no-date'), false);
-
-// A list is not a document. Density alone said this was the densest plan it had
-// ever seen, which is what a ceiling with no floor does: 150 headings reading
-// "Scope" run one marker per 6 characters, and prose cannot do that.
-const SCOPE_LIST = Array.from({ length: 150 }, () => 'Scope').join('\n');
-check('the heading-list fixture is long enough to reach the check',
-  SCOPE_LIST.length > 800, true);
-check('a list of 150 headings is not an unowned document',
-  checkSpec(SCOPE_LIST).some((f) => f.name === 'no-owner-and-no-date'), false);
-
-// Source code, which checkSpec has always excluded and checkOverplanned did not.
-// The same question about the same kind of document, answered about documents by
-// only one of the two.
-const CODE_WITH_COMMENTS = 'function go() {\n'
-  + Array.from({ length: 60 }, (_, i) => `  // we will handle step ${i}`).join('\n')
-  + '\n}';
-check('the commented-code fixture is long enough to reach the check',
-  CODE_WITH_COMMENTS.length > 700, true);
-check('code carrying sixty "we will" comments is not a proposal',
-  checkOverplanned(CODE_WITH_COMMENTS)
-    .some((f) => f.name === 'never-says-what-it-is-not-doing'), false);
-check('...and the same text is not reported as an unowned document either',
-  checkSpec(CODE_WITH_COMMENTS).some((f) => f.name === 'no-owner-and-no-date'), false);
-
-// Devin review round 3 on #137.
-//
-// "We should" is not a commitment, and putting it with "we will" brought the
-// original bug back for a fourth time: an opinion post opening "We should stop
-// pretending" and saying "build" once further down scored three and was reported
-// as an unowned plan. The first row is the reviewer's own input and the second is
-// a realistic post, kept separate because one is the reported case and the other
-// is the shape it would actually arrive in.
-console.log('\n"we should" is an opinion, not a commitment');
-const SHOULD_POST = ('We should not overstate how much a small feature can matter. '
-  + 'People often say they want to build something, but the work is always harder. ').repeat(12);
-check('the reviewer fixture clears both gates',
-  SHOULD_POST.length > 800, true);
-check('"we should" plus "build" is not an unowned plan',
-  checkSpec(SHOULD_POST).some((f) => f.name === 'no-owner-and-no-date'), false);
-check('...and is not a proposal with no cut line',
-  checkOverplanned(SHOULD_POST)
-    .some((f) => f.name === 'never-says-what-it-is-not-doing'), false);
-
-const OPINION_POST = 'We should stop pretending that the office is what made those teams work. '
-  + ('I have watched the same argument play out in four companies now, and the part nobody '
-    + 'wants to say out loud is that the good years had nothing to do with the building. They '
-    + 'had to do with who was in the room and whether anybody felt able to disagree with them. '
-    + 'You cannot build that back by insisting on attendance, and the attempt tends to drive '
-    + 'out exactly the people who made it work in the first place. ').repeat(2);
-check('the opinion-post fixture clears both gates',
-  OPINION_POST.length > 800, true);
-check('an opinion post is not an unowned plan',
-  checkSpec(OPINION_POST).some((f) => f.name === 'no-owner-and-no-date'), false);
-check('...and "we will" is still a commitment where it appears',
-  checkSpec(`We will ${OPINION_POST.slice(3)}`)
-    .some((f) => f.name === 'no-owner-and-no-date'), true);
-
-// A document that shows a code sample is still a document. One pasted line used to
-// make the whole thing source and silence both checks, while a real source file
-// must keep being skipped. Only a proportion separates those two.
-console.log('\na document showing code is still a document');
-const PROPOSAL = 'We will build the thing. The plan is to implement it across the team. '.repeat(12);
-check('the proposal fires before any code is added to it',
-  checkSpec(PROPOSAL).some((f) => f.name === 'no-owner-and-no-date'), true);
-check('one pasted code line does not turn a proposal into source',
-  checkSpec(`${PROPOSAL}\nfunction go() { return 1; }\n`)
-    .some((f) => f.name === 'no-owner-and-no-date'), true);
-check('...nor does a fenced block',
-  checkSpec(`${PROPOSAL}\n\`\`\`\nfunction go() { return 1; }\nconst x = 2;\n\`\`\`\n`)
-    .some((f) => f.name === 'no-owner-and-no-date'), true);
-check('...and the cut-line check agrees with the owner check',
-  checkOverplanned(`${PROPOSAL}\nfunction go() { return 1; }\n`)
-    .some((f) => f.name === 'never-says-what-it-is-not-doing'), true);
-
-// Both bounds of that proportion, pinned against real files in this repository
-// rather than against invented ones. The tighter side is source, so a suite that
-// grows enough prose to drop under the threshold fails here rather than quietly
-// becoming a document that gets asked who owns it.
-const THIS_SUITE = fs.readFileSync(__filename, 'utf8');
-const TECHNICAL_JS = fs.readFileSync(path.join(base, 'technical.js'), 'utf8');
-check('this suite is still read as source, not as a document',
-  codeShare(THIS_SUITE) > 0.30, true);
-check('so is the file it tests',
-  codeShare(TECHNICAL_JS) > 0.30, true);
-check('and neither is reported as an unowned document',
-  checkSpec(THIS_SUITE).concat(checkSpec(TECHNICAL_JS))
-    .some((f) => f.name === 'no-owner-and-no-date'), false);
-check('a proposal carrying one code line is under the source threshold',
-  codeShare(`${PROPOSAL}\nfunction go() { return 1; }\n`) < 0.30, true);
-
-// Codex review on #137, run as a second opinion before a fourth Devin round.
-// It found the one thing three Devin rounds had not: counting a line as code only
-// when it declares, comments or braces misses a source file built from a string
-// table, and the same input on main produced one finding where this produced two.
-console.log('\nsource is recognised by how its lines end, not by what they hold');
-const STRING_TABLE = 'const STEPS = [\n'
-  + Array.from({ length: 40 },
-    (_, i) => `  "We will build step ${i} and the plan is to implement it across the team",`).join('\n')
-  + '\n];\n\nmodule.exports = { STEPS };\n';
-check('a source file built from a string table is read as source',
-  codeShare(STRING_TABLE) > 0.30, true);
-check('...so its planning language is not an unowned document',
-  checkSpec(STRING_TABLE).some((f) => f.name === 'no-owner-and-no-date'), false);
-check('...and not a proposal with no cut line either',
-  checkOverplanned(STRING_TABLE)
-    .some((f) => f.name === 'never-says-what-it-is-not-doing'), false);
-
-// The other direction, which the first fix for the above would have broken.
-// Hard-wrapped prose ends line after line with a comma, so counting a bare comma
-// as code turned a wrapped plan carrying a code sample into source.
-const WRAPPED_PLAN = ('We will build the migration in three passes, one region at a time,\n'
-  + 'so that any problem is cheap to unwind. The plan is to run the smallest\n'
-  + 'region first, and to keep both systems live for a week either side of it,\n'
-  + 'because a reconciliation report is the only thing that tells us whether a\n'
-  + 'region is safe to cut over at all.\n').repeat(4);
-const WRAPPED_WITH_CODE = `${WRAPPED_PLAN}\n\`\`\`\nfunction go() { return 1; }\n\`\`\`\n`;
-check('the wrapped-plan fixture clears the length gate',
-  WRAPPED_WITH_CODE.length > 800, true);
-check('a hard-wrapped plan showing a code sample is still a document',
-  codeShare(WRAPPED_WITH_CODE) < 0.30, true);
-check('...and is still asked who owns it',
-  checkSpec(WRAPPED_WITH_CODE).some((f) => f.name === 'no-owner-and-no-date'), true);
-
-// Devin round 5. The measure that fixed the string table broke markdown, because
-// `*` opens a JSDoc continuation line and also every markdown bullet and every
-// `**Bold.**` paragraph. The same plan, changing only the bullet character, went
-// from a document to source and lost both checks. Written as one fixture rendered
-// three ways so that nothing but the bullet differs between the rows.
-console.log('\na plan is a plan whichever bullet it is written with');
-// No cut-line word anywhere in this fixture, deliberately. The first draft said
-// "the smallest one first", which is one, so the cut-line row stayed quiet for
-// every bullet style and would have passed as evidence about bullets.
-const PLAN_BODY = 'We will build the reconciliation in three passes. The plan is to run it\n'
-  + 'region by region, and the deliverable is a report naming each disagreement.\n\n'
-  + '```js\nfunction reconcile(index, disk) { return index.filter((e) => !disk.has(e)); }\n```\n\n';
-const planWith = (lead) => PLAN_BODY + Array.from({ length: 14 },
-  (_, i) => `${lead} Step ${i + 1}: we should check the entry and implement the comparison.`).join('\n');
-const DASH_PLAN = planWith('-');
-const STAR_PLAN = planWith('*');
-const BOLD_PLAN = PLAN_BODY + Array.from({ length: 14 },
-  (_, i) => `**Point ${i + 1}.** We should check the entry and implement the comparison here.`).join('\n');
-
-check('the bullet fixtures clear the length gate',
-  Math.min(DASH_PLAN.length, STAR_PLAN.length, BOLD_PLAN.length) > 800, true);
-check('the dash-bullet plan is a document, as it always was',
-  codeShare(DASH_PLAN) < 0.30, true);
-check('the star-bullet plan is a document too',
-  codeShare(STAR_PLAN) < 0.30, true);
-check('...and so is the one whose paragraphs open in bold',
-  codeShare(BOLD_PLAN) < 0.30, true);
-check('the star-bullet plan is still asked who owns it',
-  checkSpec(STAR_PLAN).some((f) => f.name === 'no-owner-and-no-date'), true);
-check('...and the bold-led one is too',
-  checkSpec(BOLD_PLAN).some((f) => f.name === 'no-owner-and-no-date'), true);
-check('the star-bullet plan is still asked what it is not doing',
-  checkOverplanned(STAR_PLAN).some((f) => f.name === 'never-says-what-it-is-not-doing'), true);
-// The direction the fix could have broken. Dropping the continuation line takes
-// characters off every source file carrying a block comment, so the file with the
-// most of them has to be checked, not assumed. This one passes either way and is
-// here to fail if a later change to the measure leans on `*` again.
-check('a source file behind a block comment is still source',
-  codeShare('/**\n * Reconcile the index against disk.\n * @param {object[]} index\n'
-    + ' * @param {Set<string>} disk\n * @returns {object[]}\n */\n'
-    + 'function reconcile(index, disk) {\n  return index.filter((e) => !disk.has(e.path));\n}\n'
-    + 'module.exports = { reconcile };\n') > 0.30, true);
-
-// The numbers written into the threshold comments, recomputed here. Two review
-// rounds each caught a figure in a comment that no longer matched the fixture it
-// came from, so the figures are asserted rather than noted.
-console.log('\nthe documented thresholds match the fixtures they came from');
-check('the densest fixture that must stay quiet is above the density ceiling',
-  markerDensity(PRODUCT_ESSAY).proposal > 60, true);
-check('...and it is the essay, at one marker per 119 characters',
-  Math.round(markerDensity(PRODUCT_ESSAY).proposal), 119);
-check('the repeated proposal is inside the band, at one per 33',
-  Math.round(markerDensity(REPEATED_PROPOSAL).proposal), 33);
-check('the repeated scope statement is inside the band, at one per 18',
-  Math.round(markerDensity(REPEATED_SCOPE).planning), 18);
-check('the heading list is below the floor, at one per 6',
-  Math.round(markerDensity(SCOPE_LIST).planning), 6);
 
 console.log('\nthe two readings are separate');
 {
@@ -911,10 +768,31 @@ console.log('\nhouse rules are reported as yours, not as the document being brok
 
 const CLI = path.join(__dirname, '..', 'plugins', 'slop-check', 'scripts', 'cli.js');
 
-function runCli(args, text) {
+function runCli(args, text, cwd) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'slop-cli-'));
   return execFileSync(process.execPath, [CLI, 'check', ...args], {
     input: text,
+    encoding: 'utf8',
+    env: { ...process.env, HOME: dir },
+    cwd,
+  });
+}
+
+// execFileSync throws on a non-zero exit, so a row expecting a failing run has to
+// catch it or the whole suite dies with a stack trace instead of naming the row.
+function runCliAllowingFailure(args, text, cwd) {
+  try {
+    return runCli(args, text, cwd);
+  } catch (e) {
+    return `${e.stdout || ''}${e.stderr || ''}`;
+  }
+}
+
+// The ordinary helper always closes stdin with supplied text, which hid the
+// interactive wait caused by validating an option only after reading input.
+function runCliWithNoStdin(args) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'slop-cli-'));
+  return spawnSync(process.execPath, [CLI, 'check', ...args], {
     encoding: 'utf8',
     env: { ...process.env, HOME: dir },
   });
@@ -962,11 +840,97 @@ console.log('\nthe half that does not apply prints nothing');
   check('the prose half is still reported in full',
     postReport.includes('Little sign of machine-writing habits'), true);
 
+  // A spec on the default path no longer gets asked who owns it, and that is the
+  // change rather than a regression: the two absence checks are the caller's to
+  // request. The rows below pin the default silence and the asked-for finding
+  // together, so neither can quietly become the other.
   const planReport = runCli([], PLAN);
-  check('a document with real findings still gets its technical block',
-    planReport.includes('Technical check'), true);
-  check('and the finding itself is still named',
-    planReport.includes('no-owner-and-no-date'), true);
+  check('a spec is not asked who owns it on the default path',
+    planReport.includes('no-owner-and-no-date'), false);
+  check('the default run says the absence checks did not run',
+    planReport.includes('Two checks did not run'), true);
+  check('and says which two, so it cannot read as disclaiming the whole block',
+    planReport.includes('names an owner and a date') && planReport.includes('what it is not doing'), true);
+  check('and names the flag that runs them',
+    planReport.includes('--technical spec'), true);
+  check('the reminder is printed for a post as well, not just for a document',
+    postReport.includes('--technical spec'), true);
+
+  const askedReport = runCli(['--technical', 'spec'], PLAN);
+  check('asking for the spec check gets the finding',
+    askedReport.includes('no-owner-and-no-date'), true);
+  check('a bare --technical does not turn them on',
+    runCli(['--technical'], PLAN).includes('no-owner-and-no-date'), false);
+  check('--technical code does not either',
+    runCli(['--technical', 'code'], PLAN).includes('no-owner-and-no-date'), false);
+  check('--technical data does not either',
+    runCli(['--technical', 'data'], PLAN).includes('no-owner-and-no-date'), false);
+
+  // `--technical=spec` matched nothing and fell through to the default path,
+  // which then printed the line telling the reader to run --technical spec. The
+  // rows below pin both spellings of every form, because the failure was silent:
+  // the report looked like an answer to a question that had never been asked.
+  check('--technical=spec turns them on like the spaced form',
+    runCli(['--technical=spec'], PLAN).includes('no-owner-and-no-date'), true);
+  check('--technical=code does not',
+    runCli(['--technical=code'], PLAN).includes('no-owner-and-no-date'), false);
+  check('--technical=spec does not fall through to the default path',
+    runCli(['--technical=spec'], PLAN).includes('Two checks did not run'), false);
+  // A flag is not its own value. Written first as `--technical --prose` asserting
+  // no finding, which measured nothing: the swallowed value fails the `spec`
+  // comparison either way, so the row passed against the unguarded code too.
+  // `--file` is where the swallow is observable, because the value is opened.
+  // `--file` with nothing usable after it is refused rather than read from stdin.
+  //
+  // This asymmetry is deliberate. The equals form can name a file beginning
+  // with dashes, while the spaced form treats a following flag as a missing name.
+  const dashFileDir = fs.mkdtempSync(path.join(os.tmpdir(), 'slop-dash-file-'));
+  const dashFileName = '--prose-fixture.md';
+  fs.writeFileSync(path.join(dashFileDir, dashFileName), PLAN);
+  check('--file= reads a filename beginning with dashes and prints a report',
+    runCliAllowingFailure([`--file=${dashFileName}`, '--prose'], '', dashFileDir).includes('Hard rules'), true);
+  fs.rmSync(dashFileDir, { recursive: true });
+  check('--file=--prose reports that it cannot read that filename',
+    runCliAllowingFailure(['--file=--prose'], PLAN).includes('cannot read --prose'), true);
+  check('--file=--prose is not refused as a missing filename',
+    runCliAllowingFailure(['--file=--prose'], PLAN).includes('--file was given with no filename'), false);
+  // These three rows previously asserted the opposite, and pinned a bug. The
+  // value-swallow guard stopped `--prose` being opened as a filename and let the
+  // run fall through to stdin instead, so the rows passed only because the test
+  // harness always feeds text in. Interactively the same command waits on a
+  // prompt nobody asked for.
+  check('--file with a flag after it is refused',
+    runCliAllowingFailure(['--file', '--prose'], PLAN).includes('--file was given with no filename'), true);
+  check('...and does not try to open the flag as a file',
+    runCliAllowingFailure(['--file', '--prose'], PLAN).includes('cannot read --prose'), false);
+  check('...and prints no report, having been given no file',
+    runCliAllowingFailure(['--file', '--prose'], PLAN).includes('Hard rules'), false);
+  check('--file= is refused the same way',
+    runCliAllowingFailure(['--file='], PLAN).includes('--file was given with no filename'), true);
+  // Leaving --file out is still how stdin is requested, which the Stop hook and
+  // SKILL.md both rely on, so the refusal must not reach it.
+  check('no --file at all still reads stdin',
+    runCli(['--prose'], PLAN).includes('Hard rules'), true);
+
+  // An unrecognised kind is refused, not guessed. Every one of these matched the
+  // flag and then failed the kind comparison in silence before this.
+  for (const bad of ['--technical=', '--technical==spec', '--technical=bogus']) {
+    check(`${bad} is refused rather than silently ignored`,
+      runCliAllowingFailure([bad], PLAN).includes('unrecognised kind for --technical'), true);
+    check(`...and ${bad} prints neither half of the report`,
+      runCliAllowingFailure([bad], PLAN).includes('Hard rules')
+        || runCliAllowingFailure([bad], PLAN).includes('Softer tells')
+        || runCliAllowingFailure([bad], PLAN).includes('Technical check'), false);
+  }
+  const invalidWithoutInput = runCliWithNoStdin(['--technical=bogus']);
+  check('an invalid kind with no stdin names the invalid option',
+    invalidWithoutInput.stderr.includes('unrecognised kind for --technical: "bogus"'), true);
+  check('an invalid kind with no stdin does not report empty input',
+    invalidWithoutInput.stderr.includes('nothing to check'), false);
+  check('an invalid kind with no stdin exits with the option-error status',
+    invalidWithoutInput.status, 2);
+  check('a bare --technical is still valid, not a typo',
+    runCli(['--technical'], PLAN).includes('Technical check'), true);
 
   // Asking for a half and getting silence is its own failure. The caller asked.
   check('an explicit --technical prints even with nothing to say',

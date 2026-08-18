@@ -230,223 +230,47 @@ function checkOverbuilt(text) {
   return found;
 }
 
-// --- is this text a plan at all -------------------------------------------
+// --- the two absence checks are asked for, not guessed ----------------------
 //
 // Two checks below are absence checks: nothing says who owns this, and nothing
 // says what is being left out. An absence only means something where the thing
 // was expected, and neither is expected in ordinary writing. A blog post, a
-// newsletter and a LinkedIn draft are all long, all unowned and all proposing
-// nothing, and both checks fired on all of them.
+// newsletter and a LinkedIn draft are all long, all unowned, and all proposing
+// nothing.
 //
-// Counting words was the wrong instrument, and two rounds of tuning the count
-// only moved which writing it was wrong about.
+// Deciding that in code was tried for six review rounds and abandoned on
+// 2026-08-18. Every version was a vocabulary proxy, and every one was wrong in
+// both directions at once. One qualifying word flagged any post that mentioned
+// building something. Two flagged an essay about product work, because "build"
+// and "approach" both belong in one. Three, plus a density measure, still
+// flagged an opinion post that committed to nothing, and still let a genuine
+// migration plan through in silence because it happened to avoid the listed
+// words. That last case is the measure of the failure: a real plan with a real
+// missing owner, reported clean.
 //
-// One word was too few: any post mentioning building something matched. Two was
-// too few in one direction and too many in the other, because "build" and
-// "approach" are two different words that both belong in an ordinary essay about
-// product work, while a real proposal can lean on "we will" alone. Three was
-// still wrong: a plain proposal saying "we will build" and little else reaches
-// only two.
+// So the caller says instead. These two run only when `checkSpec` and
+// `checkOverplanned` are handed `{ documentChecks: true }`, which `cli.js` sets
+// when the person running it asked for `--technical spec`, and never otherwise.
 //
-// The distinction the count kept missing is not how many words appear but what
-// kind. "We will", "the plan", "a proposal" and "the deliverable" commit somebody
-// to something. "Build", "implement" and "approach" describe work and appear just
-// as readily in a retrospective. So the commitment words count double, and the
-// work words count single, against a threshold of three. One commitment word plus
-// one work word is a proposal. Two work words on their own are a Tuesday.
+// This is not the bug recorded above `checkTechnical`, though it sits next to
+// it. There, a guess selected which groups ran, so a spec holding one per cent
+// figure was labelled "data" and never reached `checkSpec` at all. The guess was
+// the defect, not the selecting. Nothing is inferred from the text here: a
+// person asserted what the document is. The distinction worth keeping is between
+// the program deciding and the caller declaring, and only the first was wrong.
 //
-// What the numbers below are and are not. They come from the seven fixtures in
-// tests/slop-check.test.js, which are hand-written, few, and chosen by the person
-// who wrote this. They show that these thresholds separate the cases that exist
-// there. They do not establish that the thresholds are right in general, and an
-// earlier version of this comment claimed they did. Round 2 of the review made
-// that concrete by producing a two-marker proposal from outside the sample that
-// the threshold missed, which is why the rule now turns on the kind of word
-// rather than on a count that happened to fit seven examples.
+// The length floors below stay. They are not a guess about what the text is,
+// they are a floor on what the absence is worth reporting, and a two-line note
+// with no owner line is not a finding whoever asked for it wants.
 //
-// Density is the second route, and it catches what any count of distinct words
-// cannot: one word leaned on so hard that it is the subject of the document. A
-// band rather than a ceiling, and both ends are measured from those same
-// fixtures by scratchpad/measure-fixtures.js, which reads them out of the test
-// file rather than from a copy, so editing a fixture moves the numbers.
-//
-// The ceiling of 60 sits between the sparsest case that must fire on density
-// alone, at one marker per 33 characters, and the densest case that must stay
-// quiet, at one per 119. The floor of 12 sits between that same 33 and a list of
-// 150 headings reading "Scope", which runs one per 6 and is not prose at all.
-// Telling a list it names no owner is the same category of wrong as telling a
-// post.
-//
-// Two earlier versions of this comment carried the densest quiet figure as 137
-// and then as 135. Both were measured from a draft of the essay fixture and never
-// re-measured after it was lengthened for the suite. The number is 119.4, and
-// that is the reason the script above exists rather than a note of the figure.
-//
-// Multi-word alternatives come before their own substrings. `out of scope` is
-// still reachable after `scopes?` today, because a search starting at the word
-// boundary before "out" cannot match `scopes?` there, but that is a property of
-// where the engine happens to start rather than anything this file states. Order
-// them and it stops depending on that.
+// Deleted along with the guess, because nothing else used them: the commitment
+// and work word lists, the planning terms, `markers`, `leanedOn`,
+// `markerDensity`, `codeShare` and `isSourceRatherThanDocument`. The
+// source-code exclusion went with them and is not missed. It existed to stop
+// these two firing on files nobody had asked about, and now nothing fires
+// unasked.
 
-// The word lists, and the patterns built from them. Written once each: the
-// combined proposal pattern is the two halves joined rather than a third copy of
-// the same words, because three lists that must agree is three chances to edit
-// one and not the others, and nothing here would report the disagreement.
-// `we will` only. Leaving `we (?:will|should|could)` here while adding "we should"
-// below would have matched it in both lists and scored it three on its own, which
-// is worse than the defect being fixed.
-const COMMITMENT_WORDS = ['we will', 'the plan', 'proposal', 'deliverable'];
-// "We should" and "we could" are not commitments. Putting them here was the
-// round-2 answer and round 3 broke it in one line: "We should stop pretending that
-// the office is what made those teams work", plus one "build" further down, scored
-// three and got an opinion post reported as an unowned plan with no cut line. That
-// is the original bug of this pull request, arriving for the fourth time through
-// its own fix. "We will" commits somebody to doing something. "We should" is how
-// commentary opens.
-const WORK_WORDS = ['we should', 'we could', 'approach', 'implement', 'build'];
-
-function anyOf(words) {
-  return new RegExp(`\\b(${words.join('|')})\\b`, 'gi');
-}
-
-const COMMITMENT_MARKERS = anyOf(COMMITMENT_WORDS);
-const WORK_MARKERS = anyOf(WORK_WORDS);
-const PROPOSAL_MARKERS = anyOf([...COMMITMENT_WORDS, ...WORK_WORDS]);
-
-const PLANNING_TERMS = /\b(out of scope|acceptance criteria|success criteria|rollout plan|migration plan|project plan|key results?|scopes?|requirements?|deliverables?|milestones?|timelines?|stakeholders?|sign-?off|roadmaps?|sprints?|backlog|objectives?)\b/gi;
-
-// Singular and plural of one term are one term. Without this, "scope" and
-// "scopes" counted as two markers, so a document leaning on a single concept in
-// both forms reached the threshold on the strength of an inflection.
-function markers(text, pattern) {
-  const all = (text.match(pattern) || [])
-    .map((m) => m.toLowerCase().replace(/s$/, ''));
-  return { distinct: new Set(all).size, total: all.length };
-}
-
-// One word used often enough to be the subject, and often enough to still be
-// prose. Both bounds are load-bearing and they fail in opposite directions: with
-// no ceiling this never fires, and with no floor it fires on any list.
-function leanedOn(text, pattern) {
-  const { total } = markers(text, pattern);
-  if (total === 0) return false;
-  const perMarker = text.length / total;
-  return perMarker <= 60 && perMarker >= 12;
-}
-
-// Source, as opposed to a document that shows some code.
-//
-// `looksLikeCode` answers "is there code in here". That is the right question for
-// the code checks and the wrong one for the two document checks, because one
-// `function go() { return 1; }` line pasted onto a twelve-paragraph proposal made
-// the whole thing source and silenced both. It is also the question that has to
-// stay answered for source itself: a function carrying sixty "we will" comments
-// must not be told it declared no cut line, which is why the guard was added.
-//
-// Those two pull in opposite directions and only a proportion separates them, so
-// the existing test stays as a necessary condition and a share is added on top.
-// Characters, not lines: a proposal built by repeating one sentence is a single
-// 840-character line, so a code line appended to it is half the lines and three
-// per cent of the text.
-//
-// What counts as a code line is how it ENDS, not what it holds.
-//
-// The first version of this counted a line only if it declared something, was a
-// comment, or was a bare brace. A second reviewer broke it in one try: a source
-// file whose bulk is a string table matches none of those, scores near zero, and
-// is read as a document. That was a regression rather than a gap, because the
-// same input on main produced one finding and this produced two.
-//
-// Code lines end in punctuation that continues a structure. Prose lines end in a
-// full stop or a word, because prose wraps mid-sentence. That test does not care
-// whether the line holds English, which is the whole problem with a string table.
-//
-// A trailing comma alone does not count. Hard-wrapped prose ends lines with one
-// constantly, and counting it read a wrapped plan carrying a code sample as
-// source, which is the same defect facing the other way. A comma counts only when
-// the line also holds a quote or a closing bracket: that is a string-table row,
-// and it is not a wrapped sentence.
-//
-// Measured over this repository's own files, every `.js` and `.md` over 400
-// characters. Documents that get as far as `looksLikeCode` reach 14.2 per cent,
-// and the lowest source file is plugins/guardrails/hooks/resource-owner-guard.js
-// at 69.8 per cent.
-//
-// Re-measure before quoting these. They previously read 6.5 and 91.5 and were
-// wrong on the commit that stated them, where the true pair was 29.2 and 69.8: a
-// 40-point margin described as 85, with one real document in this repository
-// sitting 0.8 points under the threshold rather than 23.5 points clear of it. A
-// figure measured once and quoted after the thing it measured changed reads
-// exactly like a figure that is still true.
-//
-// What is asserted rather than stated: tests/slop-check.test.js pins this file
-// and the slop-check suite above the threshold, and the wrapped-plan and
-// bullet-style fixtures below it. The repository-wide extremes above are not
-// pinned, so treat them as of this commit rather than as a standing guarantee.
-const CODE_ENDING = /[;{}[\]()]$/;
-const LIST_ROW = /["'`\])}][^"'`]*,$/;
-// No bare `*`. It was here for the continuation line of a `/* */` block, and it
-// is also the markdown bullet and the opener of `**Bold.**`, both of which start
-// a line far more often than a JSDoc body does. Counting them read a plan written
-// with `* ` bullets as source at 78 per cent against 6 for the same plan written
-// with `- `, so it got neither document check while its prose was reported
-// over-commented. A comment opener still counts; its continuation lines do not,
-// and they do not need to, because the declarations and braces around any real
-// block comment already carry the file well past the threshold.
-const COMMENT_LINE = /^\s*(\/\/|\/\*)/;
-
-function codeShare(text) {
-  const lines = text.split('\n').filter((line) => line.trim());
-  let code = 0;
-  let all = 0;
-  for (const line of lines) {
-    const trimmed = line.trim();
-    all += line.length;
-    // No `#`. It is a comment in shell and Python and a heading in markdown, and
-    // counting it made every structured document look like source.
-    if (CODE_ENDING.test(trimmed) || LIST_ROW.test(trimmed)
-        || COMMENT_LINE.test(trimmed) || looksLikeCode(line)) {
-      code += line.length;
-    }
-  }
-  return all ? code / all : 0;
-}
-
-function isSourceRatherThanDocument(text) {
-  return looksLikeCode(text) && codeShare(text) > 0.30;
-}
-
-// Characters per marker, for each of the two vocabularies. Infinity when the text
-// holds none, which is the honest answer and keeps a caller from dividing by zero.
-// Exported so the numbers written into the comments above can be asserted.
-function markerDensity(text) {
-  const per = (pattern) => {
-    const { total } = markers(text, pattern);
-    return total ? text.length / total : Infinity;
-  };
-  return { proposal: per(PROPOSAL_MARKERS), planning: per(PLANNING_TERMS) };
-}
-
-// Commitment words count double, work words single, three to qualify.
-function proposesWork(text) {
-  const weight = 2 * markers(text, COMMITMENT_MARKERS).distinct
-    + markers(text, WORK_MARKERS).distinct;
-  return weight >= 3 || leanedOn(text, PROPOSAL_MARKERS);
-}
-
-// A document proposing work is the same question as whether it is a plan, for the
-// purpose of asking who owns it. Both routes are needed: a proposal can be
-// written entirely in the language of doing the work and never say "scope", and a
-// plan can be laid out in planning vocabulary and never say "we will".
-function readsAsAPlan(text) {
-  return proposesWork(text)
-    || markers(text, PLANNING_TERMS).distinct >= 3
-    || leanedOn(text, PLANNING_TERMS);
-}
-
-// The same failure in a plan rather than in code: a build heavier than the
-// thing being built.
-function checkOverplanned(text) {
+function checkOverplanned(text, opts = {}) {
   const found = [];
   const tag = (f) => ({ ...f, over: true });
   const lower = text.toLowerCase();
@@ -481,23 +305,12 @@ function checkOverplanned(text) {
   // Work that names no cut line has not been thought about, it has been
   // enumerated. A first version is defined by what it leaves out.
   //
-  // A single one of these words is not a proposal, and the commonest of them is
-  // "build". Any writing longer than 700 characters that mentioned building
-  // something once matched, so this fired on a LinkedIn draft whose only
-  // qualifying word was "build", in the phrase "what I am going to build next",
-  // and told its writer their post had never declared a cut line.
-  //
-  // `proposesWork` rather than a count, for the reasons given where it is defined.
-  // Every count tried here was wrong about something: one word flagged any post
-  // mentioning building, two flagged an essay about product work, and three
-  // stayed silent on a plain proposal that said "we will build" and little else.
-  //
-  // Not source code. `checkSpec` has always excluded it and this did not, so a
-  // function carrying sixty "we will" comments was told it had declared no cut
-  // line. The two checks ask the same question about the same kind of document,
-  // and only one of them was answering it about documents.
+  // Opt-in. Whether this text is a proposal at all was decided by counting words
+  // until 2026-08-18; see the block above the checks for what that cost and why
+  // the caller now says instead. The source-code exclusion went with it, because
+  // a source file is only reachable here if somebody called it a spec.
   const namesACut = /\b(out of scope|not (?:doing|building|in scope)|v2|version 2|later|deferred|explicitly excluded|won'?t (?:do|build|include)|minimum|smallest|first (?:cut|version|pass)|mvp)\b/i.test(text);
-  if (proposesWork(text) && !namesACut && text.length > 700 && !isSourceRatherThanDocument(text)) {
+  if (opts.documentChecks && !namesACut && text.length > 700) {
     found.push(tag({ name: 'never-says-what-it-is-not-doing' }));
   }
 
@@ -578,7 +391,7 @@ function checkData(text) {
 // --- scope and spec documents ---------------------------------------------
 
 // The failure is not bad prose, it is a document that decides nothing.
-function checkSpec(text) {
+function checkSpec(text, opts = {}) {
   const found = [];
   const lower = text.toLowerCase();
 
@@ -623,14 +436,13 @@ function checkSpec(text) {
 
   // Nobody's name on it, and no date. Unowned work is unreviewed work.
   //
-  // Documents only, and plans among those. Every group runs on every input now,
-  // so without the code guard this fired on every source file, and without the
-  // plan guard it fired on every piece of long prose that was never a document
-  // in the first place. Both exclusions are for the same reason: the field it
-  // reports missing was never going to be present.
+  // Opt-in, for the reasons in the block above the checks. Both exclusions this
+  // used to carry, source code and not-a-plan, existed to stop it reporting a
+  // field that was never going to be present. Asking for the check answers that
+  // question outright, so neither exclusion has anything left to do.
   const hasOwner = /\b(owner|dri|accountable|assigned to|author|lead)\b\s*[:\-]/i.test(text);
   const hasDate = /\b(20\d\d-\d\d-\d\d|\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+\d{1,2})/i.test(text);
-  if (text.length > 800 && !hasOwner && !hasDate && !isSourceRatherThanDocument(text) && readsAsAPlan(text)) {
+  if (opts.documentChecks && text.length > 800 && !hasOwner && !hasDate) {
     found.push({ name: 'no-owner-and-no-date' });
   }
 
@@ -657,7 +469,7 @@ function guessKind(filename, text) {
   return 'spec';
 }
 
-function checkTechnical(text, kind) {
+function checkTechnical(text, kind, opts = {}) {
   // Every group, every time. An earlier version picked one group from a
   // guessed kind, which quietly defeated the whole design: guessKind returns
   // "data" for anything holding a table or a percentage, so a spec with one
@@ -667,12 +479,19 @@ function checkTechnical(text, kind) {
   //
   // `kind` is now only a label for the report. Real documents are mixtures: a
   // spec carries a table, a README carries code, a plan carries both.
+  //
+  // `opts` is not that rule returning. Nothing here reads it off the text: it
+  // carries what the caller was told by the person running the command. The two
+  // checks it reaches are the absence checks in `checkSpec` and
+  // `checkOverplanned`, and the block above them records why they stopped
+  // guessing. Anything added here that infers `opts` from `text` rebuilds the
+  // defect this comment exists to describe.
   const all = [
     ...checkCode(text),
     ...checkOverbuilt(text),
     ...checkData(text),
-    ...checkSpec(text),
-    ...checkOverplanned(text),
+    ...checkSpec(text, opts),
+    ...checkOverplanned(text, opts),
   ];
 
   const hard = all.filter((f) => f.hard);
@@ -697,14 +516,12 @@ function checkTechnical(text, kind) {
   return { hard, soft, over, categories: all.length, reading, weight };
 }
 
-// `markerDensity` and `codeShare` are exported for the tests and for nothing else.
-// The thresholds above are documented with numbers, and the last two review rounds
-// both caught a number in a comment that no longer matched the fixture it came
-// from. A figure nothing can check is a figure that drifts, so the rows in
-// tests/slop-check.test.js recompute these and assert the bounds, which means
-// editing a fixture past a threshold fails the suite rather than quietly making a
-// comment false.
+// `markerDensity` and `codeShare` were exported for the tests and for nothing
+// else, and both went with the guess they measured. The rule they were kept
+// under still holds for whatever replaces them: a threshold documented only in a
+// comment drifts, because nothing fails when the fixture moves past it. Any
+// number stated in this file should be recomputed and bounded by a row in
+// tests/slop-check.test.js rather than written down here.
 module.exports = {
   checkTechnical, checkCode, checkData, checkSpec, checkOverbuilt, checkOverplanned, guessKind,
-  markerDensity, codeShare,
 };

@@ -17,9 +17,29 @@ const { checkAll, checkHard } = require(path.join(__dirname, 'tells.js'));
 const { checkTechnical, guessKind } = require(path.join(__dirname, 'technical.js'));
 const { loadConfig } = require(path.join(__dirname, 'config.js'));
 
+// `--flag value` and `--flag=value` are both ordinary ways to write this and
+// only the first was read. `--technical=spec` matched nothing, fell through to
+// the default path, and ended by printing the line telling the reader to run
+// `--technical spec`, which is what they had just run. A flag that is silently
+// not there is worse than one that errors, because the report reads as an answer.
+function argIndex(flag) {
+  return process.argv.findIndex((a) => a === flag || a.startsWith(`${flag}=`));
+}
+
+function hasFlag(flag) {
+  return argIndex(flag) > -1;
+}
+
 function argValue(flag) {
-  const i = process.argv.indexOf(flag);
-  return i > -1 ? process.argv[i + 1] : null;
+  const i = argIndex(flag);
+  if (i === -1) return null;
+  const arg = process.argv[i];
+  if (arg.startsWith(`${flag}=`)) return arg.slice(flag.length + 1);
+  // A flag is not its own value. `--technical --prose` used to read "--prose" as
+  // the kind, which then failed the `spec` comparison silently rather than
+  // saying the kind was unrecognised.
+  const next = process.argv[i + 1];
+  return next === undefined || next.startsWith('--') ? null : next;
 }
 
 async function readStdin() {
@@ -162,11 +182,55 @@ function formatTechnical(result, kind) {
 (async () => {
   const command = process.argv[2];
   if (command !== 'check') {
-    process.stderr.write('usage: cli.js check [--file <path>] [--hard-only] [--technical [kind]]\n');
+    process.stderr.write('usage: cli.js check [--file <path>] [--hard-only] [--technical [code|data|spec]]\n');
+    process.stderr.write('       --technical spec also runs the owner-and-date and cut-line checks\n');
     process.exit(2);
   }
 
+  // `--file` with nothing usable after it is a typo, not a request to read stdin.
+  //
+  // The value-swallow guard added in round 1 of this review turned
+  // `--file --prose` from an exit 2 naming the mistake into a silent stdin read,
+  // and `--file=` does the same, because both produce a falsy value that is
+  // indistinguishable here from `--file` never having been passed. Interactively
+  // that hangs on a prompt nobody asked for; in a pipe it reports on whatever
+  // happened to be piped in. This is the third time on this branch that a fix for
+  // a silent failure has produced a different silent failure, so it is refused on
+  // the same principle as an unrecognised kind: the flag was given, its value was
+  // not, and that must not read as a clean report.
+  //
+  // Not passing `--file` at all is still how you ask for stdin, which is what
+  // SKILL.md documents and what the Stop hook relies on.
   const file = argValue('--file');
+  if (hasFlag('--file') && !file) {
+    process.stderr.write('--file was given with no filename after it\n');
+    process.stderr.write('name a file, or leave --file out entirely to read stdin\n');
+    process.exit(2);
+  }
+
+  // An unrecognised kind is refused rather than quietly guessed.
+  //
+  // Round 1 of this review fixed `--technical=spec` matching no flag by matching
+  // the equals spelling, and the round 2 review found the fix had reproduced the
+  // fault in a new shape: `--technical=` and `--technical==spec` now matched, and
+  // then failed the kind comparison silently, running without the spec checks and
+  // without even the reminder that says they did not run. Patching one spelling
+  // at a time leaves the next spelling, so the class is closed here instead. A
+  // value that is not one of the three is a typo, and a typo about which checks
+  // to run must not read as a clean report.
+  //
+  // A bare `--technical` is not a typo. It means the technical half with the kind
+  // guessed, which is the documented behaviour, so `null` stays valid. Keep this
+  // before stdin is read, or an interactive typo waits for input and can report
+  // "nothing to check" without ever naming the invalid option.
+  const KINDS = ['code', 'data', 'spec'];
+  const asked = argValue('--technical');
+  if (asked !== null && !KINDS.includes(asked)) {
+    process.stderr.write(`unrecognised kind for --technical: ${JSON.stringify(asked)}\n`);
+    process.stderr.write(`expected one of ${KINDS.join(', ')}, or --technical on its own\n`);
+    process.exit(2);
+  }
+
   let text;
   if (file) {
     try {
@@ -186,20 +250,27 @@ function formatTechnical(result, kind) {
 
   const config = loadConfig();
 
-  const asked = argValue('--technical');
-  const kind = ['code', 'data', 'spec'].includes(asked) ? asked : guessKind(file, text);
+  const kind = KINDS.includes(asked) ? asked : guessKind(file, text);
 
-  if (process.argv.includes('--technical')) {
-    process.stdout.write(formatTechnical(checkTechnical(text, kind), kind) + '\n');
+  // The two absence checks run here and nowhere else. `--technical spec` is a
+  // person saying "this is a spec", which is the only thing that ever answered
+  // the question reliably; see the block above them in technical.js. A bare
+  // `--technical`, and `--technical code|data`, leave them off, because a guessed
+  // kind reaching this would be the guess arriving by a longer route.
+  const documentChecks = asked === 'spec';
+
+  if (hasFlag('--technical')) {
+    process.stdout.write(
+      formatTechnical(checkTechnical(text, kind, { documentChecks }), kind) + '\n');
     process.exit(0);
   }
 
-  if (process.argv.includes('--prose')) {
+  if (hasFlag('--prose')) {
     process.stdout.write(formatReport(checkAll(text, config)) + '\n');
     process.exit(0);
   }
 
-  if (process.argv.includes('--hard-only')) {
+  if (hasFlag('--hard-only')) {
     const { ok, violations } = checkHard(text, config);
     process.stdout.write(ok ? 'clean\n' : violations.map((v) => v.what).join('\n') + '\n');
     process.exit(0);
@@ -233,4 +304,18 @@ function formatTechnical(result, kind) {
     process.stdout.write('\n' + '-'.repeat(60) + '\n\n');
     process.stdout.write(formatTechnical(technical, kind) + '\n');
   }
+
+  // The two absence checks did not run, so say so once rather than leaving the
+  // reader to think they passed. Printed on every default run and never
+  // conditional on the text, which is the point: the moment this line decides
+  // whether the input looks like a plan, it is the deleted guess with a softer
+  // voice, and a wrong nudge is only cheaper than a wrong finding until somebody
+  // has to maintain it.
+  // "Two checks did not run" rather than "not checked", because this can print
+  // directly under a technical block that does hold findings, and the shorter
+  // wording read as a disclaimer over the whole block rather than over these two.
+  process.stdout.write(
+    '\nTwo checks did not run: whether this names an owner and a date, and whether'
+    + '\nit says what it is not doing. If it is a plan, a spec or a proposal, run'
+    + '\nagain with --technical spec.\n');
 })();
