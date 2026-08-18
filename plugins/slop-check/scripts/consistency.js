@@ -607,19 +607,40 @@ function withoutBackticks(line) {
 // rule for this file. Telling those apart means reading the sentence to decide
 // whose rule it is, and every attempt in this file to decide a document's
 // nature from its wording has been reverted.
-// The lookahead covers the whole leading run, not one position inside it.
-// Written as `\(\s*(?!#)` the `\s*` backtracks until the lookahead is happy, so
-// `](  #style)` matched: the engine gave back a space, found another space
-// rather than a `#`, and declared the target was not an anchor. That drops the
-// file's own rule on such a line without saying anything was skipped.
+// Built from named parts rather than as one expression. Written as one it was
+// wrong three times running, each time in a different clause, and each time the
+// whole thing had to be re-read to see where. The parts below are each small
+// enough to check on their own.
 //
-// An angle bracket only makes a target an anchor when a `#` follows it. The
-// first attempt at the line above read every `<` as one, and markdown uses that
-// wrapper for ordinary filenames too, `](<my file.md>)` being the reason it
-// exists. So every index written that way went straight back to the unclearable
-// warning this whole change removes. What decides is the `#`, in either
-// position; the bracket decides nothing on its own.
-const LINKS_ELSEWHERE = /^\s*(?:[-*+]|\d+[.)])\s+.*(?<!!)\[[^\]]*\]\((?!\s*(?:#|<\s*#))\s*[^)]+\)/;
+// LIST_ITEM      a bullet or a number. Prose is out of scope: the exclusion is
+//                for index entries, and a sentence that happens to carry a link
+//                is still the file's own writing.
+// LABEL          the bracketed text, allowing one level of nesting so
+//                `[A [nested] title](file.md)` is recognised. `[^\]]*` stopped
+//                at the first inner bracket and missed the whole link.
+//                `(?<!!)` keeps an image out: `![alt](shot.png)` is a caption,
+//                and the `.*` ahead of it will otherwise swallow the `!`.
+// ELSEWHERE      the target, when it is not an anchor. The lookahead covers the
+//                whole leading run, not one position inside it: written
+//                `\(\s*(?!#)` the `\s*` backtracks until the test passes, so
+//                `](  #style)` gave back a space, found another space instead
+//                of a `#`, and reported the target was not an anchor.
+//                An angle bracket only makes an anchor when a `#` follows it.
+//                Reading every `<` as one sent `](<my file.md>)` back to the
+//                unclearable warning, because markdown wraps ordinary targets
+//                that way and that is why the form exists.
+// REFERENCE      `[Title][ref]`, the other way an index links out. No space
+//                between the two brackets, or `- Foo [a] [b]` reads as a link.
+//                Where the reference points is not on this line and resolving
+//                it means reading the document, so it counts as elsewhere. A
+//                reference resolving to an anchor is the known cost, and it is
+//                the rarer shape by far.
+const LIST_ITEM = String.raw`^\s*(?:[-*+]|\d+[.)])\s+`;
+const LABEL = String.raw`(?<!!)\[(?:[^\[\]]|\[[^\[\]]*\])*\]`;
+const ELSEWHERE = String.raw`\((?!\s*(?:#|<\s*#))\s*[^)]+\)`;
+const REFERENCE = String.raw`\[[^\[\]]*\]`;
+
+const LINKS_ELSEWHERE = new RegExp(`${LIST_ITEM}.*${LABEL}(?:${ELSEWHERE}|${REFERENCE})`);
 
 function describesAnotherDocument(line) {
   return LINKS_ELSEWHERE.test(withoutCodeSpans(line));

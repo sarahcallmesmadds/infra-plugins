@@ -679,6 +679,32 @@ check('angle brackets around a filename do not make it this document', () => {
   }
 });
 
+check('the other two shapes an index entry takes are recognised too', () => {
+  // A reference-style entry and a label with nested brackets are both index
+  // entries, and both reproduced the original report until the pattern was
+  // rebuilt from named parts. Each case carries a prose breach that is never
+  // skipped, because a fixture whose every line is skipped completes no pair
+  // and passes whatever the code does.
+  const shapes = {
+    'reference style': '- [Writing style rules][style] — no em dashes, plain English',
+    'nested brackets in the label': '- [A [nested] title](writing-style-rules.md) — no em dashes',
+  };
+  for (const [what, entry] of Object.entries(shapes)) {
+    const text = `# Index\n\n${entry}\n\nIt ran — and finished.\n`;
+    assert.deepStrictEqual(brokenOwnRule(text), [],
+      `an index entry using ${what} was read as this document's own rule`);
+  }
+});
+
+check('two bracketed asides with a space between them are not a link', () => {
+  // The reference shape needs the brackets touching. Allowing a gap turns any
+  // sentence carrying two bracketed asides into an index entry, which would
+  // stop the rule on it counting.
+  const aside = '# Rules\n\n- Foo [a] [b] no em dashes here.\n\nIt ran — and finished.\n';
+  assert.strictEqual(brokenOwnRule(aside).length, 1,
+    'a bullet with two spaced brackets was treated as a reference-style link');
+});
+
 check('an image in a list item is not a link to another document', () => {
   // The bracket has to be the link's, not an image's. The `.*` ahead of it
   // swallowed the `!`, so a captioned screenshot was read as an index entry and
