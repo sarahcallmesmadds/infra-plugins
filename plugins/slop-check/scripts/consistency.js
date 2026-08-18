@@ -610,11 +610,16 @@ function withoutBackticks(line) {
 // The lookahead covers the whole leading run, not one position inside it.
 // Written as `\(\s*(?!#)` the `\s*` backtracks until the lookahead is happy, so
 // `](  #style)` matched: the engine gave back a space, found another space
-// rather than a `#`, and declared the target was not an anchor. An angle
-// bracket target, `](<#style>)`, slipped through the same way. Both are links
-// into this same document, and skipping them drops the file's own rule without
-// saying anything was skipped.
-const LINKS_ELSEWHERE = /^\s*(?:[-*+]|\d+[.)])\s+.*(?<!!)\[[^\]]*\]\((?!\s*[#<])\s*[^)]+\)/;
+// rather than a `#`, and declared the target was not an anchor. That drops the
+// file's own rule on such a line without saying anything was skipped.
+//
+// An angle bracket only makes a target an anchor when a `#` follows it. The
+// first attempt at the line above read every `<` as one, and markdown uses that
+// wrapper for ordinary filenames too, `](<my file.md>)` being the reason it
+// exists. So every index written that way went straight back to the unclearable
+// warning this whole change removes. What decides is the `#`, in either
+// position; the bracket decides nothing on its own.
+const LINKS_ELSEWHERE = /^\s*(?:[-*+]|\d+[.)])\s+.*(?<!!)\[[^\]]*\]\((?!\s*(?:#|<\s*#))\s*[^)]+\)/;
 
 function describesAnotherDocument(line) {
   return LINKS_ELSEWHERE.test(withoutCodeSpans(line));

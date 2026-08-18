@@ -656,6 +656,29 @@ check('an anchor is still an anchor with space or angle brackets around it', () 
   }
 });
 
+check('angle brackets around a filename do not make it this document', () => {
+  // The fix for the case above read every `<` as the start of an anchor.
+  // Markdown uses that wrapper for ordinary targets too, which is the whole
+  // reason it exists, so an index written that way went back to the report this
+  // change removes. The `#` is what decides, not the bracket.
+  // The prose line is load-bearing. brokenOwnRule wants a statement and a
+  // breach before it says anything, and every list line here is skipped, so
+  // without a breach that is never skipped the pair cannot complete and the
+  // case passes whether the entry was excluded or not.
+  for (const target of ['<file.md>', '<my file.md>']) {
+    const index = [
+      '# Index',
+      '',
+      `- [Writing style rules](${target}) — no em dashes, plain English`,
+      '',
+      'It ran — and finished.',
+      '',
+    ].join('\n');
+    assert.deepStrictEqual(brokenOwnRule(index), [],
+      `an index entry written as (${target}) was read as this document's own rule`);
+  }
+});
+
 check('an image in a list item is not a link to another document', () => {
   // The bracket has to be the link's, not an image's. The `.*` ahead of it
   // swallowed the `!`, so a captioned screenshot was read as an index entry and
