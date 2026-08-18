@@ -183,7 +183,7 @@ function formatTechnical(result, kind) {
   const command = process.argv[2];
   if (command !== 'check') {
     process.stderr.write('usage: cli.js check [--file <path>] [--hard-only] [--technical [code|data|spec]]\n');
-    process.stderr.write('       --technical spec also runs the owner, date and cut-line checks\n');
+    process.stderr.write('       --technical spec also runs the owner-and-date and cut-line checks\n');
     process.exit(2);
   }
 

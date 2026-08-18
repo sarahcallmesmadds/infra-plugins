@@ -875,7 +875,7 @@ console.log('\nthe half that does not apply prints nothing');
   // about the file being rejected. The prose branch exits before the reminder,
   // and the reminder is on every default run, so its absence is what separates
   // them.
-  check('...and the prose branch runs on stdin rather than the default path',
+  check('...and it is not the default path, which would have printed the reminder',
     runCliAllowingFailure(['--file', '--prose'], PLAN).includes('Two checks did not run'), false);
   check('...having actually checked the text it was given',
     runCliAllowingFailure(['--file', '--prose'], PLAN).includes('Hard rules'), true);
@@ -885,8 +885,10 @@ console.log('\nthe half that does not apply prints nothing');
   for (const bad of ['--technical=', '--technical==spec', '--technical=bogus']) {
     check(`${bad} is refused rather than silently ignored`,
       runCliAllowingFailure([bad], PLAN).includes('unrecognised kind for --technical'), true);
-    check(`...and ${bad} does not print a report`,
-      runCliAllowingFailure([bad], PLAN).includes('Hard rules'), false);
+    check(`...and ${bad} prints neither half of the report`,
+      runCliAllowingFailure([bad], PLAN).includes('Hard rules')
+        || runCliAllowingFailure([bad], PLAN).includes('Softer tells')
+        || runCliAllowingFailure([bad], PLAN).includes('Technical check'), false);
   }
   check('a bare --technical is still valid, not a typo',
     runCli(['--technical'], PLAN).includes('Technical check'), true);
