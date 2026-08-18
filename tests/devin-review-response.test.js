@@ -159,8 +159,12 @@ check('the review prompt is passed as a file, never on the command line', () => 
   for (const command of commands) {
     assert.ok(/--prompt-file\s+\S/.test(command),
       `"${command}" does not name a prompt file`);
-    assert.ok(!/-p\s+["'`]/.test(command),
-      `"${command}" passes the prompt inline, where review content reaches a granted command line`);
+    // `-p` ends the command, and nothing may follow it. Rejecting only a quoted
+    // argument left `devin ... -p unquoted review text` passing, which puts the
+    // same content on the same granted command line without the quotes that
+    // made it look wrong.
+    assert.ok(command.endsWith('-p'),
+      `"${command}" puts something after -p, where review content reaches a granted command line`);
   }
 });
 

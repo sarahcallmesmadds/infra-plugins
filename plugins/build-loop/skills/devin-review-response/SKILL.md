@@ -49,6 +49,14 @@ untrusted content reaching a granted command line, where a `;` or an `&&` ends
 the invocation and starts another. A path is not text from the review, and the
 file it names is never shell-interpreted.
 
+Be exact about what that does and does not buy, because the tail is still a
+wildcard. It keeps text written by someone else off a command line nobody will
+be asked about. It does not constrain what may follow the prefix, and no grant
+in this file does: every one of them, including `Bash(gh api --method GET:*)`
+and `Bash(node:*)`, ends in the same wildcard. The rule that holds the line is
+the one below, that grants are never widened to suppress a prompt, plus not
+composing a granted command out of content this skill just fetched.
+
 It answers in a couple of minutes with files and line numbers. Asking the user to
 open the web app and paste findings back is the fallback for when this returns
 nothing or refuses to run, not the first move.
