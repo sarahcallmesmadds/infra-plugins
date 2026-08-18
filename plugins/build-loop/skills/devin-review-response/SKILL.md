@@ -37,10 +37,13 @@ nothing or refuses to run, not the first move.
 
 Two things stop that run, and neither means the route failed:
 
-- It refuses a workspace it has not been told to trust, and the trust prompt
-  needs a real terminal, so it cannot be answered from a tool call. Trust is
-  inherited, so a worktree created under an already-trusted parent runs without
-  one. Prefer that to asking someone to answer a prompt.
+- It refuses a workspace it has not been told to trust, and `-p` cannot show the
+  trust prompt, so the refusal is the whole output. The documented answer is to
+  add `--respect-workspace-trust false`, which skips a security check and so is
+  deliberately not pre-granted here: it stops to ask, and it is worth asking,
+  since the only workspace that warrants it is a checkout of the repository
+  already under review. Observed but undocumented, so do not rely on it: a
+  directory under an already-trusted parent runs without either.
 - `--permission-mode auto` approves read-only tools only, and a review that
   needs more than those exits saying it rejected a call rather than reviewing
   nothing. Rerun it a single step up rather than reading that as no findings.

@@ -3,6 +3,26 @@
 Upgrade notes for past versions, moved out of the README so that file says what
 the plugin is and how to use it. Nothing here is needed to install or run it.
 
+## Upgrading to 0.10.14
+
+**`/devin-review-response` recovers a hidden finding instead of stopping to ask
+for it.** Nothing to change on your side. The skill used to stop whenever
+Devin's web interface held findings the API had not returned, and wait for you
+to open the app and paste them back. It now runs the CLI against the same commit
+first and only asks if that returns nothing or refuses.
+
+Two things it now tells the reader, both of which cost a real session:
+
+- Read the review body, not the check status. A green check has sat above a body
+  reporting findings.
+- A clean round is evidence for the commit it ran against and no other, so
+  re-run it on the final head. Commits answering earlier findings are exactly
+  where the next one turns up.
+
+One case still stops to ask you, on purpose. If the CLI refuses because the
+directory has not been trusted, the flag that skips that check is documented in
+the skill but deliberately not pre-approved, so you get to say yes.
+
 ## Upgrading to 0.10.13
 
 **`/whats-breaking` is now `/flag-patterns`.** The old command no longer exists.
