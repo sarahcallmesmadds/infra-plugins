@@ -130,11 +130,15 @@ Proceed? (yes / no)
 
 ## Step 5 — Run git revert
 
-Determine `repo_root` by looking up the entry's `repo` field in `roots` in
-`~/.claude/build-loop.config.json` and taking that root's `path`. With no config
-file there are the three defaults from SCHEMA.md: `personal` at
-`~/.claude/skills`, `hooks` at `~/.claude/hooks`, and `commands` at
-`~/.claude/commands`. A config holding `skillRoots` and no `roots` is read as
+Determine `repo_root` by asking for the root the entry names, rather than
+working it out:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/roots.js" list --name {repo}
+```
+
+Take the absolute `path` it prints. The defaults are already applied when there
+is no config file, and a pre-v2 `skillRoots` config has already been read as
 roots of kind `skill`. If `repo` is
 `"unknown"`, or names a root that is no longer configured, stop and say so.
 Never guess a repository to run a revert in.

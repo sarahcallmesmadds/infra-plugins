@@ -100,13 +100,17 @@ Collect from four places. Gather all four before judging anything, because the s
 
 ### 3a — The git log of every configured root
 
-Read the roots from `~/.claude/build-loop.config.json`. With no config file, use the three defaults from SCHEMA.md: `personal` at `~/.claude/skills` (kind `skill`), `hooks` at `~/.claude/hooks` (kind `hook`), and `commands` at `~/.claude/commands` (kind `command`). If the config has `skillRoots` and no `roots`, read those as roots of kind `skill`.
-
-Check they exist before reading any git log:
+Ask for the roots rather than working them out. This prints them and checks
+them in one call, and it has to run before any git log:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/roots.js" check
+node "${CLAUDE_PLUGIN_ROOT}/scripts/roots.js" list
 ```
+
+Every root comes back with an absolute `path`, its `kind`, and whether it
+`exists`, with the defaults already applied when there is no config file and a
+pre-v2 `skillRoots` config already read as roots of kind `skill`. The exit code
+is the one `check` gives.
 
 - Exit 0, carry on.
 - Exit 3, a root someone configured is gone. Relay what it said and use the

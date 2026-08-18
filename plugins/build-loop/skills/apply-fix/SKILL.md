@@ -340,10 +340,15 @@ If the output is `0` or the file is missing, report an error immediately and do 
 
 ## Step 8 — Commit and close the loop
 
-Read the roots from `~/.claude/build-loop.config.json`. If that file does not
-exist, use the three defaults from SCHEMA.md: `personal` at `~/.claude/skills`,
-`hooks` at `~/.claude/hooks`, and `commands` at `~/.claude/commands`. A config
-holding `skillRoots` and no `roots` is read as roots of kind `skill`.
+Ask for this entry's root rather than working it out:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/roots.js" list --name {repo}
+```
+
+It comes back with an absolute `path` and its `kind`, with the defaults already
+applied when there is no config file and a pre-v2 `skillRoots` config already
+read as roots of kind `skill`.
 
 Step 2 asked about this entry's `repo` by name, before anything was written, so
 by here that root is known to exist. Do not check again.
@@ -514,12 +519,12 @@ two answers are opposite and getting it wrong either way misleads:
 | `skill`, `hook`, `command` | `This is live for your next session already, since it was written straight into {root.path}. Pushing is about keeping it, not about loading it.` |
 | `plugin-repo` | `Nothing will load this yet. Push the branch, open a PR, and after it merges run claude plugin marketplace update and claude plugin update, since the installed copy is served from the plugin cache and not from this checkout.` |
 
-The defaults at the top of this step are `personal` at `~/.claude/skills`, `hooks` at
-`~/.claude/hooks` and `commands` at `~/.claude/commands`. A write into any of those is
-picked up by the next session with no push, no PR and no install, so telling someone it
-is inert would have them stop testing a change that is already active. A `plugin-repo`
-root is the opposite: the running copy comes from the cache, so the checkout can be
-committed and the machine still runs the old file.
+The split is by `kind`, which is why the table keys on it rather than on a list of
+paths. A root of kind `skill`, `hook` or `command` is a directory the harness reads
+directly, so a write into one is picked up by the next session with no push, no PR and
+no install, and telling someone it is inert would have them stop testing a change that
+is already active. A `plugin-repo` root is the opposite: the running copy comes from
+the cache, so the checkout can be committed and the machine still runs the old file.
 
 Either way the commit is local, and that part is said above in both cases.
 

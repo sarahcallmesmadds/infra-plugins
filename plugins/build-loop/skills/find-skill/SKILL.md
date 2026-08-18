@@ -27,10 +27,10 @@ The argument after `find-skill` (or `$ARGUMENTS`) is the intent. If empty, list 
 
 ## Step 1 — Build the index at runtime
 
-Scan the configured roots, the same set the rest of this plugin uses. Read
-`roots` from `~/.claude/build-loop.config.json`. A config holding `skillRoots`
-and no `roots` is read as roots of kind `skill`. If the file does not exist, use
-the default root `{ "name": "personal", "path": "~/.claude/skills", "kind": "skill" }`.
+Scan the configured roots, the same set the rest of this plugin uses. The block
+below asks `roots.js` for them rather than reading the config itself, so the
+defaults, the pre-v2 `skillRoots` shape and the `~` expansion are decided in one
+place for every skill here.
 
 **Roots of kind `skill` and kind `plugin-repo` are scanned here.** Both hold
 skills, in different layouts. A hook or command root is not scanned: it holds
@@ -57,8 +57,8 @@ Read the two together, because either kind of root is somewhere to scan:
   frame it as something having gone missing. Carry on.
 - Exit 4 from **both**, there is nowhere to read at all. Say that the inventory
   is empty because there is nowhere to look, not because nothing is installed,
-  and stop. On a machine with no config file this is what an absent
-  `~/.claude/skills` produces, and it is not a fault: nobody chose that path
+  and stop. On a machine with no config file this is what an absent default
+  skills directory produces, and it is not a fault: nobody chose that path
   either, so describe it as nothing being configured rather than as something
   having gone. Exit 4 from only one of the two is ordinary and says nothing: a
   machine that keeps its skills in a plugin checkout has no root of kind
@@ -89,33 +89,55 @@ For each file, extract from the YAML frontmatter:
 Use this Bash + Python one-liner to load all frontmatter cleanly:
 
 ```bash
-python3 - <<'PY'
-import os, re, glob, json
+python3 - "${CLAUDE_PLUGIN_ROOT}/scripts/roots.js" <<'PY'
+import os, re, glob, json, subprocess, sys
 
-CONFIG = os.path.expanduser("~/.claude/build-loop.config.json")
-DEFAULT = [{"name": "personal", "path": "~/.claude/skills", "kind": "skill"}]
+# The roots come from roots.js, not from a second reader written here. This
+# block used to open build-loop.config.json itself and carry its own copy of the
+# default root, which made it the sixth place in this plugin that decided what
+# the defaults are. The others have stopped; the duplicate that mattered most
+# was this one, because it was code rather than prose and so could disagree
+# without anyone reading a difference.
+#
+# Every path it returns is already absolute, so nothing below expands `~`. A
+# literal `~` was the failure that produced the tilde warning at the top of this
+# file, and it cannot happen to these.
+#
+# Failure is not caught. A config that exists and cannot be used is roots.js's
+# to refuse, and it already has above. Catching it here meant a corrupt config
+# was reported by the check and then quietly ignored one step later, so routing
+# went ahead against the default path and looked like it had worked.
+# Scoped the same way as the two checks above, and for the same reason. An
+# unscoped list reports on hook and command roots too, which this skill never
+# scans, so its exit code would answer a wider question than the one being
+# asked: skill roots all gone while a hooks directory survives would come back
+# as "some missing" and routing would go ahead against nothing.
+ROOTS_JS, KINDS = sys.argv[1], ("skill", "plugin-repo")
+NOWHERE = 4  # roots.js: nothing in scope to look at
 
-# Only an absent config falls back to the defaults. A config that exists and
-# cannot be used is a different situation and it is not this block's to paper
-# over: roots.js refuses it above and the skill has already stopped. Catching
-# every exception here meant a corrupt config was reported by the check and then
-# quietly ignored one step later, so the routing went ahead against
-# ~/.claude/skills and looked like it had worked. That silent default is the
-# behaviour the check was added to end, so it cannot survive underneath it.
-if not os.path.exists(CONFIG):
-    roots = DEFAULT
-else:
-    cfg = json.load(open(CONFIG))
-    # "roots" is the current key. "skillRoots" predates the schema change and
-    # carries no "kind", so every entry in it is a skill root by definition.
-    if isinstance(cfg.get("roots"), list) and cfg["roots"]:
-        roots = cfg["roots"]
-    elif isinstance(cfg.get("skillRoots"), list) and cfg["skillRoots"]:
-        roots = [dict(r, kind="skill") for r in cfg["skillRoots"]]
-    else:
-        raise SystemExit(
-            "build-loop.config.json has no usable roots. roots.js check says why."
-        )
+roots, codes = [], []
+for kind in KINDS:
+    run = subprocess.run(
+        ["node", ROOTS_JS, "list", "--kind", kind], capture_output=True, text=True
+    )
+    codes.append(run.returncode)
+    if run.returncode == NOWHERE:
+        continue  # no root of this kind is ordinary; one of the two usually is
+    if run.returncode not in (0, 3, 5):
+        # Exit 1 is the only code that prints a sentence rather than JSON, and
+        # it is the config being unreadable. Relay it as it came.
+        raise SystemExit(run.stdout.strip() or f"roots.js list --kind {kind} failed silently.")
+    roots += json.loads(run.stdout)["roots"]
+
+# Both empty is the case worth stopping for, and the message is the point of
+# stopping. An empty inventory reads as "nothing is installed" when what happened
+# is that there was nowhere to look, and those are different answers.
+if all(c == NOWHERE for c in codes):
+    raise SystemExit(
+        "No skill or plugin-repo root exists to scan, so there is nothing to route "
+        "from. This is not the same as having no skills installed. Run "
+        "`roots.js check` to see which paths were expected."
+    )
 
 # Skill roots and plugin-repo roots both hold SKILL.md files, in different
 # layouts. A hook root would yield nothing and a command root would yield files
@@ -130,7 +152,7 @@ roots = [r for r in roots if r.get("kind", "skill") in PATTERNS]
 
 seen, skills = set(), []
 for root in roots:
-    base = os.path.expanduser(root["path"])
+    base = root["path"]
     for pattern in PATTERNS[root.get("kind", "skill")]:
         for path in sorted(glob.glob(os.path.join(base, pattern))):
             if path in seen:

@@ -73,13 +73,17 @@ You show this in the draft at Step 2, so a wrong guess costs nothing. Asking abo
 
 **3. target_path** — the absolute path to the file a fix would edit. Resolve it this way:
 
-1. Read the roots from `~/.claude/build-loop.config.json`. If that file does not exist, use the three defaults from SCHEMA.md: `personal` at `~/.claude/skills` (kind `skill`), `hooks` at `~/.claude/hooks` (kind `hook`), and `commands` at `~/.claude/commands` (kind `command`). If the config has `skillRoots` and no `roots`, read each of those as a root of kind `skill`.
-
-   Then check they still exist, before searching them:
+1. Ask for the roots rather than working them out. This prints them and checks
+   they still exist in one call, and it runs before you search any of them:
 
    ```bash
-   node "${CLAUDE_PLUGIN_ROOT}/scripts/roots.js" check
+   node "${CLAUDE_PLUGIN_ROOT}/scripts/roots.js" list
    ```
+
+   Every root comes back with an absolute `path`, its `kind`, and whether it
+   `exists`. The defaults are already applied when there is no config file, and
+   a pre-v2 `skillRoots` config has already been read as roots of kind `skill`.
+   The exit code is the one `check` gives.
 
    - Exit 0, carry on.
    - Exit 3, a root someone configured is gone. Relay that before asking the

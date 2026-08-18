@@ -18,27 +18,28 @@ You are maintaining the dependency map at `~/.claude/build-loop/DEPS.json`. The 
 
 The things you build live in more than one place: skills installed for daily
 use, hooks the harness fires, slash commands, and any separate repository you
-develop them in. Read the roots from `~/.claude/build-loop.config.json`. If that
-file does not exist, use the three defaults:
-
-```json
-{ "roots": [
-  { "name": "personal", "path": "~/.claude/skills",   "kind": "skill" },
-  { "name": "hooks",    "path": "~/.claude/hooks",    "kind": "hook" },
-  { "name": "commands", "path": "~/.claude/commands", "kind": "command" }
-] }
-```
-
-A config holding `skillRoots` and no `roots` is read as roots of kind `skill`.
-Do not rewrite that file. It predates schema v2 and still works.
-
-**Check the roots before scanning, and relay what it says.** The check is a
-script rather than a paragraph, because the same rule has to hold in every skill
-that reads this config, and six paragraphs drift where one script cannot:
+develop them in. Ask for that list rather than working it out, and relay what it
+says:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/roots.js" check
+node "${CLAUDE_PLUGIN_ROOT}/scripts/roots.js" list
 ```
+
+It prints every root as JSON, each with an absolute `path`, its `kind`, and
+whether it `exists`. The defaults are already applied when there is no config
+file, and a config holding `skillRoots` and no `roots` has already been read as
+roots of kind `skill`. Do not rewrite that file. It predates schema v2 and still
+works.
+
+**This is a script rather than a paragraph, because the same rule has to hold in
+every skill that reads this config, and six paragraphs drift where one script
+cannot.** That sentence used to sit directly beneath a copy of the default roots
+written out here in full, which is the drift it was warning about, one paragraph
+away from itself.
+
+**`list` rather than `check`, because it answers both questions.** Its exit code
+is the one `check` gives, so a single call hands you the roots and tells you
+whether to go on.
 
 - Exit 0, every root exists. Nothing to relay, carry on.
 - Exit 3, a root someone configured is gone. Print what it said, then scan the

@@ -21,7 +21,7 @@ const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { execFileSync } = require('child_process');
+const { execFileSync, spawnSync } = require('child_process');
 
 const SCRIPT = path.join(__dirname, '..', 'plugins', 'build-loop', 'scripts', 'roots.js');
 const HOMES = [];
@@ -494,13 +494,45 @@ check('every broad caller has a rule for an absent default', () => {
 
 check('find-skill does not silently default underneath the check', () => {
   // The check refused a corrupt config and the Python below it caught every
-  // exception and routed against ~/.claude/skills anyway, so the skill relayed
+  // exception and routed against the default path anyway, so the skill relayed
   // "the config could not be read" and then behaved as though it had. A guard
   // that the code beneath it ignores is worse than no guard: it reads as
   // handled.
+  //
+  // This used to assert the shape of that Python, `if not os.path.exists(CONFIG)`,
+  // which pinned one implementation of the rule rather than the rule. The block
+  // no longer reads the config at all; roots.js decides absent versus broken for
+  // every skill here. So the check runs the block against a corrupt config and
+  // asserts what it does, which is the thing that was actually wrong.
   const text = skillText('find-skill');
-  assert.doesNotMatch(text, /except Exception:\s*\n\s*roots = DEFAULT/, 'still swallows any config error and defaults');
-  assert.match(text, /if not os\.path\.exists\(CONFIG\)/, 'no longer distinguishes an absent config from a broken one');
+  const block = text.match(/python3 - "\$\{CLAUDE_PLUGIN_ROOT\}\/scripts\/roots\.js" <<'PY'\n([\s\S]*?)\nPY\n/);
+  assert.ok(block, 'the inventory block is not in the expected heredoc form');
+
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'find-skill-corrupt-'));
+  try {
+    fs.mkdirSync(path.join(home, '.claude', 'skills', 'demo'), { recursive: true });
+    fs.writeFileSync(path.join(home, '.claude', 'skills', 'demo', 'SKILL.md'),
+      '---\nname: demo\ndescription: d\n---\n');
+    // A config that exists and cannot be parsed. Absent would be legitimate and
+    // would correctly fall back; broken must stop.
+    fs.writeFileSync(path.join(home, '.claude', 'build-loop.config.json'), '{ not json');
+
+    const script = path.join(home, 'block.py');
+    fs.writeFileSync(script, block[1]);
+    const run = spawnSync('python3', [script, SCRIPT], {
+      encoding: 'utf8', env: { ...process.env, HOME: home },
+    });
+
+    assert.notStrictEqual(run.status, 0,
+      'routed against the defaults with a config it could not read');
+    const said = (run.stdout || '') + (run.stderr || '');
+    assert.match(said, /not valid JSON|could not be read|Fix or remove it/,
+      `stopped without saying why: ${said.slice(0, 200)}`);
+    assert.doesNotMatch(said, /"name":\s*"demo"/,
+      'printed an inventory anyway, which is the silent default this guards');
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
 });
 
 check('every skill that reads the config checks the roots exist', () => {
