@@ -38,12 +38,24 @@ nothing or refuses to run, not the first move.
 Two things stop that run, and neither means the route failed:
 
 - It refuses a workspace it has not been told to trust, and `-p` cannot show the
-  trust prompt, so the refusal is the whole output. The documented answer is to
-  add `--respect-workspace-trust false`, which skips a security check and so is
-  deliberately not pre-granted here: it stops to ask, and it is worth asking,
-  since the only workspace that warrants it is a checkout of the repository
-  already under review. Observed but undocumented, so do not rely on it: a
-  directory under an already-trusted parent runs without either.
+  trust prompt, so the refusal is the whole output. The documented answer skips
+  a security check, so it is written to fall outside the grant above and stop to
+  ask, and it is worth asking: the only workspace that warrants it is a checkout
+  of the repository already under review. Write it exactly this way, with the
+  flag ahead of `-p`:
+
+  <!-- bash-approval-required -->
+  ```bash
+  devin --permission-mode auto --respect-workspace-trust false -p "<prompt>"
+  ```
+
+  The order is load-bearing and is the reason this is spelled out. A grant is a
+  prefix that ends at `-p`, so the same flag written after `-p` sits inside the
+  grant and runs unasked, and nobody should have to work that out to know
+  whether a security check was skipped on their behalf.
+
+  Observed but undocumented, so do not build on it: a directory under an
+  already-trusted parent runs without any of this.
 - `--permission-mode auto` approves read-only tools only, and a review that
   needs more than those exits saying it rejected a call rather than reviewing
   nothing. Rerun it a single step up rather than reading that as no findings.

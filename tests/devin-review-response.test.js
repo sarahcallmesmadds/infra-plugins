@@ -128,6 +128,22 @@ check('the recovery command is granted, not just described', () => {
     'the CLI recovery is documented but not granted');
 });
 
+check('the trust-skip command is written outside the skill\'s own grant', () => {
+  // The skill says skipping the workspace trust check stops to ask. A grant is
+  // a prefix, so that is only true while the flag sits ahead of `-p`: written
+  // after it the command still starts with the granted prefix and runs unasked,
+  // and the claim in the document quietly stops being true.
+  const whole = fs.readFileSync(path.join(SKILL, 'SKILL.md'), 'utf8');
+  const front = whole.split(/^---$/m)[1] || '';
+  const prefix = (front.match(/Bash\((devin [^:)]*):\*\)/) || [])[1];
+  assert.ok(prefix, 'the skill no longer grants the recovery command');
+
+  const documented = (whole.match(/^\s*devin .*--respect-workspace-trust.*$/m) || [])[0];
+  assert.ok(documented, 'the skill no longer shows how to run it in an untrusted workspace');
+  assert.ok(!documented.trim().startsWith(prefix),
+    `the documented trust-skip command starts with the granted prefix "${prefix}", so it runs without asking`);
+});
+
 check('validator uses the plugin-level scripts convention', () => {
   assert.ok(fs.existsSync(VALIDATOR), 'plugin-level pre-push validator is missing');
   assert.ok(!fs.existsSync(path.join(SKILL, 'scripts/pre-push-check.js')),

@@ -20,8 +20,11 @@ Two things it now tells the reader, both of which cost a real session:
   where the next one turns up.
 
 One case still stops to ask you, on purpose. If the CLI refuses because the
-directory has not been trusted, the flag that skips that check is documented in
-the skill but deliberately not pre-approved, so you get to say yes.
+directory has not been trusted, the flag that skips that check is written ahead
+of `-p`, which puts it outside the skill's own permission grant, so you get to
+say yes. Written after `-p` the same flag would sit inside the grant and run
+unasked, which is why the skill spells out the order rather than leaving it to
+whoever types it.
 
 ## Upgrading to 0.10.13
 
