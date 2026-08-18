@@ -567,25 +567,39 @@ function withoutBackticks(line) {
   return line.replace(/`/g, '');
 }
 
-// A rule named inside a list item that links somewhere else belongs to the
-// document being linked to, not to the file naming it.
+// An index entry describes the document it links to, so a rule named in one is
+// that document's rule and the punctuation in one is that format's punctuation.
 //
-// An index states what its entries are about. MEMORY.md is one: every entry is
-// `- [Title](file.md) - one line about it`, and one of those entries names her
-// no-em-dashes rule. The separator in that format is the character the rule
-// bans, so the file read as stating a rule and breaking it on 45 of its 66
-// lines, and it did that on every single edit. A warning that can never be
-// cleared is one that teaches the reader to stop looking, which costs more than
-// the check earns.
+// An index is a list of `- [Title](file.md) - one line about it`, and the
+// separator in that format is often the very character a style rule bans. One
+// entry naming the rule turned every other entry into a breach of it: a real
+// index reported a rule stated once and broken on 45 of its 66 lines, on every
+// edit, and no edit could ever clear it. A warning nobody can clear is one that
+// teaches the reader to stop looking, which costs more than the check earns.
 //
-// The link is what carries it, not the bullet. A plain list item saying "No em
-// dashes" is this file's own rule and still counts. So does a link into this
+// Neither question is asked of such a line, and both halves matter. Skipping
+// only the rule test leaves the separators reported as breaches whenever some
+// other line does state the rule, which is the same false report with a
+// different sentence on it.
+//
+// The link is what carries this, not the bullet. A plain list item saying "No
+// em dashes" is the file's own rule and still counts. So does a link into this
 // same document, because an anchor is not somewhere else, which is why the
-// target is required not to start with `#`.
+// target must not start with `#`.
+//
+// Read past code spans, like every other predicate here. `- Write links as
+// `[Title](file.md)`` shows the syntax rather than linking anywhere, and
+// matching it swallowed a rule stated on the same line.
+//
+// Not handled, deliberately: a bullet that links elsewhere and also states a
+// rule for this file. Telling those apart means reading the sentence to decide
+// whose rule it is, and every attempt in this file to decide a document's
+// nature from its wording has been reverted. Missing that rule is quiet; the
+// index false positive was not.
 const LINKS_ELSEWHERE = /^\s*(?:[-*+]|\d+[.)])\s+.*\[[^\]]*\]\(\s*(?!#)[^)]+\)/;
 
 function describesAnotherDocument(line) {
-  return LINKS_ELSEWHERE.test(line);
+  return LINKS_ELSEWHERE.test(withoutCodeSpans(line));
 }
 
 // The only two places that decide what a line does about a rule.
@@ -607,11 +621,7 @@ function describesAnotherDocument(line) {
 //
 // Why the two normalise differently is the whole point and is not an
 // oversight. See withoutCodeSpans and withoutBackticks.
-//
-// statesRule carries a third question, and describesAnotherDocument below is
-// where it is answered: whose rule is this.
 function statesRule(rule, line) {
-  if (describesAnotherDocument(line)) return false;
   return rule.states.test(withoutBackticks(line));
 }
 
@@ -650,6 +660,10 @@ function ruleLines(rule, text) {
 
   lines.forEach((line, i) => {
     if (inExample[i]) return;
+    // Whose document the line is about is asked before what it does about the
+    // rule, and answering it once here is what keeps the two halves from
+    // disagreeing. See describesAnotherDocument.
+    if (describesAnotherDocument(line)) return;
     if (statesRule(rule, line)) { statedAt.push(i + 1); return; }
     if (breaksRule(rule, line)) breaches.push(i + 1);
   });

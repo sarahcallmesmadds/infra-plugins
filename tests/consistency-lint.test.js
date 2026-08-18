@@ -596,6 +596,44 @@ check('a link into this same document is not somewhere else', () => {
     'an anchor link was treated as pointing at another document');
 });
 
+check('index entries are not breaches either, when another line does state the rule', () => {
+  // Skipping only the rule test is half a fix. The file below states the rule
+  // in prose, so the statement is found somewhere else, and the two index
+  // separators then get reported as breaking it. They are that index format's
+  // punctuation, and reporting them is the same false finding with a different
+  // sentence on it.
+  const withIndex = [
+    '# House rules',
+    '',
+    'No em dashes in this document.',
+    '',
+    '- [Handoff](HANDOFF.md) — where the live threads are',
+    '- [Hard rules](hard-rules.md) — never touch the mailbox',
+    '',
+  ].join('\n');
+  assert.deepStrictEqual(brokenOwnRule(withIndex), [],
+    'an index separator was reported as breaking a rule stated elsewhere in the file');
+});
+
+check('link syntax shown in a code span does not swallow a rule on the same line', () => {
+  // Every other predicate here reads past code spans, because showing a thing
+  // is not using it. Without that, the bullet below looks like an index entry
+  // and the rule it plainly states is never found.
+  const showsSyntax = '# Rules\n\n- No em dashes, write links as `[Title](file.md)`.\n\nIt ran — and finished.\n';
+  const found = brokenOwnRule(showsSyntax);
+  assert.strictEqual(found.length, 1, 'a rule stated beside a code span link was missed');
+  assert.deepStrictEqual(found[0].lines, [5], 'the breach line moved');
+});
+
+check('a prose sentence containing a link still states the file\'s own rule', () => {
+  // The exclusion is scoped to list items on purpose, and this is what pins
+  // that. An implementation that skipped any line holding a link would pass
+  // the three cases above and fail this one.
+  const prose = '# Rules\n\nSee [style](style.md). No em dashes here.\n\nIt ran — and finished.\n';
+  assert.strictEqual(brokenOwnRule(prose).length, 1,
+    'a link in ordinary prose was treated as an index entry');
+});
+
 check('adding an example does not re-report an untouched line', () => {
   // The seventh review finding, at the level it was reported. A file states the
   // rule and already breaks it on line 5. The edit appends a fenced example,
