@@ -64,7 +64,7 @@
       "name": "slop-check",
       "source": "./plugins/slop-check",
       "description": "Catch the habits that mean nobody edited it, and rewrite an answer that did not land. Blocks em dashes and choppy sentence runs in the assistant's own writing in both Claude Code and Codex, checks any draft, document, pull request, chart or spec for the signs it shipped unreviewed, and reshapes a confusing answer around what you have to do.",
-      "version": "0.5.1",
+      "version": "0.5.2",
       "author": {
         "name": "Sarah Madden"
       },

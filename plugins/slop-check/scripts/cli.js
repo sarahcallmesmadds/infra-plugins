@@ -207,10 +207,30 @@ function formatTechnical(result, kind) {
 
   // Default: both halves. One skill runs this against anything, and whichever
   // half is irrelevant reports nothing rather than being wrong.
+  //
+  // That second sentence was a comment describing an intention the code did not
+  // carry out. The technical half printed unconditionally, so a LinkedIn draft
+  // came back with a heading calling it a spec, a verdict on whether it had been
+  // reviewed, and three closing lines answering a question nobody had asked. A
+  // heading plus "nothing worth flagging" is not reporting nothing, it is
+  // reporting at length that there is nothing to report.
+  //
+  // Silence is conditional on there being no findings, not on the guessed kind.
+  // Kind is a label here: `checkTechnical` deliberately runs every group over
+  // every input, so gating on it would rebuild the bug its own comment records.
+  //
+  // An explicit `--technical` prints either way, above. Asking for a half and
+  // getting silence is its own failure, and that caller asked.
   const prose = checkAll(text, config);
   const technical = checkTechnical(text, kind);
 
-  process.stdout.write(formatReport(prose) + '\n\n');
-  process.stdout.write('-'.repeat(60) + '\n\n');
-  process.stdout.write(formatTechnical(technical, kind) + '\n');
+  process.stdout.write(formatReport(prose) + '\n');
+
+  const technicalHasSomethingToSay =
+    technical.hard.length > 0 || technical.soft.length > 0 || technical.over.length > 0;
+
+  if (technicalHasSomethingToSay) {
+    process.stdout.write('\n' + '-'.repeat(60) + '\n\n');
+    process.stdout.write(formatTechnical(technical, kind) + '\n');
+  }
 })();

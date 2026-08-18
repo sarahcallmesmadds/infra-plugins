@@ -16,7 +16,7 @@ const { execFileSync } = require('child_process');
 
 const base = path.join(__dirname, '..', 'plugins', 'slop-check', 'scripts');
 const { checkHard, checkAll } = require(path.join(base, 'tells.js'));
-const { checkCode, checkData, checkSpec, checkTechnical, checkOverbuilt, checkOverplanned } = require(path.join(base, 'technical.js'));
+const { checkCode, checkData, checkSpec, checkTechnical, checkOverbuilt, checkOverplanned, markerDensity, codeShare } = require(path.join(base, 'technical.js'));
 const simpleSkill = fs.readFileSync(path.join(__dirname, '..', 'plugins', 'slop-check', 'skills', 'say-it-simply', 'SKILL.md'), 'utf8');
 
 const EM = String.fromCharCode(0x2014);
@@ -109,6 +109,335 @@ check('a plan that says what it is NOT doing is not',
 check('handing back the reader their own context is caught',
   checkOverplanned('As you mentioned, this is manual. To recap, it is slow.')
     .some((f) => f.name === 'restates-what-you-already-said'), true);
+
+// The document checks used to fire on writing that was never a document.
+//
+// Both of these are absence checks, and an absence is only a finding where the
+// thing was expected. One qualifying word was enough to make ordinary prose
+// count as a proposal, and "build" is the commonest word in writing about making
+// anything. A post ran through the skill came back reporting that it named no
+// owner and declared no cut line, neither of which a post has.
+//
+// The positive rows below matter more than the negative ones here. A guard added
+// to stop a false positive is one edit away from silencing the real finding, and
+// the shape it protects, a plan written entirely in the language of doing the
+// work rather than in planning vocabulary, is the one a vocabulary test misses.
+console.log('\ndocument checks stay off writing that is not a document');
+const POST = 'Six months ago I stopped writing my own status updates by hand. Not because '
+  + 'I got lazy, but because every update I wrote was answering a question nobody had '
+  + 'asked. I would spend forty minutes explaining what I had done, and the person '
+  + 'reading it wanted one thing, which was to know whether they had to do anything. '
+  + 'So I changed the shape of them. Each one now opens with the action, or with a '
+  + 'plain sentence saying no action is needed, and the explanation goes underneath '
+  + 'where the people who want it can find it. Replies went up rather than down, '
+  + 'which surprised me. What I am going to build next is a small template for it, '
+  + 'because I keep rewriting the same shape by hand every week. The part I did not '
+  + 'expect was how much easier the writing got once the first line had to carry the '
+  + 'whole point, since there is nowhere to hide a sentence you have not thought '
+  + 'through. If you write these for a living, take the last one you sent and move '
+  + 'the ask to the top, then read both versions out loud and listen to which one '
+  + 'sounds like it was written by somebody who knew what they wanted.';
+check('a post is longer than the threshold',
+  POST.length > 800, true);
+check('a post is not reported as an unowned document',
+  checkSpec(POST).some((f) => f.name === 'no-owner-and-no-date'), false);
+check('a post is not reported as a proposal with no cut line',
+  checkOverplanned(POST).some((f) => f.name === 'never-says-what-it-is-not-doing'), false);
+// Parenthesised on purpose. Written without the brackets, `.repeat` binds to the
+// second literal alone, and the result lands at 468 characters, under the 700 the
+// check requires. The row then passed against the code it was written to catch,
+// and passed for a reason that had nothing to do with the fix.
+const ONE_MARKER = ('I want to build something better than the thing we have now, and I '
+  + 'keep coming back to why that turns out to be harder than it sounds. ').repeat(6);
+check('the one-marker fixture is past the length threshold',
+  ONE_MARKER.length > 700, true);
+check('one mention of building something is not a proposal',
+  checkOverplanned(ONE_MARKER).some((f) => f.name === 'never-says-what-it-is-not-doing'), false);
+
+const PLAN = '# Migration to the new billing service\n\n'
+  + 'Scope covers the subscription records, the invoice generator and the dunning '
+  + 'emails. Requirements are that no customer sees a gap in service and that every '
+  + 'historical invoice stays retrievable at the address it already has. The timeline '
+  + 'runs across three regions, each getting a week of dual running before the old '
+  + 'path is switched off. Stakeholders in support get a briefing the week before '
+  + 'their own region moves. Success criteria are that the error rate stays where it '
+  + 'is today and that support volume does not rise above its current weekly mean. '
+  + 'The reconciliation report runs nightly against both systems and lists every '
+  + 'account whose totals disagree, and that report is what tells us whether a region '
+  + 'is safe to cut over, so it lands before the first region moves rather than after '
+  + 'it. Anything touching tax calculation is held back until the three regions are '
+  + 'through, because the rules differ per region and getting one wrong is a refund '
+  + 'and an apology rather than a retry.';
+check('a plan document is still asked who owns it',
+  checkSpec(PLAN).some((f) => f.name === 'no-owner-and-no-date'), true);
+check('a proposal written without planning vocabulary is still asked too',
+  checkSpec('We will build the thing. The plan is to implement it across the team. '.repeat(12))
+    .some((f) => f.name === 'no-owner-and-no-date'), true);
+check('a document that names its owner is not asked twice',
+  checkSpec(`Owner: the billing team\n\n${PLAN}`)
+    .some((f) => f.name === 'no-owner-and-no-date'), false);
+
+// Devin review round 1 on #137. Counting two distinct markers was wrong in both
+// directions, and these rows pin both directions.
+//
+// Too quiet: a document that leans on one marker over and over is proposing work
+// as plainly as one that uses two different words once each. Counting distinct
+// words cannot see repetition at all.
+//
+// Too loud: "build" and "approach" are two distinct markers and both turn up in
+// any ordinary essay about product work, so two was still enough to flag writing
+// that proposes nothing. That one was not in the review. It was found by
+// measuring marker density across the fixtures while choosing the threshold the
+// review's first two findings needed.
+console.log('\none marker leaned on is a plan; two ordinary words are not');
+const REPEATED_PROPOSAL = 'We will fix the billing service. '.repeat(50);
+check('the repeated-proposal fixture is long enough to reach both checks',
+  REPEATED_PROPOSAL.length > 800, true);
+check('a document that says "we will" fifty times is asked who owns it',
+  checkSpec(REPEATED_PROPOSAL).some((f) => f.name === 'no-owner-and-no-date'), true);
+check('...and is asked what it is not doing',
+  checkOverplanned(REPEATED_PROPOSAL)
+    .some((f) => f.name === 'never-says-what-it-is-not-doing'), true);
+
+const REPEATED_SCOPE = 'Scope is limited. '.repeat(60);
+check('the repeated-scope fixture is long enough',
+  REPEATED_SCOPE.length > 800, true);
+check('a scope statement repeated sixty times is asked who owns it',
+  checkSpec(REPEATED_SCOPE).some((f) => f.name === 'no-owner-and-no-date'), true);
+
+const PRODUCT_ESSAY = ('I spent four years building the wrong thing before I understood why. '
+  + 'Every time we shipped, I would build the feature somebody asked for loudest, and '
+  + 'the approach felt responsive at the time. What I could not see was that each build '
+  + 'made the next one harder, because none of them shared a shape. The team that took '
+  + 'over stopped building for two months and wrote down what the product refused to do. '
+  + 'That list was shorter than any roadmap I had made and it decided more. If I were '
+  + 'starting again I would build that list first and treat the approach as the thing to '
+  + 'get right rather than the speed. ').repeat(2);
+check('the essay fixture is long enough to reach both checks',
+  PRODUCT_ESSAY.length > 800, true);
+check('an essay using "build" and "approach" is not an unowned plan',
+  checkSpec(PRODUCT_ESSAY).some((f) => f.name === 'no-owner-and-no-date'), false);
+check('...and is not a proposal with no cut line',
+  checkOverplanned(PRODUCT_ESSAY)
+    .some((f) => f.name === 'never-says-what-it-is-not-doing'), false);
+
+// Singular and plural of one word are one marker. Without normalising, "scope"
+// and "scopes" counted as two and carried a document over the threshold on the
+// strength of an inflection rather than on anything it said.
+const SPARSE_INFLECTION = 'The scope of the change is small. '
+  + ('Everything else here is ordinary narrative prose that runs on at some length '
+    + 'without proposing anything, because the point of it is to be long rather than '
+    + 'to be a plan. ').repeat(6)
+  + 'Scopes of this kind are common. ';
+check('the inflection fixture is long enough, and thin on markers',
+  SPARSE_INFLECTION.length > 800, true);
+check('"scope" and "scopes" are one marker, not two',
+  checkSpec(SPARSE_INFLECTION).some((f) => f.name === 'no-owner-and-no-date'), false);
+
+// Devin review round 2 on #137. Three of these are what the round found, and each
+// one is a case no count of distinct words could have got right.
+//
+// The proposal below is the one that broke counting for good. It uses two markers,
+// "we will" and "build", at a low density, which is exactly the shape of the essay
+// fixture above that must stay quiet. Two inputs, same marker count, opposite
+// answers, so the count is not the thing that separates them. What separates them
+// is that "we will" commits somebody and "build" only describes work.
+console.log('\ncommitment language separates a proposal from a retrospective');
+const SHORT_PLAN = 'We will build the billing service. '
+  + 'The first phase is to build the data model and the second is to build the API. '
+  + 'We will write tests as we build. We will also build a small admin panel. '
+  + 'The work will take several weeks and we will review it daily. '
+  + ('This paragraph carries ordinary context that is not planning language itself, '
+    + 'so the marker count stays low while the document passes the length gate. ').repeat(8);
+check('the short-plan fixture is long enough to reach both checks',
+  SHORT_PLAN.length > 800, true);
+check('a plain proposal using only "we will" and "build" is asked who owns it',
+  checkSpec(SHORT_PLAN).some((f) => f.name === 'no-owner-and-no-date'), true);
+check('...and is asked what it is not doing',
+  checkOverplanned(SHORT_PLAN)
+    .some((f) => f.name === 'never-says-what-it-is-not-doing'), true);
+check('the essay it shares a marker count with still stays quiet',
+  checkSpec(PRODUCT_ESSAY).some((f) => f.name === 'no-owner-and-no-date'), false);
+
+// A list is not a document. Density alone said this was the densest plan it had
+// ever seen, which is what a ceiling with no floor does: 150 headings reading
+// "Scope" run one marker per 6 characters, and prose cannot do that.
+const SCOPE_LIST = Array.from({ length: 150 }, () => 'Scope').join('\n');
+check('the heading-list fixture is long enough to reach the check',
+  SCOPE_LIST.length > 800, true);
+check('a list of 150 headings is not an unowned document',
+  checkSpec(SCOPE_LIST).some((f) => f.name === 'no-owner-and-no-date'), false);
+
+// Source code, which checkSpec has always excluded and checkOverplanned did not.
+// The same question about the same kind of document, answered about documents by
+// only one of the two.
+const CODE_WITH_COMMENTS = 'function go() {\n'
+  + Array.from({ length: 60 }, (_, i) => `  // we will handle step ${i}`).join('\n')
+  + '\n}';
+check('the commented-code fixture is long enough to reach the check',
+  CODE_WITH_COMMENTS.length > 700, true);
+check('code carrying sixty "we will" comments is not a proposal',
+  checkOverplanned(CODE_WITH_COMMENTS)
+    .some((f) => f.name === 'never-says-what-it-is-not-doing'), false);
+check('...and the same text is not reported as an unowned document either',
+  checkSpec(CODE_WITH_COMMENTS).some((f) => f.name === 'no-owner-and-no-date'), false);
+
+// Devin review round 3 on #137.
+//
+// "We should" is not a commitment, and putting it with "we will" brought the
+// original bug back for a fourth time: an opinion post opening "We should stop
+// pretending" and saying "build" once further down scored three and was reported
+// as an unowned plan. The first row is the reviewer's own input and the second is
+// a realistic post, kept separate because one is the reported case and the other
+// is the shape it would actually arrive in.
+console.log('\n"we should" is an opinion, not a commitment');
+const SHOULD_POST = ('We should not overstate how much a small feature can matter. '
+  + 'People often say they want to build something, but the work is always harder. ').repeat(12);
+check('the reviewer fixture clears both gates',
+  SHOULD_POST.length > 800, true);
+check('"we should" plus "build" is not an unowned plan',
+  checkSpec(SHOULD_POST).some((f) => f.name === 'no-owner-and-no-date'), false);
+check('...and is not a proposal with no cut line',
+  checkOverplanned(SHOULD_POST)
+    .some((f) => f.name === 'never-says-what-it-is-not-doing'), false);
+
+const OPINION_POST = 'We should stop pretending that the office is what made those teams work. '
+  + ('I have watched the same argument play out in four companies now, and the part nobody '
+    + 'wants to say out loud is that the good years had nothing to do with the building. They '
+    + 'had to do with who was in the room and whether anybody felt able to disagree with them. '
+    + 'You cannot build that back by insisting on attendance, and the attempt tends to drive '
+    + 'out exactly the people who made it work in the first place. ').repeat(2);
+check('the opinion-post fixture clears both gates',
+  OPINION_POST.length > 800, true);
+check('an opinion post is not an unowned plan',
+  checkSpec(OPINION_POST).some((f) => f.name === 'no-owner-and-no-date'), false);
+check('...and "we will" is still a commitment where it appears',
+  checkSpec(`We will ${OPINION_POST.slice(3)}`)
+    .some((f) => f.name === 'no-owner-and-no-date'), true);
+
+// A document that shows a code sample is still a document. One pasted line used to
+// make the whole thing source and silence both checks, while a real source file
+// must keep being skipped. Only a proportion separates those two.
+console.log('\na document showing code is still a document');
+const PROPOSAL = 'We will build the thing. The plan is to implement it across the team. '.repeat(12);
+check('the proposal fires before any code is added to it',
+  checkSpec(PROPOSAL).some((f) => f.name === 'no-owner-and-no-date'), true);
+check('one pasted code line does not turn a proposal into source',
+  checkSpec(`${PROPOSAL}\nfunction go() { return 1; }\n`)
+    .some((f) => f.name === 'no-owner-and-no-date'), true);
+check('...nor does a fenced block',
+  checkSpec(`${PROPOSAL}\n\`\`\`\nfunction go() { return 1; }\nconst x = 2;\n\`\`\`\n`)
+    .some((f) => f.name === 'no-owner-and-no-date'), true);
+check('...and the cut-line check agrees with the owner check',
+  checkOverplanned(`${PROPOSAL}\nfunction go() { return 1; }\n`)
+    .some((f) => f.name === 'never-says-what-it-is-not-doing'), true);
+
+// Both bounds of that proportion, pinned against real files in this repository
+// rather than against invented ones. The tighter side is source, so a suite that
+// grows enough prose to drop under the threshold fails here rather than quietly
+// becoming a document that gets asked who owns it.
+const THIS_SUITE = fs.readFileSync(__filename, 'utf8');
+const TECHNICAL_JS = fs.readFileSync(path.join(base, 'technical.js'), 'utf8');
+check('this suite is still read as source, not as a document',
+  codeShare(THIS_SUITE) > 0.30, true);
+check('so is the file it tests',
+  codeShare(TECHNICAL_JS) > 0.30, true);
+check('and neither is reported as an unowned document',
+  checkSpec(THIS_SUITE).concat(checkSpec(TECHNICAL_JS))
+    .some((f) => f.name === 'no-owner-and-no-date'), false);
+check('a proposal carrying one code line is under the source threshold',
+  codeShare(`${PROPOSAL}\nfunction go() { return 1; }\n`) < 0.30, true);
+
+// Codex review on #137, run as a second opinion before a fourth Devin round.
+// It found the one thing three Devin rounds had not: counting a line as code only
+// when it declares, comments or braces misses a source file built from a string
+// table, and the same input on main produced one finding where this produced two.
+console.log('\nsource is recognised by how its lines end, not by what they hold');
+const STRING_TABLE = 'const STEPS = [\n'
+  + Array.from({ length: 40 },
+    (_, i) => `  "We will build step ${i} and the plan is to implement it across the team",`).join('\n')
+  + '\n];\n\nmodule.exports = { STEPS };\n';
+check('a source file built from a string table is read as source',
+  codeShare(STRING_TABLE) > 0.30, true);
+check('...so its planning language is not an unowned document',
+  checkSpec(STRING_TABLE).some((f) => f.name === 'no-owner-and-no-date'), false);
+check('...and not a proposal with no cut line either',
+  checkOverplanned(STRING_TABLE)
+    .some((f) => f.name === 'never-says-what-it-is-not-doing'), false);
+
+// The other direction, which the first fix for the above would have broken.
+// Hard-wrapped prose ends line after line with a comma, so counting a bare comma
+// as code turned a wrapped plan carrying a code sample into source.
+const WRAPPED_PLAN = ('We will build the migration in three passes, one region at a time,\n'
+  + 'so that any problem is cheap to unwind. The plan is to run the smallest\n'
+  + 'region first, and to keep both systems live for a week either side of it,\n'
+  + 'because a reconciliation report is the only thing that tells us whether a\n'
+  + 'region is safe to cut over at all.\n').repeat(4);
+const WRAPPED_WITH_CODE = `${WRAPPED_PLAN}\n\`\`\`\nfunction go() { return 1; }\n\`\`\`\n`;
+check('the wrapped-plan fixture clears the length gate',
+  WRAPPED_WITH_CODE.length > 800, true);
+check('a hard-wrapped plan showing a code sample is still a document',
+  codeShare(WRAPPED_WITH_CODE) < 0.30, true);
+check('...and is still asked who owns it',
+  checkSpec(WRAPPED_WITH_CODE).some((f) => f.name === 'no-owner-and-no-date'), true);
+
+// Devin round 5. The measure that fixed the string table broke markdown, because
+// `*` opens a JSDoc continuation line and also every markdown bullet and every
+// `**Bold.**` paragraph. The same plan, changing only the bullet character, went
+// from a document to source and lost both checks. Written as one fixture rendered
+// three ways so that nothing but the bullet differs between the rows.
+console.log('\na plan is a plan whichever bullet it is written with');
+// No cut-line word anywhere in this fixture, deliberately. The first draft said
+// "the smallest one first", which is one, so the cut-line row stayed quiet for
+// every bullet style and would have passed as evidence about bullets.
+const PLAN_BODY = 'We will build the reconciliation in three passes. The plan is to run it\n'
+  + 'region by region, and the deliverable is a report naming each disagreement.\n\n'
+  + '```js\nfunction reconcile(index, disk) { return index.filter((e) => !disk.has(e)); }\n```\n\n';
+const planWith = (lead) => PLAN_BODY + Array.from({ length: 14 },
+  (_, i) => `${lead} Step ${i + 1}: we should check the entry and implement the comparison.`).join('\n');
+const DASH_PLAN = planWith('-');
+const STAR_PLAN = planWith('*');
+const BOLD_PLAN = PLAN_BODY + Array.from({ length: 14 },
+  (_, i) => `**Point ${i + 1}.** We should check the entry and implement the comparison here.`).join('\n');
+
+check('the bullet fixtures clear the length gate',
+  Math.min(DASH_PLAN.length, STAR_PLAN.length, BOLD_PLAN.length) > 800, true);
+check('the dash-bullet plan is a document, as it always was',
+  codeShare(DASH_PLAN) < 0.30, true);
+check('the star-bullet plan is a document too',
+  codeShare(STAR_PLAN) < 0.30, true);
+check('...and so is the one whose paragraphs open in bold',
+  codeShare(BOLD_PLAN) < 0.30, true);
+check('the star-bullet plan is still asked who owns it',
+  checkSpec(STAR_PLAN).some((f) => f.name === 'no-owner-and-no-date'), true);
+check('...and the bold-led one is too',
+  checkSpec(BOLD_PLAN).some((f) => f.name === 'no-owner-and-no-date'), true);
+check('the star-bullet plan is still asked what it is not doing',
+  checkOverplanned(STAR_PLAN).some((f) => f.name === 'never-says-what-it-is-not-doing'), true);
+// The direction the fix could have broken. Dropping the continuation line takes
+// characters off every source file carrying a block comment, so the file with the
+// most of them has to be checked, not assumed. This one passes either way and is
+// here to fail if a later change to the measure leans on `*` again.
+check('a source file behind a block comment is still source',
+  codeShare('/**\n * Reconcile the index against disk.\n * @param {object[]} index\n'
+    + ' * @param {Set<string>} disk\n * @returns {object[]}\n */\n'
+    + 'function reconcile(index, disk) {\n  return index.filter((e) => !disk.has(e.path));\n}\n'
+    + 'module.exports = { reconcile };\n') > 0.30, true);
+
+// The numbers written into the threshold comments, recomputed here. Two review
+// rounds each caught a figure in a comment that no longer matched the fixture it
+// came from, so the figures are asserted rather than noted.
+console.log('\nthe documented thresholds match the fixtures they came from');
+check('the densest fixture that must stay quiet is above the density ceiling',
+  markerDensity(PRODUCT_ESSAY).proposal > 60, true);
+check('...and it is the essay, at one marker per 119 characters',
+  Math.round(markerDensity(PRODUCT_ESSAY).proposal), 119);
+check('the repeated proposal is inside the band, at one per 33',
+  Math.round(markerDensity(REPEATED_PROPOSAL).proposal), 33);
+check('the repeated scope statement is inside the band, at one per 18',
+  Math.round(markerDensity(REPEATED_SCOPE).planning), 18);
+check('the heading list is below the floor, at one per 6',
+  Math.round(markerDensity(SCOPE_LIST).planning), 6);
 
 console.log('\nthe two readings are separate');
 {
@@ -612,6 +941,39 @@ check('a real hard rule still reads BROKEN',
 // author genuinely is the person whose rules these are.
 check('--hard-only still reports the house rule',
   runCli(['--hard-only'], BANNED).includes('phrases ruled out for this author'), true);
+
+// SKILL.md: "By default it runs both halves. Whichever half does not apply
+// reports nothing, which is why one command handles a LinkedIn draft and a pull
+// request equally." That was a promise the code did not keep. The technical half
+// printed unconditionally, so a post came back with a heading calling it a spec,
+// a verdict on whether it had been reviewed and a closing explanation of what
+// the check does not claim.
+//
+// Silence here is conditional on there being no findings, never on the guessed
+// kind. `checkTechnical` runs every group over every input on purpose, and the
+// comment in it records what happened the last time a kind decided what ran.
+console.log('\nthe half that does not apply prints nothing');
+{
+  const postReport = runCli([], POST);
+  check('a post gets no technical block',
+    postReport.includes('Technical check'), false);
+  check('and no separator rule above the one it would have had',
+    postReport.includes('-'.repeat(60)), false);
+  check('the prose half is still reported in full',
+    postReport.includes('Little sign of machine-writing habits'), true);
+
+  const planReport = runCli([], PLAN);
+  check('a document with real findings still gets its technical block',
+    planReport.includes('Technical check'), true);
+  check('and the finding itself is still named',
+    planReport.includes('no-owner-and-no-date'), true);
+
+  // Asking for a half and getting silence is its own failure. The caller asked.
+  check('an explicit --technical prints even with nothing to say',
+    runCli(['--technical'], POST).includes('Technical check'), true);
+  check('...and says so rather than printing an empty heading',
+    runCli(['--technical'], POST).includes('Nothing else worth flagging'), true);
+}
 
 console.log(`\n${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);
