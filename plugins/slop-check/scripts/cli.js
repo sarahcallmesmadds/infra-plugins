@@ -183,6 +183,7 @@ function formatTechnical(result, kind) {
   const command = process.argv[2];
   if (command !== 'check') {
     process.stderr.write('usage: cli.js check [--file <path>] [--hard-only] [--technical [code|data|spec]]\n');
+    process.stderr.write('       --technical spec also runs the owner, date and cut-line checks\n');
     process.exit(2);
   }
 
@@ -206,8 +207,27 @@ function formatTechnical(result, kind) {
 
   const config = loadConfig();
 
+  // An unrecognised kind is refused rather than quietly guessed.
+  //
+  // Round 1 of this review fixed `--technical=spec` matching no flag by matching
+  // the equals spelling, and the round 2 review found the fix had reproduced the
+  // fault in a new shape: `--technical=` and `--technical==spec` now matched, and
+  // then failed the kind comparison silently, running without the spec checks and
+  // without even the reminder that says they did not run. Patching one spelling
+  // at a time leaves the next spelling, so the class is closed here instead. A
+  // value that is not one of the three is a typo, and a typo about which checks
+  // to run must not read as a clean report.
+  //
+  // A bare `--technical` is not a typo. It means the technical half with the kind
+  // guessed, which is the documented behaviour, so `null` stays valid.
+  const KINDS = ['code', 'data', 'spec'];
   const asked = argValue('--technical');
-  const kind = ['code', 'data', 'spec'].includes(asked) ? asked : guessKind(file, text);
+  if (asked !== null && !KINDS.includes(asked)) {
+    process.stderr.write(`unrecognised kind for --technical: ${JSON.stringify(asked)}\n`);
+    process.stderr.write(`expected one of ${KINDS.join(', ')}, or --technical on its own\n`);
+    process.exit(2);
+  }
+  const kind = KINDS.includes(asked) ? asked : guessKind(file, text);
 
   // The two absence checks run here and nowhere else. `--technical spec` is a
   // person saying "this is a spec", which is the only thing that ever answered

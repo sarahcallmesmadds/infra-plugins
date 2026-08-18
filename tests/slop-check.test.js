@@ -871,8 +871,25 @@ console.log('\nthe half that does not apply prints nothing');
   // `--file` is where the swallow is observable, because the value is opened.
   check('a following flag is not swallowed as a value',
     runCliAllowingFailure(['--file', '--prose'], PLAN).includes('cannot read --prose'), false);
-  check('...and the text on stdin is checked instead',
+  // "Hard rules" appears on a default run too, so asserting it proved nothing
+  // about the file being rejected. The prose branch exits before the reminder,
+  // and the reminder is on every default run, so its absence is what separates
+  // them.
+  check('...and the prose branch runs on stdin rather than the default path',
+    runCliAllowingFailure(['--file', '--prose'], PLAN).includes('Two checks did not run'), false);
+  check('...having actually checked the text it was given',
     runCliAllowingFailure(['--file', '--prose'], PLAN).includes('Hard rules'), true);
+
+  // An unrecognised kind is refused, not guessed. Every one of these matched the
+  // flag and then failed the kind comparison in silence before this.
+  for (const bad of ['--technical=', '--technical==spec', '--technical=bogus']) {
+    check(`${bad} is refused rather than silently ignored`,
+      runCliAllowingFailure([bad], PLAN).includes('unrecognised kind for --technical'), true);
+    check(`...and ${bad} does not print a report`,
+      runCliAllowingFailure([bad], PLAN).includes('Hard rules'), false);
+  }
+  check('a bare --technical is still valid, not a typo',
+    runCli(['--technical'], PLAN).includes('Technical check'), true);
 
   // Asking for a half and getting silence is its own failure. The caller asked.
   check('an explicit --technical prints even with nothing to say',

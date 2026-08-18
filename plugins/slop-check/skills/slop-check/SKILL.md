@@ -30,8 +30,9 @@ By default it runs both halves, and the technical half prints only when it holds
 a finding, which is why one command handles a LinkedIn draft and a pull request
 equally.
 
-One thing does print every time: two lines naming the checks that did not run.
-That is deliberate and is described below.
+A default run also ends with two lines naming the checks that did not run. That
+is deliberate and is described below. It is the default run only: `--prose`,
+`--hard-only` and an explicit `--technical` all end before it.
 
 ### Ask before running the spec checks
 
