@@ -628,20 +628,51 @@ check('the summary does not report work that did not happen', () => {
 // version of this one.
 check('the new-items bucket defaults to adding nothing', () => {
   // Normalised first. The paragraph match below ends on a blank line, which is
-  // two newlines and is three characters under CRLF, so a file saved with
-  // Windows endings would find no paragraph at all and report it as missing.
+  // two newlines and four characters under CRLF, so a file saved with Windows
+  // endings would find no paragraph at all and report it as missing.
   const skill = SKILLS['audit-deps'].replace(/\r\n?/g, '\n');
   // Spacing is not meaning. Everything below compares flattened text.
   const flat = (s) => s.replace(/\s+/g, ' ').trim();
+  // Indentation, not any whitespace. `\s*` spans newlines, so an anchor built
+  // from it is not the line-start anchor the name suggests.
+  const INDENT = '[ \\t]*';
 
-  // Every passage is counted, not just found. A first match is not necessarily
-  // the passage that governs: a correct copy sitting anywhere above the real one
-  // satisfies a comparison against match()[0] while the real one below it says
-  // the opposite. Nothing plants a decoy by accident, but an unrelated section
-  // quoting the draft would do it without meaning to, and either way the check
-  // would be reading a passage nobody runs on.
+  // Which passage governs is settled by where it sits, before anything asks what
+  // it says. Finding it by its opening words anywhere in the file cannot tell the
+  // instruction that governs from a copy of it, and counting the matches does not
+  // help: planting a correct copy earlier and wrapping the real line so it no
+  // longer starts one leaves exactly one match, the copy, and the comparison
+  // passes against text nobody runs while the draft the user reads says
+  // `Default: all.`
+  //
+  // So the draft is located structurally. Step 5 is the section that shows it,
+  // its fenced block is the draft itself, and the instruction paragraph is the
+  // prose under that fence. A decoy has to be inside the real draft to be read,
+  // and one there is not a decoy, it is a second prompt line in the block the
+  // user sees, which the count below refuses.
+  const section = skill.match(/^## Step 5\b[\s\S]*?(?=\n## |(?![\s\S]))/m);
+  assert.ok(
+    section,
+    'audit-deps has no "## Step 5" section, so there is no way to tell which '
+    + 'draft governs. If the step was renamed or renumbered, move this with it'
+  );
+  const step5 = section[0];
+
+  const fenced = step5.match(/^```[\s\S]*?^```/gm) || [];
+  const drafts = fenced.filter((f) => f.includes("Changes I'd make to DEPS.json:"));
+  assert.strictEqual(
+    drafts.length, 1,
+    drafts.length === 0
+      ? 'no fenced block in Step 5 contains "Changes I\'d make to DEPS.json:", so '
+        + 'the draft the user answers cannot be identified'
+      : `${drafts.length} fenced blocks in Step 5 contain "Changes I'd make to `
+        + 'DEPS.json:", so which one the user is shown is ambiguous'
+  );
+  const draft = drafts[0];
+  const belowDraft = step5.slice(step5.indexOf(draft) + draft.length);
+
   const PROMPT_LINE = 'so say which ones you want. all / none / name them. Default: none.';
-  const prompts = skill.match(/^\s*so say which ones you want\..*$/gm) || [];
+  const prompts = draft.match(new RegExp(`^${INDENT}so say which ones you want\\..*$`, 'gm')) || [];
   // Zero matches has two causes and a line matcher cannot tell them apart. A wrap
   // that splits the opening phrase itself leaves nothing to find, and calling
   // that gone sends the reader looking for a deleted line that is on screen in
@@ -651,30 +682,31 @@ check('the new-items bucket defaults to adding nothing', () => {
   //
   // Only the whole sentence is used for that, never a shorter opening. Flattening
   // joins every line to the one after it, so it invents adjacencies that exist
-  // nowhere in the file: a different passage in this same skill wraps as "so say"
-  // then "which ones you want. Nothing was stamped as reviewed", which flattens
-  // into the exact opening phrase of the line being looked for. A short anchor
-  // reports a deleted line as merely wrapped, using evidence assembled out of two
-  // unrelated sentences.
+  // nowhere in the file: a different fenced example in this same step wraps as
+  // "so say" then "which ones you want. Nothing was stamped as reviewed", which
+  // flattens into the exact opening phrase of the line being looked for. Scoping
+  // to the draft leaves that particular neighbour outside, and the reasoning
+  // holds for any other, so the full sentence stays the discriminator.
   //
   // So when the full sentence is absent, both causes stay on the table and the
   // message says so rather than choosing.
+  const flatDraft = flat(draft);
   const flatSkill = flat(skill);
   assert.strictEqual(
     prompts.length, 1,
     prompts.length === 0
-      ? flatSkill.includes(PROMPT_LINE)
-        ? 'no single line in the Step 5 draft matches, and the whole sentence does '
-          + 'appear once the file is flattened. Most likely the line is wrapped '
-          + 'across two, which is worth fixing because it sits in a fenced draft '
-          + 'where the break is what the user is shown. Worth ruling out first: '
-          + 'flattening joins every line to the next, so two neighbouring lines '
-          + 'can read that way without either being the draft line'
-        : 'no single line in the Step 5 draft starts "so say which ones you want.". '
+      ? flatDraft.includes(PROMPT_LINE)
+        ? 'no single line of the Step 5 draft matches, and the whole sentence does '
+          + 'appear once the draft is flattened. That is what a line wrapped across '
+          + 'two looks like, and it is worth fixing either way, because the break '
+          + 'is inside a fenced draft and is what the user is shown. Rule out '
+          + 'first: flattening joins every line to the next, so two neighbouring '
+          + 'lines can read that way without either being the draft line'
+        : 'no single line of the Step 5 draft starts "so say which ones you want.". '
           + 'Either the line is gone, or it has been wrapped across lines and '
           + 'reworded as well, and this cannot tell which from here'
-      : `${prompts.length} lines in audit-deps start "so say which ones you want.". `
-        + 'This check cannot tell which one Step 5 shows the user, so it is not '
+      : `${prompts.length} lines of the Step 5 draft start "so say which ones you `
+        + 'want.". This check cannot tell which one the user answers, so it is not '
         + 'checking anything until there is one'
   );
   assert.strictEqual(
@@ -697,17 +729,21 @@ check('the new-items bucket defaults to adding nothing', () => {
   // alone means the paragraph is unfindable if it is ever the last thing in the
   // file, which reports as the paragraph being missing rather than as the end of
   // the file arriving early.
-  // `\s*` for the same reason the prompt matcher has it. Without it an indented
-  // copy of the correct paragraph, under a numbered step or inside a block quote,
-  // is not found at all and reports as missing.
-  const paragraphs = skill.match(/^\s*For missing entries,[\s\S]*?(?=\n\n|(?![\s\S]))/gm) || [];
+  // Indentation tolerated for the same reason the prompt matcher tolerates it,
+  // so a paragraph under a numbered step is still found, and searched below the
+  // draft rather than across the file, so a copy elsewhere cannot stand in for
+  // the one that governs.
+  const paragraphs = belowDraft.match(
+    new RegExp(`^${INDENT}For missing entries,[\\s\\S]*?(?=\\n\\n|(?![\\s\\S]))`, 'gm')
+  ) || [];
   assert.strictEqual(
     paragraphs.length, 1,
     paragraphs.length === 0
-      ? 'no paragraph starting "For missing entries," was found. Either it is '
-        + 'gone, or a reflow moved that opening phrase off the start of a line'
-      : `${paragraphs.length} paragraphs start "For missing entries,", so this `
-        + 'check cannot tell which one an implementation reads'
+      ? 'no paragraph starting "For missing entries," was found under the Step 5 '
+        + 'draft. Either it is gone, a reflow moved that opening phrase off the '
+        + 'start of a line, or it has moved out of Step 5 entirely'
+      : `${paragraphs.length} paragraphs under the Step 5 draft start "For missing `
+        + 'entries,", so this check cannot tell which one an implementation reads'
   );
   const instruction = flat(paragraphs[0]);
   const claims = [
