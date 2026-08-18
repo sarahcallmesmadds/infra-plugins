@@ -561,6 +561,178 @@ check('the edit test and the file scan ask the same question', () => {
     'the file scan changed its mind about the rule sentence, so the pairing above is now wrong');
 });
 
+// An index names what its entries are about, and that is not the same as
+// stating a rule for itself. Reported 2026-08-09 against MEMORY.md, which is
+// exactly this shape: 30 entries of `- [Title](file.md) — one line about it`,
+// one of them naming the no-em-dashes rule, and the format's own separator on
+// 45 of 66 lines. It fired on every edit and always would have.
+check('a rule named in a list item that links elsewhere is that document\'s rule, not this one\'s', () => {
+  const index = [
+    '# Index',
+    '',
+    '- [Handoff](HANDOFF.md) — where the live threads are',
+    '- [Writing style rules](writing-style-rules.md) — no em dashes, plain English',
+    '- [Hard rules](hard-rules.md) — never touch her email',
+    '',
+  ].join('\n');
+  assert.deepStrictEqual(brokenOwnRule(index), [],
+    'an index entry describing another document was read as a rule binding the index');
+});
+
+check('a rule in a plain list item is still this file\'s own rule', () => {
+  // The exclusion above turns on the link, not on the list item. Without that,
+  // any rule written as a bullet would stop counting, which is how most rules
+  // files write them.
+  const rules = '# Rules\n\n- No em dashes in prose.\n\nIt ran — and finished.\n';
+  const found = brokenOwnRule(rules);
+  assert.strictEqual(found.length, 1, 'a bulleted rule with no link stopped being a rule');
+  assert.deepStrictEqual(found[0].lines, [5], 'the breach line moved');
+});
+
+check('a link into this same document is not somewhere else', () => {
+  // An anchor points into the file stating it, so the rule is still its own.
+  const anchored = '# Rules\n\n- [See below](#style) no em dashes here.\n\nIt ran — and finished.\n';
+  assert.strictEqual(brokenOwnRule(anchored).length, 1,
+    'an anchor link was treated as pointing at another document');
+});
+
+check('index entries are not breaches either, when another line does state the rule', () => {
+  // Skipping only the rule test is half a fix. The file below states the rule
+  // in prose, so the statement is found somewhere else, and the two index
+  // separators then get reported as breaking it. They are that index format's
+  // punctuation, and reporting them is the same false finding with a different
+  // sentence on it.
+  const withIndex = [
+    '# House rules',
+    '',
+    'No em dashes in this document.',
+    '',
+    '- [Handoff](HANDOFF.md) — where the live threads are',
+    '- [Hard rules](hard-rules.md) — never touch the mailbox',
+    '',
+  ].join('\n');
+  assert.deepStrictEqual(brokenOwnRule(withIndex), [],
+    'an index separator was reported as breaking a rule stated elsewhere in the file');
+});
+
+check('link syntax shown in a code span does not swallow a rule on the same line', () => {
+  // Every other predicate here reads past code spans, because showing a thing
+  // is not using it. Without that, the bullet below looks like an index entry
+  // and the rule it plainly states is never found.
+  const showsSyntax = '# Rules\n\n- No em dashes, write links as `[Title](file.md)`.\n\nIt ran — and finished.\n';
+  const found = brokenOwnRule(showsSyntax);
+  assert.strictEqual(found.length, 1, 'a rule stated beside a code span link was missed');
+  assert.deepStrictEqual(found[0].lines, [5], 'the breach line moved');
+});
+
+check('an index entry does not state the rule either, so a breach elsewhere goes unreported', () => {
+  // The other half of the pair, and the only case that pins it. Every test
+  // above would still pass if the line were skipped before the breach test
+  // alone and still counted as a statement, because an index on its own has no
+  // other breach to report. Here it does: the prose line is a genuine em dash.
+  // If the entry counted as stating the rule, that line would be reported
+  // against a rule this document never set.
+  const indexPlusProse = [
+    '# Index',
+    '',
+    '- [Writing style rules](writing-style-rules.md) — no em dashes, plain English',
+    '',
+    'It ran — and finished.',
+    '',
+  ].join('\n');
+  assert.deepStrictEqual(brokenOwnRule(indexPlusProse), [],
+    'an index entry was counted as setting a rule for the file listing it');
+});
+
+check('an anchor is still an anchor with space or angle brackets around it', () => {
+  // The lookahead has to cover the whole leading run. Checking one position
+  // inside it lets the whitespace backtrack until the test passes, so `(  #x)`
+  // read as a link somewhere else and the rule on that line was dropped with
+  // nothing said. `(<#x>)` went the same way.
+  for (const target of ['#style', '  #style', '<#style>']) {
+    const text = `# Rules\n\n- [See below](${target}) no em dashes here.\n\nIt ran — and finished.\n`;
+    assert.strictEqual(brokenOwnRule(text).length, 1,
+      `a same-document anchor written as (${target}) was treated as pointing elsewhere`);
+  }
+});
+
+check('angle brackets around a filename do not make it this document', () => {
+  // The fix for the case above read every `<` as the start of an anchor.
+  // Markdown uses that wrapper for ordinary targets too, which is the whole
+  // reason it exists, so an index written that way went back to the report this
+  // change removes. The `#` is what decides, not the bracket.
+  // The prose line is load-bearing. brokenOwnRule wants a statement and a
+  // breach before it says anything, and every list line here is skipped, so
+  // without a breach that is never skipped the pair cannot complete and the
+  // case passes whether the entry was excluded or not.
+  for (const target of ['<file.md>', '<my file.md>']) {
+    const index = [
+      '# Index',
+      '',
+      `- [Writing style rules](${target}) — no em dashes, plain English`,
+      '',
+      'It ran — and finished.',
+      '',
+    ].join('\n');
+    assert.deepStrictEqual(brokenOwnRule(index), [],
+      `an index entry written as (${target}) was read as this document's own rule`);
+  }
+});
+
+check('the other two shapes an index entry takes are recognised too', () => {
+  // A reference-style entry and a label with nested brackets are both index
+  // entries, and both reproduced the original report until the pattern was
+  // rebuilt from named parts. Each case carries a prose breach that is never
+  // skipped, because a fixture whose every line is skipped completes no pair
+  // and passes whatever the code does.
+  const shapes = {
+    'reference style': '- [Writing style rules][style] — no em dashes, plain English',
+    'nested brackets in the label': '- [A [nested] title](writing-style-rules.md) — no em dashes',
+  };
+  for (const [what, entry] of Object.entries(shapes)) {
+    const text = `# Index\n\n${entry}\n\nIt ran — and finished.\n`;
+    assert.deepStrictEqual(brokenOwnRule(text), [],
+      `an index entry using ${what} was read as this document's own rule`);
+  }
+});
+
+check('two bracketed asides with a space between them are not a link', () => {
+  // The reference shape needs the brackets touching. Allowing a gap turns any
+  // sentence carrying two bracketed asides into an index entry, which would
+  // stop the rule on it counting.
+  const aside = '# Rules\n\n- Foo [a] [b] no em dashes here.\n\nIt ran — and finished.\n';
+  assert.strictEqual(brokenOwnRule(aside).length, 1,
+    'a bullet with two spaced brackets was treated as a reference-style link');
+});
+
+check('an image in a list item is not a link to another document', () => {
+  // The bracket has to be the link's, not an image's. The `.*` ahead of it
+  // swallowed the `!`, so a captioned screenshot was read as an index entry and
+  // its caption stopped being checked.
+  const caption = '# Rules\n\nNo em dashes.\n\n- ![a screenshot](shot.png) — the caption\n';
+  assert.strictEqual(brokenOwnRule(caption).length, 1,
+    'an image caption was skipped as though it were an index entry');
+});
+
+check('adding an index entry is not adding a rule', () => {
+  // ruleChange asks the same two questions through ruleLines, so it inherits
+  // the exclusion. Pinned separately because nothing else here would notice if
+  // the two ever stopped sharing a path.
+  assert.deepStrictEqual(
+    ruleChange('em-dash', '# Index\n', '# Index\n\n- [Style](style.md) — no em dashes\n'),
+    { addedRule: false, addedBreach: false },
+    'listing a document that has a rule read as giving the index that rule');
+});
+
+check('a prose sentence containing a link still states the file\'s own rule', () => {
+  // The exclusion is scoped to list items on purpose, and this is what pins
+  // that. An implementation that skipped any line holding a link would pass
+  // the three cases above and fail this one.
+  const prose = '# Rules\n\nSee [style](style.md). No em dashes here.\n\nIt ran — and finished.\n';
+  assert.strictEqual(brokenOwnRule(prose).length, 1,
+    'a link in ordinary prose was treated as an index entry');
+});
+
 check('adding an example does not re-report an untouched line', () => {
   // The seventh review finding, at the level it was reported. A file states the
   // rule and already breaks it on line 5. The edit appends a fenced example,
