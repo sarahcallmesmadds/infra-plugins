@@ -576,11 +576,24 @@ needs to force-push.
 
 ## Step R1 — Locate the queue entry
 
-Step 1's three argument shapes, with `revert` stripped from the front, and one
-change: keep only entries at `"fix applied, watching"`, where Step 1 keeps `Open`
-and `In Progress`. When nothing matches a target name, say "No 'fix applied,
-watching' entries found for '{target}'. If the fix is in a different status, give
-me the full queue entry id." Stop.
+Step 1's three argument shapes, with `revert` stripped from the front. Two
+things differ, and both are deliberate:
+
+- **Status.** Keep only entries at `"fix applied, watching"`, where Step 1 keeps
+  `Open` and `In Progress`.
+- **Type.** Do **not** filter on `type == "primary"`. Step 1 does, and this mode
+  must not inherit it. A dep-review entry that reached `"fix applied, watching"`
+  had a fix written and committed against it, so it is exactly as revertible as a
+  primary one, and excluding it leaves that fix with no way to be undone from
+  here. `/revert-fix` never filtered on type either, so this preserves its
+  behaviour rather than changing it.
+
+Everything else carries over unchanged, including reading `target` and falling
+back to `skill` when `target` is absent, per the read-time mapping in SCHEMA.md.
+
+When nothing matches a target name, say "No 'fix applied, watching' entries found
+for '{target}'. If the fix is in a different status, give me the full queue entry
+id." Stop.
 
 **Annotate every list this step shows, not just one of them.** Read each
 candidate's notes and label it by its **last** marker, since notes are

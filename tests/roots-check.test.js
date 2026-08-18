@@ -447,23 +447,40 @@ check('a skill that commits into one root asks about that root by name', () => {
 check('apply-fix asks by name once per mode, not once in total', () => {
   // The guard the comment above promises. Folding revert-fix in turned two files
   // each holding one call site into one file holding two, and a single-match
-  // regex cannot tell four from two. Apply mode asks at Step 2, before anything
-  // is written; revert mode asks at Step R5, because Step 2 never ran on that
-  // path. Losing either one puts a git command behind an unasked question.
+  // regex cannot tell two from one. Apply mode asks at Step 2, before anything is
+  // written; revert mode asks at Step R5, because Step 2 never ran on that path.
+  // Losing either one puts a git command behind an unasked question.
   //
-  // Counted, not matched: the failure this replaces is a check that passed while
-  // half of what it named was gone.
+  // Split at the mode boundary rather than counted across the file. A count alone
+  // is satisfied by any two occurrences, so both calls landing in apply mode, or
+  // one of them being a mention in prose, would pass while the property this
+  // names is broken. That is the shape of check this repository keeps having to
+  // replace: one that passes while half of what it describes is gone.
   const text = skillText('apply-fix');
-  const asks = (text.match(/roots\.js"? check --name/g) || []).length;
-  assert.strictEqual(asks, 2,
-    `apply-fix asks about a root by name ${asks} times; expected one per mode, `
-    + 'apply at Step 2 and revert at Step R5. A mode that stopped asking runs git '
-    + 'inside a root nothing confirmed.');
+  const boundary = text.indexOf('# Revert mode');
+  assert.ok(boundary > 0,
+    'apply-fix has no "# Revert mode" heading, so the two modes cannot be told '
+    + 'apart and every check below is measuring one undivided file.');
 
-  const takes = (text.match(/roots\.js"? list --name/g) || []).length;
-  assert.strictEqual(takes, 2,
-    `apply-fix takes a root path by name ${takes} times; expected one per mode. `
-    + 'A path taken without the matching check is the ordering bug both modes name.');
+  const applyMode = text.slice(0, boundary);
+  const revertMode = text.slice(boundary);
+
+  for (const [mode, section, step] of [
+    ['apply', applyMode, 'Step 2'],
+    ['revert', revertMode, 'Step R5'],
+  ]) {
+    const asks = (section.match(/roots\.js"? check --name/g) || []).length;
+    assert.strictEqual(asks, 1,
+      `${mode} mode asks about a root by name ${asks} times, expected once at `
+      + `${step}. A mode that stopped asking runs git inside a root nothing `
+      + 'confirmed; a mode asking twice means the other mode lost its call.');
+
+    const takes = (section.match(/roots\.js"? list --name/g) || []).length;
+    assert.strictEqual(takes, 1,
+      `${mode} mode takes a root path by name ${takes} times, expected once. `
+      + 'A path taken without the matching check in the same mode is the ordering '
+      + 'bug both modes name.');
+  }
 });
 
 check('no skill claims a bare check proves a particular root exists', () => {
