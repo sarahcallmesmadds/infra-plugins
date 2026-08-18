@@ -777,6 +777,16 @@ function runCli(args, text) {
   });
 }
 
+// execFileSync throws on a non-zero exit, so a row expecting a failing run has to
+// catch it or the whole suite dies with a stack trace instead of naming the row.
+function runCliAllowingFailure(args, text) {
+  try {
+    return runCli(args, text);
+  } catch (e) {
+    return `${e.stdout || ''}${e.stderr || ''}`;
+  }
+}
+
 const BANNED = 'This approach is worth stealing. The team shipped it last week and it held up well.';
 const report = runCli(['--prose'], BANNED);
 
@@ -827,7 +837,9 @@ console.log('\nthe half that does not apply prints nothing');
   check('a spec is not asked who owns it on the default path',
     planReport.includes('no-owner-and-no-date'), false);
   check('the default run says the absence checks did not run',
-    planReport.includes('Not checked: whether this names an owner'), true);
+    planReport.includes('Two checks did not run'), true);
+  check('and says which two, so it cannot read as disclaiming the whole block',
+    planReport.includes('names an owner and a date') && planReport.includes('what it is not doing'), true);
   check('and names the flag that runs them',
     planReport.includes('--technical spec'), true);
   check('the reminder is printed for a post as well, not just for a document',
@@ -842,6 +854,25 @@ console.log('\nthe half that does not apply prints nothing');
     runCli(['--technical', 'code'], PLAN).includes('no-owner-and-no-date'), false);
   check('--technical data does not either',
     runCli(['--technical', 'data'], PLAN).includes('no-owner-and-no-date'), false);
+
+  // `--technical=spec` matched nothing and fell through to the default path,
+  // which then printed the line telling the reader to run --technical spec. The
+  // rows below pin both spellings of every form, because the failure was silent:
+  // the report looked like an answer to a question that had never been asked.
+  check('--technical=spec turns them on like the spaced form',
+    runCli(['--technical=spec'], PLAN).includes('no-owner-and-no-date'), true);
+  check('--technical=code does not',
+    runCli(['--technical=code'], PLAN).includes('no-owner-and-no-date'), false);
+  check('--technical=spec does not fall through to the default path',
+    runCli(['--technical=spec'], PLAN).includes('Two checks did not run'), false);
+  // A flag is not its own value. Written first as `--technical --prose` asserting
+  // no finding, which measured nothing: the swallowed value fails the `spec`
+  // comparison either way, so the row passed against the unguarded code too.
+  // `--file` is where the swallow is observable, because the value is opened.
+  check('a following flag is not swallowed as a value',
+    runCliAllowingFailure(['--file', '--prose'], PLAN).includes('cannot read --prose'), false);
+  check('...and the text on stdin is checked instead',
+    runCliAllowingFailure(['--file', '--prose'], PLAN).includes('Hard rules'), true);
 
   // Asking for a half and getting silence is its own failure. The caller asked.
   check('an explicit --technical prints even with nothing to say',

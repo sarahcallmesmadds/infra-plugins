@@ -26,8 +26,12 @@ half. `--technical code|data|spec` sets the label on the report heading. It does
 not otherwise change which checks run, with one exception: `spec` also turns on
 the two checks described below.
 
-By default it runs both halves. Whichever half does not apply reports nothing,
-which is why one command handles a LinkedIn draft and a pull request equally.
+By default it runs both halves, and the technical half prints only when it holds
+a finding, which is why one command handles a LinkedIn draft and a pull request
+equally.
+
+One thing does print every time: two lines naming the checks that did not run.
+That is deliberate and is described below.
 
 ### Ask before running the spec checks
 

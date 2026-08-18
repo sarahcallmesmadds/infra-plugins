@@ -17,9 +17,29 @@ const { checkAll, checkHard } = require(path.join(__dirname, 'tells.js'));
 const { checkTechnical, guessKind } = require(path.join(__dirname, 'technical.js'));
 const { loadConfig } = require(path.join(__dirname, 'config.js'));
 
+// `--flag value` and `--flag=value` are both ordinary ways to write this and
+// only the first was read. `--technical=spec` matched nothing, fell through to
+// the default path, and ended by printing the line telling the reader to run
+// `--technical spec`, which is what they had just run. A flag that is silently
+// not there is worse than one that errors, because the report reads as an answer.
+function argIndex(flag) {
+  return process.argv.findIndex((a) => a === flag || a.startsWith(`${flag}=`));
+}
+
+function hasFlag(flag) {
+  return argIndex(flag) > -1;
+}
+
 function argValue(flag) {
-  const i = process.argv.indexOf(flag);
-  return i > -1 ? process.argv[i + 1] : null;
+  const i = argIndex(flag);
+  if (i === -1) return null;
+  const arg = process.argv[i];
+  if (arg.startsWith(`${flag}=`)) return arg.slice(flag.length + 1);
+  // A flag is not its own value. `--technical --prose` used to read "--prose" as
+  // the kind, which then failed the `spec` comparison silently rather than
+  // saying the kind was unrecognised.
+  const next = process.argv[i + 1];
+  return next === undefined || next.startsWith('--') ? null : next;
 }
 
 async function readStdin() {
@@ -196,18 +216,18 @@ function formatTechnical(result, kind) {
   // kind reaching this would be the guess arriving by a longer route.
   const documentChecks = asked === 'spec';
 
-  if (process.argv.includes('--technical')) {
+  if (hasFlag('--technical')) {
     process.stdout.write(
       formatTechnical(checkTechnical(text, kind, { documentChecks }), kind) + '\n');
     process.exit(0);
   }
 
-  if (process.argv.includes('--prose')) {
+  if (hasFlag('--prose')) {
     process.stdout.write(formatReport(checkAll(text, config)) + '\n');
     process.exit(0);
   }
 
-  if (process.argv.includes('--hard-only')) {
+  if (hasFlag('--hard-only')) {
     const { ok, violations } = checkHard(text, config);
     process.stdout.write(ok ? 'clean\n' : violations.map((v) => v.what).join('\n') + '\n');
     process.exit(0);
@@ -248,7 +268,11 @@ function formatTechnical(result, kind) {
   // whether the input looks like a plan, it is the deleted guess with a softer
   // voice, and a wrong nudge is only cheaper than a wrong finding until somebody
   // has to maintain it.
+  // "Two checks did not run" rather than "not checked", because this can print
+  // directly under a technical block that does hold findings, and the shorter
+  // wording read as a disclaimer over the whole block rather than over these two.
   process.stdout.write(
-    '\nNot checked: whether this names an owner, a date and what it is not doing.'
-    + '\nIf it is a plan, a spec or a proposal, run again with --technical spec.\n');
+    '\nTwo checks did not run: whether this names an owner and a date, and whether'
+    + '\nit says what it is not doing. If it is a plan, a spec or a proposal, run'
+    + '\nagain with --technical spec.\n');
 })();
