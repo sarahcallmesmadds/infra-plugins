@@ -3,6 +3,83 @@
 Upgrade notes for past versions, moved out of the README so that file says what
 the plugin is and how to use it. Nothing here is needed to install or run it.
 
+## Upgrading to 0.10.15
+
+**`/revert-fix` is gone. Undoing a fix is now `/apply-fix revert {id}`.** The
+old command stops existing on update, so a muscle-memory `/revert-fix` will not
+resolve. Everything it did survives, in the same order, as Steps R1 to R6 inside
+`/apply-fix`.
+
+Nothing else about reverting changed. It still adds an undo commit rather than
+rewriting history, still refuses an entry whose last note marker is
+`Not committed:`, still labels every candidate list by marker so a refusal comes
+before the choice, and still offers to reopen an entry that was written without a
+commit.
+
+**Why one skill instead of two.** Applying a fix and undoing one are the same
+motion read in two directions, and they shared a schema, a lock, a status
+vocabulary and a set of note markers. Four rules in two files means a rule fixed
+in one stays wrong in the other, which is the failure `scratch.js` and
+`roots.js` were each written to end.
+
+**It did not save anything. It cost 42 lines.** The two skills were 803
+lines, 545 and 258. The fold landed at 785, and six review rounds took it to 845.
+The last two rounds found nothing wrong with the fold at all: they found bugs that
+had been sitting in \`apply-fix\` all along, which the rules written for revert mode
+made visible. That is the clearest argument for the fold that this change has, and
+it is not the one the audit made.
+
+The audit put 643 lines against this action by counting the whole of both skills
+as removable. Almost none of `/revert-fix` was duplication. It was reasoning
+about reverting, and the three review rounds proved that the hard way: each one
+found something the compression had dropped, and all three were load-bearing.
+
+- Step R3 lost the field the note marker lives in, leaving an instruction to
+  compare a string prefix against a `{ts, text}` object. It finds nothing and
+  reports an entry that has a commit as having none.
+- Step R1 inherited a `type == "primary"` filter from Step 1 that the old skill
+  never had, which would have made a dep-review's committed fix impossible to
+  undo.
+- Step R5 lost the sentence binding `{repo_root}` to the path `roots.js list`
+  returns, so the revert had no stated directory to run in. Putting it back at R5
+  was not enough either: Steps R3 and R4 put that placeholder into text shown to a
+  person before R5 runs, so the root is now resolved at Step R2, where apply mode
+  already resolves its own.
+- Step R6 lost the rule against reading the entry and rebuilding it by hand. That
+  is the one place in this file with a git operation between reading an entry and
+  writing it, so it is where another session is most likely to write in the gap.
+
+Three justifications written to explain those fixes were themselves wrong and had
+to be corrected in the next round, including one that said a binding covered the
+steps "below" it when those steps were above it.
+
+So the number to carry forward is not 18 or 643. It is that folding two skills
+costs lines rather than saving them, because the shared parts are the cheap
+boilerplate and the bulk is reasoning that survives. **What the fold actually
+buys is one fewer file to keep in sync** across a shared schema, lock, status
+vocabulary and set of note markers, which is the thing that kept going wrong.
+That is worth having. It is just not what it was sold as, and the next person
+planning the same move on another pair should measure first.
+
+**The review gate stayed separate on purpose.** `/verify-fix` was the other half
+of this fold and is still its own skill, because its tool list deliberately
+withholds git so the thing that reviews a fix cannot commit one. Folding it in
+would have turned that boundary into a sentence asking itself not to, and a hook
+cannot restore it: a hook sees the command, not which mode the skill is in, so
+the skill would have to announce its own mode and the gate would fail silently
+the day it forgot.
+
+**One test changed shape.** `roots-check` used to name two skills that each
+asked about a root by name once. Both call sites now live in one file, where a
+single-match regex cannot tell two from one, so it splits by mode and asserts the
+step each one sits under: apply mode at Step 2, revert mode at Step R2. Losing
+either puts a git command behind a question nobody asked, and moving either to a
+different step fails naming both the step it found and the step it wanted.
+
+Revert mode asked at Step R5 in the first version of this fold. It moved to R2
+because Steps R3 and R4 both put the resolved path into text shown to a person
+before R5 ever runs.
+
 ## Upgrading to 0.10.14
 
 **`/devin-review-response` recovers a hidden finding instead of stopping to ask

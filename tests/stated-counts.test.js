@@ -373,5 +373,52 @@ check('it leaves a number that is not counting the list alone', () => {
     'a duration next to a list was read as a count of it');
 });
 
+
+// --- counts that name a thing on disk rather than a list beside them --------
+//
+// The check above only looks at a number sitting within two lines of a list,
+// which is deliberate and argued for at the top of this file. That scope has a
+// hole, and folding /revert-fix into /apply-fix fell straight through it: the
+// build-loop README says "The ten commands" in a heading with a bold subheading
+// between it and the bullets, and says it again 280 lines later with no list
+// anywhere near. Deleting a skill left both saying eleven, and every suite
+// passed.
+//
+// A count that names something countable on disk can be checked against the
+// disk instead of against a nearby list. That is the form the original queue
+// entry asked for and the form prose cannot derive on its own.
+
+check('the build-loop README command count matches the skills on disk', () => {
+  const WORDS = {
+    six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
+    eleven: 11, twelve: 12, thirteen: 13, fourteen: 14,
+  };
+  const readme = path.join(__dirname, '..', 'plugins', 'build-loop', 'README.md');
+  const skillsDir = path.join(__dirname, '..', 'plugins', 'build-loop', 'skills');
+
+  const onDisk = fs.readdirSync(skillsDir)
+    .filter((name) => fs.existsSync(path.join(skillsDir, name, 'SKILL.md')))
+    .length;
+
+  const text = fs.readFileSync(readme, 'utf8');
+  const claims = [...text.matchAll(/The (\w+) commands/g)];
+
+  assert.ok(claims.length > 0,
+    'the build-loop README no longer states a command count in the form "The N '
+    + 'commands". If the wording changed, change this check with it rather than '
+    + 'deleting it: an unmatched pattern is a check that passes on anything.');
+
+  for (const [phrase, word] of claims) {
+    const stated = WORDS[word.toLowerCase()];
+    assert.ok(stated !== undefined,
+      `the README says "${phrase}" and this check cannot read "${word}" as a `
+      + `number. Add it to WORDS. Skills on disk: ${onDisk}.`);
+    assert.strictEqual(stated, onDisk,
+      `the README says "${phrase}" but there are ${onDisk} skill directories `
+      + 'under plugins/build-loop/skills/. Deleting or adding a skill changes the '
+      + 'count and the sentence does not follow on its own.');
+  }
+});
+
 console.log(`\n${ran} checks, ${failed} failed  (${repoChecked} pairs in the repository, ${checked - repoChecked} in fixtures)`);
 process.exit(failed === 0 ? 0 : 1);

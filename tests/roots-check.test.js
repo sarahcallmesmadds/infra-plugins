@@ -426,16 +426,136 @@ check('every skill that calls roots.js is allowed to run it', () => {
 });
 
 check('a skill that commits into one root asks about that root by name', () => {
-  // apply-fix and revert-fix both run git inside the root named by the entry's
-  // repo field. A bare check answers about every root, and "the others are
-  // fine" is not an answer about the one you are about to write into. That gap
-  // is how an absent default reached a git command as an all-clear.
-  const offending = ['apply-fix', 'revert-fix'].filter((name) =>
+  // apply-fix runs git inside the root named by the entry's repo field, in both
+  // of its modes: apply mode to record the fix, revert mode to undo it. A bare
+  // check answers about every root, and "the others are fine" is not an answer
+  // about the one you are about to write into. That gap is how an absent default
+  // reached a git command as an all-clear.
+  //
+  // revert-fix was the second name here until it folded into apply-fix as revert
+  // mode. Both call sites survived the fold and both are inside the one file now,
+  // so a check that only looked at the file would pass having lost one of them.
+  //
+  // The step each call lives in is asserted rather than named in a message. The
+  // previous version put the step in the failure text only, and when the revert
+  // guard moved from R5 to R2 the message kept saying R5: a maintainer sent to
+  // the wrong step by a test that was still green. Naming a thing in prose is how
+  // it goes stale; asserting it is how it cannot.
+  const offending = ['apply-fix'].filter((name) =>
     !/roots\.js"? check --name/.test(skillText(name)));
   assert.deepStrictEqual(
     offending, [],
     `these run git inside one root and do not ask about it by name: ${offending.join(', ')}`
   );
+});
+
+check('apply-fix asks by name once per mode, not once in total', () => {
+  // The guard the comment above promises. Folding revert-fix in turned two files
+  // each holding one call site into one file holding two, and a single-match
+  // regex cannot tell two from one. Apply mode asks at Step 2, before anything is
+  // written; revert mode asks at Step R2, because Step 2 never runs on that path
+  // and Steps R3 and R4 quote the resolved path to a person before any revert.
+  // Losing either one puts a git command behind an unasked question.
+  //
+  // Both step numbers are asserted below rather than only described here. This
+  // comment said R5 for two rounds after the guard moved to R2, which is the
+  // failure the assertion exists to stop, committed in the comment explaining it.
+  //
+  // Split at the mode boundary rather than counted across the file. A count alone
+  // is satisfied by any two occurrences, so both calls landing in apply mode, or
+  // one of them being a mention in prose, would pass while the property this
+  // names is broken. That is the shape of check this repository keeps having to
+  // replace: one that passes while half of what it describes is gone.
+  const text = skillText('apply-fix');
+
+  // Anchored to the start of a line and required to be unique. Plain indexOf
+  // would also match the heading quoted inside prose or a fenced block, and a
+  // split at the wrong offset still yields one match per half, so the check
+  // would pass while saying nothing. A second occurrence is the failure, not a
+  // tie to break.
+  const headings = [...text.matchAll(/^# Revert mode\s*$/gm)];
+  assert.strictEqual(headings.length, 1,
+    `apply-fix has ${headings.length} lines reading "# Revert mode", expected `
+    + 'exactly one. With none the two modes cannot be told apart and every '
+    + 'assertion below is measuring one undivided file; with more than one the '
+    + 'split lands at the first, which may not be the mode boundary.');
+  const boundary = headings[0].index;
+
+  const applyMode = text.slice(0, boundary);
+  const revertMode = text.slice(boundary);
+
+  for (const [mode, section, step] of [
+    ['apply', applyMode, 'Step 2'],
+    ['revert', revertMode, 'Step R2'],
+  ]) {
+    // The heading this mode's root check must live under. Asserted first,
+    // because every boundary below is found by splitting on headings: if the
+    // heading is reworded the split silently stops working and the assertions
+    // under it pass while measuring nothing.
+    const heads = [...section.matchAll(/^## (Step [^\s—-]+)[^\n]*$/gm)];
+    assert.ok(heads.some((h) => h[1] === step),
+      `${mode} mode has no "## ${step}" heading. Headings found: `
+      + `${heads.map((h) => h[1]).join(', ') || 'none'}. The checks below split on `
+      + 'headings, so a renamed one turns them into assertions about nothing.');
+
+    // And the call has to be under that heading, not merely somewhere in the
+    // mode. A guard that moves to another step keeps the count at one.
+    const askAt = section.search(/roots\.js"? check --name/);
+    const owning = heads.filter((h) => h.index < askAt).pop();
+    assert.ok(owning && owning[1] === step,
+      `${mode} mode asks about its root under "${owning ? owning[1] : 'no heading'}" `
+      + `but it belongs under "${step}". Apply mode asks before it writes; revert `
+      + 'mode asks at R2 because Steps R3 and R4 quote the path to a person before '
+      + 'any revert runs.');
+    const asks = (section.match(/roots\.js"? check --name/g) || []).length;
+    assert.strictEqual(asks, 1,
+      `${mode} mode asks about a root by name ${asks} times, expected once at `
+      + `${step}. A mode that stopped asking runs git inside a root nothing `
+      + 'confirmed; a mode asking twice means the other mode lost its call.');
+
+    const takes = (section.match(/roots\.js"? list --name/g) || []).length;
+    assert.strictEqual(takes, 1,
+      `${mode} mode takes a root path by name ${takes} times, expected once. `
+      + 'A path taken without the matching check in the same mode is the ordering '
+      + 'bug both modes name.');
+
+    // Calling list and never saying what to do with the answer is how revert
+    // mode shipped a git command with no directory: the call was present, the
+    // count was right, and {repo_root} was bound nowhere in the section.
+    //
+    // Presence alone was not enough either. The next version passed on a file
+    // whose binding sat at Step R5 while Steps R3 and R4 already put {repo_root}
+    // into text shown to a person, so the placeholder was handed over with no
+    // value behind it.
+    //
+    // But "the binding must precede every use" is too strict and fails a correct
+    // file: apply mode writes the command block and then a one-line legend under
+    // it, which is readable and fine. What actually went wrong in revert mode was
+    // crossing a step boundary, using the value in one step and explaining it two
+    // steps later. So the boundary is the step: whatever binds {repo_root} has to
+    // arrive before the next "## Step" heading after its first use.
+    //
+    // Both wordings in this file are accepted, because pinning one phrase makes a
+    // legitimate rewrite fail while changing nothing about the property.
+    const BINDS = /\{repo_root\}`? is the (absolute )?`path`( of the root| this prints)?/;
+    const bindsAt = section.search(BINDS);
+    assert.ok(bindsAt >= 0,
+      `${mode} mode never says what {repo_root} is. The path it looks up goes `
+      + 'nowhere and every git command in the mode has no stated directory.');
+
+    const firstUse = section.search(/\{repo_root\}/);
+    assert.ok(firstUse >= 0, `${mode} mode never mentions {repo_root} at all.`);
+
+    if (bindsAt > firstUse) {
+      const between = section.slice(firstUse, bindsAt);
+      const crossed = between.match(/\n## Step [^\n]*/g) || [];
+      assert.deepStrictEqual(crossed, [],
+        `${mode} mode first uses {repo_root} and only binds it ${crossed.length} `
+        + `step heading(s) later, crossing:${crossed.join(';')}. A step that quotes `
+        + 'the placeholder before anything defines it hands a person a command '
+        + 'they cannot run.');
+    }
+  }
 });
 
 check('no skill claims a bare check proves a particular root exists', () => {

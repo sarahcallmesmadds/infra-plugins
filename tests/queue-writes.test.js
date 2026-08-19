@@ -37,7 +37,7 @@ const SKILLS = path.join(__dirname, '..', 'plugins', 'build-loop', 'skills');
 const QUEUE_JS = path.join(__dirname, '..', 'plugins', 'build-loop', 'scripts', 'queue.js');
 
 // Skills that change an entry that already exists.
-const UPDATERS = ['apply-fix', 'verify-fix', 'revert-fix'];
+const UPDATERS = ['apply-fix', 'verify-fix'];
 
 // Skills that create entries. /flag-issue was deliberately absent from the old
 // list, because it only ever wrote new files and there was nothing on disk to
@@ -214,7 +214,14 @@ check('free text reaches a note through a file, not a shell argument', () => {
   // --note "{text}" walked straight past it: a denylist of the cases already
   // known is not a rule, it is a record of what has been noticed. Values with a
   // genuinely fixed shape are allowed by name and have to be argued for.
-  const SAFE_IN_NOTE = new Set(['commit-hash', 'revert-commit-hash', 'repo', 'id', 'target']);
+  // revert-hash replaced revert-commit-hash when revert-fix folded into
+  // apply-fix and the two names for one value were reduced to one. The argument
+  // for it is the argument the old name had: it is the output of
+  // `git rev-parse HEAD`, so it is hex and cannot carry a quote, a newline or a
+  // $(...). The old name is gone from the plugins rather than kept beside it,
+  // because an allowlist that only grows is the record-of-what-was-noticed this
+  // comment warns about.
+  const SAFE_IN_NOTE = new Set(['commit-hash', 'revert-hash', 'repo', 'id', 'target']);
   const INTERPOLATED = (line) => {
     for (const arg of line.match(/--note "[^"]*"/g) || []) {
       for (const [, name] of arg.matchAll(/\{([^}]+)\}/g)) {
@@ -471,7 +478,7 @@ check('the checks would catch one', () => {
 
 // Counted as they run and then compared. This line was once a formula that
 // looked derived and was not, and it reported 10 while 13 ran.
-const EXPECTED_CHECKS = 29;
+const EXPECTED_CHECKS = 27;
 if (ran !== EXPECTED_CHECKS) {
   failed += 1;
   console.log(

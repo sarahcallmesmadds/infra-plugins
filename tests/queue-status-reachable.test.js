@@ -88,7 +88,8 @@ function statusesWrittenBy(text) {
 // Discovered, not listed by hand.
 //
 // The first version of this file named verify-fix and apply-fix and called
-// itself a general rule. revert-fix also writes queue statuses, `Open` and
+// itself a general rule. revert-fix, a separate skill at the time and since
+// folded into apply-fix as revert mode, also wrote queue statuses, `Open` and
 // `Won't Fix`, and was silently outside the rule it claimed to enforce. Both
 // values happen to be allowed, so nothing failed and nothing would have.
 //
@@ -140,7 +141,7 @@ check('the writers actually write something, so the regex has not gone stale', (
 check('discovery finds every queue-status writer, not a subset', () => {
   // The gap this replaced: a hand-kept list held two of the three.
   const found = Object.keys(WRITERS).sort();
-  for (const expected of ['apply-fix', 'revert-fix', 'verify-fix']) {
+  for (const expected of ['apply-fix', 'verify-fix']) {
     assert.ok(found.includes(expected),
       `${expected} writes queue statuses and discovery missed it. Found: ${found.join(', ')}`);
   }
