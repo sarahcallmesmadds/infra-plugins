@@ -29,6 +29,7 @@ const WORK = fs.mkdtempSync(path.join(os.tmpdir(), 'slop-turn-'));
 const DIRTY = 'The build finished — it took four minutes.';
 const DIRTY2 = 'One dash — here, and another — there.';
 const CLEAN = 'This sentence carries no forbidden punctuation at all, and it runs long enough to avoid the choppy rule.';
+const CLEAN2 = 'A different clean sentence, also free of forbidden punctuation and also long enough not to read as choppy.';
 
 let failed = 0, ran = 0;
 function check(what, fn) {
@@ -86,11 +87,14 @@ check('the block names where the text is, and says it is not the closing message
 });
 
 check('a clean turn with prose before a tool call is not blocked', () => {
+  // Two DIFFERENT clean strings. With the same one for both, the dedupe drops
+  // the earlier copy before anything judges it, and the case passes whether or
+  // not earlier prose is checked at all.
   const t = transcript('opening-clean.jsonl', [
     user('do the thing'), said(CLEAN), toolCall(), toolResult(),
   ]);
   assert.strictEqual(run({ hook_event_name: 'Stop', transcript_path: t,
-    last_assistant_message: CLEAN, stop_hook_active: false }), null);
+    last_assistant_message: CLEAN2, stop_hook_active: false }), null);
 });
 
 // ------------------------------------------- both halves, counted apart -----
@@ -212,6 +216,105 @@ check('with no last_assistant_message the old fallback stands alone', () => {
   assert.ok(!/before a tool call/.test(out.reason),
     'the degraded path grew a half-working version of the new one');
   assert.ok(!/places/.test(out.reason));
+});
+
+
+// ------------------------------------- what the first review round found ----
+
+check('a tool result quoting the marker does not silence a real violation', () => {
+  // Any grep of this repository prints the marker. Matching it anywhere in a
+  // serialised user entry made the guard go quiet on a genuine break, which is
+  // worse than never running: it reports nothing and looks like a clean turn.
+  const t = transcript('marker-in-tool-result.jsonl', [
+    user('do the thing'),
+    said(DIRTY),
+    toolCall(),
+    { type: 'user', message: { content: [{ type: 'tool_result',
+      content: 'style-guard.js:  return `Style violation in ${subject}: ...`' }] } },
+  ]);
+  const out = run({ hook_event_name: 'Stop', transcript_path: t,
+    last_assistant_message: CLEAN, stop_hook_active: false });
+  assert.ok(out, 'a tool result containing the marker suppressed a real violation');
+  assert.match(out.reason, /before a tool call/);
+});
+
+check('a turn that opens and closes with the same sentence reports both', () => {
+  // Text is not identity. Dropping every earlier copy that read the same as the
+  // closing message named one place while two needed rewriting.
+  const t = transcript('repeated.jsonl', [
+    user('do the thing'), said(DIRTY), toolCall(), toolResult(),
+  ]);
+  const out = run({ hook_event_name: 'Stop', transcript_path: t,
+    last_assistant_message: DIRTY, stop_hook_active: false });
+  assert.ok(out);
+  assert.match(out.reason, /2 places/,
+    'the opening copy was dropped for reading the same as the closing one');
+});
+
+check('the tail read survives a window that begins mid-character', () => {
+  // An em dash is three bytes and the window is a byte offset, so the read can
+  // begin inside one. The damaged bytes can only ever land before the first
+  // newline, which is what gets dropped. Asserted at every offset rather than
+  // argued, because the drop looks removable to anyone tidying this later.
+  const rows = [];
+  for (let i = 0; i < 40; i++) rows.push(JSON.stringify({ type: 'user',
+    message: { content: 'padding — with an em dash and a café, line ' + i } }));
+  const buf = Buffer.from(rows.join('\n') + '\n', 'utf8');
+
+  let midChar = 0, damaged = 0;
+  for (let start = 1; start < buf.length; start++) {
+    if ((buf[start] & 0xC0) === 0x80) midChar += 1;
+    let text = buf.subarray(start).toString('utf8');
+    text = text.slice(text.indexOf('\n') + 1);
+    if (text.includes('\uFFFD')) damaged += 1;
+    for (const line of text.split('\n')) {
+      if (!line.trim()) continue;
+      try { JSON.parse(line); } catch { damaged += 1; }
+    }
+  }
+  assert.ok(midChar > 0, 'no offset landed mid-character, so this proves nothing');
+  assert.strictEqual(damaged, 0,
+    'a split character survived past the first newline, so a parsed row can carry one');
+});
+
+
+check('a transcript that changes size under the read is not used', () => {
+  // A race is not observable from outside the process, so this one case reaches
+  // in rather than spawning the hook. Without it the guard is a line of code
+  // nothing exercises, which is the shape this repository keeps finding.
+  process.env.HOME = FAKE_HOME;
+  const guard = require('../plugins/slop-check/scripts/style-guard.js');
+  const { loadConfig } = require('../plugins/slop-check/scripts/config.js');
+
+  const t = transcript('race.jsonl', [
+    user('do the thing'), said(DIRTY), toolCall(), toolResult(),
+  ]);
+
+  const real = fs.fstatSync;
+  let calls = 0;
+  // The first call sizes the buffer, the second checks the file has not moved.
+  fs.fstatSync = function (fd) {
+    calls += 1;
+    const st = real.call(fs, fd);
+    return calls === 2 ? { size: st.size + 1 } : st;
+  };
+  try {
+    const out = guard.blockMessage(CLEAN2, t, loadConfig(), 'the response just written');
+    assert.strictEqual(out, null,
+      'earlier parts were taken from a transcript that grew under the read, so the '
+      + 'window may have ended before this turn began and the walk can land in the last one');
+  } finally {
+    fs.fstatSync = real;
+  }
+
+  // And the same call without the interference still finds it, or the case
+  // above passes because nothing was ever going to be found.
+  // blockMessage returns the message itself. Only the hook wraps it into the
+  // {decision, reason} shape the harness reads, which is why every other case
+  // here goes through the subprocess.
+  const found = guard.blockMessage(CLEAN2, t, loadConfig(), 'the response just written');
+  assert.ok(typeof found === 'string' && /before a tool call/.test(found),
+    'the undisturbed call found nothing either, so the assertion above proves nothing');
 });
 
 console.log(`\n${ran} checks, ${failed} failed`);

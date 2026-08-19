@@ -132,13 +132,26 @@ function earlierParts(transcriptPath, closing) {
 
   let text;
   try {
-    const size = fs.statSync(transcriptPath).size;
-    const start = Math.max(0, size - TURN_WINDOW_BYTES);
     const fd = fs.openSync(transcriptPath, 'r');
+    let start;
     try {
+      // fstat rather than stat, so the size and the bytes come from the same
+      // open file rather than from two lookups of a name.
+      const size = fs.fstatSync(fd).size;
+      start = Math.max(0, size - TURN_WINDOW_BYTES);
       const buf = Buffer.alloc(size - start);
-      fs.readSync(fd, buf, 0, buf.length, start);
-      text = buf.toString('utf8');
+      // The count matters. A short read leaves the rest of the buffer as zero
+      // bytes, and those rows parse as nothing while the rows before them parse
+      // fine, so the damage is invisible.
+      const read = fs.readSync(fd, buf, 0, buf.length, start);
+      // Grown or shrunk while being read. The turn boundary is appended before
+      // the turn it opens, so in practice it is long written by the time this
+      // runs, but "in practice" is how the fault this hook exists to avoid got
+      // in. If the file moved at all, the window may end before the current
+      // boundary, the walk then finds the previous one, and the previous turn's
+      // prose is reported as though it were just written. Give up instead.
+      if (fs.fstatSync(fd).size !== size) return null;
+      text = buf.subarray(0, read).toString('utf8');
     } finally {
       fs.closeSync(fd);
     }
@@ -170,6 +183,34 @@ function earlierParts(transcriptPath, closing) {
   }
   if (from === -1) return null;                 // boundary outside the window
 
+  // Which row is the last thing the assistant said, and whether it can be the
+  // closing message at all.
+  //
+  // Position alone is not enough either. The log runs a beat behind, so the
+  // closing message is usually not on disk yet and the last row here is an
+  // earlier part of the same turn. What separates the two is what follows it:
+  // if the assistant called a tool afterwards, then whatever it said before
+  // that was not the last thing it said, whether or not the words match.
+  let lastSaid = -1;
+  for (let i = rows.length - 1; i > from; i--) {
+    const e = rows[i];
+    if (e.type !== 'assistant' || e.isApiErrorMessage) continue;
+    const c = e.message && e.message.content;
+    if (!c) continue;
+    const t = (Array.isArray(c)
+      ? c.filter((x) => x.type === 'text').map((x) => x.text).join('\n')
+      : String(c)).trim();
+    if (t) { lastSaid = i; break; }
+  }
+  // Anything tool-shaped after it settles the question.
+  for (let i = lastSaid + 1; lastSaid !== -1 && i < rows.length; i++) {
+    const e = rows[i];
+    const c = e.message && e.message.content;
+    const tooled = Array.isArray(c)
+      && c.some((x) => x.type === 'tool_use' || x.type === 'tool_result');
+    if (tooled) { lastSaid = -1; break; }
+  }
+
   const parts = [];
   for (let i = from + 1; i < rows.length; i++) {
     const e = rows[i];
@@ -182,7 +223,12 @@ function earlierParts(transcriptPath, closing) {
     if (!t) continue;
     // The closing message, if the log has caught up with it. It is checked from
     // the event, and checking it twice would report one em dash as two.
-    if (closing && t === closing) continue;
+    //
+    // Only the last one can be it. Matching on the text alone meant a turn that
+    // opened and closed with the same sentence lost the opening copy, and the
+    // block then named one place while two needed rewriting. Text is not
+    // identity: the position is.
+    if (closing && i === lastSaid && t === closing) continue;
     // Already blocked once and already rewritten. The rewrite is a later
     // message in this same turn, because the hook's feedback is isMeta and does
     // not start a new one, so without this the original is found again and
@@ -204,7 +250,16 @@ function wasBlocked(rows, i) {
       if (t.trim()) return false;
       continue;
     }
-    if (e.type === 'user' && JSON.stringify(e.message || '').includes(BLOCK_MARKER)) return true;
+    // The hook's own feedback and nothing else. It arrives as an isMeta user
+    // entry whose content is a plain string. Searching the whole serialised
+    // entry matched a tool_result that merely contained the marker, which any
+    // grep of this repository produces, and that suppressed a real violation
+    // while reporting nothing. A guard that goes quiet because the words
+    // appeared in someone's search output is worse than one that never ran.
+    if (e.type === 'user' && e.isMeta) {
+      const c = e.message && e.message.content;
+      if (typeof c === 'string' && c.includes(BLOCK_MARKER)) return true;
+    }
   }
   return false;
 }
