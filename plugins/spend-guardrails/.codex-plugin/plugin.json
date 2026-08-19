@@ -1,6 +1,6 @@
 {
   "name": "spend-guardrails",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Choose the lowest-cost current Claude or OpenAI model that can reliably do the work, without recommending retired models.",
   "author": {
     "name": "Sarah Madden",

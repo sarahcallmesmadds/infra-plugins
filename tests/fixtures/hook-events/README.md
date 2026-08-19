@@ -53,7 +53,7 @@ chmod +x ~/.claude/hooks/capture-event.js
 ```
 
 - The installed plugin sits under a version number,
-  `~/.claude/plugins/cache/smadds/build-loop/0.5.6/hooks/`, so wiring that path
+  `~/.claude/plugins/cache/infra-plugins/build-loop/0.5.6/hooks/`, so wiring that path
   breaks at the next release.
 - `${CLAUDE_PLUGIN_ROOT}` is a plugin-manifest variable. In `settings.json` it
   expands to nothing, leaving a hook that runs `node /hooks/capture-event.js`

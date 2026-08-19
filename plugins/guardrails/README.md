@@ -88,7 +88,7 @@ failing silently. See the section on how a hook finds Node.
 
 ```
 /plugin marketplace add sarahcallmesmadds/infra-plugins
-/plugin install guardrails@smadds
+/plugin install guardrails@infra-plugins
 ```
 
 Add the marketplace **by repository**, as above. If you add it by pasting a
@@ -477,7 +477,7 @@ These stay quiet on purpose:
 | detached HEAD | a valid repository doing normal work |
 | nothing named, and nowhere is a repository | committing outside a repository is not a thing |
 
-Nothing about your config changes. Run `/plugin update guardrails@smadds`.
+Nothing about your config changes. Run `/plugin update guardrails@infra-plugins`.
 
 ## Upgrading to 0.2.3
 
@@ -511,7 +511,7 @@ that text is not visible to this hook. Instructions aimed at a model tend to
 survive being summarised, that being their whole purpose, but this is not the
 same coverage as scanning the page itself.
 
-Nothing about your config changes. Run `/plugin update guardrails@smadds`.
+Nothing about your config changes. Run `/plugin update guardrails@infra-plugins`.
 
 ## Upgrading to 0.2.2
 
@@ -537,7 +537,7 @@ Still not covered: the per-user temp directory under `/var/folders` on macOS,
 which is what `os.tmpdir()` returns. It differs per machine so it cannot ship as
 a default. Add it to `safeDeletePaths` yourself if you delete there often.
 
-Nothing about your config changes. Run `/plugin update guardrails@smadds`.
+Nothing about your config changes. Run `/plugin update guardrails@infra-plugins`.
 
 ## Upgrading to 0.2.1
 
@@ -548,7 +548,7 @@ command. That covers all three blocking checks: recursive deletes, commits to a
 protected branch, and the commit message format. The injection scanners were
 never affected, because they only add a note and already used the current shape.
 
-Nothing about your config changes. Run `/plugin update guardrails@smadds`.
+Nothing about your config changes. Run `/plugin update guardrails@infra-plugins`.
 
 ## Upgrading from 0.1.x
 
@@ -563,7 +563,7 @@ installed list.
 
 Nothing else changed. The hooks, the detection logic, and the config file are
 untouched, so an existing `guardrails.config.json` still applies. Re-run
-`/plugin install guardrails@smadds` to pick up the new names.
+`/plugin install guardrails@infra-plugins` to pick up the new names.
 
 ## Licence
 
