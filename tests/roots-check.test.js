@@ -453,8 +453,13 @@ check('apply-fix asks by name once per mode, not once in total', () => {
   // The guard the comment above promises. Folding revert-fix in turned two files
   // each holding one call site into one file holding two, and a single-match
   // regex cannot tell two from one. Apply mode asks at Step 2, before anything is
-  // written; revert mode asks at Step R5, because Step 2 never ran on that path.
+  // written; revert mode asks at Step R2, because Step 2 never runs on that path
+  // and Steps R3 and R4 quote the resolved path to a person before any revert.
   // Losing either one puts a git command behind an unasked question.
+  //
+  // Both step numbers are asserted below rather than only described here. This
+  // comment said R5 for two rounds after the guard moved to R2, which is the
+  // failure the assertion exists to stop, committed in the comment explaining it.
   //
   // Split at the mode boundary rather than counted across the file. A count alone
   // is satisfied by any two occurrences, so both calls landing in apply mode, or

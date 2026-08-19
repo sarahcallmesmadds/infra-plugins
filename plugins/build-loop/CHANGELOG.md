@@ -71,9 +71,14 @@ the day it forgot.
 
 **One test changed shape.** `roots-check` used to name two skills that each
 asked about a root by name once. Both call sites now live in one file, where a
-single-match regex cannot tell two from one, so it counts them instead: apply
-mode asks at Step 2, revert mode at Step R5, and losing either puts a git command
-behind a question nobody asked.
+single-match regex cannot tell two from one, so it splits by mode and asserts the
+step each one sits under: apply mode at Step 2, revert mode at Step R2. Losing
+either puts a git command behind a question nobody asked, and moving either to a
+different step fails naming both the step it found and the step it wanted.
+
+Revert mode asked at Step R5 in the first version of this fold. It moved to R2
+because Steps R3 and R4 both put the resolved path into text shown to a person
+before R5 ever runs.
 
 ## Upgrading to 0.10.14
 
