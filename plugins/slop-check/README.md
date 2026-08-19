@@ -24,20 +24,27 @@ machine before that was fixed, four of five broke a hard rule and none were
 caught, each carrying 24 to 34 em dashes against one for a typical main-agent
 break.
 
-One gap is left, and it is written down rather than left to be discovered. A
-turn that pauses to run a tool and writes a paragraph before doing so is checked
-from the tool call onwards, and that opening paragraph is not read. Re-measured
-on 2026-08-18, 2.8 per cent of turns carried a hard rule break that sat only in
-the unread part. An earlier figure of 4.7 per cent counted a turn as escaping
-when its opening paragraph had in fact been blocked and rewritten, which is the
-guard working.
+Since 0.8.0 it checks the whole turn rather than only the end of it. A turn that
+pauses to run a tool and writes a paragraph first had that paragraph read by
+nobody, and on the sessions this was measured against, 18 turns out of 702, or
+2.6 per cent, carried a hard rule break sitting only in that unread part.
+Replaying all 18 against the new hook catches 16. A block now says which part it
+means and quotes the start of it, because a rewrite instruction pointed at the
+wrong paragraph reads as a false positive and teaches people the guard is
+unreliable. Where both halves break a rule, they are listed separately rather
+than added into one number, since the reader has to go to each.
 
-The reason for the limit is that the alternative was worse: the hook used to
-take the turn from the session log, which is written a beat behind the
-conversation, so it read the message before the one it was blocking. It was
-wrong about which text it was looking at in 70 of 116 real blocks. Narrower and
-correct beats wider and misdirected, and closing the gap is a known piece of
-work rather than a decision to live with.
+To find where the turn began it reads the last megabyte of the session log,
+which covers 99.09 per cent of turns across the 3,938 measured. On a turn bigger
+than that the opening prose is not checked, rather than partly checked. That is
+what the other two of the 18 are: both ran past a megabyte, at 1.12MB and
+1.01MB, so the limit is the one described here rather than a second unknown.
+Taking whatever the window happens to begin with would mean blocking somebody
+for text from the previous turn, and that is exactly the fault this hook was
+rewritten to stop committing: it used to take the whole turn from the session
+log, which is written a beat behind the conversation, and it was wrong about
+which text it was looking at in 70 of 116 real blocks. Narrower and correct
+beats wider and misdirected.
 
 **A hook that catches a markdown file contradicting itself**, the moment it is
 written. It warns and never blocks. Three checks, all of them about the file
