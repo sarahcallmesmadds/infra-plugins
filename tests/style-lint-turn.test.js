@@ -29,6 +29,12 @@ const WORK = fs.mkdtempSync(path.join(os.tmpdir(), 'slop-turn-'));
 const DIRTY = 'The build finished — it took four minutes.';
 const DIRTY2 = 'One dash — here, and another — there.';
 const CLEAN = 'This sentence carries no forbidden punctuation at all, and it runs long enough to avoid the choppy rule.';
+// What the hook actually says about an earlier paragraph. It quotes the text,
+// and that quotation is what ties the objection to the paragraph.
+const OBJECTION_TO_OPENING =
+  'Stop hook feedback:\nStyle violation in this turn, in text written earlier in this turn: '
+  + '1 em dash. It is not in your closing message, so re-reading that will not find it. '
+  + 'The text begins: "' + 'The build finished — it took four minutes.' + '". Rewrite that part.';
 const CLEAN2 = 'A different clean sentence, also free of forbidden punctuation and also long enough not to read as choppy.';
 
 let failed = 0, ran = 0;
@@ -195,9 +201,10 @@ check('an already-blocked opening is not reported a second time', () => {
   const t = transcript('already-blocked.jsonl', [
     user('do the thing'),
     said(DIRTY),
-    meta('Stop hook feedback: Style violation in the response just written: 1 em dash.'),
-    said('Fixed. The build finished. It took four minutes.'),
     toolCall(), toolResult(),
+    said(CLEAN),                                   // the turn's closing message
+    meta(OBJECTION_TO_OPENING),                    // the block, which lands after it
+    said('Fixed. The build finished. It took four minutes.'),
   ]);
   assert.strictEqual(run({ hook_event_name: 'Stop', transcript_path: t,
     last_assistant_message: CLEAN, stop_hook_active: false }), null);
@@ -243,6 +250,17 @@ check('the closing message is not counted twice when the log has caught up', () 
   assert.match(out.reason, /the response just written: 1 em dash/);
   assert.ok(!/2 places/.test(out.reason),
     'the same message was read from both sources and reported as two');
+
+  // Control. A hook that never opened the log would also say one place here, so
+  // the fixture has to show the log being read at all: a second dirty message,
+  // which only the transcript can supply, has to make it two.
+  const two = transcript('caught-up-control.jsonl', [
+    user('do the thing'), said(DIRTY2), toolCall(), toolResult(),
+  ]);
+  const twoOut = run({ hook_event_name: 'Stop', transcript_path: two,
+    last_assistant_message: DIRTY, stop_hook_active: false });
+  assert.ok(twoOut && /2 places/.test(twoOut.reason),
+    'the transcript was never read, so the assertion above is about nothing');
 });
 
 check('with no last_assistant_message the old fallback stands alone', () => {
@@ -404,10 +422,11 @@ check('block feedback carried as text blocks is still recognised', () => {
   const t = transcript('meta-as-blocks.jsonl', [
     user('do the thing'),
     said(DIRTY),
-    { type: 'user', isMeta: true, message: { content: [{ type: 'text',
-      text: 'Stop hook feedback: Style violation in the response just written: 1 em dash.' }] } },
-    said('Fixed. The build finished. It took four minutes.'),
     toolCall(), toolResult(),
+    said(CLEAN),
+    { type: 'user', isMeta: true, message: { content: [{ type: 'text',
+      text: OBJECTION_TO_OPENING }] } },
+    said('Fixed. The build finished. It took four minutes.'),
   ]);
   assert.strictEqual(run({ hook_event_name: 'Stop', transcript_path: t,
     last_assistant_message: CLEAN, stop_hook_active: false }), null,
@@ -474,6 +493,148 @@ check('a slash command IS the start of a turn', () => {
   assert.ok(run({ hook_event_name: 'Stop', transcript_path: own,
     last_assistant_message: CLEAN2, stop_hook_active: false }),
     'prose after the slash command was not read');
+});
+
+
+check('an objection naming the closing message does not silence an earlier one', () => {
+  // The other half of matching by quotation. A block about the closing message
+  // says nothing about a paragraph three tool calls back, and treating any
+  // objection in the turn as covering everything in it would let a real break
+  // through on the strength of an unrelated one.
+  const t = transcript('objection-elsewhere.jsonl', [
+    user('do the thing'),
+    said(DIRTY),                                   // never objected to
+    toolCall(), toolResult(),
+    said('An earlier closing attempt.'),
+    meta('Stop hook feedback: Style violation in the response just written: 1 em dash. '
+      + 'Rewrite it now.'),
+    said('A corrected closing attempt.'),
+  ]);
+  const out = run({ hook_event_name: 'Stop', transcript_path: t,
+    last_assistant_message: CLEAN2, stop_hook_active: false });
+  assert.ok(out, 'an objection about the closing message silenced an unrelated paragraph');
+  assert.match(out.reason, /The build finished/);
+});
+
+check('machinery carried as text blocks does not start a turn', () => {
+  // 155 interrupt notices on this machine arrive as text blocks rather than as
+  // plain strings, so a check that only looked at strings saw none of them and
+  // reported the shape as absent. That is how the first version of this passed.
+  const t = transcript('machinery-blocks.jsonl', [
+    user('do the thing'),
+    said(DIRTY),
+    { type: 'user', message: { content: [{ type: 'text', text: '[Request interrupted by user]' }] } },
+    said(CLEAN), toolCall(), toolResult(),
+  ]);
+  const out = run({ hook_event_name: 'Stop', transcript_path: t,
+    last_assistant_message: CLEAN2, stop_hook_active: false });
+  assert.ok(out, 'an interrupt notice acted as the start of the turn, so the opening was skipped');
+  assert.match(out.reason, /The build finished/);
+});
+
+check('a bash echo row does not start a turn either', () => {
+  const t = transcript('bash-row.jsonl', [
+    user('do the thing'),
+    said(DIRTY),
+    { type: 'user', message: { content: '<bash-input>ls</bash-input>' } },
+    said(CLEAN), toolCall(), toolResult(),
+  ]);
+  const out = run({ hook_event_name: 'Stop', transcript_path: t,
+    last_assistant_message: CLEAN2, stop_hook_active: false });
+  assert.ok(out, 'a bash echo row acted as the start of the turn');
+  assert.match(out.reason, /The build finished/);
+});
+
+
+check('a row that speaks and calls a tool at once is not the closing message', () => {
+  // An assistant row can carry text and a tool_use together. Nothing follows the
+  // row, so a check that only looked at later rows called the text the closing
+  // message and skipped it, which is a hard rule break going out unread.
+  //
+  // Nothing after the row, or a trailing tool result cancels the candidate on
+  // its own and the fix is never reached. And the closing message has to match
+  // the row's text, because that is the only condition under which the row
+  // would be dropped as a duplicate. The first version of this had both wrong
+  // and passed with the fix removed.
+  const t = transcript('text-and-tool.jsonl', [
+    user('do the thing'),
+    { type: 'assistant', message: { content: [
+      { type: 'text', text: DIRTY }, { type: 'tool_use', name: 'Bash' }] } },
+  ]);
+  const out = run({ hook_event_name: 'Stop', transcript_path: t,
+    last_assistant_message: DIRTY, stop_hook_active: false });
+  assert.ok(out, 'nothing was reported at all');
+  assert.match(out.reason, /2 places/,
+    'the text was taken for the closing message, so the paragraph that also '
+    + 'called a tool went unread');
+});
+
+check('the degraded path does not blame this agent for a delegated message', () => {
+  // With no last_assistant_message there is no turn to bound, so the newest
+  // assistant row is taken as the text. If that row belongs to a subagent, the
+  // block names the wrong writer. The guard for this went into earlierParts a
+  // round earlier and was missed here, which is why it was found twice.
+  const t = transcript('sidechain-fallback.jsonl', [
+    user('do the thing'),
+    { type: 'assistant', isSidechain: true, message: { content: [{ type: 'text',
+      text: 'A helper wrote this — with its own dash.' }] } },
+  ]);
+  assert.strictEqual(run({ hook_event_name: 'Stop', transcript_path: t,
+    stop_hook_active: false }), null,
+    'the fallback blocked this agent for a delegated conversation');
+
+  // Control: the same row without the flag must block, or the silence above is
+  // just the fallback not working.
+  const own = transcript('sidechain-fallback-control.jsonl', [
+    user('do the thing'),
+    said('A helper wrote this — with its own dash.'),
+  ]);
+  assert.ok(run({ hook_event_name: 'Stop', transcript_path: own,
+    stop_hook_active: false }), 'the fallback found nothing either');
+});
+
+check('a window that begins exactly on a line start keeps that line', () => {
+  // The drop that removes a partial first line was removing a whole good one
+  // whenever the cut landed on a line boundary. When that line is the start of
+  // the turn, the turn then has no start and nothing is checked at all.
+  //
+  // The alignment is constructed rather than searched for. The window begins at
+  // size - 1MB, so it begins exactly at the turn's first byte when everything
+  // from that row onwards is exactly 1MB. An earlier version of this case tried
+  // to solve for it with arithmetic, failed, and reported itself as passing
+  // while printing that it had not run.
+  const WINDOW = 1024 * 1024;
+  const enc = (r) => JSON.stringify(r) + '\n';
+  const turn = [user('do the thing'), said(DIRTY), toolCall(), toolResult()];
+  let bytes = turn.reduce((n, r) => n + Buffer.byteLength(enc(r), 'utf8'), 0);
+
+  // Pad the turn out to exactly one window, with tool results, which are inert.
+  const rows = [...turn];
+  const chunk = (n) => ({ type: 'user', message: { content: [{ type: 'tool_result', content: 'x'.repeat(n) }] } });
+  while (WINDOW - bytes > 5000) {
+    rows.push(chunk(4096));
+    bytes += Buffer.byteLength(enc(chunk(4096)), 'utf8');
+  }
+  // One last row sized so the total lands on the window exactly.
+  const overhead = Buffer.byteLength(enc(chunk(0)), 'utf8');
+  const need = WINDOW - bytes - overhead;
+  assert.ok(need >= 0, 'could not pad the turn to exactly one window');
+  rows.push(chunk(need));
+
+  // Anything at all in front, so the window does not simply start at zero.
+  const t = transcript('edge-aligned.jsonl', [user('an earlier turn'), said(CLEAN), ...rows]);
+
+  const size = fs.statSync(t).size;
+  const edge = size - WINDOW;
+  const buf = fs.readFileSync(t);
+  assert.ok(edge > 0, 'the file is not larger than the window, so nothing is cut');
+  assert.strictEqual(buf[edge - 1], 0x0a,
+    'the window edge did not land on a line start, so this case is not exercising the fix');
+
+  const out = run({ hook_event_name: 'Stop', transcript_path: t,
+    last_assistant_message: CLEAN2, stop_hook_active: false });
+  assert.ok(out, 'the turn start was dropped with the partial line, so the turn had no start');
+  assert.match(out.reason, /The build finished/);
 });
 
 console.log(`\n${ran} checks, ${failed} failed`);

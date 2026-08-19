@@ -82,6 +82,12 @@ function fromTranscript(transcript) {
     // sentence they cannot reach. Found while re-measuring the two coverage
     // gaps on 2026-08-18, where these were 7 of 12 apparent misses.
     if (entry.isApiErrorMessage) continue;
+    // A delegated conversation can be appended here with this flag, and on this
+    // path there is no turn to bound it, so the newest assistant row may belong
+    // to a subagent. Blocking the main agent for it names the wrong writer.
+    // The same guard exists in earlierParts; it was added there first and this
+    // one was missed, which is why it was found twice.
+    if (entry.isSidechain) continue;
     const content = entry.message && entry.message.content;
     if (!content) continue;
     const text = Array.isArray(content)
@@ -108,22 +114,41 @@ const TURN_WINDOW_BYTES = 1024 * 1024;
 
 // Some rows arrive as ordinary user messages without being the user saying
 // anything, and stopping the walk at one puts the turn boundary in the wrong
-// place, so the previous turn's prose is read as part of this one.
+// place.
+//
+// The direction of that fault is worth being exact about, because it is not the
+// one it looks like. The walk runs backwards and takes the newest qualifying
+// row, so a machinery row accepted as the boundary moves the start of the turn
+// FORWARD. Nothing from a previous turn is dragged in. What happens is that this
+// turn's own earlier prose falls outside the boundary and is never read, so the
+// coverage this file exists to add quietly does not apply to any turn that ran a
+// shell command or picked up a system note along the way.
 //
 // Counted across the 298 main session logs on the machine this was written on:
-// 55 rows carry echoed command output this way. `[Request interrupted` is in
-// the list on build-loop's authority rather than on evidence, since none appear
-// here outside isMeta, and it costs one comparison to not depend on that.
+// 155 interrupt notices, 55 echoed stdout rows, 40 each of bash input, stdout
+// and stderr. The interrupt notices are the reason the array form matters more
+// than the string form: every one of them arrives as text blocks rather than as
+// a plain string, so a check that only looked at strings, as this one first did,
+// saw none of them and reported the shape as absent.
 //
-// A slash command is deliberately NOT on this list. `<command-message>` and
-// `<command-name>` rows, 439 of them here, are the user typing `/something`,
-// which is the user speaking and is a real turn boundary. build-loop's
-// pushback.js drops those too, because it is asking whether the user was
-// complaining and a slash command is not a complaint. Different question, and
-// copying its list wholesale would have made every slash command invisible.
-function SPOKEN_BY_USER(content) {
-  return !content.includes('<local-command-stdout>')
-    && !content.startsWith('[Request interrupted');
+// The list is build-loop's, in pushback.js, minus two entries. `<command-message>`
+// and `<command-name>` stay off it deliberately: those are the user typing
+// `/something`, which is the user speaking and a real turn boundary, and there
+// are 439 of them here. pushback.js drops them because it is asking whether the
+// user was complaining, and a slash command is not a complaint. Different
+// question, and copying the list wholesale would make every slash command
+// invisible.
+const MACHINERY = [
+  '<local-command-stdout>', '<local-command-stderr>', '<local-command-caveat>',
+  '<bash-input>', '<bash-stdout>', '<bash-stderr>',
+  '<system-reminder>', '[Request interrupted', 'Caveat:',
+  'Stop hook feedback:', 'Base directory for this skill:',
+];
+
+function spokenByUser(row) {
+  const text = textOfRow(row);
+  if (!text) return true;            // nothing to judge on, so do not exclude it
+  return !MACHINERY.some((marker) => text.startsWith(marker));
 }
 
 // Every wording this file can produce starts with these words. `style-lint`
@@ -159,6 +184,12 @@ function earlierParts(transcriptPath, closing) {
       // open file rather than from two lookups of a name.
       const size = fs.fstatSync(fd).size;
       start = Math.max(0, size - TURN_WINDOW_BYTES);
+      // One byte earlier than the window, when there is one, so the drop below
+      // can tell a cut that landed mid-line from one that landed exactly on a
+      // line start. Without it a boundary row sitting exactly on the window edge
+      // was thrown away with the partial line that usually sits there, and the
+      // turn then had no start at all.
+      if (start > 0) start -= 1;
       const buf = Buffer.alloc(size - start);
       // The count matters. A short read leaves the rest of the buffer as zero
       // bytes, and those rows parse as nothing while the rows before them parse
@@ -178,7 +209,11 @@ function earlierParts(transcriptPath, closing) {
     // A window that did not start at the beginning almost certainly begins
     // mid-line, and half a JSON object parses as nothing rather than as
     // something wrong, but dropping it is cheaper than reasoning about it.
-    if (start > 0) text = text.slice(text.indexOf('\n') + 1);
+    if (start > 0) {
+      text = text[0] === '\n'
+        ? text.slice(1)                              // the window began on a line start
+        : text.slice(text.indexOf('\n') + 1);       // mid-line, so drop the remnant
+    }
   } catch {
     return null;
   }
@@ -222,7 +257,7 @@ function earlierParts(transcriptPath, closing) {
     if (e.type !== 'user' || e.isMeta) continue;
     const c = e.message && e.message.content;
     if (Array.isArray(c) && c.some((x) => x.type === 'tool_result')) continue;
-    if (typeof c === 'string' && !SPOKEN_BY_USER(c)) continue;
+    if (!spokenByUser(e)) continue;
     from = i;
     break;
   }
@@ -247,6 +282,13 @@ function earlierParts(transcriptPath, closing) {
       : String(c)).trim();
     if (t) { lastSaid = i; break; }
   }
+  // A row can carry text and a tool call together, and then the text is not the
+  // last thing said either, without anything following the row at all.
+  if (lastSaid !== -1) {
+    const c = rows[lastSaid].message && rows[lastSaid].message.content;
+    if (Array.isArray(c) && c.some((x) => x.type === 'tool_use')) lastSaid = -1;
+  }
+
   // Anything tool-shaped after it settles the question.
   for (let i = lastSaid + 1; lastSaid !== -1 && i < rows.length; i++) {
     const e = rows[i];
@@ -255,6 +297,8 @@ function earlierParts(transcriptPath, closing) {
       && c.some((x) => x.type === 'tool_use' || x.type === 'tool_result');
     if (tooled) { lastSaid = -1; break; }
   }
+
+  const said = objections(rows, from);
 
   const parts = [];
   for (let i = from + 1; i < rows.length; i++) {
@@ -278,7 +322,7 @@ function earlierParts(transcriptPath, closing) {
     // message in this same turn, because the hook's feedback is isMeta and does
     // not start a new one, so without this the original is found again and
     // reported as though nothing had been done about it.
-    if (wasBlocked(rows, i)) continue;
+    if (said.some((o) => o.includes(excerpt(t)))) continue;
     parts.push(t);
   }
   return parts;
@@ -296,28 +340,28 @@ function textOfRow(e) {
     : String(c)).trim();
 }
 
-// Whether the hook already objected to rows[i], by looking for its own feedback
-// before the next thing the assistant said.
-function wasBlocked(rows, i) {
-  for (let j = i + 1; j < rows.length; j++) {
-    const e = rows[j];
-    if (e.type === 'assistant') {
-      if (textOfRow(e)) return false;
-      continue;
-    }
-    // The hook's own feedback and nothing else. Searching the whole serialised
-    // entry matched a tool_result that merely contained the marker, which any
-    // grep of this repository produces, and that suppressed a real violation
-    // while reporting nothing. A guard that goes quiet because the words turned
-    // up in somebody's search output is worse than one that never ran.
-    //
-    // isMeta is what draws the line, not the shape of the content. Requiring a
-    // plain string as well meant a host that hands the same feedback over as
-    // text blocks, which is how the assistant's own messages arrive, went
-    // unrecognised and the just-rewritten paragraph was reported all over again.
-    if (e.type === 'user' && e.isMeta && textOfRow(e).includes(BLOCK_MARKER)) return true;
+// Everything the hook said about this turn, so a paragraph can be matched to
+// the objection that named it.
+//
+// The first version of this walked forward from the paragraph and gave up at
+// the next thing the assistant said. For an earlier part of a turn that is
+// exactly the wrong shape: the block fires at Stop, so the turn's closing
+// message sits between the paragraph and the feedback, the scan stopped there,
+// and a paragraph the writer had already corrected was demanded again. The
+// fixture that was supposed to cover this put the feedback immediately after
+// the paragraph, which is not a shape that occurs, so it passed.
+//
+// Proximity was the wrong question. What ties an objection to a paragraph is
+// that the objection quoted it, so that is what gets asked.
+function objections(rows, from) {
+  const out = [];
+  for (let i = from + 1; i < rows.length; i++) {
+    const e = rows[i];
+    if (e.type !== 'user' || !e.isMeta) continue;
+    const t = textOfRow(e);
+    if (t.includes(BLOCK_MARKER)) out.push(t);
   }
-  return false;
+  return out;
 }
 
 // Enough of a piece of writing to find it again, and no more.

@@ -17,22 +17,22 @@ before the turn ends. These are enforced rather than suggested, because a rule
 you have to restate every session is not a rule.
 
 It checks the closing message of each turn, which is what the Stop event hands
-it, and since 0.7.0 it checks what a subagent hands back as well. A subagent's
+it, and it checks what a subagent hands back as well. A subagent's
 report is often the whole substance of an answer, and it was the longest
 writing in a session that nothing read. Of the subagent reports measured on one
 machine before that was fixed, four of five broke a hard rule and none were
 caught, each carrying 24 to 34 em dashes against one for a typical main-agent
 break.
 
-Since 0.8.0 it checks the whole turn rather than only the end of it. A turn that
-pauses to run a tool and writes a paragraph first had that paragraph read by
-nobody, and on the sessions this was measured against, 18 turns out of 702, or
-2.6 per cent, carried a hard rule break sitting only in that unread part.
-Replaying all 18 against the new hook catches 16. A block now says which part it
-means and quotes the start of it, because a rewrite instruction pointed at the
-wrong paragraph reads as a false positive and teaches people the guard is
-unreliable. Where both halves break a rule, they are listed separately rather
-than added into one number, since the reader has to go to each.
+It checks the whole turn rather than only the end of it. A turn that pauses to
+run a tool and writes a paragraph first had that paragraph read by nobody, and
+on the sessions this was measured against, 18 turns out of 702, or 2.6 per cent,
+carried a hard rule break sitting only in that unread part. Replaying all 18
+catches 16. A block says which part it means and quotes the start of it, because
+a rewrite instruction pointed at the wrong paragraph reads as a false positive
+and teaches people the guard is unreliable. Where both halves break a rule, they
+are listed separately rather than added into one number, since the reader has to
+go to each.
 
 To find where the turn began it reads the last megabyte of the session log,
 which covers 99.09 per cent of turns across the 3,938 measured. On a turn bigger
