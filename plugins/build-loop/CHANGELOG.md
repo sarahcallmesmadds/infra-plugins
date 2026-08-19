@@ -3,6 +3,16 @@
 Upgrade notes for past versions, moved out of the README so that file says what
 the plugin is and how to use it. Nothing here is needed to install or run it.
 
+## Upgrading to 0.10.16
+
+**Nothing in the plugin changed.** The marketplace was renamed from `smadds`
+to `infra-plugins`, which edits this plugin's README, and any edit under
+`plugins/build-loop/` obliges a version bump so `claude plugin update` fetches
+it. Install with `/plugin install build-loop@infra-plugins`.
+
+0.10.15 does not exist. Another unmerged branch had claimed it, so this release
+skipped it rather than collide.
+
 ## Upgrading to 0.10.14
 
 **`/devin-review-response` recovers a hidden finding instead of stopping to ask

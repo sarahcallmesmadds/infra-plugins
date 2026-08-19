@@ -1,4 +1,4 @@
-# smadds
+# infra-plugins
 
 Plugins for Claude Code and Codex, by [Sarah Madden](https://github.com/sarahcallmesmadds).
 
@@ -16,8 +16,8 @@ than after.
 Then install what you want:
 
 ```
-/plugin install guardrails@smadds
-/plugin install build-loop@smadds
+/plugin install guardrails@infra-plugins
+/plugin install build-loop@infra-plugins
 ```
 
 Add the marketplace **by repository**, as above. Adding it by pasting a direct

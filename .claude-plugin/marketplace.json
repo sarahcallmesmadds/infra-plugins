@@ -1,5 +1,5 @@
 {
-  "name": "smadds",
+  "name": "infra-plugins",
   "owner": {
     "name": "Sarah Madden",
     "url": "https://github.com/sarahcallmesmadds"
@@ -12,7 +12,7 @@
       "name": "guardrails",
       "source": "./plugins/guardrails",
       "description": "Blocks commits to protected branches, asks before irreversible deletes, flags prompt injection in content the model reads or writes, and can require a governing document be read before a directory is written. Enforced automatically in both Claude Code and Codex.",
-      "version": "0.5.5",
+      "version": "0.5.6",
       "author": {
         "name": "Sarah Madden"
       },
@@ -28,7 +28,7 @@
       "name": "git-hygiene",
       "source": "./plugins/git-hygiene",
       "description": "Tells you which old branches are safe to delete and which still hold work that exists nowhere else, then cleans up the safe ones once you approve them. Never deletes unmerged commits.",
-      "version": "0.3.8",
+      "version": "0.3.9",
       "author": {
         "name": "Sarah Madden"
       },
@@ -45,7 +45,7 @@
       "name": "build-loop",
       "source": "./plugins/build-loop",
       "description": "Keep everything you build honest. Log what a skill, hook, command, plugin or script got wrong the moment it happens, fix it from the queue with an approval gate, know what else the fix puts at risk, and keep a to-build list that closes itself when the work actually ships.",
-      "version": "0.10.14",
+      "version": "0.10.16",
       "author": {
         "name": "Sarah Madden"
       },
@@ -64,7 +64,7 @@
       "name": "slop-check",
       "source": "./plugins/slop-check",
       "description": "Catch the habits that mean nobody edited it, and rewrite an answer that did not land. Blocks em dashes and choppy sentence runs in the assistant's own writing in both Claude Code and Codex, checks any draft, document, pull request, chart or spec for the signs it shipped unreviewed, and reshapes a confusing answer around what you have to do.",
-      "version": "0.7.0",
+      "version": "0.8.1",
       "author": {
         "name": "Sarah Madden"
       },
@@ -82,7 +82,7 @@
       "name": "session",
       "source": "./plugins/session",
       "description": "Make sessions continuous. Wrap one up into a handoff the next one loads, start with today's date and a compact build-loop brief, warn when another session is already working here, and put cost, context and connected tool health in the status line.",
-      "version": "0.8.20",
+      "version": "0.8.21",
       "author": {
         "name": "Sarah Madden"
       },
@@ -100,7 +100,7 @@
       "name": "spend-guardrails",
       "source": "./plugins/spend-guardrails",
       "description": "Choose the lowest-cost current Claude or OpenAI model that can reliably do the work, without recommending retired models.",
-      "version": "0.1.2",
+      "version": "0.1.3",
       "author": {
         "name": "Sarah Madden"
       },

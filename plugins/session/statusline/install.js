@@ -13,7 +13,7 @@
 //
 // The tempting one line is to point straight at the installed copy:
 //
-//   ~/.claude/plugins/cache/smadds/session/0.1.0/statusline/statusline.js
+//   ~/.claude/plugins/cache/infra-plugins/session/0.1.0/statusline/statusline.js
 //
 // That path contains the version. Updating the plugin creates a new directory
 // beside it and leaves the old one in place, so the setting keeps resolving,
@@ -50,7 +50,7 @@ function compareVersions(a, b) {
 
 // Every installed copy of this plugin's status line, newest first.
 //
-// Scans across marketplaces rather than assuming `smadds`, so this still works
+// Scans across marketplaces rather than assuming any one of them, so this works
 // for anyone who added the marketplace under a different name.
 function installedStatuslines(home = os.homedir()) {
   const cache = path.join(home, '.claude', 'plugins', 'cache');

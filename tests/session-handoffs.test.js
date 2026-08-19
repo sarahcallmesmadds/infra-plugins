@@ -654,9 +654,13 @@ check('the resolver prefers the newest version, not the first on disk', () => {
   // The plugin manager leaves superseded version directories in place, so a
   // resolver that takes the first match keeps rendering a version that was
   // replaced weeks ago, with nothing to indicate it.
+  // `other-market` is arbitrary on purpose. The resolver scans whatever
+  // marketplaces are on disk instead of assuming one, so a fixture built under
+  // this repository's own marketplace name would pass against a resolver that
+  // hardcoded it. Do not "tidy" this to the real name.
   const home = tmpHome();
   for (const v of ['0.1.0', '0.2.0', '0.10.0']) {
-    const dir = path.join(home, '.claude', 'plugins', 'cache', 'smadds', 'session', v, 'statusline');
+    const dir = path.join(home, '.claude', 'plugins', 'cache', 'other-market', 'session', v, 'statusline');
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, 'statusline.js'), '// x');
   }
@@ -722,7 +726,8 @@ check('a resolver that finds no plugin says so rather than rendering blank', () 
 check('a resolver with a version installed renders the real line', () => {
   const home = tmpHome();
   const { shimPath } = install.install({ home });
-  const v = path.join(home, '.claude', 'plugins', 'cache', 'smadds', 'session', '0.1.0');
+  // Arbitrary marketplace name on purpose; see the note on the case above.
+  const v = path.join(home, '.claude', 'plugins', 'cache', 'other-market', 'session', '0.1.0');
   fs.mkdirSync(path.join(v, 'statusline'), { recursive: true });
   fs.mkdirSync(path.join(v, 'scripts'), { recursive: true });
   for (const f of ['config.js', 'mcp-health.js']) {

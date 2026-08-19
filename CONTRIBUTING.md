@@ -1,6 +1,6 @@
 # Building plugins and skills
 
-This is the release checklist for the `smadds` marketplace. Use it for a new
+This is the release checklist for the `infra-plugins` marketplace. Use it for a new
 plugin, a new skill inside an existing plugin, and any change to files that ship
 inside a plugin.
 

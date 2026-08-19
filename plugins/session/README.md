@@ -589,7 +589,7 @@ Since 0.8.18 the hooks say which of the two has happened.
 
 ```
 /plugin marketplace add sarahcallmesmadds/infra-plugins
-/plugin install session@smadds
+/plugin install session@infra-plugins
 ```
 
 Restart afterwards. Hooks and skills load at startup, so nothing changes in a

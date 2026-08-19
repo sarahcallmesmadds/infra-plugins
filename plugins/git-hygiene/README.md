@@ -129,7 +129,7 @@ It never blocks anything.
 
 ```
 /plugin marketplace add sarahcallmesmadds/infra-plugins
-/plugin install git-hygiene@smadds
+/plugin install git-hygiene@infra-plugins
 ```
 
 Add the marketplace **by repository**, as above. Pasting a direct URL to
