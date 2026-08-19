@@ -489,6 +489,18 @@ check('apply-fix asks by name once per mode, not once in total', () => {
       `${mode} mode takes a root path by name ${takes} times, expected once. `
       + 'A path taken without the matching check in the same mode is the ordering '
       + 'bug both modes name.');
+
+    // Calling list and never saying what to do with the answer is how revert
+    // mode shipped a git command with no directory: the call was present, the
+    // count was right, and {repo_root} was bound nowhere in the section. So the
+    // binding is asserted, not just the call.
+    assert.ok(/\{repo_root\}/.test(section),
+      `${mode} mode never mentions {repo_root}, so the path it just looked up `
+      + 'goes nowhere and any git command in this mode has no stated directory.');
+    assert.ok(/absolute `path`|`path` it prints|path of the root/.test(section),
+      `${mode} mode uses {repo_root} without saying it is the path returned by `
+      + 'roots.js list. An unbound placeholder reaches a git command as an empty '
+      + 'string or as the literal text.');
   }
 });
 

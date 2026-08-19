@@ -592,8 +592,11 @@ things differ, and both are deliberate:
   `In Progress` entry to `"fix applied, watching"` with no commit and no marker,
   and Step 8 lands there after writing a file with nowhere to commit it. Those
   are refused at Step R3 on their marker, which is the right place for it. Type
-  is not what distinguishes them, so filtering on type would drop revertible
-  entries without catching a single unrevertible one.
+  is not what distinguishes them: hashless entries occur at both types, and so do
+  committed ones. A type filter would drop revertible dep-reviews, and any
+  unrevertible entry it happened to remove was already going to be refused at R3
+  on its marker. It removes real work and adds no protection, rather than adding
+  none at all.
 
 Everything else carries over unchanged, including reading `target` and falling
 back to `skill` when `target` is absent, per the read-time mapping in SCHEMA.md.
@@ -729,6 +732,12 @@ Then take the path:
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/scripts/roots.js" list --name {repo}
 ```
+
+**`{repo_root}` is the absolute `path` this prints, and nothing else.** Every
+`git -C {repo_root}` below runs there, including the ones quoted to the user at
+Steps R3 and R4, so leaving it unbound means the revert has no stated directory to
+run in. The defaults are already applied when there is no config file, and a
+pre-v2 `skillRoots` config has already been read as roots of kind `skill`.
 
 **The check comes first and this does not relay.** `list` prints JSON, so the
 sentence naming a missing root has to come from `check`, and it has to arrive

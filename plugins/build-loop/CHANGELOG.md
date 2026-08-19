@@ -22,12 +22,33 @@ vocabulary and a set of note markers. Four rules in two files means a rule fixed
 in one stays wrong in the other, which is the failure `scratch.js` and
 `roots.js` were each written to end.
 
-**What it did not save.** The honest number is 18 lines, 803 to 785. The audit
-that asked for this counted the whole of both skills as removable, and almost
-none of `/revert-fix` was duplication: it was reasoning about reverting, which
-has to live somewhere. The win here is one fewer skill to keep in sync and one
-fewer file that can drift, not a smaller corpus. Anyone planning the same move on
-another pair should measure before believing the line count.
+**It did not save anything. It cost 14 lines.** The two skills were 803 lines,
+545 and 258. The fold landed at 785, and three review rounds took it to 817.
+
+The audit put 643 lines against this action by counting the whole of both skills
+as removable. Almost none of `/revert-fix` was duplication. It was reasoning
+about reverting, and the three review rounds proved that the hard way: each one
+found something the compression had dropped, and all three were load-bearing.
+
+- Step R3 lost the field the note marker lives in, leaving an instruction to
+  compare a string prefix against a `{ts, text}` object. It finds nothing and
+  reports an entry that has a commit as having none.
+- Step R1 inherited a `type == "primary"` filter from Step 1 that the old skill
+  never had, which would have made a dep-review's committed fix impossible to
+  undo.
+- Step R5 lost the sentence binding `{repo_root}` to the path `roots.js list`
+  returns, so the revert had no stated directory to run in.
+
+Two justifications written to explain those fixes were themselves wrong and had
+to be corrected in the next round.
+
+So the number to carry forward is not 18 or 643. It is that folding two skills
+costs lines rather than saving them, because the shared parts are the cheap
+boilerplate and the bulk is reasoning that survives. **What the fold actually
+buys is one fewer file to keep in sync** across a shared schema, lock, status
+vocabulary and set of note markers, which is the thing that kept going wrong.
+That is worth having. It is just not what it was sold as, and the next person
+planning the same move on another pair should measure first.
 
 **The review gate stayed separate on purpose.** `/verify-fix` was the other half
 of this fold and is still its own skill, because its tool list deliberately
