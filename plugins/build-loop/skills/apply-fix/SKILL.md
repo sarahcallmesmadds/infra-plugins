@@ -582,11 +582,18 @@ things differ, and both are deliberate:
 - **Status.** Keep only entries at `"fix applied, watching"`, where Step 1 keeps
   `Open` and `In Progress`.
 - **Type.** Do **not** filter on `type == "primary"`. Step 1 does, and this mode
-  must not inherit it. A dep-review entry that reached `"fix applied, watching"`
-  had a fix written and committed against it, so it is exactly as revertible as a
-  primary one, and excluding it leaves that fix with no way to be undone from
-  here. `/revert-fix` never filtered on type either, so this preserves its
-  behaviour rather than changing it.
+  must not inherit it. A dep-review entry can carry a committed fix like any
+  other, and excluding it here would leave that fix with no way to be undone.
+  The skill this mode replaced did not filter on type, so keeping it unfiltered
+  preserves behaviour rather than changing it.
+
+  **This is not a claim that every entry at this status has a commit.** It does
+  not, whatever its type: `/verify-fix` Step S4's standalone PASS promotes an
+  `In Progress` entry to `"fix applied, watching"` with no commit and no marker,
+  and Step 8 lands there after writing a file with nowhere to commit it. Those
+  are refused at Step R3 on their marker, which is the right place for it. Type
+  is not what distinguishes them, so filtering on type would drop revertible
+  entries without catching a single unrevertible one.
 
 Everything else carries over unchanged, including reading `target` and falling
 back to `skill` when `target` is absent, per the read-time mapping in SCHEMA.md.
@@ -629,8 +636,11 @@ Read the entry with the Read tool.
 
 ## Step R3 — Find the commit hash
 
-Scan `notes[]` in order for text starting `"Committed:"` or `"Not committed:"`,
-and take the **last** one. Notes are append-only, so an entry written without a
+Scan the entry's `notes[]` array in order for **objects whose `text` field**
+starts with `"Committed:"` or `"Not committed:"`, and take the **last** one. A
+note is a `{ts, text}` object, so comparing the prefix against the note itself
+rather than against `note.text` finds nothing and reports an entry with a commit
+as having none. Notes are append-only, so an entry written without a
 repository and later committed carries both, and the older `Not committed:`
 describes a state that has since changed. Deciding on the first match refuses to
 revert a commit that exists.

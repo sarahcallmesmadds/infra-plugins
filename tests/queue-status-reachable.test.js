@@ -88,7 +88,8 @@ function statusesWrittenBy(text) {
 // Discovered, not listed by hand.
 //
 // The first version of this file named verify-fix and apply-fix and called
-// itself a general rule. revert-fix also writes queue statuses, `Open` and
+// itself a general rule. revert-fix, a separate skill at the time and since
+// folded into apply-fix as revert mode, also wrote queue statuses, `Open` and
 // `Won't Fix`, and was silently outside the rule it claimed to enforce. Both
 // values happen to be allowed, so nothing failed and nothing would have.
 //

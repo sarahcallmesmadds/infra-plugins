@@ -457,10 +457,19 @@ check('apply-fix asks by name once per mode, not once in total', () => {
   // names is broken. That is the shape of check this repository keeps having to
   // replace: one that passes while half of what it describes is gone.
   const text = skillText('apply-fix');
-  const boundary = text.indexOf('# Revert mode');
-  assert.ok(boundary > 0,
-    'apply-fix has no "# Revert mode" heading, so the two modes cannot be told '
-    + 'apart and every check below is measuring one undivided file.');
+
+  // Anchored to the start of a line and required to be unique. Plain indexOf
+  // would also match the heading quoted inside prose or a fenced block, and a
+  // split at the wrong offset still yields one match per half, so the check
+  // would pass while saying nothing. A second occurrence is the failure, not a
+  // tie to break.
+  const headings = [...text.matchAll(/^# Revert mode\s*$/gm)];
+  assert.strictEqual(headings.length, 1,
+    `apply-fix has ${headings.length} lines reading "# Revert mode", expected `
+    + 'exactly one. With none the two modes cannot be told apart and every '
+    + 'assertion below is measuring one undivided file; with more than one the '
+    + 'split lands at the first, which may not be the mode boundary.');
+  const boundary = headings[0].index;
 
   const applyMode = text.slice(0, boundary);
   const revertMode = text.slice(boundary);
