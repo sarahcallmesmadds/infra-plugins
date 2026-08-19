@@ -529,7 +529,7 @@ Wait for the user's answer. If they say "leave them", they stay Open. Do not aut
 
 ```
 Fix committed locally. Queue entry {id} is now "fix applied, watching".
-Commit: {hash} ({repo}), on branch {branch}, not pushed.
+Commit: {commit-hash} ({repo}), on branch {branch}, not pushed.
 {liveness}
 Then try it for real. When it works, run /list-bugs and update the entry to Resolved.
 ```

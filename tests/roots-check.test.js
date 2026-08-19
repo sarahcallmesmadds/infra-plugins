@@ -434,8 +434,13 @@ check('a skill that commits into one root asks about that root by name', () => {
   //
   // revert-fix was the second name here until it folded into apply-fix as revert
   // mode. Both call sites survived the fold and both are inside the one file now,
-  // so the check below would pass on a file that had lost one of them. The
-  // call-site count guards that.
+  // so a check that only looked at the file would pass having lost one of them.
+  //
+  // The step each call lives in is asserted rather than named in a message. The
+  // previous version put the step in the failure text only, and when the revert
+  // guard moved from R5 to R2 the message kept saying R5: a maintainer sent to
+  // the wrong step by a test that was still green. Naming a thing in prose is how
+  // it goes stale; asserting it is how it cannot.
   const offending = ['apply-fix'].filter((name) =>
     !/roots\.js"? check --name/.test(skillText(name)));
   assert.deepStrictEqual(
@@ -476,8 +481,27 @@ check('apply-fix asks by name once per mode, not once in total', () => {
 
   for (const [mode, section, step] of [
     ['apply', applyMode, 'Step 2'],
-    ['revert', revertMode, 'Step R5'],
+    ['revert', revertMode, 'Step R2'],
   ]) {
+    // The heading this mode's root check must live under. Asserted first,
+    // because every boundary below is found by splitting on headings: if the
+    // heading is reworded the split silently stops working and the assertions
+    // under it pass while measuring nothing.
+    const heads = [...section.matchAll(/^## (Step [^\s—-]+)[^\n]*$/gm)];
+    assert.ok(heads.some((h) => h[1] === step),
+      `${mode} mode has no "## ${step}" heading. Headings found: `
+      + `${heads.map((h) => h[1]).join(', ') || 'none'}. The checks below split on `
+      + 'headings, so a renamed one turns them into assertions about nothing.');
+
+    // And the call has to be under that heading, not merely somewhere in the
+    // mode. A guard that moves to another step keeps the count at one.
+    const askAt = section.search(/roots\.js"? check --name/);
+    const owning = heads.filter((h) => h.index < askAt).pop();
+    assert.ok(owning && owning[1] === step,
+      `${mode} mode asks about its root under "${owning ? owning[1] : 'no heading'}" `
+      + `but it belongs under "${step}". Apply mode asks before it writes; revert `
+      + 'mode asks at R2 because Steps R3 and R4 quote the path to a person before '
+      + 'any revert runs.');
     const asks = (section.match(/roots\.js"? check --name/g) || []).length;
     assert.strictEqual(asks, 1,
       `${mode} mode asks about a root by name ${asks} times, expected once at `

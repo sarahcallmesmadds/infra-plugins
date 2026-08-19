@@ -23,7 +23,7 @@ in one stays wrong in the other, which is the failure `scratch.js` and
 `roots.js` were each written to end.
 
 **It did not save anything. It cost 34 lines.** The two skills were 803
-lines, 545 and 258. The fold landed at 785, and four review rounds took it to 837.
+lines, 545 and 258. The fold landed at 785, and five review rounds took it to 837.
 
 The audit put 643 lines against this action by counting the whole of both skills
 as removable. Almost none of `/revert-fix` was duplication. It was reasoning
