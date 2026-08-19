@@ -492,15 +492,40 @@ check('apply-fix asks by name once per mode, not once in total', () => {
 
     // Calling list and never saying what to do with the answer is how revert
     // mode shipped a git command with no directory: the call was present, the
-    // count was right, and {repo_root} was bound nowhere in the section. So the
-    // binding is asserted, not just the call.
-    assert.ok(/\{repo_root\}/.test(section),
-      `${mode} mode never mentions {repo_root}, so the path it just looked up `
-      + 'goes nowhere and any git command in this mode has no stated directory.');
-    assert.ok(/absolute `path`|`path` it prints|path of the root/.test(section),
-      `${mode} mode uses {repo_root} without saying it is the path returned by `
-      + 'roots.js list. An unbound placeholder reaches a git command as an empty '
-      + 'string or as the literal text.');
+    // count was right, and {repo_root} was bound nowhere in the section.
+    //
+    // Presence alone was not enough either. The next version passed on a file
+    // whose binding sat at Step R5 while Steps R3 and R4 already put {repo_root}
+    // into text shown to a person, so the placeholder was handed over with no
+    // value behind it.
+    //
+    // But "the binding must precede every use" is too strict and fails a correct
+    // file: apply mode writes the command block and then a one-line legend under
+    // it, which is readable and fine. What actually went wrong in revert mode was
+    // crossing a step boundary, using the value in one step and explaining it two
+    // steps later. So the boundary is the step: whatever binds {repo_root} has to
+    // arrive before the next "## Step" heading after its first use.
+    //
+    // Both wordings in this file are accepted, because pinning one phrase makes a
+    // legitimate rewrite fail while changing nothing about the property.
+    const BINDS = /\{repo_root\}`? is the (absolute )?`path`( of the root| this prints)?/;
+    const bindsAt = section.search(BINDS);
+    assert.ok(bindsAt >= 0,
+      `${mode} mode never says what {repo_root} is. The path it looks up goes `
+      + 'nowhere and every git command in the mode has no stated directory.');
+
+    const firstUse = section.search(/\{repo_root\}/);
+    assert.ok(firstUse >= 0, `${mode} mode never mentions {repo_root} at all.`);
+
+    if (bindsAt > firstUse) {
+      const between = section.slice(firstUse, bindsAt);
+      const crossed = between.match(/\n## Step [^\n]*/g) || [];
+      assert.deepStrictEqual(crossed, [],
+        `${mode} mode first uses {repo_root} and only binds it ${crossed.length} `
+        + `step heading(s) later, crossing:${crossed.join(';')}. A step that quotes `
+        + 'the placeholder before anything defines it hands a person a command '
+        + 'they cannot run.');
+    }
   }
 });
 

@@ -624,7 +624,7 @@ rather than after it.
 
 ---
 
-## Step R2 — Guard on status
+## Step R2 — Guard on status and resolve the root
 
 Read the entry with the Read tool.
 
@@ -634,6 +634,38 @@ Read the entry with the Read tool.
   to the diff." Stop.
 - If `repo == "unknown"`: say "This entry has repo: unknown. I can't tell which
   repository to undo this in. Resolve the repo field first." Stop.
+
+**Then resolve the root, here and not later.** Apply mode does this at Step 2 for
+the same reason, and Step 2 has not run on this path, so this is the only root
+check revert mode gets.
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/roots.js" check --name {repo}
+```
+
+Exit 0 means it exists. Anything else, relay what the check printed and stop. A
+revert is the one operation here where guessing at a repository would rewrite work
+in the wrong place, so "the other roots are fine" is not an answer. `--name`
+rather than a bare `check`, for the reason Step 2 gives.
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/roots.js" list --name {repo}
+```
+
+**`{repo_root}` is the absolute `path` this prints, and nothing else.** The
+defaults are already applied when there is no config file, and a pre-v2
+`skillRoots` config has already been read as roots of kind `skill`.
+
+**The check comes first and this does not relay.** `list` prints JSON, so the
+sentence naming a missing root has to come from `check`, and it has to arrive
+before a path is taken rather than after one already has been.
+
+**This step is where the root is resolved because Steps R3 and R4 both put
+`{repo_root}` into text shown to the user, before any revert runs.** It used to
+sit at Step R5, which left both of those quoting a placeholder with no value
+behind it. Handing someone a command containing `{repo_root}` is the same failure
+as handing them one containing `${CLAUDE_PLUGIN_ROOT}`: it cannot be run, and it
+looks like it can.
 
 ---
 
@@ -648,11 +680,16 @@ repository and later committed carries both, and the older `Not committed:`
 describes a state that has since changed. Deciding on the first match refuses to
 revert a commit that exists.
 
-The format is `"Committed: {hash} to {repo}"`, so `"Committed: abc1234 to
-personal"` gives `abc1234`.
+The note's own text has the format `"Committed: {hash} to {repo}"`, written by
+Step 8. That `{hash}` is part of the stored string being parsed, not a value to
+substitute here: `"Committed: abc1234 to personal"` gives `abc1234`.
 
 - **Last marker is `Committed:`** — take the hash and continue, even if an
-  earlier `Not committed:` note exists. The commit is the newer fact.
+  earlier `Not committed:` note exists. The commit is the newer fact. **That hash
+  is `{commit-hash}` from here on**, and it is the only name used for it: the
+  commit being undone is `{commit-hash}` and the undo commit made at Step R5 is
+  `{revert-hash}`. Two names for one value is how a message ends up reporting a
+  different commit from the one the command touched.
 
 - **Last marker is `Not committed:`** — nothing to revert. Step 8 writes that
   marker when it wrote the file and the root was not a git repository. Quote the
@@ -699,7 +736,7 @@ personal"` gives `abc1234`.
 **Before running any git command, show exactly what will happen and wait.**
 
 ```
-I'll run: git revert {hash} --no-edit in {repo_root}
+I'll run: git revert {commit-hash} --no-edit in {repo_root}
 
 This creates a NEW undo commit. It does not delete or modify the original commit.
 The fix for {target} will be reversed.
@@ -715,35 +752,7 @@ touching neither the repository nor the entry.
 
 ## Step R5 — Run the revert
 
-**Step 2's root guard has not run, so this is the only root check on this path.**
-Ask about the root this entry names before taking a path from it, for the reason
-Step 2 gives about `--name`:
-
-```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/roots.js" check --name {repo}
-```
-
-Exit 0 means it exists. Anything else, relay what the check printed and stop. A
-revert is the one operation here where guessing at a repository would rewrite
-work in the wrong place.
-
-Then take the path:
-
-```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/roots.js" list --name {repo}
-```
-
-**`{repo_root}` is the absolute `path` this prints, and nothing else.** Every
-`git -C {repo_root}` below runs there, including the ones quoted to the user at
-Steps R3 and R4, so leaving it unbound means the revert has no stated directory to
-run in. The defaults are already applied when there is no config file, and a
-pre-v2 `skillRoots` config has already been read as roots of kind `skill`.
-
-**The check comes first and this does not relay.** `list` prints JSON, so the
-sentence naming a missing root has to come from `check`, and it has to arrive
-before a path is taken rather than after one already has been.
-
-Run:
+`{repo_root}` was resolved at Step R2 and is the path used here.
 
 ```bash
 git -C {repo_root} revert {commit-hash} --no-edit
@@ -754,7 +763,8 @@ entry has NOT been updated. The usual causes are that the commit was already
 reverted, or that newer commits conflict with the undo. Check with: `git -C
 {repo_root} log --oneline | head -10`" Stop.
 
-Then capture the undo commit, which is a different hash from the original fix:
+Then capture the undo commit. **What this prints is `{revert-hash}`**, and it is
+a different value from `{commit-hash}`, which is the commit just undone:
 
 ```bash
 git -C {repo_root} rev-parse HEAD
@@ -764,17 +774,27 @@ git -C {repo_root} rev-parse HEAD
 
 ## Step R6 — Update the queue entry and close
 
-Status and note in one call, for the reason Step 8 gives:
+Status and note in one call:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/scripts/queue.js" update {id} --status Open \
-  --note "Reverted: {revert-commit-hash}"
+  --note "Reverted: {revert-hash}"
 ```
+
+**Do not read the entry and rebuild it yourself.** A revert has happened since
+Step R1, the session may have run for hours, and another session may have written
+to the same entry in between. `queue.js` reads it inside the lock, so the note is
+appended to what is on disk now rather than to the copy read at the start, and the
+version read cannot overwrite work never seen. This is the same rule as the one at
+Step 2, restated because the gap it closes is widest here: nowhere else in this
+file is there a git operation between reading an entry and writing it.
 
 If it exits non-zero, say "The queue entry update failed. The revert DID succeed
 (undo commit: {revert-hash}), and the queue file was not updated: {what it
 printed}." A refusal usually means another session holds the lock, so running it
 again is the remedy rather than editing the file by hand.
+
+Never edit the entry with the Write tool to get around it, for the reason above.
 
 ```
 Done. The fix for {target} has been reverted (undo commit: {revert-hash}).

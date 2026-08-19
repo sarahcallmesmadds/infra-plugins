@@ -22,8 +22,8 @@ vocabulary and a set of note markers. Four rules in two files means a rule fixed
 in one stays wrong in the other, which is the failure `scratch.js` and
 `roots.js` were each written to end.
 
-**It did not save anything. It cost 14 lines.** The two skills were 803 lines,
-545 and 258. The fold landed at 785, and three review rounds took it to 817.
+**It did not save anything. It cost 34 lines.** The two skills were 803
+lines, 545 and 258. The fold landed at 785, and four review rounds took it to 837.
 
 The audit put 643 lines against this action by counting the whole of both skills
 as removable. Almost none of `/revert-fix` was duplication. It was reasoning
@@ -37,10 +37,17 @@ found something the compression had dropped, and all three were load-bearing.
   never had, which would have made a dep-review's committed fix impossible to
   undo.
 - Step R5 lost the sentence binding `{repo_root}` to the path `roots.js list`
-  returns, so the revert had no stated directory to run in.
+  returns, so the revert had no stated directory to run in. Putting it back at R5
+  was not enough either: Steps R3 and R4 put that placeholder into text shown to a
+  person before R5 runs, so the root is now resolved at Step R2, where apply mode
+  already resolves its own.
+- Step R6 lost the rule against reading the entry and rebuilding it by hand. That
+  is the one place in this file with a git operation between reading an entry and
+  writing it, so it is where another session is most likely to write in the gap.
 
-Two justifications written to explain those fixes were themselves wrong and had
-to be corrected in the next round.
+Three justifications written to explain those fixes were themselves wrong and had
+to be corrected in the next round, including one that said a binding covered the
+steps "below" it when those steps were above it.
 
 So the number to carry forward is not 18 or 643. It is that folding two skills
 costs lines rather than saving them, because the shared parts are the cheap
