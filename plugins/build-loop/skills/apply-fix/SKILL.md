@@ -386,7 +386,7 @@ assume it ends in `SKILL.md`, because the target may be a hook or a script:
 
 ```bash
 git -C <root.path> add <target_path relative to root.path>
-git -C <root.path> commit -m "fix({target}): {one-line summary of fix} [queue:{id}]"
+git -C <root.path> commit -m "fix({target}): {one-line summary} [queue:{id}]"
 ```
 
 **If either command fails, establish which failure it is before choosing a branch:**
@@ -525,6 +525,16 @@ after, so a lost note is visible rather than silent.
 
 Wait for the user's answer. If they say "leave them", they stay Open. Do not auto-close dep-review entries.
 
+**Get the branch before showing anything**, since the summary below prints it:
+
+```bash
+git -C {repo_root} rev-parse --abbrev-ref HEAD
+```
+
+That output is `{branch}`. It used to be fetched twenty lines below the display
+that prints it, so a run following this file in order reached the summary with
+nothing to substitute and put the word `{branch}` in front of a person.
+
 **Show closing summary:**
 
 ```
@@ -550,8 +560,6 @@ is already active. A `plugin-repo` root is the opposite: the running copy comes 
 the cache, so the checkout can be committed and the machine still runs the old file.
 
 Either way the commit is local, and that part is said above in both cases.
-
-Get the branch with `git -C {repo_root} rev-parse --abbrev-ref HEAD`.
 
 **Say "not pushed" every time, and never leave it implied.** This skill does not push,
 by the deliberate decision above, and `"fix applied, watching"` reads as shipped and

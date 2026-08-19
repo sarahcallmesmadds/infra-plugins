@@ -22,8 +22,12 @@ vocabulary and a set of note markers. Four rules in two files means a rule fixed
 in one stays wrong in the other, which is the failure `scratch.js` and
 `roots.js` were each written to end.
 
-**It did not save anything. It cost 34 lines.** The two skills were 803
-lines, 545 and 258. The fold landed at 785, and five review rounds took it to 837.
+**It did not save anything. It cost 42 lines.** The two skills were 803
+lines, 545 and 258. The fold landed at 785, and six review rounds took it to 845.
+The last two rounds found nothing wrong with the fold at all: they found bugs that
+had been sitting in \`apply-fix\` all along, which the rules written for revert mode
+made visible. That is the clearest argument for the fold that this change has, and
+it is not the one the audit made.
 
 The audit put 643 lines against this action by counting the whole of both skills
 as removable. Almost none of `/revert-fix` was duplication. It was reasoning
