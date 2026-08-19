@@ -106,6 +106,26 @@ function fromTranscript(transcript) {
 // checked. See earlierParts for why that is the only safe answer.
 const TURN_WINDOW_BYTES = 1024 * 1024;
 
+// Some rows arrive as ordinary user messages without being the user saying
+// anything, and stopping the walk at one puts the turn boundary in the wrong
+// place, so the previous turn's prose is read as part of this one.
+//
+// Counted across the 298 main session logs on the machine this was written on:
+// 55 rows carry echoed command output this way. `[Request interrupted` is in
+// the list on build-loop's authority rather than on evidence, since none appear
+// here outside isMeta, and it costs one comparison to not depend on that.
+//
+// A slash command is deliberately NOT on this list. `<command-message>` and
+// `<command-name>` rows, 439 of them here, are the user typing `/something`,
+// which is the user speaking and is a real turn boundary. build-loop's
+// pushback.js drops those too, because it is asking whether the user was
+// complaining and a slash command is not a complaint. Different question, and
+// copying its list wholesale would have made every slash command invisible.
+function SPOKEN_BY_USER(content) {
+  return !content.includes('<local-command-stdout>')
+    && !content.startsWith('[Request interrupted');
+}
+
 // Every wording this file can produce starts with these words. `style-lint`
 // uses it to tell a message it already blocked from one it has not seen, so it
 // has to stay true of all of them.
@@ -166,7 +186,31 @@ function earlierParts(transcriptPath, closing) {
   const rows = [];
   for (const line of text.split('\n')) {
     if (!line.trim()) continue;
-    try { rows.push(JSON.parse(line)); } catch { /* a torn line is not evidence */ }
+    let row;
+    try { row = JSON.parse(line); } catch { continue; }   // a torn line is not evidence
+    // A delegated conversation can be appended into the main session log with
+    // this flag, and its prompt arrives as a plain-string user row: exactly what
+    // the boundary walk below is looking for. Stopping there puts the boundary
+    // inside somebody else's conversation, so the subagent's writing is reported
+    // against the main agent while the main agent's own opening paragraph, the
+    // thing this function was added to read, sits before the boundary and is
+    // skipped. That is the wrong-text failure this whole change exists to
+    // remove, arriving by a route nobody was watching.
+    //
+    // It does not reproduce on this build, and that is worth writing down so
+    // this guard is not later read as evidence it happened: across all 298 main
+    // session logs on the machine this was written on, zero user rows carry the
+    // flag, because subagent conversations go to their own files under
+    // subagents/. build-loop's pushback.js drops these rows explicitly, so the
+    // shape has been seen somewhere, and one condition is a cheap way to not
+    // depend on which build you are running.
+    //
+    // pushback.js also drops rows whose userType is not "external", and that is
+    // deliberately not copied. It is answering whether the user was complaining,
+    // where a slash command is not pushback. Here the question is whether the
+    // user spoke, and a slash command is the user speaking.
+    if (row.isSidechain) continue;
+    rows.push(row);
   }
 
   // Walk back to the message that opened this turn. `isMeta` is what excludes
@@ -178,6 +222,7 @@ function earlierParts(transcriptPath, closing) {
     if (e.type !== 'user' || e.isMeta) continue;
     const c = e.message && e.message.content;
     if (Array.isArray(c) && c.some((x) => x.type === 'tool_result')) continue;
+    if (typeof c === 'string' && !SPOKEN_BY_USER(c)) continue;
     from = i;
     break;
   }
@@ -239,27 +284,38 @@ function earlierParts(transcriptPath, closing) {
   return parts;
 }
 
+// The text of a row, however the host chose to carry it. wasBlocked used to do
+// this itself and only handled the array form, so a plain-string assistant row
+// read as empty and the scan walked straight past the message it was supposed
+// to stop at.
+function textOfRow(e) {
+  const c = e && e.message && e.message.content;
+  if (!c) return '';
+  return (Array.isArray(c)
+    ? c.filter((x) => x.type === 'text').map((x) => x.text).join('\n')
+    : String(c)).trim();
+}
+
 // Whether the hook already objected to rows[i], by looking for its own feedback
 // before the next thing the assistant said.
 function wasBlocked(rows, i) {
   for (let j = i + 1; j < rows.length; j++) {
     const e = rows[j];
     if (e.type === 'assistant') {
-      const c = e.message && e.message.content;
-      const t = Array.isArray(c) ? c.filter((x) => x.type === 'text').map((x) => x.text).join('') : '';
-      if (t.trim()) return false;
+      if (textOfRow(e)) return false;
       continue;
     }
-    // The hook's own feedback and nothing else. It arrives as an isMeta user
-    // entry whose content is a plain string. Searching the whole serialised
+    // The hook's own feedback and nothing else. Searching the whole serialised
     // entry matched a tool_result that merely contained the marker, which any
     // grep of this repository produces, and that suppressed a real violation
-    // while reporting nothing. A guard that goes quiet because the words
-    // appeared in someone's search output is worse than one that never ran.
-    if (e.type === 'user' && e.isMeta) {
-      const c = e.message && e.message.content;
-      if (typeof c === 'string' && c.includes(BLOCK_MARKER)) return true;
-    }
+    // while reporting nothing. A guard that goes quiet because the words turned
+    // up in somebody's search output is worse than one that never ran.
+    //
+    // isMeta is what draws the line, not the shape of the content. Requiring a
+    // plain string as well meant a host that hands the same feedback over as
+    // text blocks, which is how the assistant's own messages arrive, went
+    // unrecognised and the just-rewritten paragraph was reported all over again.
+    if (e.type === 'user' && e.isMeta && textOfRow(e).includes(BLOCK_MARKER)) return true;
   }
   return false;
 }
@@ -346,7 +402,7 @@ function blockMessage(direct, transcriptPath, config, subject) {
   const found = [];
   for (const t of earlier) {
     const r = judge(t);
-    if (r) found.push({ where: 'before a tool call', result: r, text: t });
+    if (r) found.push({ where: 'earlier in this turn', result: r, text: t });
   }
   const closingResult = judge(closing);
   if (closingResult) found.push({ where: subject, result: closingResult, text: closing });
