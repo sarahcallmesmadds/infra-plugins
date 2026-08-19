@@ -280,7 +280,17 @@ Same three response types as Step V3:
 
   **Then offer a restore only if a `Committed:` note exists:**
 
-  > "Should I help restore the target file to its pre-fix state? To check what the file looked like before: git -C {repo_root} log --oneline -5, find the commit with [queue:{id}] in the message, then run /apply-fix revert {id} to undo it."
+  > "Should I help restore the target file to its pre-fix state? To check what the file looked like before: git -C {repo_root} log --oneline -5, and find the commit with [queue:{id}] in the message. Undo it with: git -C {repo_root} revert {that hash} --no-edit"
+
+  **Name the git command here, not `/apply-fix revert`.** The fail path above has
+  already set this entry back to `Open`, and revert mode stops on any entry that is
+  not `fix applied, watching`, so pointing at it hands someone an instruction that
+  refuses. That was true of `/revert-fix` before the fold and stayed true through
+  the rename, because the line was rewritten without checking the guard on the
+  other side of it.
+
+  If they would rather have the entry driven than the command, the order has to go
+  the other way: undo it before rejecting it, while the status still allows it.
 
   With a `Not committed:` note, there is no commit and `git log` cannot run usefully in
   a directory that is not a repository, so say this instead:

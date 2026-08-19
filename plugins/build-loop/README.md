@@ -15,7 +15,7 @@ It covers everything you build, not only skills. A hook, a slash command, a
 whole plugin, and a loose script are all things that can misbehave, and all of
 them are things you forget you meant to fix.
 
-## The eleven commands
+## The ten commands
 
 **Catch it**
 
@@ -32,8 +32,10 @@ them are things you forget you meant to fix.
   show a plain-language before and after. Nothing is written until you say yes.
   The fix is committed so it can be undone.
 - `/verify-fix` — confirm a fix actually worked before closing it.
-- `/apply-fix revert` — undo a fix that did not, with `git revert` rather than
-  history rewriting, and put the entry back to open.
+- `/apply-fix revert` — the same command in its other mode, undoing a fix that
+  did not work, with `git revert` rather than history rewriting, and putting the
+  entry back to open. A mode rather than an eleventh command, which is why the
+  count above is ten.
 
 **Remember what you meant to build**
 
@@ -296,7 +298,7 @@ teaches you to ignore it.
 
 ## Codex
 
-**The eleven commands are identical on both runtimes.** Everything you invoke by
+**The ten commands are identical on both runtimes.** Everything you invoke by
 name behaves the same way, reads the same queue, and writes the same files.
 
 **The hooks run in Codex too.** This section has now been wrong twice in
