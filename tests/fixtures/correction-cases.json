@@ -3,7 +3,7 @@
   "how_to_read_a_case": {
     "side": "user means it arrives as a prompt. assistant means the answer concedes it, which the policy also has to catch.",
     "expected": "suggest, quiet, or either. either means the reading is genuinely ambiguous and both answers are defensible, so it must not be counted as a failure in either direction.",
-    "found": "which review round produced it. Round 0 is the cases written when it was first built."
+    "found": "which round produced it. Round 0 is the cases written when it was first built, rounds 1 to 4 came from review, and round 5 came from use rather than review."
   },
   "cases": [
     { "side": "user", "expected": "suggest", "found": 0, "input": "that was wrong, the wrap skill should file centrally" },

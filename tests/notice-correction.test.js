@@ -138,13 +138,14 @@ check('a turn already running a queue command is still routed', () => {
 // boundaries that stop it being a nuisance, and each one exists because
 // something went wrong without it.
 //
-// Every pattern here is literal prose, which does pin wording to the extent
-// that the phrase it names has to survive. So each one is the shortest phrase
-// that still carries its boundary and nothing else: a reword keeping the
-// boundary keeps the test green, and one dropping the boundary fails. Reaching
-// for a longer, more natural-reading phrase is what makes this brittle, and a
-// whole sentence was matched here until a review pointed out that tuning the
-// sentence would break a check that was not about the sentence.
+// Each boundary is named by a phrase, built into a pattern by `phrase()` below
+// rather than written by hand, and that does pin wording to the extent that the
+// phrase has to survive. So each one is the shortest phrase that still carries
+// its boundary and nothing else: a reword keeping the boundary keeps the test
+// green, and one dropping the boundary fails. Reaching for a longer, more
+// natural-reading phrase is what makes this brittle, and a whole sentence was
+// matched here until a review pointed out that tuning the sentence would break
+// a check that was not about the sentence.
 
 // Match a phrase wherever the line breaks fall. POLICY is an array of short
 // strings joined with newlines, so every space inside a phrase is a newline in
@@ -168,10 +169,24 @@ check('the phrase matcher survives a line break and still says no', () => {
   // Without this the helper is load bearing and unchecked: one that returned
   // /(?:)/ would match everything, and all nine boundary checks below would
   // pass against a policy that had lost every one of them.
+  //
+  // Each case below names the wrong implementation it rules out. The first
+  // version of this case ruled out only the empty matcher, and a review pointed
+  // out it would have accepted four other wrong ones, which is the same fault
+  // as an empty matcher wearing a coat.
   assert.ok(phrase('cannot finish without it fixed').test('you cannot\nfinish without it\nfixed.'), 'did not match across newlines');
   assert.ok(phrase('has to be theirs').test('It has to be theirs.'), 'did not match on one line');
   assert.ok(!phrase('has to be theirs').test('It has to be ours.'), 'matched a policy missing the phrase');
   assert.ok(!phrase('not block').test('this hook may block'), 'matched words out of order');
+  // rules out joining on `.*`, which lets unrelated text sit between the words
+  assert.ok(!phrase('not block').test('not really block'), 'matched with other words in between');
+  // rules out joining on `\s*`, which makes the separator optional
+  assert.ok(!phrase('not block').test('notblock'), 'matched with no separator at all');
+  // rules out dropping the `i` flag
+  assert.ok(phrase('has to be theirs').test('IT HAS TO BE THEIRS'), 'was case sensitive');
+  // rules out skipping the escape: unescaped, `a.c` matches `abc`
+  assert.ok(phrase('a.c').test('a.c'), 'escaping broke an ordinary match');
+  assert.ok(!phrase('a.c').test('abc'), 'did not escape a regex metacharacter');
 });
 
 check('the policy states every boundary it needs', () => {
