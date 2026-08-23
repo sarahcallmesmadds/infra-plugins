@@ -80,19 +80,35 @@ const MAY_INVOLVE_BUILT_TOOL =
 // correction inside your own answer, "you're right, the hook should have
 // failed open", is the case the corpus has most of, and it belongs here. What
 // does not belong is a finding nobody was looking for.
+//
+// Those two are close enough that the first draft of this let them collapse.
+// It said the trigger was the user speaking "or you realising while answering
+// that it did", and then said a defect you turned up on your own was not one.
+// Realising while answering and turning something up on your own describe the
+// same event, so the reader had a rule and its exception with no way to tell
+// them apart, and the safe reading of that is to keep flagging, which is the
+// behaviour being removed. The trigger now says conceding rather than
+// realising: a concession is anchored to something the user said, a
+// realisation is not.
+//
+// "Blocking" is anchored for the same reason. Left bare it is a mood, and the
+// same aside reads as blocking on a bad day and trivial on a good one, so the
+// boundary drifts between sessions. It means you cannot finish what they asked
+// without it fixed, which is a question with an answer.
 const POLICY = [
   'The current topic may involve tooling built in this setup. Using the',
   'conversation so far and the answer you are about to give, watch for a real',
   'correction to a skill, hook, command, plugin or script built here.',
   '',
-  'That is either the user saying something behaved wrongly, or you realising',
-  'while answering that it did.',
+  'That is either the user saying something behaved wrongly, or your own answer',
+  'conceding to them that it did.',
   '',
-  'It has to be theirs. A correction is one they raised, or one your own answer',
-  'concedes to them. A defect you turned up on your own, that they never',
-  'mentioned and that is not blocking the work in front of them, is not one,',
-  'however real it is and however sure you are. Fix it if the tooling is the',
-  'work, and otherwise say nothing.',
+  'It has to be theirs, and those two are the whole list. A defect you turned up',
+  'on your own, that they never raised and that your answer is not conceding, is',
+  'not a correction however real it is and however sure you are. Raise one of',
+  'those only when it blocks what they actually asked for, meaning you cannot',
+  'finish without it fixed. Otherwise fix it if the tooling is the work, and say',
+  'nothing if it is not.',
   '',
   'If one occurs, suggest `/flag-issue` once, briefly, at the end of your',
   'answer. Do not run it and do not block. Say nothing for plans, questions,',

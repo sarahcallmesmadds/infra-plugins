@@ -26,7 +26,7 @@
 //   no Stop hook, and therefore no loop
 //
 // What cannot be pinned here is whether the model gets the judgement right.
-// tests/fixtures/correction-cases.json holds every case from all four rounds
+// tests/fixtures/correction-cases.json holds every case from all five rounds
 // for that, and it needs a real session to score. A test that scored it with
 // another regex would be back where this started.
 
@@ -137,6 +137,14 @@ check('a turn already running a queue command is still routed', () => {
 // Not the wording, which will be tuned from real failures. These are the
 // boundaries that stop it being a nuisance, and each one exists because
 // something went wrong without it.
+//
+// Every pattern here is literal prose, which does pin wording to the extent
+// that the phrase it names has to survive. So each one is the shortest phrase
+// that still carries its boundary and nothing else: a reword keeping the
+// boundary keeps the test green, and one dropping the boundary fails. Reaching
+// for a longer, more natural-reading phrase is what makes this brittle, and a
+// whole sentence was matched here until a review pointed out that tuning the
+// sentence would break a check that was not about the sentence.
 
 check('the policy states every boundary it needs', () => {
   const policy = onPrompt('the hook fired twice').hookSpecificOutput.additionalContext;
@@ -149,7 +157,10 @@ check('the policy states every boundary it needs', () => {
     [/skill, hook, command, plugin or script/i, 'says what counts as built here'],
     [/answer you are about to give/i, 'covers the correction the answer itself concedes'],
     [/has to be theirs/i, 'excludes a defect the user never raised'],
-    [/not blocking the work in front of them/i, 'says what makes an unraised defect worth raising anyway'],
+    // `\s+` because POLICY is an array joined with newlines, so any phrase can
+    // fall across a line break. The queue-command pattern above needs it for the
+    // same reason, and this one was written without it and failed on the wrap.
+    [/cannot\s+finish without it fixed/i, 'anchors blocking to something with an answer'],
   ];
   for (const [re, why] of required) {
     assert.ok(re.test(policy), `the policy no longer ${why}`);

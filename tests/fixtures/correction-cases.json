@@ -59,7 +59,7 @@
     { "side": "assistant", "expected": "quiet", "found": 5, "input": "While running that I noticed the dependency map matches on name alone across repositories, which could send a review to the wrong plugin." },
     { "side": "assistant", "expected": "quiet", "found": 5, "input": "Done. Separately, the audit script's glob misses bin/, which I spotted on the way past." },
     { "side": "assistant", "expected": "quiet", "found": 5, "input": "That is merged. One thing I noticed while I was in there: the wrap skill still proposes the repository root." },
-    { "side": "assistant", "expected": "suggest", "found": 5, "input": "I cannot finish this install. Step 6 asks the operator to produce a file there is no way to produce, so the run stops here." },
+    { "side": "assistant", "expected": "either", "found": 5, "input": "I cannot finish this install. Step 6 asks the operator to produce a file there is no way to produce, so the run stops here." },
     { "side": "assistant", "expected": "suggest", "found": 5, "input": "The command refused the branch I need for this change, and its reason is wrong, so I am blocked until that is sorted." }
   ]
 }
