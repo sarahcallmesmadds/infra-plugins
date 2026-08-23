@@ -26,7 +26,7 @@
 //   no Stop hook, and therefore no loop
 //
 // What cannot be pinned here is whether the model gets the judgement right.
-// tests/fixtures/correction-cases.json holds every case from all five rounds
+// tests/fixtures/correction-cases.json holds every case from rounds 0 to 5
 // for that, and it needs a real session to score. A test that scored it with
 // another regex would be back where this started.
 
@@ -103,6 +103,14 @@ for (const prompt of [
   '(/pickup) gave me the wrong handoff',
   'that command needs a confirm step',
   'the script is fine now',
+  // Every case above is lowercase and singular, and the command cases use only
+  // start-of-string, a backtick and an open paren. So a gate that had lost its
+  // `i` flag, its `s?`, and every delimiter but those three passed the lot. The
+  // four below hold the parts nothing was holding.
+  'Hooks failed on that turn',
+  'please run /pickup',
+  "'/pickup' gave me the wrong handoff",
+  '[/pickup] gave me the wrong handoff',
 ]) {
   check(`routed, because the topic could be built here: "${prompt.slice(0, 38)}..."`, () => {
     assert.ok(onPrompt(prompt), 'gate did not route a turn about tooling');
@@ -193,6 +201,24 @@ check('the phrase matcher survives a line break and still says no', () => {
   // rules out skipping the escape: unescaped, `a.c` matches `abc`
   assert.ok(phrase('a.c').test('a.c'), 'escaping broke an ordinary match');
   assert.ok(!phrase('a.c').test('abc'), 'did not escape a regex metacharacter');
+
+  // rules out escaping only some metacharacters. Both reviewers found this
+  // independently: with only the `a.c` case above, a helper escaping `.` and
+  // nothing else passed every assertion here and all nine boundary checks,
+  // because no phrase in the policy today contains another metacharacter. So
+  // the suite would have stayed green while the helper became unsafe for the
+  // first phrase that did, and nothing would have connected the two events.
+  for (const meta of ['.', '*', '+', '?', '^', '$', '{', '}', '(', ')', '|', '[', ']', '\\']) {
+    const literal = `a${meta}b`;
+    assert.ok(phrase(literal).test(literal), `an unescaped ${meta} stopped the phrase matching itself`);
+  }
+  // the positive loop alone misses the metacharacters whose unescaped meaning
+  // still matches the literal, so these pin what each would leak instead
+  assert.ok(!phrase('a*b').test('b'), 'left `*` unescaped, so the first word became optional');
+  assert.ok(!phrase('a?b').test('b'), 'left `?` unescaped, so a character became optional');
+  assert.ok(!phrase('a|b').test('a'), 'left `|` unescaped, so the phrase became an alternation');
+  assert.ok(!phrase('a+b').test('aab'), 'left `+` unescaped, so a character became repeatable');
+  assert.ok(!phrase('a\\b').test('a b'), 'left the backslash unescaped, so it became an escape sequence');
 });
 
 check('the policy states every boundary it needs', () => {
@@ -223,6 +249,11 @@ for (const [name, payload] of [
   ['an empty body', ''],
   ['an event with no prompt', { hook_event_name: 'UserPromptSubmit' }],
   ['a prompt that is not a string', { hook_event_name: 'UserPromptSubmit', prompt: 42 }],
+  // 42 alone cannot fail this. `RegExp.test` coerces it to "42", which the gate
+  // does not match, so deleting the `typeof` guard leaves the hook quiet and the
+  // case green. An array coerces to "hook", which the gate does match, so this
+  // is the one that actually holds the guard in place.
+  ['a prompt that is an array', { hook_event_name: 'UserPromptSubmit', prompt: ['hook'] }],
   ['an empty prompt', { hook_event_name: 'UserPromptSubmit', prompt: '' }],
   ['a null prompt', { hook_event_name: 'UserPromptSubmit', prompt: null }],
 ]) {
@@ -256,8 +287,16 @@ check('no Stop hook is wired, so there is no loop to guard against', () => {
   // which is what the Stop hook existed to catch.
   const manifest = JSON.parse(fs.readFileSync(path.join(PLUGIN, 'hooks', 'hooks.json'), 'utf8'));
   assert.ok(!manifest.hooks.Stop, 'a Stop hook is wired again, which brings the loop back');
-  const wired = JSON.stringify(manifest.hooks.UserPromptSubmit);
-  assert.ok(wired.includes('notice-correction.js'), 'the hook is not wired to UserPromptSubmit');
+  // Searching the serialized JSON for the filename is not enough, and this was
+  // wrong before this branch touched it. `true # notice-correction.js` contains
+  // the name and runs nothing, and so does the name sitting in an unrelated
+  // field. What has to be true is that some entry is a command which ends by
+  // executing this file, so that is what is checked.
+  const entries = manifest.hooks.UserPromptSubmit.flatMap((group) => group.hooks || []);
+  const runsIt = entries.some(
+    (entry) => entry.type === 'command' && /\/hooks\/notice-correction\.js"?\s*$/.test(entry.command)
+  );
+  assert.ok(runsIt, 'no UserPromptSubmit entry actually ends by running notice-correction.js');
 });
 
 // --- the corpus, which this file cannot score ------------------------------
@@ -286,6 +325,23 @@ check('the case file is well formed, so it does not rot unnoticed', () => {
   // spent four rounds removing. Some sentences are genuinely ambiguous and the
   // corpus records which, rather than pretending a rule settles them.
   assert.ok(kinds.has('either'), 'no ambiguous cases, so nothing records where judgement runs out');
+
+  // The file claims to hold every round, and nothing held it to that: deleting
+  // every case from the newest round left the suite green, because the older
+  // ones already supply a non-empty corpus and all three verdicts. So the rounds
+  // present have to run from 0 with no gaps, and the highest one has to be the
+  // one the documentation names. Delete a round and one of these fails.
+  const rounds = [...new Set(corpus.cases.map((c) => c.found))].sort((a, b) => a - b);
+  const highest = rounds[rounds.length - 1];
+  assert.deepStrictEqual(
+    rounds,
+    Array.from({ length: highest + 1 }, (_, i) => i),
+    `rounds present are ${rounds.join(', ')}, which skips one, so a round was dropped rather than added`
+  );
+  assert.ok(
+    new RegExp(`round ${highest}\\b`, 'i').test(corpus.how_to_read_a_case.found),
+    `the newest round is ${highest} and the documentation does not mention it`
+  );
   assert.ok(
     /must not be counted as a failure/i.test(corpus.how_to_read_a_case.expected),
     'the corpus no longer says an `either` case cannot fail, which is the whole meaning of the verdict'
