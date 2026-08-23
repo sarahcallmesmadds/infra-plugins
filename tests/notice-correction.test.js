@@ -26,7 +26,7 @@
 //   no Stop hook, and therefore no loop
 //
 // What cannot be pinned here is whether the model gets the judgement right.
-// tests/fixtures/correction-cases.json holds every case from all four rounds
+// tests/fixtures/correction-cases.json holds every case from rounds 0 to 5
 // for that, and it needs a real session to score. A test that scored it with
 // another regex would be back where this started.
 
@@ -103,6 +103,14 @@ for (const prompt of [
   '(/pickup) gave me the wrong handoff',
   'that command needs a confirm step',
   'the script is fine now',
+  // Every case above is lowercase and singular, and the command cases use only
+  // start-of-string, a backtick and an open paren. So a gate that had lost its
+  // `i` flag, its `s?`, and every delimiter but those three passed the lot. The
+  // four below hold the parts nothing was holding.
+  'Hooks failed on that turn',
+  'please run /pickup',
+  "'/pickup' gave me the wrong handoff",
+  '[/pickup] gave me the wrong handoff',
 ]) {
   check(`routed, because the topic could be built here: "${prompt.slice(0, 38)}..."`, () => {
     assert.ok(onPrompt(prompt), 'gate did not route a turn about tooling');
@@ -137,17 +145,94 @@ check('a turn already running a queue command is still routed', () => {
 // Not the wording, which will be tuned from real failures. These are the
 // boundaries that stop it being a nuisance, and each one exists because
 // something went wrong without it.
+//
+// Each boundary is named by a phrase, built into a pattern by `phrase()` below
+// rather than written by hand, and that does pin wording to the extent that the
+// phrase has to survive. So each one is the shortest phrase that still carries
+// its boundary and nothing else: a reword keeping the boundary keeps the test
+// green, and one dropping the boundary fails. Reaching for a longer, more
+// natural-reading phrase is what makes this brittle, and a whole sentence was
+// matched here until a review pointed out that tuning the sentence would break
+// a check that was not about the sentence.
+
+// Match a phrase wherever the line breaks fall. POLICY is an array of short
+// strings joined with newlines, so every space inside a phrase is a newline in
+// waiting, and a pattern with a literal space fails against text that plainly
+// contains the phrase. Twice now, one word apart: `cannot finish without it
+// fixed` was written with a literal space, fixed by escaping the one gap that
+// happened to wrap, and broke again on the next gap when a paragraph was
+// reflowed. Escaping the gap that broke is not the fix. Escaping every gap is,
+// which is why this is a function and not a habit.
+const phrase = (text) =>
+  new RegExp(
+    text
+      .trim()
+      .split(/\s+/)
+      .map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+      .join('\\s+'),
+    'i'
+  );
+
+check('the phrase matcher survives a line break and still says no', () => {
+  // Without this the helper is load bearing and unchecked: one that returned
+  // /(?:)/ would match everything, and all nine boundary checks below would
+  // pass against a policy that had lost every one of them.
+  //
+  // Each case below names the wrong implementation it rules out. The first
+  // version of this case ruled out only the empty matcher, and a review pointed
+  // out it would have accepted four other wrong ones, which is the same fault
+  // as an empty matcher wearing a coat.
+  assert.ok(phrase('cannot finish without it fixed').test('you cannot\nfinish without it\nfixed.'), 'did not match across newlines');
+  assert.ok(phrase('has to be theirs').test('It has to be theirs.'), 'did not match on one line');
+  assert.ok(!phrase('has to be theirs').test('It has to be ours.'), 'matched a policy missing the phrase');
+  assert.ok(!phrase('not block').test('this hook may block'), 'matched without the first word present');
+  // rules out an implementation that ignores order
+  assert.ok(!phrase('not block').test('block not'), 'matched the words in the wrong order');
+  // rules out joining on `.*`, which lets unrelated text sit between the words
+  assert.ok(!phrase('not block').test('not really block'), 'matched with other words in between');
+  // rules out joining on `\s*`, which makes the separator optional
+  assert.ok(!phrase('not block').test('notblock'), 'matched with no separator at all');
+  // rules out joining on `\s`, exactly one whitespace character. Every other
+  // string here has single spaces, so a one-character join passes all of them
+  // and then fails on a double space, a tab, or a blank line in the policy.
+  assert.ok(phrase('has to be theirs').test('has  to\tbe\n\ntheirs'), 'needed exactly one whitespace between words');
+  // rules out dropping the `i` flag
+  assert.ok(phrase('has to be theirs').test('IT HAS TO BE THEIRS'), 'was case sensitive');
+  // rules out skipping the escape: unescaped, `a.c` matches `abc`
+  assert.ok(phrase('a.c').test('a.c'), 'escaping broke an ordinary match');
+  assert.ok(!phrase('a.c').test('abc'), 'did not escape a regex metacharacter');
+
+  // rules out escaping only some metacharacters. Both reviewers found this
+  // independently: with only the `a.c` case above, a helper escaping `.` and
+  // nothing else passed every assertion here and all nine boundary checks,
+  // because no phrase in the policy today contains another metacharacter. So
+  // the suite would have stayed green while the helper became unsafe for the
+  // first phrase that did, and nothing would have connected the two events.
+  for (const meta of ['.', '*', '+', '?', '^', '$', '{', '}', '(', ')', '|', '[', ']', '\\']) {
+    const literal = `a${meta}b`;
+    assert.ok(phrase(literal).test(literal), `an unescaped ${meta} stopped the phrase matching itself`);
+  }
+  // the positive loop alone misses the metacharacters whose unescaped meaning
+  // still matches the literal, so these pin what each would leak instead
+  assert.ok(!phrase('a*b').test('b'), 'left `*` unescaped, so the first word became optional');
+  assert.ok(!phrase('a?b').test('b'), 'left `?` unescaped, so a character became optional');
+  assert.ok(!phrase('a|b').test('a'), 'left `|` unescaped, so the phrase became an alternation');
+  assert.ok(!phrase('a+b').test('aab'), 'left `+` unescaped, so a character became repeatable');
+  assert.ok(!phrase('a\\b').test('a b'), 'left the backslash unescaped, so it became an escape sequence');
+});
 
 check('the policy states every boundary it needs', () => {
   const policy = onPrompt('the hook fired twice').hookSpecificOutput.additionalContext;
   const required = [
-    [/\/flag-issue/, 'names the command to suggest'],
-    [/once/i, 'says once, or it will be repeated every turn'],
-    [/not run it/i, 'says not to run it, since this must never write'],
-    [/not block/i, 'says not to block'],
-    [/queue command is\s+already being invoked/i, 'excludes a turn already filing one'],
-    [/skill, hook, command, plugin or script/i, 'says what counts as built here'],
-    [/answer you are about to give/i, 'covers the correction the answer itself concedes'],
+    [phrase('/flag-issue'), 'names the command to suggest'],
+    [phrase('once'), 'says once, or it will be repeated every turn'],
+    [phrase('not run it'), 'says not to run it, since this must never write'],
+    [phrase('not block'), 'says not to block'],
+    [phrase('queue command is already being invoked'), 'excludes a turn already filing one'],
+    [phrase('skill, hook, command, plugin or script'), 'says what counts as built here'],
+    [phrase('answer you are about to give'), 'covers the correction the answer itself concedes'],
+    [phrase('has to be theirs'), 'excludes a defect the user never raised'],
+    [phrase('cannot finish without it fixed'), 'anchors blocking to something with an answer'],
   ];
   for (const [re, why] of required) {
     assert.ok(re.test(policy), `the policy no longer ${why}`);
@@ -164,6 +249,11 @@ for (const [name, payload] of [
   ['an empty body', ''],
   ['an event with no prompt', { hook_event_name: 'UserPromptSubmit' }],
   ['a prompt that is not a string', { hook_event_name: 'UserPromptSubmit', prompt: 42 }],
+  // 42 alone cannot fail this. `RegExp.test` coerces it to "42", which the gate
+  // does not match, so deleting the `typeof` guard leaves the hook quiet and the
+  // case green. An array coerces to "hook", which the gate does match, so this
+  // is the one that actually holds the guard in place.
+  ['a prompt that is an array', { hook_event_name: 'UserPromptSubmit', prompt: ['hook'] }],
   ['an empty prompt', { hook_event_name: 'UserPromptSubmit', prompt: '' }],
   ['a null prompt', { hook_event_name: 'UserPromptSubmit', prompt: null }],
 ]) {
@@ -197,8 +287,36 @@ check('no Stop hook is wired, so there is no loop to guard against', () => {
   // which is what the Stop hook existed to catch.
   const manifest = JSON.parse(fs.readFileSync(path.join(PLUGIN, 'hooks', 'hooks.json'), 'utf8'));
   assert.ok(!manifest.hooks.Stop, 'a Stop hook is wired again, which brings the loop back');
-  const wired = JSON.stringify(manifest.hooks.UserPromptSubmit);
-  assert.ok(wired.includes('notice-correction.js'), 'the hook is not wired to UserPromptSubmit');
+});
+
+check('notice-correction is declared on UserPromptSubmit', () => {
+  // Deliberately small, and the reason is the point. This check was four times
+  // a text match on the command string and once a harness that built a fake
+  // plugin root and ran every manifest command through /bin/sh to watch what
+  // the launcher was handed. Each version was a nearer approximation of proving
+  // the shell would reach the hook, each review found a hole in the one before,
+  // and the ten command shapes the last one was proved against were attacks
+  // invented here against a detector invented here. That is a test fitted to
+  // its own review history rather than to a risk. It also ran whatever the
+  // manifest happened to contain, which is harmless for today's two commands
+  // and not a property worth keeping.
+  //
+  // The realistic failure is somebody editing hooks.json and dropping this
+  // entry, moving it to another event, or pointing it at another file. A
+  // declaration check catches all three.
+  //
+  // Everything else about that command is already checked generically, for
+  // every hook in every plugin, by hook-executable.test.js: that the file a
+  // manifest names exists, that a JavaScript hook is invoked through the
+  // launcher rather than directly, that every command guards the file it is
+  // about to run, and that the guard fires and only when it should. Restating
+  // any of it here would duplicate a check rather than add one. What that suite
+  // cannot see is an entry that was never declared, which is this one line.
+  const manifest = JSON.parse(fs.readFileSync(path.join(PLUGIN, 'hooks', 'hooks.json'), 'utf8'));
+  const declared = (manifest.hooks.UserPromptSubmit || [])
+    .flatMap((group) => group.hooks || [])
+    .some((entry) => entry.type === 'command' && entry.command.includes('/hooks/notice-correction.js'));
+  assert.ok(declared, 'no UserPromptSubmit entry names notice-correction.js, so the hook ships and never runs');
 });
 
 // --- the corpus, which this file cannot score ------------------------------
@@ -217,6 +335,37 @@ check('the case file is well formed, so it does not rot unnoticed', () => {
   // direction, and the quiet direction is the one that makes this a nuisance.
   const kinds = new Set(corpus.cases.map((c) => c.expected));
   assert.ok(kinds.has('suggest') && kinds.has('quiet'), 'the corpus only tests one direction');
+
+  // `either` is a verdict, not a gap in the policy, and this pins that so the
+  // point does not get relitigated. A review round asked for a rule that
+  // disambiguates the `either` cases, having itself recommended marking one of
+  // them `either` a round earlier. Those two asks cannot both be met: a case is
+  // marked `either` precisely because both readings are defensible, and writing
+  // a rule that forces one is how the policy grew the phrase lists this hook
+  // spent four rounds removing. Some sentences are genuinely ambiguous and the
+  // corpus records which, rather than pretending a rule settles them.
+  assert.ok(kinds.has('either'), 'no ambiguous cases, so nothing records where judgement runs out');
+
+  // The file claims to hold every round, and nothing held it to that: deleting
+  // every case from the newest round left the suite green, because the older
+  // ones already supply a non-empty corpus and all three verdicts. So the rounds
+  // present have to run from 0 with no gaps, and the highest one has to be the
+  // one the documentation names. Delete a round and one of these fails.
+  const rounds = [...new Set(corpus.cases.map((c) => c.found))].sort((a, b) => a - b);
+  const highest = rounds[rounds.length - 1];
+  assert.deepStrictEqual(
+    rounds,
+    Array.from({ length: highest + 1 }, (_, i) => i),
+    `rounds present are ${rounds.join(', ')}, which skips one, so a round was dropped rather than added`
+  );
+  assert.ok(
+    new RegExp(`round ${highest}\\b`, 'i').test(corpus.how_to_read_a_case.found),
+    `the newest round is ${highest} and the documentation does not mention it`
+  );
+  assert.ok(
+    /must not be counted as a failure/i.test(corpus.how_to_read_a_case.expected),
+    'the corpus no longer says an `either` case cannot fail, which is the whole meaning of the verdict'
+  );
 });
 
 console.log(`\n${ran} checks, ${failed} failed`);

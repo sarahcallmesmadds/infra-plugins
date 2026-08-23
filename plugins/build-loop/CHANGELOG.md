@@ -3,6 +3,36 @@
 Upgrade notes for past versions, moved out of the README so that file says what
 the plugin is and how to use it. Nothing here is needed to install or run it.
 
+## Upgrading to 0.10.17
+
+**The `/flag-issue` nudge only speaks up for corrections you made.** Nothing to
+change on your side, and you should notice it less.
+
+A hook watches for corrections to anything built here and suggests
+`/flag-issue`. It was suggesting on turn after turn of any session about
+tooling, which for the people using this plugin is most sessions. Every
+suggestion was true and none had been asked for: running one skill turns up a
+real defect in a neighbouring one, the answer offers to file it, and the next
+turn does it again about something else. Truth was never the bar, and a version
+that only checks truth reads as relentless however good each finding is.
+
+A correction now has to be yours. One you raised, or one the answer concedes to
+you after you raised something. A defect found unprompted, that you never
+mentioned, is not one however real it is.
+
+There is a single exception, and it is narrow: an unraised defect is still worth
+saying when it blocks what you actually asked for, meaning the work cannot be
+finished without it fixed.
+
+Below that bar, staying quiet is not the same as leaving it broken. An unraised
+defect that does not block you still gets fixed, rather than mentioned, when the
+tooling is itself what the session is for. What stops is the interruption, not
+the repair.
+
+What did not change: the gate deciding which turns get looked at is the same and
+is deliberately wide, and the hook still only suggests. It never writes and
+never blocks.
+
 ## Upgrading to 0.10.16
 
 **Nothing in the plugin changed.** The marketplace was renamed from `smadds`
