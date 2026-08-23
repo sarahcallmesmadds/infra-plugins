@@ -306,8 +306,19 @@ check('the manifest really runs this hook, proved by running it', () => {
   // three guards in front of the invocation and then reports whether the
   // invocation happened and what it was handed.
   //
-  // This does prove the wiring. What it deliberately does not cover is the
-  // guards' own messages and exit codes, which hook-executable.test.js owns.
+  // What this proves: the launcher ran, and the script it was given to run was
+  // this hook. Recording every argument was not enough and was the fourth near
+  // miss, because a command running some other script and passing this file's
+  // path after it would have matched. It records `$1` alone, which is the
+  // script `node` executes, so a path anywhere else on the line no longer
+  // counts.
+  //
+  // What it deliberately leaves alone: the guards' own messages and exit codes,
+  // which hook-executable.test.js owns. Only the first of the two commands here
+  // reaches the launcher at all, because the second runs a shell script absent
+  // from this temporary root and its guard stops it. That is fine and expected;
+  // exit codes are not read, and the assertion is about what the launcher was
+  // handed, not about every command succeeding.
   const manifest = JSON.parse(fs.readFileSync(path.join(PLUGIN, 'hooks', 'hooks.json'), 'utf8'));
   const commands = manifest.hooks.UserPromptSubmit
     .flatMap((group) => group.hooks || [])
@@ -320,8 +331,12 @@ check('the manifest really runs this hook, proved by running it', () => {
     const argv = path.join(root, 'argv');
     fs.mkdirSync(path.join(root, 'bin'));
     const launcher = path.join(root, 'bin', 'hook-node');
-    // `"$@"` and not `$*`, so a path containing a space is still one argument.
-    fs.writeFileSync(launcher, `#!/bin/sh\nprintf '%s\\n' "$@" >> ${JSON.stringify(argv)}\n`);
+    // `"$1"` and not `"$@"`, per the note above. Records are separated by a NUL
+    // rather than a newline, because a newline is legal in a path and would
+    // otherwise split one record into two, which is how a check like this
+    // reports a path it never saw. Append, not truncate, so several
+    // invocations accumulate.
+    fs.writeFileSync(launcher, `#!/bin/sh\nprintf '%s\\0' "$1" >> ${JSON.stringify(argv)}\n`);
     fs.chmodSync(launcher, 0o755);
 
     for (const command of commands) {
@@ -332,13 +347,17 @@ check('the manifest really runs this hook, proved by running it', () => {
       });
     }
 
-    const handed = fs.existsSync(argv) ? fs.readFileSync(argv, 'utf8').split('\n').filter(Boolean) : [];
+    const ran = fs.existsSync(argv) ? fs.readFileSync(argv, 'utf8').split('\0').filter(Boolean) : [];
     assert.ok(
-      handed.includes(path.join(root, 'hooks', 'notice-correction.js')),
-      `the launcher was never handed this hook. It received: ${JSON.stringify(handed)}`
+      ran.includes(path.join(root, 'hooks', 'notice-correction.js')),
+      `the launcher was never asked to run this hook. It was asked to run: ${JSON.stringify(ran)}`
     );
   } finally {
-    fs.rmSync(root, { recursive: true, force: true });
+    // Guarded, so a failure to clean up cannot replace the assertion error
+    // above it with a message about a temporary directory.
+    try {
+      fs.rmSync(root, { recursive: true, force: true });
+    } catch { /* the directory is in the system temp folder and will be swept */ }
   }
 });
 
