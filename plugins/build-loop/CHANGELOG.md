@@ -24,9 +24,10 @@ There is a single exception, and it is narrow: an unraised defect is still worth
 saying when it blocks what you actually asked for, meaning the work cannot be
 finished without it fixed.
 
-Staying quiet is not the same as leaving it broken. Where the tooling is itself
-the work of the session, an unraised defect gets fixed rather than mentioned.
-What stops is the interruption, not the repair.
+Below that bar, staying quiet is not the same as leaving it broken. An unraised
+defect that does not block you still gets fixed, rather than mentioned, when the
+tooling is itself what the session is for. What stops is the interruption, not
+the repair.
 
 What did not change: the gate deciding which turns get looked at is the same and
 is deliberately wide, and the hook still only suggests. It never writes and
