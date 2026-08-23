@@ -95,6 +95,14 @@ const MAY_INVOLVE_BUILT_TOOL =
 // same aside reads as blocking on a bad day and trivial on a good one, so the
 // boundary drifts between sessions. It means you cannot finish what they asked
 // without it fixed, which is a question with an answer.
+//
+// The exception gets its own paragraph because it did not have one. It sat at
+// the end of the paragraph that rules unraised defects out, after a sentence
+// claiming the two triggers were the whole list, which the exception then made
+// false. "Raise one of those" could equally have pointed at the two triggers or
+// at the unraised defects it actually means. A rule, a claim that the rule is
+// complete, and an exception to it, all in one paragraph, is three things a
+// reader has to hold apart with nothing separating them.
 const POLICY = [
   'The current topic may involve tooling built in this setup. Using the',
   'conversation so far and the answer you are about to give, watch for a real',
@@ -103,12 +111,14 @@ const POLICY = [
   'That is either the user saying something behaved wrongly, or your own answer',
   'conceding to them that it did.',
   '',
-  'It has to be theirs, and those two are the whole list. A defect you turned up',
-  'on your own, that they never raised and that your answer is not conceding, is',
-  'not a correction however real it is and however sure you are. Raise one of',
-  'those only when it blocks what they actually asked for, meaning you cannot',
-  'finish without it fixed. Otherwise fix it if the tooling is the work, and say',
-  'nothing if it is not.',
+  'It has to be theirs. A defect you turned up on your own, that they never',
+  'raised and that your answer is not conceding, is not a correction however',
+  'real it is and however sure you are.',
+  '',
+  'There is one exception and it is narrow. Raise an unraised defect when it',
+  'blocks what they actually asked for, meaning you cannot finish without it',
+  'fixed. Otherwise fix it if the tooling is the work, and say nothing if it is',
+  'not.',
   '',
   'If one occurs, suggest `/flag-issue` once, briefly, at the end of your',
   'answer. Do not run it and do not block. Say nothing for plans, questions,',

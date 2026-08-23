@@ -146,21 +146,46 @@ check('a turn already running a queue command is still routed', () => {
 // whole sentence was matched here until a review pointed out that tuning the
 // sentence would break a check that was not about the sentence.
 
+// Match a phrase wherever the line breaks fall. POLICY is an array of short
+// strings joined with newlines, so every space inside a phrase is a newline in
+// waiting, and a pattern with a literal space fails against text that plainly
+// contains the phrase. Twice now, one word apart: `cannot finish without it
+// fixed` was written with a literal space, fixed by escaping the one gap that
+// happened to wrap, and broke again on the next gap when a paragraph was
+// reflowed. Escaping the gap that broke is not the fix. Escaping every gap is,
+// which is why this is a function and not a habit.
+const phrase = (text) =>
+  new RegExp(
+    text
+      .trim()
+      .split(/\s+/)
+      .map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+      .join('\\s+'),
+    'i'
+  );
+
+check('the phrase matcher survives a line break and still says no', () => {
+  // Without this the helper is load bearing and unchecked: one that returned
+  // /(?:)/ would match everything, and all nine boundary checks below would
+  // pass against a policy that had lost every one of them.
+  assert.ok(phrase('cannot finish without it fixed').test('you cannot\nfinish without it\nfixed.'), 'did not match across newlines');
+  assert.ok(phrase('has to be theirs').test('It has to be theirs.'), 'did not match on one line');
+  assert.ok(!phrase('has to be theirs').test('It has to be ours.'), 'matched a policy missing the phrase');
+  assert.ok(!phrase('not block').test('this hook may block'), 'matched words out of order');
+});
+
 check('the policy states every boundary it needs', () => {
   const policy = onPrompt('the hook fired twice').hookSpecificOutput.additionalContext;
   const required = [
     [/\/flag-issue/, 'names the command to suggest'],
     [/once/i, 'says once, or it will be repeated every turn'],
-    [/not run it/i, 'says not to run it, since this must never write'],
-    [/not block/i, 'says not to block'],
-    [/queue command is\s+already being invoked/i, 'excludes a turn already filing one'],
-    [/skill, hook, command, plugin or script/i, 'says what counts as built here'],
-    [/answer you are about to give/i, 'covers the correction the answer itself concedes'],
-    [/has to be theirs/i, 'excludes a defect the user never raised'],
-    // `\s+` because POLICY is an array joined with newlines, so any phrase can
-    // fall across a line break. The queue-command pattern above needs it for the
-    // same reason, and this one was written without it and failed on the wrap.
-    [/cannot\s+finish without it fixed/i, 'anchors blocking to something with an answer'],
+    [phrase('not run it'), 'says not to run it, since this must never write'],
+    [phrase('not block'), 'says not to block'],
+    [phrase('queue command is already being invoked'), 'excludes a turn already filing one'],
+    [phrase('skill, hook, command, plugin or script'), 'says what counts as built here'],
+    [phrase('answer you are about to give'), 'covers the correction the answer itself concedes'],
+    [phrase('has to be theirs'), 'excludes a defect the user never raised'],
+    [phrase('cannot finish without it fixed'), 'anchors blocking to something with an answer'],
   ];
   for (const [re, why] of required) {
     assert.ok(re.test(policy), `the policy no longer ${why}`);
