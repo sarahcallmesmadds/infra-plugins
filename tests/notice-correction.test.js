@@ -177,11 +177,17 @@ check('the phrase matcher survives a line break and still says no', () => {
   assert.ok(phrase('cannot finish without it fixed').test('you cannot\nfinish without it\nfixed.'), 'did not match across newlines');
   assert.ok(phrase('has to be theirs').test('It has to be theirs.'), 'did not match on one line');
   assert.ok(!phrase('has to be theirs').test('It has to be ours.'), 'matched a policy missing the phrase');
-  assert.ok(!phrase('not block').test('this hook may block'), 'matched words out of order');
+  assert.ok(!phrase('not block').test('this hook may block'), 'matched without the first word present');
+  // rules out an implementation that ignores order
+  assert.ok(!phrase('not block').test('block not'), 'matched the words in the wrong order');
   // rules out joining on `.*`, which lets unrelated text sit between the words
   assert.ok(!phrase('not block').test('not really block'), 'matched with other words in between');
   // rules out joining on `\s*`, which makes the separator optional
   assert.ok(!phrase('not block').test('notblock'), 'matched with no separator at all');
+  // rules out joining on `\s`, exactly one whitespace character. Every other
+  // string here has single spaces, so a one-character join passes all of them
+  // and then fails on a double space, a tab, or a blank line in the policy.
+  assert.ok(phrase('has to be theirs').test('has  to\tbe\n\ntheirs'), 'needed exactly one whitespace between words');
   // rules out dropping the `i` flag
   assert.ok(phrase('has to be theirs').test('IT HAS TO BE THEIRS'), 'was case sensitive');
   // rules out skipping the escape: unescaped, `a.c` matches `abc`
@@ -192,8 +198,8 @@ check('the phrase matcher survives a line break and still says no', () => {
 check('the policy states every boundary it needs', () => {
   const policy = onPrompt('the hook fired twice').hookSpecificOutput.additionalContext;
   const required = [
-    [/\/flag-issue/, 'names the command to suggest'],
-    [/once/i, 'says once, or it will be repeated every turn'],
+    [phrase('/flag-issue'), 'names the command to suggest'],
+    [phrase('once'), 'says once, or it will be repeated every turn'],
     [phrase('not run it'), 'says not to run it, since this must never write'],
     [phrase('not block'), 'says not to block'],
     [phrase('queue command is already being invoked'), 'excludes a turn already filing one'],
@@ -270,6 +276,20 @@ check('the case file is well formed, so it does not rot unnoticed', () => {
   // direction, and the quiet direction is the one that makes this a nuisance.
   const kinds = new Set(corpus.cases.map((c) => c.expected));
   assert.ok(kinds.has('suggest') && kinds.has('quiet'), 'the corpus only tests one direction');
+
+  // `either` is a verdict, not a gap in the policy, and this pins that so the
+  // point does not get relitigated. A review round asked for a rule that
+  // disambiguates the `either` cases, having itself recommended marking one of
+  // them `either` a round earlier. Those two asks cannot both be met: a case is
+  // marked `either` precisely because both readings are defensible, and writing
+  // a rule that forces one is how the policy grew the phrase lists this hook
+  // spent four rounds removing. Some sentences are genuinely ambiguous and the
+  // corpus records which, rather than pretending a rule settles them.
+  assert.ok(kinds.has('either'), 'no ambiguous cases, so nothing records where judgement runs out');
+  assert.ok(
+    /must not be counted as a failure/i.test(corpus.how_to_read_a_case.expected),
+    'the corpus no longer says an `either` case cannot fail, which is the whole meaning of the verdict'
+  );
 });
 
 console.log(`\n${ran} checks, ${failed} failed`);
