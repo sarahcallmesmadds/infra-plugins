@@ -1,5 +1,5 @@
 {
-  "what_this_is": "Every case found across four rounds of review on PR #64, kept as the record of what the correction policy should do. These cannot be scored by the test suite, because the thing deciding is the model rather than a function. Score them by running a session with the plugin installed and checking each one, then tune the policy text from what actually failed rather than from invented phrasing.",
+  "what_this_is": "Every case found across five rounds of review, kept as the record of what the correction policy should do. Round 5 is the one that arrived from use rather than from review: an unraised defect, real and correctly described, volunteered on turn after turn until the nudge was asked to be narrowed. These cannot be scored by the test suite, because the thing deciding is the model rather than a function. Score them by running a session with the plugin installed and checking each one, then tune the policy text from what actually failed rather than from invented phrasing.",
   "how_to_read_a_case": {
     "side": "user means it arrives as a prompt. assistant means the answer concedes it, which the policy also has to catch.",
     "expected": "suggest, quiet, or either. either means the reading is genuinely ambiguous and both answers are defensible, so it must not be counted as a failure in either direction.",
@@ -53,6 +53,13 @@
     { "side": "assistant", "expected": "suggest", "found": 4, "input": "I should have built the plugin differently." },
     { "side": "assistant", "expected": "suggest", "found": 4, "input": "I should have put the hook after validation." },
     { "side": "assistant", "expected": "quiet", "found": 4, "input": "I was wrong about the revenue forecast. Separately, the plugin is installed correctly." },
-    { "side": "assistant", "expected": "quiet", "found": 4, "input": "I should have red plugin badges ready tomorrow." }
+    { "side": "assistant", "expected": "quiet", "found": 4, "input": "I should have red plugin badges ready tomorrow." },
+
+    { "side": "assistant", "expected": "quiet", "found": 5, "input": "Worth a /flag-issue of its own: the cross-repo name match I hit while filing that one." },
+    { "side": "assistant", "expected": "quiet", "found": 5, "input": "While running that I noticed the dependency map matches on name alone across repositories, which could send a review to the wrong plugin." },
+    { "side": "assistant", "expected": "quiet", "found": 5, "input": "Done. Separately, the audit script's glob misses bin/, which I spotted on the way past." },
+    { "side": "assistant", "expected": "quiet", "found": 5, "input": "That is merged. One thing I noticed while I was in there: the wrap skill still proposes the repository root." },
+    { "side": "assistant", "expected": "suggest", "found": 5, "input": "I cannot finish this install. Step 6 asks the operator to produce a file there is no way to produce, so the run stops here." },
+    { "side": "assistant", "expected": "suggest", "found": 5, "input": "The command refused the branch I need for this change, and its reason is wrong, so I am blocked until that is sorted." }
   ]
 }

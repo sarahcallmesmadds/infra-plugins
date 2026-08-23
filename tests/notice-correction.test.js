@@ -148,6 +148,8 @@ check('the policy states every boundary it needs', () => {
     [/queue command is\s+already being invoked/i, 'excludes a turn already filing one'],
     [/skill, hook, command, plugin or script/i, 'says what counts as built here'],
     [/answer you are about to give/i, 'covers the correction the answer itself concedes'],
+    [/has to be theirs/i, 'excludes a defect the user never raised'],
+    [/not blocking the work in front of them/i, 'says what makes an unraised defect worth raising anyway'],
   ];
   for (const [re, why] of required) {
     assert.ok(re.test(policy), `the policy no longer ${why}`);

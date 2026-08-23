@@ -65,6 +65,21 @@ const MAY_INVOLVE_BUILT_TOOL =
 // it can tell invoking a command from talking about one. A few lines of
 // harmless context during a real /flag-issue run costs nothing; another early
 // return is another edge to get wrong.
+//
+// The line about a correction having to be the user's is doing more work than
+// it looks. Without it this fires on anything true rather than anything asked
+// for: running one skill turns up a real defect in a neighbouring one, the
+// answer offers to file it, and because the gate routes any turn that mentions
+// a skill or a plugin, that happens on most turns of a session about tooling,
+// which is most sessions here. Every suggestion was defensible on its own and
+// the sum of them was a nuisance the user asked to have switched off. Truth
+// was never the bar, and a version of this that only checks truth reads as
+// relentless no matter how good each finding is.
+//
+// The boundary is deliberately not "did the user speak first". Conceding a
+// correction inside your own answer, "you're right, the hook should have
+// failed open", is the case the corpus has most of, and it belongs here. What
+// does not belong is a finding nobody was looking for.
 const POLICY = [
   'The current topic may involve tooling built in this setup. Using the',
   'conversation so far and the answer you are about to give, watch for a real',
@@ -72,6 +87,12 @@ const POLICY = [
   '',
   'That is either the user saying something behaved wrongly, or you realising',
   'while answering that it did.',
+  '',
+  'It has to be theirs. A correction is one they raised, or one your own answer',
+  'concedes to them. A defect you turned up on your own, that they never',
+  'mentioned and that is not blocking the work in front of them, is not one,',
+  'however real it is and however sure you are. Fix it if the tooling is the',
+  'work, and otherwise say nothing.',
   '',
   'If one occurs, suggest `/flag-issue` once, briefly, at the end of your',
   'answer. Do not run it and do not block. Say nothing for plans, questions,',
