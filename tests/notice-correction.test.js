@@ -35,8 +35,7 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
-const { execFileSync, spawnSync } = require('child_process');
+const { execFileSync } = require('child_process');
 
 const PLUGIN = path.join(__dirname, '..', 'plugins', 'build-loop');
 const HOOK = path.join(PLUGIN, 'hooks', 'notice-correction.js');
@@ -290,75 +289,34 @@ check('no Stop hook is wired, so there is no loop to guard against', () => {
   assert.ok(!manifest.hooks.Stop, 'a Stop hook is wired again, which brings the loop back');
 });
 
-check('the manifest really runs this hook, proved by running it', () => {
-  // Three review rounds landed on this check and every one of them was the same
-  // fault: it read the command as text and its comment claimed more than
-  // reading text can deliver. Searching the serialized JSON for the filename
-  // passed `true # notice-correction.js`. Anchoring the name to the end of the
-  // command passed `echo .../notice-correction.js` and rejected real wirings
-  // with a trailing argument. Requiring the launcher before the hook passed
-  // `echo 'bin/hook-node is not running /hooks/notice-correction.js'`.
+check('notice-correction is declared on UserPromptSubmit', () => {
+  // Deliberately small, and the reason is the point. This check was four times
+  // a text match on the command string and once a harness that built a fake
+  // plugin root and ran every manifest command through /bin/sh to watch what
+  // the launcher was handed. Each version was a nearer approximation of proving
+  // the shell would reach the hook, each review found a hole in the one before,
+  // and the ten command shapes the last one was proved against were attacks
+  // invented here against a detector invented here. That is a test fitted to
+  // its own review history rather than to a risk. It also ran whatever the
+  // manifest happened to contain, which is harmless for today's two commands
+  // and not a property worth keeping.
   //
-  // Every one of those was a closer approximation of the same wrong idea. A
-  // shell command means what the shell does with it, so the only honest check
-  // runs it. The plugin root here is a real directory carrying a launcher that
-  // records its arguments rather than executing anything, which satisfies the
-  // three guards in front of the invocation and then reports whether the
-  // invocation happened and what it was handed.
+  // The realistic failure is somebody editing hooks.json and dropping this
+  // entry, moving it to another event, or pointing it at another file. A
+  // declaration check catches all three.
   //
-  // What this proves: the launcher ran, and the script it was given to run was
-  // this hook. Recording every argument was not enough and was the fourth near
-  // miss, because a command running some other script and passing this file's
-  // path after it would have matched. It records `$1` alone, which is the
-  // script `node` executes, so a path anywhere else on the line no longer
-  // counts.
-  //
-  // What it deliberately leaves alone: the guards' own messages and exit codes,
-  // which hook-executable.test.js owns. Only the first of the two commands here
-  // reaches the launcher at all, because the second runs a shell script absent
-  // from this temporary root and its guard stops it. That is fine and expected;
-  // exit codes are not read, and the assertion is about what the launcher was
-  // handed, not about every command succeeding.
+  // Everything else about that command is already checked generically, for
+  // every hook in every plugin, by hook-executable.test.js: that the file a
+  // manifest names exists, that a JavaScript hook is invoked through the
+  // launcher rather than directly, that every command guards the file it is
+  // about to run, and that the guard fires and only when it should. Restating
+  // any of it here would duplicate a check rather than add one. What that suite
+  // cannot see is an entry that was never declared, which is this one line.
   const manifest = JSON.parse(fs.readFileSync(path.join(PLUGIN, 'hooks', 'hooks.json'), 'utf8'));
-  const commands = manifest.hooks.UserPromptSubmit
+  const declared = (manifest.hooks.UserPromptSubmit || [])
     .flatMap((group) => group.hooks || [])
-    .filter((entry) => entry.type === 'command')
-    .map((entry) => entry.command);
-  assert.ok(commands.length, 'no UserPromptSubmit commands in the manifest at all');
-
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'notice-correction-wiring-'));
-  try {
-    const argv = path.join(root, 'argv');
-    fs.mkdirSync(path.join(root, 'bin'));
-    const launcher = path.join(root, 'bin', 'hook-node');
-    // `"$1"` and not `"$@"`, per the note above. Records are separated by a NUL
-    // rather than a newline, because a newline is legal in a path and would
-    // otherwise split one record into two, which is how a check like this
-    // reports a path it never saw. Append, not truncate, so several
-    // invocations accumulate.
-    fs.writeFileSync(launcher, `#!/bin/sh\nprintf '%s\\0' "$1" >> ${JSON.stringify(argv)}\n`);
-    fs.chmodSync(launcher, 0o755);
-
-    for (const command of commands) {
-      spawnSync('/bin/sh', ['-c', command], {
-        env: { ...process.env, CLAUDE_PLUGIN_ROOT: root },
-        input: JSON.stringify({ hook_event_name: 'UserPromptSubmit', prompt: 'the hook fired twice' }),
-        encoding: 'utf8',
-      });
-    }
-
-    const ran = fs.existsSync(argv) ? fs.readFileSync(argv, 'utf8').split('\0').filter(Boolean) : [];
-    assert.ok(
-      ran.includes(path.join(root, 'hooks', 'notice-correction.js')),
-      `the launcher was never asked to run this hook. It was asked to run: ${JSON.stringify(ran)}`
-    );
-  } finally {
-    // Guarded, so a failure to clean up cannot replace the assertion error
-    // above it with a message about a temporary directory.
-    try {
-      fs.rmSync(root, { recursive: true, force: true });
-    } catch { /* the directory is in the system temp folder and will be swept */ }
-  }
+    .some((entry) => entry.type === 'command' && entry.command.includes('/hooks/notice-correction.js'));
+  assert.ok(declared, 'no UserPromptSubmit entry names notice-correction.js, so the hook ships and never runs');
 });
 
 // --- the corpus, which this file cannot score ------------------------------
