@@ -35,7 +35,8 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
-const { execFileSync } = require('child_process');
+const os = require('os');
+const { execFileSync, spawnSync } = require('child_process');
 
 const PLUGIN = path.join(__dirname, '..', 'plugins', 'build-loop');
 const HOOK = path.join(PLUGIN, 'hooks', 'notice-correction.js');
@@ -287,32 +288,58 @@ check('no Stop hook is wired, so there is no loop to guard against', () => {
   // which is what the Stop hook existed to catch.
   const manifest = JSON.parse(fs.readFileSync(path.join(PLUGIN, 'hooks', 'hooks.json'), 'utf8'));
   assert.ok(!manifest.hooks.Stop, 'a Stop hook is wired again, which brings the loop back');
-  // Searching the serialized JSON for the filename is not enough, and this was
-  // wrong before this branch touched it: `true # notice-correction.js` carries
-  // the name and runs nothing, and so does the name sitting in an unrelated
-  // field. Anchoring the name to the end of the command was the first attempt
-  // and it was wrong twice over, which is worth keeping because it is the same
-  // mistake in both directions. It still passed `echo .../notice-correction.js`,
-  // and it rejected real wirings that quote the path differently or put an
-  // argument or a redirect after it.
+});
+
+check('the manifest really runs this hook, proved by running it', () => {
+  // Three review rounds landed on this check and every one of them was the same
+  // fault: it read the command as text and its comment claimed more than
+  // reading text can deliver. Searching the serialized JSON for the filename
+  // passed `true # notice-correction.js`. Anchoring the name to the end of the
+  // command passed `echo .../notice-correction.js` and rejected real wirings
+  // with a trailing argument. Requiring the launcher before the hook passed
+  // `echo 'bin/hook-node is not running /hooks/notice-correction.js'`.
   //
-  // What is actually required is the launcher: every hook in every plugin here
-  // starts through bin/hook-node, with the hook file as its argument. So the
-  // check is that both appear and the hook comes after the launcher.
+  // Every one of those was a closer approximation of the same wrong idea. A
+  // shell command means what the shell does with it, so the only honest check
+  // runs it. The plugin root here is a real directory carrying a launcher that
+  // records its arguments rather than executing anything, which satisfies the
+  // three guards in front of the invocation and then reports whether the
+  // invocation happened and what it was handed.
   //
-  // What this proves and does not: it proves the manifest asks for this hook to
-  // be run through the launcher. It cannot prove the shell reaches that point,
-  // because the command also carries three guards that exit early, and a
-  // manifest cannot be executed from here. The guards are covered by
-  // hook-executable.test.js and the hook's own behaviour by the cases above.
-  const entries = manifest.hooks.UserPromptSubmit.flatMap((group) => group.hooks || []);
-  const runsIt = entries.some((entry) => {
-    if (entry.type !== 'command') return false;
-    const launcher = entry.command.lastIndexOf('bin/hook-node');
-    const hook = entry.command.lastIndexOf('/hooks/notice-correction.js');
-    return launcher !== -1 && hook > launcher;
-  });
-  assert.ok(runsIt, 'no UserPromptSubmit entry passes notice-correction.js to bin/hook-node');
+  // This does prove the wiring. What it deliberately does not cover is the
+  // guards' own messages and exit codes, which hook-executable.test.js owns.
+  const manifest = JSON.parse(fs.readFileSync(path.join(PLUGIN, 'hooks', 'hooks.json'), 'utf8'));
+  const commands = manifest.hooks.UserPromptSubmit
+    .flatMap((group) => group.hooks || [])
+    .filter((entry) => entry.type === 'command')
+    .map((entry) => entry.command);
+  assert.ok(commands.length, 'no UserPromptSubmit commands in the manifest at all');
+
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'notice-correction-wiring-'));
+  try {
+    const argv = path.join(root, 'argv');
+    fs.mkdirSync(path.join(root, 'bin'));
+    const launcher = path.join(root, 'bin', 'hook-node');
+    // `"$@"` and not `$*`, so a path containing a space is still one argument.
+    fs.writeFileSync(launcher, `#!/bin/sh\nprintf '%s\\n' "$@" >> ${JSON.stringify(argv)}\n`);
+    fs.chmodSync(launcher, 0o755);
+
+    for (const command of commands) {
+      spawnSync('/bin/sh', ['-c', command], {
+        env: { ...process.env, CLAUDE_PLUGIN_ROOT: root },
+        input: JSON.stringify({ hook_event_name: 'UserPromptSubmit', prompt: 'the hook fired twice' }),
+        encoding: 'utf8',
+      });
+    }
+
+    const handed = fs.existsSync(argv) ? fs.readFileSync(argv, 'utf8').split('\n').filter(Boolean) : [];
+    assert.ok(
+      handed.includes(path.join(root, 'hooks', 'notice-correction.js')),
+      `the launcher was never handed this hook. It received: ${JSON.stringify(handed)}`
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 // --- the corpus, which this file cannot score ------------------------------
