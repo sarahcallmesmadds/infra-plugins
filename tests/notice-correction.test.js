@@ -288,15 +288,31 @@ check('no Stop hook is wired, so there is no loop to guard against', () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(PLUGIN, 'hooks', 'hooks.json'), 'utf8'));
   assert.ok(!manifest.hooks.Stop, 'a Stop hook is wired again, which brings the loop back');
   // Searching the serialized JSON for the filename is not enough, and this was
-  // wrong before this branch touched it. `true # notice-correction.js` contains
+  // wrong before this branch touched it: `true # notice-correction.js` carries
   // the name and runs nothing, and so does the name sitting in an unrelated
-  // field. What has to be true is that some entry is a command which ends by
-  // executing this file, so that is what is checked.
+  // field. Anchoring the name to the end of the command was the first attempt
+  // and it was wrong twice over, which is worth keeping because it is the same
+  // mistake in both directions. It still passed `echo .../notice-correction.js`,
+  // and it rejected real wirings that quote the path differently or put an
+  // argument or a redirect after it.
+  //
+  // What is actually required is the launcher: every hook in every plugin here
+  // starts through bin/hook-node, with the hook file as its argument. So the
+  // check is that both appear and the hook comes after the launcher.
+  //
+  // What this proves and does not: it proves the manifest asks for this hook to
+  // be run through the launcher. It cannot prove the shell reaches that point,
+  // because the command also carries three guards that exit early, and a
+  // manifest cannot be executed from here. The guards are covered by
+  // hook-executable.test.js and the hook's own behaviour by the cases above.
   const entries = manifest.hooks.UserPromptSubmit.flatMap((group) => group.hooks || []);
-  const runsIt = entries.some(
-    (entry) => entry.type === 'command' && /\/hooks\/notice-correction\.js"?\s*$/.test(entry.command)
-  );
-  assert.ok(runsIt, 'no UserPromptSubmit entry actually ends by running notice-correction.js');
+  const runsIt = entries.some((entry) => {
+    if (entry.type !== 'command') return false;
+    const launcher = entry.command.lastIndexOf('bin/hook-node');
+    const hook = entry.command.lastIndexOf('/hooks/notice-correction.js');
+    return launcher !== -1 && hook > launcher;
+  });
+  assert.ok(runsIt, 'no UserPromptSubmit entry passes notice-correction.js to bin/hook-node');
 });
 
 // --- the corpus, which this file cannot score ------------------------------
