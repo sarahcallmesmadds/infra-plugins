@@ -673,7 +673,7 @@ const emDashMessage = runStyleHook(`a sentence ${EM} with a dash in it`);
 check('the em dash remedy names the fault once',
   emDashMessage.split('em dash').length - 1 <= 2, true);
 
-// --- the hook lints the turn that just ended ---------------------------------
+// --- the hook lints the whole turn that just ended ---------------------------
 //
 // The hook used to walk the transcript for the finished turn. The transcript is
 // written a beat behind the conversation, so at Stop time the finished turn is
@@ -682,22 +682,44 @@ check('the em dash remedy names the fault once',
 // was stopped and told to fix the previous turn's em dashes, while the turn
 // that actually broke the rule was never checked.
 //
-// The event carries the finished turn as `last_assistant_message`, so that is
-// what gets linted now. The rows below are written so that the second one fails
-// against the old walk, which was confirmed by running them against it before
-// the fix went in.
+// The event carries the closing message as `last_assistant_message`, while the
+// transcript carries prose written before tool calls. The hook combines those
+// sources after the latest real user message, without pulling an older turn
+// into the result.
 
 console.log('\nthe Stop hook lints the turn that just ended');
 
-// Payload fields and transcript contents are set independently on purpose. The
-// bug only shows when the two disagree, which is every real firing.
+function assistantEntry(text) {
+  return {
+    type: 'assistant',
+    message: { content: [{ type: 'text', text }] },
+  };
+}
+
+function userEntry(text, extra = {}) {
+  return {
+    type: 'user',
+    message: { content: [{ type: 'text', text }] },
+    ...extra,
+  };
+}
+
+function toolResultEntry(text = 'tool finished') {
+  return {
+    type: 'user',
+    message: { content: [{ type: 'tool_result', tool_use_id: 'tool-1', content: text }] },
+  };
+}
+
+// Payload fields and transcript contents are set independently on purpose. A
+// string remains shorthand for the old assistant-only fixtures; object entries
+// let full-turn cases reproduce real user, assistant, and tool-result shapes.
 function runStyleHookOn({ ended, transcriptTurns = [] }) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'slop-ended-'));
   const transcript = path.join(dir, 'transcript.jsonl');
-  fs.writeFileSync(transcript, transcriptTurns.map((text) => JSON.stringify({
-    type: 'assistant',
-    message: { content: [{ type: 'text', text }] },
-  })).join('\n') + (transcriptTurns.length ? '\n' : ''));
+  fs.writeFileSync(transcript, transcriptTurns.map((entry) => JSON.stringify(
+    typeof entry === 'string' ? assistantEntry(entry) : entry
+  )).join('\n') + (transcriptTurns.length ? '\n' : ''));
 
   const payload = { transcript_path: transcript, stop_hook_active: false };
   if (ended !== undefined) payload.last_assistant_message = ended;
@@ -733,6 +755,66 @@ check('the count named is the count in the turn that ended',
     transcriptTurns: [`a ${EM} b ${EM} c ${EM} d ${EM} e ${EM} f`],
   }).includes('2 em dashes'), true);
 
+check('prose written before a tool call is checked with the clean closing message',
+  runStyleHookOn({
+    ended: clean,
+    transcriptTurns: [
+      userEntry('Check this answer.'),
+      assistantEntry(`The opening has one ${EM} forbidden mark.`),
+      toolResultEntry(),
+    ],
+  }).includes('1 em dash'), true);
+
+check('the violation count combines opening and closing prose from one turn',
+  runStyleHookOn({
+    ended: `The close has two ${EM} marks ${EM} here.`,
+    transcriptTurns: [
+      userEntry('Check this answer.'),
+      assistantEntry(`The opening has one ${EM} mark.`),
+      toolResultEntry(),
+    ],
+  }).includes('3 em dashes'), true);
+
+check('the latest real user message keeps an older dirty response out',
+  runStyleHookOn({
+    ended: clean,
+    transcriptTurns: [
+      userEntry('The earlier request.'),
+      assistantEntry(`An older response has a ${EM} mark.`),
+      userEntry('The current request.'),
+    ],
+  }), '');
+
+check('tool results and host metadata do not split the current turn',
+  runStyleHookOn({
+    ended: clean,
+    transcriptTurns: [
+      userEntry('Check this answer.'),
+      assistantEntry(`The opening has one ${EM} forbidden mark.`),
+      toolResultEntry(),
+      userEntry('host metadata', { isMeta: true }),
+    ],
+  }).includes('1 em dash'), true);
+
+check('a closing message already saved in the transcript is counted once',
+  runStyleHookOn({
+    ended: `The closing message has one ${EM} mark.`,
+    transcriptTurns: [
+      userEntry('Check this answer.'),
+      assistantEntry(`The closing message has one ${EM} mark.`),
+    ],
+  }).includes('1 em dash'), true);
+
+check('an empty closing message still checks earlier prose in the current turn',
+  runStyleHookOn({
+    ended: '',
+    transcriptTurns: [
+      userEntry('Check this answer.'),
+      assistantEntry(`The opening has one ${EM} forbidden mark.`),
+      toolResultEntry(),
+    ],
+  }).includes('1 em dash'), true);
+
 // The fallback. `last_assistant_message` is captured in the Stop fixture and
 // checked by hook-event-shape.test.js, but nobody published it as a contract,
 // so its absence has to degrade to the old behaviour rather than to silence.
@@ -742,9 +824,8 @@ check('with the field absent the transcript is still read',
 
 // Absent and empty are different answers to different questions, and the first
 // version of this file got it wrong in a way that reopened the bug. An empty
-// field is a turn that ended without prose, a turn whose last act was a tool
-// call being the ordinary case. Falling back there lints an older message and
-// calls it the response just written, which is the whole fault.
+// field can be a turn that ended without prose. With no trustworthy user
+// boundary, the hook must not guess that an older message belongs to this turn.
 check('a turn that ended without prose is not linted against an older one',
   runStyleHookOn({ ended: '', transcriptTurns: [`a ${EM} b ${EM} c ${EM} d`] }), '');
 

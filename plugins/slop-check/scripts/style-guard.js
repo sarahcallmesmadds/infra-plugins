@@ -51,6 +51,36 @@ function remedyFor(violations) {
   return parts.join(' ');
 }
 
+function transcriptEntries(transcript) {
+  if (!transcript || !fs.existsSync(transcript)) return [];
+
+  let lines;
+  try {
+    lines = fs.readFileSync(transcript, 'utf8').trim().split('\n');
+  } catch {
+    return [];
+  }
+
+  return lines.flatMap((line) => {
+    try {
+      return [JSON.parse(line)];
+    } catch {
+      return [];
+    }
+  });
+}
+
+function assistantProse(entry) {
+  if (!entry || entry.type !== 'assistant' || entry.isApiErrorMessage) return '';
+
+  const content = entry.message && entry.message.content;
+  if (!content) return '';
+  const text = Array.isArray(content)
+    ? content.filter((c) => c.type === 'text').map((c) => c.text).join('\n')
+    : String(content);
+  return text.trim();
+}
+
 // The fallback, and formerly the only path. Walk back to the most recent
 // assistant message that actually said something. Tool calls and empty turns
 // are not prose.
@@ -59,37 +89,50 @@ function remedyFor(violations) {
 // SubagentStop the event carries two paths and only one of them is the
 // subagent's own.
 function fromTranscript(transcript) {
-  if (!transcript || !fs.existsSync(transcript)) return '';
+  const entries = transcriptEntries(transcript);
 
-  let lines;
-  try {
-    lines = fs.readFileSync(transcript, 'utf8').trim().split('\n');
-  } catch {
-    return '';
-  }
-
-  for (let i = lines.length - 1; i >= 0; i--) {
-    let entry;
-    try {
-      entry = JSON.parse(lines[i]);
-    } catch {
-      continue;
-    }
-    if (entry.type !== 'assistant') continue;
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i];
     // Claude Code's own error text is not prose anyone wrote, and it contains
     // an em dash: "usually temporary - try again in a moment". Linting it
     // blocks a turn for the host's wording and tells the writer to fix a
     // sentence they cannot reach. Found while re-measuring the two coverage
     // gaps on 2026-08-18, where these were 7 of 12 apparent misses.
-    if (entry.isApiErrorMessage) continue;
-    const content = entry.message && entry.message.content;
-    if (!content) continue;
-    const text = Array.isArray(content)
-      ? content.filter((c) => c.type === 'text').map((c) => c.text).join('\n')
-      : String(content);
-    if (text.trim()) return text.trim();
+    const text = assistantProse(entry);
+    if (text) return text;
   }
   return '';
+}
+
+// A real user message starts a turn. Tool results and host-generated metadata
+// are also stored as user entries, but treating either as a boundary would
+// discard the prose written before a tool call, which is the gap this walk is
+// here to close.
+function isTurnBoundary(entry) {
+  if (!entry || entry.type !== 'user' || entry.isMeta) return false;
+
+  const content = entry.message && entry.message.content;
+  if (!Array.isArray(content)) return true;
+  return content.some((block) => block && block.type !== 'tool_result');
+}
+
+// Return every assistant prose block after the latest real user message. Null
+// means the transcript has no trustworthy turn boundary, which lets callers
+// preserve the older single-message fallback without mistaking stale history
+// for part of the current response.
+function currentTurnParts(transcript) {
+  const entries = transcriptEntries(transcript);
+  let boundary = -1;
+
+  for (let i = entries.length - 1; i >= 0; i--) {
+    if (isTurnBoundary(entries[i])) {
+      boundary = i;
+      break;
+    }
+  }
+  if (boundary === -1) return null;
+
+  return entries.slice(boundary + 1).map(assistantProse).filter(Boolean);
 }
 
 // The prose to judge, preferring the value the event handed over directly.
@@ -127,6 +170,23 @@ function proseOf(direct, transcriptPath) {
   return fromTranscript(transcriptPath);
 }
 
+// Stop's direct field reliably carries the closing message, while the session
+// transcript reliably carries the earlier prose in the same turn. Combine the
+// two only when the transcript identifies the latest real user boundary. That
+// keeps the direct-field fix for stale transcripts while covering text written
+// before tool calls. If the closing message has already reached the transcript,
+// include it once rather than doubling every finding and count.
+function wholeTurnProse(direct, transcriptPath) {
+  const parts = currentTurnParts(transcriptPath);
+  if (parts === null) return proseOf(direct, transcriptPath);
+
+  if (typeof direct === 'string') {
+    const closing = direct.trim();
+    if (closing && parts[parts.length - 1] !== closing) parts.push(closing);
+  }
+  return parts.join('\n').trim();
+}
+
 // The whole verdict in one call. Returns null when there is nothing to say, so
 // a caller never has to decide what "clean" looks like.
 //
@@ -142,10 +202,8 @@ function proseOf(direct, transcriptPath) {
 // its own reply. Blocking SubagentStop prevents the subagent from stopping, so
 // the subagent is the one told to rewrite, and calling its report "the response
 // just written" describes something it did not write.
-function blockMessage(direct, transcriptPath, config, subject) {
+function blockFor(text, config, subject) {
   if (config.enforce === false) return null;
-
-  const text = proseOf(direct, transcriptPath);
   if (!text) return null;
 
   let result;
@@ -163,4 +221,23 @@ function blockMessage(direct, transcriptPath, config, subject) {
     + `Do not apologise at length or explain the rule.`;
 }
 
-module.exports = { remedyFor, fromTranscript, proseOf, blockMessage };
+function blockMessage(direct, transcriptPath, config, subject) {
+  return blockFor(proseOf(direct, transcriptPath), config, subject);
+}
+
+function blockTurnMessage(direct, transcriptPath, config) {
+  return blockFor(
+    wholeTurnProse(direct, transcriptPath),
+    config,
+    'the current response, including text written before tool calls'
+  );
+}
+
+module.exports = {
+  remedyFor,
+  fromTranscript,
+  proseOf,
+  wholeTurnProse,
+  blockMessage,
+  blockTurnMessage,
+};

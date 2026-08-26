@@ -20,7 +20,7 @@
 const path = require('path');
 
 const { readEvent, block } = require(path.join(__dirname, '..', 'scripts', 'hook-io.js'));
-const { blockMessage } = require(path.join(__dirname, '..', 'scripts', 'style-guard.js'));
+const { blockTurnMessage } = require(path.join(__dirname, '..', 'scripts', 'style-guard.js'));
 const { loadConfig } = require(path.join(__dirname, '..', 'scripts', 'config.js'));
 
 readEvent((payload) => {
@@ -30,11 +30,10 @@ readEvent((payload) => {
   // `transcript_path` is this session's own, which on a Stop event is the only
   // one there is. The subagent hook has to choose between two and does not
   // get to copy this line.
-  const message = blockMessage(
+  const message = blockTurnMessage(
     payload.last_assistant_message,
     payload.transcript_path,
-    loadConfig(),
-    'the response just written'
+    loadConfig()
   );
 
   if (message) block(message);

@@ -16,28 +16,26 @@ short sentences are blocked in the assistant's output, so it has to rewrite
 before the turn ends. These are enforced rather than suggested, because a rule
 you have to restate every session is not a rule.
 
-It checks the closing message of each turn, which is what the Stop event hands
-it, and since 0.7.0 it checks what a subagent hands back as well. A subagent's
-report is often the whole substance of an answer, and it was the longest
-writing in a session that nothing read. Of the subagent reports measured on one
-machine before that was fixed, four of five broke a hard rule and none were
-caught, each carrying 24 to 34 em dashes against one for a typical main-agent
-break.
+It checks every prose block in a main-agent turn, including text written before
+a tool call, and since 0.7.0 it checks what a subagent hands back as well. A
+subagent's report is often the whole substance of an answer, and it was the
+longest writing in a session that nothing read. Of the subagent reports measured
+on one machine before that was fixed, four of five broke a hard rule and none
+were caught, each carrying 24 to 34 em dashes against one for a typical
+main-agent break.
 
-One gap is left, and it is written down rather than left to be discovered. A
-turn that pauses to run a tool and writes a paragraph before doing so is checked
-from the tool call onwards, and that opening paragraph is not read. Re-measured
-on 2026-08-18, 2.8 per cent of turns carried a hard rule break that sat only in
-the unread part. An earlier figure of 4.7 per cent counted a turn as escaping
-when its opening paragraph had in fact been blocked and rewritten, which is the
-guard working.
+The Stop event reliably carries the closing message, while the session log
+reliably carries the earlier prose in the same turn. The hook combines them
+after the latest real user message. Tool results and host-generated metadata do
+not count as new turns, and a closing message already present in the log is not
+counted twice.
 
-The reason for the limit is that the alternative was worse: the hook used to
-take the turn from the session log, which is written a beat behind the
-conversation, so it read the message before the one it was blocking. It was
-wrong about which text it was looking at in 70 of 116 real blocks. Narrower and
-correct beats wider and misdirected, and closing the gap is a known piece of
-work rather than a decision to live with.
+That boundary matters because the hook used to take the finished turn from the
+session log alone, which is written a beat behind the conversation. It read the
+message before the one it was blocking and was wrong about which text it was
+looking at in 70 of 116 real blocks. The direct closing message still wins when
+the log has no trustworthy boundary, so broader coverage does not bring that
+stale-message bug back.
 
 **A hook that catches a markdown file contradicting itself**, the moment it is
 written. It warns and never blocks. Three checks, all of them about the file

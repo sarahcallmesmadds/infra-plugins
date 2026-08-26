@@ -213,7 +213,7 @@ check('the Stop hook still addresses a response, not a report', () => {
     stop_hook_active: false,
   });
   assert.ok(out, 'the Stop hook stopped blocking');
-  assert.match(out.reason, /the response just written/);
+  assert.match(out.reason, /the current response/);
 });
 
 check('the Stop hook falls back to transcript_path', () => {
@@ -227,7 +227,7 @@ check('the Stop hook falls back to transcript_path', () => {
   // Truthiness alone would accept any JSON at all, including a shape the
   // harness ignores, which is the failure this whole suite is modelled on.
   assert.strictEqual(out.decision, 'block');
-  assert.match(out.reason, /the response just written/);
+  assert.match(out.reason, /the current response/);
   assert.match(out.reason, /em dash/);
 });
 
