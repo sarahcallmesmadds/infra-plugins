@@ -89,24 +89,38 @@ function git(args) {
   }
 }
 
-function worktreeMatches(ref, name, untrackedFiles) {
-  const prefix = `plugins/${name}/`;
-  if (untrackedFiles.some((file) => file.startsWith(prefix))) {
-    return { matches: false };
-  }
-
+function trackedTreeMatches(ref, prefix, diffArgs, label) {
   const result = spawnSync(
     'git',
-    ['-C', REPO, 'diff', '--quiet', ref, '--', prefix],
+    ['-C', REPO, 'diff', ...diffArgs, '--quiet', ref, '--', prefix],
     { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }
   );
   if (result.error) return { matches: false, error: result.error.message };
+  if (result.signal) {
+    return { matches: false, error: `${label} terminated by ${result.signal}` };
+  }
   if (result.status === 0) return { matches: true };
   if (result.status === 1) return { matches: false };
   return {
     matches: false,
-    error: (result.stderr || '').trim() || `git diff exited ${result.status}`,
+    error: (result.stderr || '').trim()
+      || (result.status === null ? `${label} failed without an exit status` : `${label} exited ${result.status}`),
   };
+}
+
+function snapshotMatchesBase(ref, name, snapshot, untrackedFiles) {
+  const prefix = `plugins/${name}/`;
+
+  // Git diff does not report untracked files. Without this guard, one new file
+  // beside an otherwise matching squash merge would make the whole plugin look
+  // released even though the next commit could still ship that file.
+  if (snapshot === 'worktree' && untrackedFiles.some((file) => file.startsWith(prefix))) {
+    return { matches: false };
+  }
+
+  return snapshot === 'index'
+    ? trackedTreeMatches(ref, prefix, ['--cached'], 'git diff --cached')
+    : trackedTreeMatches(ref, prefix, [], 'git diff');
 }
 
 // The ref this branch is measured against. `origin/main` first, because that is
@@ -154,11 +168,21 @@ function compareVersions(a, b) {
   return 0;
 }
 
+function releaseVersionMoved(now, before) {
+  const order = compareVersions(now, before);
+  if (order !== null) return order === 1;
+  // The validator below deliberately accepts unorderable version strings when
+  // they changed. A squash release uses the same rule, while null still means
+  // the manifest was missing or unreadable and proves nothing.
+  return now !== null && before !== null && now !== before;
+}
+
 function versionAt(ref, name) {
   const raw = git(['show', `${ref}:plugins/${name}/.claude-plugin/plugin.json`]);
   if (raw === null) return null;
   try {
-    return JSON.parse(raw).version;
+    const version = JSON.parse(raw).version;
+    return version == null ? null : version;
   } catch (_) {
     return null;
   }
@@ -168,10 +192,32 @@ function versionInWorktree(name) {
   const file = path.join(REPO, 'plugins', name, '.claude-plugin', 'plugin.json');
   if (!fs.existsSync(file)) return null;
   try {
-    return JSON.parse(fs.readFileSync(file, 'utf8')).version;
+    const version = JSON.parse(fs.readFileSync(file, 'utf8')).version;
+    return version == null ? null : version;
   } catch (_) {
     return null;
   }
+}
+
+function versionInIndex(name) {
+  const raw = git(['show', `:plugins/${name}/.claude-plugin/plugin.json`]);
+  if (raw === null) return null;
+  try {
+    const version = JSON.parse(raw).version;
+    return version == null ? null : version;
+  } catch (_) {
+    return null;
+  }
+}
+
+function matchingContentHasReleaseBump(ref, name) {
+  const prefix = `plugins/${name}/`;
+  const contentCommit = git(['log', '-1', '--format=%H', ref, '--', prefix]);
+  if (!contentCommit) return false;
+  return releaseVersionMoved(
+    versionAt(contentCommit, name),
+    versionAt(`${contentCommit}^`, name)
+  );
 }
 
 // ------------------------------------------------------------------- tests --
@@ -192,10 +238,11 @@ if (!base) {
 
 // The fork point, and the only defensible thing to compare a version against.
 //
-// The tracked file list below compares the fork point with the working tree, so
-// it holds committed, staged and unstaged changes. Git diff does not report
-// untracked files, so those are collected separately and folded into the same
-// list. Reading the earlier version off the tip of `base` instead measures
+// The tracked file lists below compare the fork point with both the working
+// tree and the index. Either list alone has a blind spot when a staged file and
+// its working copy differ. Git diff does not report untracked files, so those
+// are collected separately and folded into the same list. Reading the earlier
+// version off the tip of `base` instead measures
 // something else entirely, and the two disagree the moment main moves.
 //
 // The case that got through: branch B forks at 0.3.0, edits the plugin, bumps
@@ -205,10 +252,14 @@ if (!base) {
 // installed users already have. That is #58 and #60 exactly, with the check
 // reporting a pass.
 const mergeBase = git(['merge-base', base, 'HEAD']);
-const tracked = mergeBase && git(['diff', '--name-only', mergeBase, '--', 'plugins/']);
+const trackedWorktree = mergeBase && git(['diff', '--name-only', mergeBase, '--', 'plugins/']);
+const trackedIndex = mergeBase
+  && git(['diff', '--cached', '--name-only', mergeBase, '--', 'plugins/']);
+const unstaged = git(['diff', '--name-only', '--', 'plugins/']);
 const untracked = git(['ls-files', '--others', '--exclude-standard', '--', 'plugins/']);
 
-if (!mergeBase || tracked === null || untracked === null) {
+if (!mergeBase || trackedWorktree === null || trackedIndex === null
+  || unstaged === null || untracked === null) {
   console.log(`plugin-version-drift: no merge base with ${base}.`);
   console.log('  A shallow clone has no shared history to work from. Fetch more depth to');
   console.log('  turn this back on: git fetch --unshallow, or fetch-depth: 0 in CI.');
@@ -216,9 +267,13 @@ if (!mergeBase || tracked === null || untracked === null) {
   process.exit(0);
 }
 
+const trackedWorktreeFiles = trackedWorktree.split('\n').filter(Boolean);
+const trackedIndexFiles = trackedIndex.split('\n').filter(Boolean);
+const unstagedFiles = unstaged.split('\n').filter(Boolean);
 const untrackedFiles = untracked.split('\n').filter(Boolean);
 const changed = [...new Set([
-  ...tracked.split('\n').filter(Boolean),
+  ...trackedWorktreeFiles,
+  ...trackedIndexFiles,
   ...untrackedFiles,
 ])].sort();
 
@@ -230,6 +285,9 @@ for (const file of changed) {
     touched.get(m[1]).push(file);
   }
 }
+
+const filesFor = (files, name) => files.filter((file) => file.startsWith(`plugins/${name}/`));
+const worktreeOwnFiles = [...new Set([...unstagedFiles, ...untrackedFiles])];
 
 // The base is named with its date, because this comparison is only as current
 // as the ref on the machine running it and a stale `origin/main` compares
@@ -246,66 +304,118 @@ if (!touched.size) {
   process.exit(0);
 }
 
-for (const [name, files] of [...touched].sort()) {
-  const sameAsBase = worktreeMatches(base, name, untrackedFiles);
-  if (sameAsBase.error) {
-    check(`${name} can be compared with ${base}`, () => {
-      assert.fail(`could not compare plugins/${name}/ with ${base}: ${sameAsBase.error}`);
+for (const [name] of [...touched].sort()) {
+  const atFork = versionAt(mergeBase, name);
+  const atTip = versionAt(base, name);
+  const indexFiles = filesFor(trackedIndexFiles, name);
+  const worktreeFiles = filesFor([...trackedWorktreeFiles, ...untrackedFiles], name);
+  const worktreeHasOwnChanges = filesFor(worktreeOwnFiles, name).length > 0;
+  const snapshots = [];
+
+  if (indexFiles.length) {
+    snapshots.push({
+      kind: 'index',
+      label: 'staged snapshot',
+      files: indexFiles,
+      now: versionInIndex(name),
     });
-    continue;
   }
-  if (sameAsBase.matches) {
+  // When the working tree equals the index, checking both would validate the
+  // same tree twice. An unstaged or untracked file makes it a distinct snapshot
+  // that could replace the index on the next `git add`, so it needs its own check.
+  if (worktreeFiles.length && (!indexFiles.length || worktreeHasOwnChanges)) {
+    snapshots.push({
+      kind: 'worktree',
+      label: 'working snapshot',
+      files: [...new Set(worktreeFiles)],
+      now: versionInWorktree(name),
+    });
+  }
+
+  let comparisonFailed = false;
+  for (const snapshot of snapshots) {
+    const sameAsBase = snapshotMatchesBase(base, name, snapshot.kind, untrackedFiles);
+    if (sameAsBase.error) {
+      check(`${name} ${snapshot.label} can be compared with ${base}`, () => {
+        assert.fail(`could not compare plugins/${name}/ ${snapshot.label} with ${base}: `
+          + sameAsBase.error);
+      });
+      comparisonFailed = true;
+    } else {
+      snapshot.matchesBase = sameAsBase.matches;
+    }
+  }
+  if (comparisonFailed) continue;
+
+  // A matching tree proves only that main has the branch content. The version
+  // might have been consumed by an earlier release, before the matching content
+  // landed. The commit that last changed this plugin must carry the bump too,
+  // or users already on that number still fetch nothing.
+  const baseHasReleaseBump = releaseVersionMoved(atTip, atFork);
+  const matchingContentWasReleased = baseHasReleaseBump
+    && matchingContentHasReleaseBump(base, name);
+  if (matchingContentWasReleased && snapshots.every((snapshot) => snapshot.matchesBase)) {
     ran += 1;
     console.log(`  SKIP  ${name} changed, but its files already match ${base} `
-      + `at ${versionAt(base, name)}`);
+      + `at ${atTip}`);
     console.log('        (branch appears squash-merged; nothing to bump)');
     continue;
   }
 
-  check(`${name} changed, so its version moved`, () => {
-    const atFork = versionAt(mergeBase, name);
-    const atTip = versionAt(base, name);
-    const now = versionInWorktree(name);
+  const toValidate = matchingContentWasReleased
+    ? snapshots.filter((snapshot) => !snapshot.matchesBase)
+    : snapshots;
+  for (const snapshot of toValidate) {
+    const qualifier = toValidate.length > 1 ? ` ${snapshot.label}` : '';
+    check(`${name}${qualifier} changed, so its version moved`, () => {
+      const { files: snapshotFiles, now } = snapshot;
 
-    // A plugin that does not exist at the fork point is new, and there is no
-    // earlier number for it to differ from.
-    if (atFork === null) return;
+      // A plugin that does not exist at the fork point is new, and there is no
+      // earlier number for it to differ from.
+      if (atFork === null) return;
 
-    const where = `${files.slice(0, 4).join(', ')}`
-      + `${files.length > 4 ? `, and ${files.length - 4} more` : ''}`;
-    const consequence = 'The plugin manager compares version numbers, so it will report a '
-      + 'successful update and fetch nothing, and the old code keeps running on every '
-      + 'installed machine.';
+      const where = `${snapshotFiles.slice(0, 4).join(', ')}`
+        + `${snapshotFiles.length > 4 ? `, and ${snapshotFiles.length - 4} more` : ''}`;
+      const consequence = 'The plugin manager compares version numbers, so it will report a '
+        + 'successful update and fetch nothing, and the old code keeps running on every '
+        + 'installed machine.';
 
-    // Above both the fork point and whatever main has released since. The fork
-    // point alone is not enough once main has moved, and main's tip alone says
-    // nothing about whether this branch bumped at all. The highest of the two is
-    // the number installed machines could already hold.
-    const ceiling = (atTip !== null && compareVersions(atTip, atFork) === 1) ? atTip : atFork;
+      // Above both the fork point and whatever main has released since. The fork
+      // point alone is not enough once main has moved, and main's tip alone says
+      // nothing about whether this branch bumped at all. The highest of the two is
+      // the number installed machines could already hold.
+      const ceiling = (atTip !== null && compareVersions(atTip, atFork) === 1) ? atTip : atFork;
 
-    if (now === atFork) {
-      assert.fail(`${files.length} file(s) under plugins/${name}/ changed since the fork point but `
-        + `the version is still ${atFork}, the same as at the fork point: ${where}. `
-        + `${consequence} Bump it in all three manifests.`);
-    }
-    if (atTip !== null && now === atTip && atTip !== atFork) {
-      assert.fail(`plugins/${name}/ changed on this branch and its version is ${now}, which `
-        + `${base} has already released: ${where}. ${consequence} Pick a number above ${atTip}.`);
-    }
+      if (now === null) {
+        assert.fail(`plugins/${name}/ ${snapshot.label} has no readable version in `
+          + `.claude-plugin/plugin.json: ${where}. A missing or invalid manifest cannot `
+          + 'prove that this snapshot would ship a new release.');
+      }
 
-    const order = compareVersions(now, ceiling);
-    if (order === null) {
-      // Different, but not orderable, so the strongest true statement is that
-      // it changed. Said out loud rather than counted as a clean pass.
-      console.log(`        note: ${name} ${ceiling} -> ${now} could not be compared as `
-        + 'semver, so only the change was checked, not the direction.');
-      return;
-    }
-    assert.strictEqual(order, 1,
-      `plugins/${name}/ changed on this branch and its version went from ${ceiling} to `
-      + `${now}, which is not higher: ${where}. ${consequence} A number that moves backwards `
-      + 'fails the same way as one that does not move at all.');
-  });
+      if (now === atFork) {
+        assert.fail(`${snapshotFiles.length} file(s) under plugins/${name}/ changed since the fork point but `
+          + `the version is still ${atFork}, the same as at the fork point: ${where}. `
+          + `${consequence} Bump it in all three manifests.`);
+      }
+      if (atTip !== null && now === atTip && atTip !== atFork) {
+        assert.fail(`plugins/${name}/ changed on this branch and its version is ${now}, which `
+          + `${base} has already released: ${where}. ${consequence} Pick a number above ${atTip}.`);
+      }
+
+      const order = compareVersions(now, ceiling);
+      if (order === null) {
+        // Different, but not orderable, so the strongest true statement is that
+        // it changed. Said out loud rather than counted as a clean pass.
+        console.log(`        note: ${name} ${ceiling} -> ${now} could not be compared as `
+          + 'semver, so only the change was checked, not the direction.');
+        return;
+      }
+      assert.strictEqual(order, 1,
+        `plugins/${name}/ changed on this branch and its version went from ${ceiling} to `
+        + `${now}, which is not higher: ${where}. ${consequence} A number that moves backwards `
+        + 'fails the same way as one that does not move at all.');
+    });
+  }
 }
 
 console.log(`\n${ran} checks, ${failed} failed`);
