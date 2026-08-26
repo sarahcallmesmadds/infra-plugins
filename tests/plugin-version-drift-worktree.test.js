@@ -28,12 +28,18 @@ function check(what, fn) {
 
 function fixture() {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'plugin-version-drift-'));
-  const git = (...args) => execFileSync('git', [
+  const gitArgs = (...args) => [
     '-C', repo,
     '-c', 'user.email=test@example.com',
     '-c', 'user.name=Test',
     ...args,
-  ], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  ];
+  const git = (...args) => execFileSync('git', gitArgs(...args), {
+    encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+  }).trim();
+  const gitStatus = (...args) => spawnSync('git', gitArgs(...args), {
+    encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+  }).status;
   const write = (relative, contents) => {
     const file = path.join(repo, relative);
     fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -50,7 +56,17 @@ function fixture() {
   return {
     repo,
     git,
+    gitStatus,
     write,
+    squashFeature() {
+      const featureTip = git('rev-parse', 'HEAD');
+      git('checkout', '-q', 'main');
+      git('merge', '--squash', 'feature');
+      git('commit', '-qm', 'squash feature');
+      git('update-ref', 'refs/remotes/origin/main', 'main');
+      git('checkout', '-q', 'feature');
+      return featureTip;
+    },
     run() {
       const result = spawnSync(process.execPath, [CHECK], {
         encoding: 'utf8',
@@ -80,6 +96,13 @@ function assertMissingBump(result, file) {
   assert.strictEqual(result.status, 1, result.output);
   assert.match(result.output, /version is still 1\.0\.0/, result.output);
   assert.match(result.output, new RegExp(file.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), result.output);
+}
+
+function commitFeature(f) {
+  f.write('plugins/demo/README.md', '# Demo\nFeature content.\n');
+  f.write('plugins/demo/.claude-plugin/plugin.json', '{\n  "name": "demo",\n  "version": "1.0.1"\n}\n');
+  f.git('add', '.');
+  f.git('commit', '-qm', 'change plugin');
 }
 
 check('a clean branch passes', () => withFixture((f) => {
@@ -117,6 +140,53 @@ check('a committed plugin edit without a bump still fails', () => withFixture((f
   f.git('add', 'plugins/demo/README.md');
   f.git('commit', '-qm', 'change plugin');
   assertMissingBump(f.run(), 'plugins/demo/README.md');
+}));
+
+check('a squash-merged branch whose plugin matches main is skipped', () => withFixture((f) => {
+  commitFeature(f);
+  const featureTip = f.squashFeature();
+  assert.strictEqual(
+    f.gitStatus('merge-base', '--is-ancestor', featureTip, 'origin/main'),
+    1,
+    'the fixture used an ancestry merge instead of a squash merge'
+  );
+  assert.strictEqual(
+    f.git('diff', '--name-only', 'origin/main', '--', 'plugins/demo'),
+    '',
+    'the feature plugin does not match the squash-merged plugin on origin/main'
+  );
+
+  const result = f.run();
+  assert.strictEqual(result.status, 0, result.output);
+  assert.match(result.output, /SKIP  demo changed, but its files already match origin\/main at 1\.0\.1/, result.output);
+  assert.doesNotMatch(result.output, /Pick a number above/, result.output);
+}));
+
+check('same-version content that differs from main still fails', () => withFixture((f) => {
+  commitFeature(f);
+  f.git('checkout', '-q', 'main');
+  f.write('plugins/demo/README.md', '# Demo\nDifferent content on main.\n');
+  f.write('plugins/demo/.claude-plugin/plugin.json', '{\n  "name": "demo",\n  "version": "1.0.1"\n}\n');
+  f.git('add', '.');
+  f.git('commit', '-qm', 'release different content');
+  f.git('update-ref', 'refs/remotes/origin/main', 'main');
+  f.git('checkout', '-q', 'feature');
+
+  const result = f.run();
+  assert.strictEqual(result.status, 1, result.output);
+  assert.match(result.output, /origin\/main has already released/, result.output);
+  assert.doesNotMatch(result.output, /SKIP/, result.output);
+}));
+
+check('an untracked file after the squash merge still fails', () => withFixture((f) => {
+  commitFeature(f);
+  f.squashFeature();
+  f.write('plugins/demo/new.js', 'module.exports = {};\n');
+
+  const result = f.run();
+  assert.strictEqual(result.status, 1, result.output);
+  assert.match(result.output, /plugins\/demo\/new\.js/, result.output);
+  assert.doesNotMatch(result.output, /SKIP/, result.output);
 }));
 
 console.log(`\n${ran} checks, ${failed} failed`);

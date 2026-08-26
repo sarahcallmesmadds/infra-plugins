@@ -59,7 +59,7 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
-const { execFileSync } = require('child_process');
+const { execFileSync, spawnSync } = require('child_process');
 
 // The override gives the regression suite a disposable repository to exercise.
 // Normal runs still inspect the checkout that contains this file.
@@ -87,6 +87,26 @@ function git(args) {
   } catch (_) {
     return null;
   }
+}
+
+function worktreeMatches(ref, name, untrackedFiles) {
+  const prefix = `plugins/${name}/`;
+  if (untrackedFiles.some((file) => file.startsWith(prefix))) {
+    return { matches: false };
+  }
+
+  const result = spawnSync(
+    'git',
+    ['-C', REPO, 'diff', '--quiet', ref, '--', prefix],
+    { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }
+  );
+  if (result.error) return { matches: false, error: result.error.message };
+  if (result.status === 0) return { matches: true };
+  if (result.status === 1) return { matches: false };
+  return {
+    matches: false,
+    error: (result.stderr || '').trim() || `git diff exited ${result.status}`,
+  };
 }
 
 // The ref this branch is measured against. `origin/main` first, because that is
@@ -196,9 +216,10 @@ if (!mergeBase || tracked === null || untracked === null) {
   process.exit(0);
 }
 
+const untrackedFiles = untracked.split('\n').filter(Boolean);
 const changed = [...new Set([
   ...tracked.split('\n').filter(Boolean),
-  ...untracked.split('\n').filter(Boolean),
+  ...untrackedFiles,
 ])].sort();
 
 const touched = new Map();
@@ -226,6 +247,21 @@ if (!touched.size) {
 }
 
 for (const [name, files] of [...touched].sort()) {
+  const sameAsBase = worktreeMatches(base, name, untrackedFiles);
+  if (sameAsBase.error) {
+    check(`${name} can be compared with ${base}`, () => {
+      assert.fail(`could not compare plugins/${name}/ with ${base}: ${sameAsBase.error}`);
+    });
+    continue;
+  }
+  if (sameAsBase.matches) {
+    ran += 1;
+    console.log(`  SKIP  ${name} changed, but its files already match ${base} `
+      + `at ${versionAt(base, name)}`);
+    console.log('        (branch appears squash-merged; nothing to bump)');
+    continue;
+  }
+
   check(`${name} changed, so its version moved`, () => {
     const atFork = versionAt(mergeBase, name);
     const atTip = versionAt(base, name);
