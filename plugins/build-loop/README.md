@@ -124,7 +124,7 @@ something breaks. The map is where that gets written down.
 
 ```
 /plugin marketplace add sarahcallmesmadds/infra-plugins
-/plugin install build-loop@smadds
+/plugin install build-loop@infra-plugins
 ```
 
 Add the marketplace **by repository**, as above. Adding it by pasting a direct

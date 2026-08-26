@@ -5,8 +5,8 @@
 //
 // plugin-versions.test.js asks whether a plugin's three declared versions agree
 // with each other. They always did. This asks the other question: whether the
-// number moved when the code under it did, which needs a comparison against
-// history and cannot be answered from the working tree alone.
+// number moved when the code under it did. The earlier side of that comparison
+// comes from history; the current side comes from the working tree.
 //
 // ---------------------------------------------------------------------------
 // Why this exists, in three merges.
@@ -37,9 +37,10 @@
 // The asymmetry decides it. An unnecessary patch bump costs nothing. A missed
 // one is a release that silently does not exist.
 //
-// Uncommitted work is deliberately not counted. The failure happens at merge,
-// so committing is the right moment to ask, and a suite that demands a version
-// bump before you have finished editing is a suite people turn off.
+// Uncommitted work counts. The full suite normally runs before the commit, so a
+// check that reads HEAD for the current side is silent at the only moment the
+// missing bump can be fixed. Staged, unstaged and untracked plugin files all
+// describe code the next commit can ship, so all three have to be visible here.
 //
 // ---------------------------------------------------------------------------
 // This wants a fetched `origin/main`, and says so rather than pretending.
@@ -60,7 +61,9 @@ const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 
-const REPO = path.join(__dirname, '..');
+// The override gives the regression suite a disposable repository to exercise.
+// Normal runs still inspect the checkout that contains this file.
+const REPO = process.env.PLUGIN_VERSION_DRIFT_REPO || path.join(__dirname, '..');
 
 let failed = 0;
 let ran = 0;
@@ -141,6 +144,16 @@ function versionAt(ref, name) {
   }
 }
 
+function versionInWorktree(name) {
+  const file = path.join(REPO, 'plugins', name, '.claude-plugin', 'plugin.json');
+  if (!fs.existsSync(file)) return null;
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8')).version;
+  } catch (_) {
+    return null;
+  }
+}
+
 // ------------------------------------------------------------------- tests --
 
 const base = baseRef();
@@ -159,8 +172,10 @@ if (!base) {
 
 // The fork point, and the only defensible thing to compare a version against.
 //
-// The file list below is `merge-base..HEAD`, so it holds what this branch
-// changed. Reading the earlier version off the tip of `base` instead measures
+// The tracked file list below compares the fork point with the working tree, so
+// it holds committed, staged and unstaged changes. Git diff does not report
+// untracked files, so those are collected separately and folded into the same
+// list. Reading the earlier version off the tip of `base` instead measures
 // something else entirely, and the two disagree the moment main moves.
 //
 // The case that got through: branch B forks at 0.3.0, edits the plugin, bumps
@@ -170,9 +185,10 @@ if (!base) {
 // installed users already have. That is #58 and #60 exactly, with the check
 // reporting a pass.
 const mergeBase = git(['merge-base', base, 'HEAD']);
-const changed = mergeBase && git(['diff', '--name-only', `${mergeBase}..HEAD`, '--', 'plugins/']);
+const tracked = mergeBase && git(['diff', '--name-only', mergeBase, '--', 'plugins/']);
+const untracked = git(['ls-files', '--others', '--exclude-standard', '--', 'plugins/']);
 
-if (!mergeBase || changed === null) {
+if (!mergeBase || tracked === null || untracked === null) {
   console.log(`plugin-version-drift: no merge base with ${base}.`);
   console.log('  A shallow clone has no shared history to work from. Fetch more depth to');
   console.log('  turn this back on: git fetch --unshallow, or fetch-depth: 0 in CI.');
@@ -180,8 +196,13 @@ if (!mergeBase || changed === null) {
   process.exit(0);
 }
 
+const changed = [...new Set([
+  ...tracked.split('\n').filter(Boolean),
+  ...untracked.split('\n').filter(Boolean),
+])].sort();
+
 const touched = new Map();
-for (const file of changed.split('\n').filter(Boolean)) {
+for (const file of changed) {
   const m = file.match(/^plugins\/([^/]+)\//);
   if (m && plugins.includes(m[1])) {
     if (!touched.has(m[1])) touched.set(m[1], []);
@@ -208,9 +229,7 @@ for (const [name, files] of [...touched].sort()) {
   check(`${name} changed, so its version moved`, () => {
     const atFork = versionAt(mergeBase, name);
     const atTip = versionAt(base, name);
-    const now = versionAt('HEAD', name)
-      || JSON.parse(fs.readFileSync(
-        path.join(REPO, 'plugins', name, '.claude-plugin', 'plugin.json'), 'utf8')).version;
+    const now = versionInWorktree(name);
 
     // A plugin that does not exist at the fork point is new, and there is no
     // earlier number for it to differ from.
@@ -229,7 +248,7 @@ for (const [name, files] of [...touched].sort()) {
     const ceiling = (atTip !== null && compareVersions(atTip, atFork) === 1) ? atTip : atFork;
 
     if (now === atFork) {
-      assert.fail(`${files.length} file(s) under plugins/${name}/ changed on this branch but `
+      assert.fail(`${files.length} file(s) under plugins/${name}/ changed since the fork point but `
         + `the version is still ${atFork}, the same as at the fork point: ${where}. `
         + `${consequence} Bump it in all three manifests.`);
     }

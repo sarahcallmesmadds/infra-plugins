@@ -34,7 +34,7 @@ One JSON file per item, stored at:
   "kind": "plugin",
   "what": "Warn about stale branches at the start of a session and offer to clean them up.",
   "why": "22 stale branches have built up and nothing surfaces them until they cause a conflict.",
-  "where": "smadds marketplace",
+  "where": "infra-plugins marketplace",
   "destination_root": "infra-plugins",
   "source": "",
   "blocked_by": "",

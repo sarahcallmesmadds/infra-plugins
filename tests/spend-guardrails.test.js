@@ -70,7 +70,7 @@ check('Fermat-specific policy did not survive the port', () => {
 });
 
 check('the README states installation, runtime, configuration, and side effects', () => {
-  assert.match(readme, /\/plugin install spend-guardrails@smadds/);
+  assert.match(readme, /\/plugin install spend-guardrails@infra-plugins/);
   assert.match(readme, /both Claude Code and Codex/);
   assert.match(readme, /No setup or configuration is required/);
   assert.match(readme, /advisory and read-only/);

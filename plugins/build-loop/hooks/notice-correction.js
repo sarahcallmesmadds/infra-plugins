@@ -65,13 +65,60 @@ const MAY_INVOLVE_BUILT_TOOL =
 // it can tell invoking a command from talking about one. A few lines of
 // harmless context during a real /flag-issue run costs nothing; another early
 // return is another edge to get wrong.
+//
+// The line about a correction having to be the user's is doing more work than
+// it looks. Without it this fires on anything true rather than anything asked
+// for: running one skill turns up a real defect in a neighbouring one, the
+// answer offers to file it, and because the gate routes any turn that mentions
+// a skill or a plugin, that happens on most turns of a session about tooling,
+// which is most sessions here. Every suggestion was defensible on its own and
+// the sum of them was a nuisance the user asked to have switched off. Truth
+// was never the bar, and a version of this that only checks truth reads as
+// relentless no matter how good each finding is.
+//
+// The boundary is deliberately not "did the user speak first". Conceding a
+// correction inside your own answer, "you're right, the hook should have
+// failed open", is the case the corpus has most of, and it belongs here. What
+// does not belong is a finding nobody was looking for.
+//
+// Those two are close enough that the first draft of this let them collapse.
+// It said the trigger was the user speaking "or you realising while answering
+// that it did", and then said a defect you turned up on your own was not one.
+// Realising while answering and turning something up on your own describe the
+// same event, so the reader had a rule and its exception with no way to tell
+// them apart, and the safe reading of that is to keep flagging, which is the
+// behaviour being removed. The trigger now says conceding rather than
+// realising: a concession is anchored to something the user said, a
+// realisation is not.
+//
+// "Blocking" is anchored for the same reason. Left bare it is a mood, and the
+// same aside reads as blocking on a bad day and trivial on a good one, so the
+// boundary drifts between sessions. It means you cannot finish what they asked
+// without it fixed, which is a question with an answer.
+//
+// The exception gets its own paragraph because it did not have one. It sat at
+// the end of the paragraph that rules unraised defects out, after a sentence
+// claiming the two triggers were the whole list, which the exception then made
+// false. "Raise one of those" could equally have pointed at the two triggers or
+// at the unraised defects it actually means. A rule, a claim that the rule is
+// complete, and an exception to it, all in one paragraph, is three things a
+// reader has to hold apart with nothing separating them.
 const POLICY = [
   'The current topic may involve tooling built in this setup. Using the',
   'conversation so far and the answer you are about to give, watch for a real',
   'correction to a skill, hook, command, plugin or script built here.',
   '',
-  'That is either the user saying something behaved wrongly, or you realising',
-  'while answering that it did.',
+  'That is either the user saying something behaved wrongly, or your own answer',
+  'conceding to them that it did.',
+  '',
+  'It has to be theirs. A defect you turned up on your own, that they never',
+  'raised and that your answer is not conceding, is not a correction however',
+  'real it is and however sure you are.',
+  '',
+  'There is one exception and it is narrow. Raise an unraised defect when it',
+  'blocks what they actually asked for, meaning you cannot finish without it',
+  'fixed. Otherwise fix it if the tooling is the work, and say nothing if it is',
+  'not.',
   '',
   'If one occurs, suggest `/flag-issue` once, briefly, at the end of your',
   'answer. Do not run it and do not block. Say nothing for plans, questions,',

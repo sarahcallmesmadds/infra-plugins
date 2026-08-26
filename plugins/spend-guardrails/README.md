@@ -13,12 +13,12 @@ capability tier and clearly withholds unverified IDs and prices.
 
 ## Install
 
-Add the `smadds` marketplace, then install `spend-guardrails` from it. In Claude
+Add the `infra-plugins` marketplace, then install `spend-guardrails` from it. In Claude
 Code:
 
 ```text
 /plugin marketplace add sarahcallmesmadds/infra-plugins
-/plugin install spend-guardrails@smadds
+/plugin install spend-guardrails@infra-plugins
 ```
 
 No setup or configuration is required. Ask a model-selection question in a new

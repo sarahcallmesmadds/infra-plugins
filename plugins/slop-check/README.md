@@ -239,7 +239,7 @@ So: on a document whose subject is writing quality, ignore the result.
 
 ```
 /plugin marketplace add sarahcallmesmadds/infra-plugins
-/plugin install slop-check@smadds
+/plugin install slop-check@infra-plugins
 ```
 
 Add the marketplace **by repository**, as above. Adding it by pasting a direct
