@@ -83,10 +83,9 @@ plugin directory as fixed text.
 
 **Print either message with `printf`, never `echo`.** This one is not about the announced
 message alone. `/bin/sh` and `/bin/zsh` both let `echo` interpret a backslash, and the stderr
-line is the one still carrying an absolute path, so it is the more exposed of the two. Four
-hook commands in one plugin still use `echo` on that line. They cannot fire on the current
-install paths, and correcting them costs a release per plugin, so they are being corrected one
-plugin at a time. The rule is here to stop another being written.
+line is the one still carrying an absolute path, so it is the more exposed of the two. Every
+hook command uses `printf`, and `tests/hook-executable.test.js` recognises only that form, so a
+new `echo` guard fails the suite instead of reopening the split-warning defect.
 
 **Release notes go in the plugin's `CHANGELOG.md`, never in its README.** A README is what
 somebody reads to install and use the plugin, and upgrade notes for versions nobody is running
