@@ -253,7 +253,7 @@ check('a session id that looks like a path is refused, not sanitised', () => {
     assert.strictEqual(ctx.bridgePath(bad, '/tmp'), null, `accepted ${bad}`);
     assert.strictEqual(ctx.safeSessionId(bad), null);
   }
-  assert.ok(ctx.bridgePath('3667d77f-7558-4f65-b19e-0483620f95bf', '/tmp'));
+  assert.ok(ctx.bridgePath('aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee', '/tmp'));
 });
 
 check('a missing or unreadable context window writes nothing', () => {

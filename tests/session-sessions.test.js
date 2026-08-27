@@ -10,8 +10,8 @@
 // directory that means nothing, which is the fastest way to teach someone to
 // ignore this hook.
 //
-// The `ps` samples below are real output from a machine running all three at
-// once, trimmed in width only.
+// The `ps` sample below is synthetic output for a machine running all three at
+// once. It preserves the process shapes the parser must distinguish.
 
 'use strict';
 
@@ -30,41 +30,41 @@ function check(name, fn) {
 
 // ------------------------------------------------------------ ps parsing ----
 
-const REAL_PS = [
+const PS_SAMPLE = [
   '  PID                  STARTED COMMAND',
-  ' 2936 Fri Jul 24 22:28:53 2026 /Applications/Claude.app/Contents/MacOS/Claude',
-  ' 2940 Fri Jul 24 22:28:56 2026 /Applications/Claude.app/Contents/Frameworks/Claude Helper.app/Contents/MacOS/Claude Helper --type=gpu-process',
-  '66995 Mon Jul 27 20:19:01 2026 /Applications/cmux.app/Contents/Resources/bin/cmux hooks feed --source claude',
-  '66141 Mon Jul 27 20:14:57 2026 /Users/example/.local/bin/claude --session-id 3667d77f-7558-4f65-b19e-0483620f95bf --settings {"hooks":{}}',
-  '69501 Mon Jul 27 20:31:12 2026 /Users/example/.local/bin/claude --session-id 78F0713B-0EB4-4B77-BCCD-5441DA44A5D5',
+  '41001 Fri Jul 24 22:28:53 2026 /Applications/Claude.app/Contents/MacOS/Claude',
+  '41002 Fri Jul 24 22:28:56 2026 /Applications/Claude.app/Contents/Frameworks/Claude Helper.app/Contents/MacOS/Claude Helper --type=gpu-process',
+  '42001 Mon Jul 27 20:19:01 2026 /Applications/cmux.app/Contents/Resources/bin/cmux hooks feed --source claude',
+  '43001 Mon Jul 27 20:14:57 2026 /Users/example/.local/bin/claude --session-id 11111111-2222-4333-8444-555555555555 --settings {"hooks":{}}',
+  '43002 Mon Jul 27 20:31:12 2026 /Users/example/.local/bin/claude --session-id AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE',
 ].join('\n');
 
 const NOW = Date.parse('Mon Jul 27 20:34:57 2026');
 
-check('finds exactly the two real sessions in real ps output', () => {
-  const found = parsePs(REAL_PS, NOW);
+check('finds exactly the two sessions in representative ps output', () => {
+  const found = parsePs(PS_SAMPLE, NOW);
   assert.strictEqual(found.length, 2, `expected 2, got ${found.length}: ${found.map((f) => f.pid)}`);
-  assert.deepStrictEqual(found.map((f) => f.pid), [66141, 69501]);
+  assert.deepStrictEqual(found.map((f) => f.pid), [43001, 43002]);
 });
 
 check('the desktop app is not a session', () => {
-  const found = parsePs(REAL_PS, NOW);
-  assert.ok(!found.some((f) => f.pid === 2936), 'matched /Applications/Claude.app');
-  assert.ok(!found.some((f) => f.pid === 2940), 'matched a Claude Helper renderer');
+  const found = parsePs(PS_SAMPLE, NOW);
+  assert.ok(!found.some((f) => f.pid === 41001), 'matched /Applications/Claude.app');
+  assert.ok(!found.some((f) => f.pid === 41002), 'matched a Claude Helper renderer');
 });
 
 check('a session manager passing --source claude is not a session', () => {
-  const found = parsePs(REAL_PS, NOW);
-  assert.ok(!found.some((f) => f.pid === 66995), 'matched cmux');
+  const found = parsePs(PS_SAMPLE, NOW);
+  assert.ok(!found.some((f) => f.pid === 42001), 'matched cmux');
 });
 
 check('session ids are lowercased so self-exclusion cannot miss on case', () => {
-  const found = parsePs(REAL_PS, NOW);
-  assert.strictEqual(found[1].sessionId, '78f0713b-0eb4-4b77-bccd-5441da44a5d5');
+  const found = parsePs(PS_SAMPLE, NOW);
+  assert.strictEqual(found[1].sessionId, 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee');
 });
 
 check('age is computed from the ps start time', () => {
-  const found = parsePs(REAL_PS, NOW);
+  const found = parsePs(PS_SAMPLE, NOW);
   assert.strictEqual(found[0].ageMinutes, 20);
   assert.strictEqual(found[1].ageMinutes, 4);
 });
@@ -93,11 +93,11 @@ check('empty and garbage input yield no sessions rather than throwing', () => {
 // whole answer on one name staying the same.
 
 const { liveSessions, ancestorPids } = require(path.join(ROOT, 'scripts', 'sessions.js'));
-const psExec = (cmd) => (cmd === 'ps' ? REAL_PS : null);
+const psExec = (cmd) => (cmd === 'ps' ? PS_SAMPLE : null);
 
 check('the caller is excluded by session id', () => {
   const r = liveSessions({
-    selfSessionId: '3667d77f-7558-4f65-b19e-0483620f95bf', exec: psExec, now: NOW,
+    selfSessionId: '11111111-2222-4333-8444-555555555555', exec: psExec, now: NOW,
   });
   assert.strictEqual(r.sessions.length, 1);
   assert.strictEqual(r.identifiedSelf, true);
@@ -106,9 +106,9 @@ check('the caller is excluded by session id', () => {
 check('the caller is excluded by pid when the id is unavailable', () => {
   // The second signal. The pid is in the process table already, so it needs no
   // agreement about formats, and it covers a renamed id variable.
-  const r = liveSessions({ selfPids: ['66141'], exec: psExec, now: NOW });
+  const r = liveSessions({ selfPids: ['43001'], exec: psExec, now: NOW });
   assert.strictEqual(r.sessions.length, 1);
-  assert.ok(!r.sessions.some((s) => s.pid === 66141));
+  assert.ok(!r.sessions.some((s) => s.pid === 43001));
   assert.strictEqual(r.identifiedSelf, true);
 });
 
@@ -116,8 +116,8 @@ check('an ancestor pid identifies the caller with no environment at all', () => 
   // The signal that survives anything being renamed. A command is spawned by a
   // shell that was spawned by Claude Code, so the session is always up the
   // chain.
-  const r = liveSessions({ selfPids: [999, 66141, 4], exec: psExec, now: NOW });
-  assert.ok(!r.sessions.some((s) => s.pid === 66141));
+  const r = liveSessions({ selfPids: [999, 43001, 4], exec: psExec, now: NOW });
+  assert.ok(!r.sessions.some((s) => s.pid === 43001));
   assert.strictEqual(r.identifiedSelf, true);
 });
 
@@ -139,9 +139,9 @@ check('a ps that will not answer ends the walk rather than throwing', () => {
 
 check('a session id in a different case still excludes the caller', () => {
   const r = liveSessions({
-    selfSessionId: '78F0713B-0EB4-4B77-BCCD-5441DA44A5D5', exec: psExec, now: NOW,
+    selfSessionId: 'AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE', exec: psExec, now: NOW,
   });
-  assert.ok(!r.sessions.some((s) => s.pid === 69501));
+  assert.ok(!r.sessions.some((s) => s.pid === 43002));
 });
 
 check('when neither signal identifies the caller, that is reported', () => {
