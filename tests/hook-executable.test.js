@@ -161,7 +161,7 @@ function sayFor(event) {
 // by four other plugins that a single pull request is not allowed to touch.
 //
 // What changed is only which form this generator emits, and so which one the
-// "Prefix each command with" hint teaches. GUARD_RE accepts both, so the eleven
+// "Prefix each command with" hint teaches. GUARD_RE accepts both, so
 // unconverted commands still parse as guards and are still checked. Queue entry
 // 2026-08-17T18-32-15-hook-executable-test holds the agreement: each plugin's
 // share lands in that plugin's next release, and slop-check's landed in the
@@ -185,7 +185,7 @@ function guardFor(target, event) {
 
 // Either printing form, because both are live and neither is wrong to find.
 // `printf '%s\\n'` is what CLAUDE.md requires of anything newly written. `echo`
-// is what the eleven commands predating that rule still carry, and they are
+// is what commands predating that rule may still carry, and they are
 // converted a plugin at a time as each plugin's next release comes round rather
 // than in one repo-wide change. Non-capturing on purpose: every group position
 // below this line is counted on by matchGuard.
@@ -1196,7 +1196,7 @@ check('the guard survives a plugin root holding a backslash', () => {
   //
   // `guardFor` emits the converted shape now, so the three assertions above
   // exercise `printf` and nothing else. The defect being guarded against is
-  // carried by the eleven commands that have NOT been converted, and running
+  // carried by commands that have not been converted, and running
   // the new shape says nothing about those. So the old shape is run here too,
   // and pinned to the behaviour that makes it a defect: it splits, and the
   // first line is all a reader ever sees.

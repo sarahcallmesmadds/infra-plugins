@@ -83,15 +83,15 @@ plugin directory as fixed text.
 
 **Print either message with `printf`, never `echo`.** This one is not about the announced
 message alone. `/bin/sh` and `/bin/zsh` both let `echo` interpret a backslash, and the stderr
-line is the one still carrying an absolute path, so it is the more exposed of the two. Eleven
-hook commands across five plugins still use `echo` on that line. They cannot fire on the current
-install paths, and correcting them costs a release per plugin, so they are logged rather than
-scheduled. The rule is here to stop the twelfth being written.
+line is the one still carrying an absolute path, so it is the more exposed of the two. Eight
+hook commands across three plugins still use `echo` on that line. They cannot fire on the current
+install paths, and correcting them costs a release per plugin, so they are being corrected one
+plugin at a time. The rule is here to stop another being written.
 
 **Release notes go in the plugin's `CHANGELOG.md`, never in its README.** A README is what
 somebody reads to install and use the plugin, and upgrade notes for versions nobody is running
-push that to the bottom of a long file. build-loop is the worked example. `guardrails` and
-`git-hygiene` still keep theirs in the README and want the same treatment.
+push that to the bottom of a long file. build-loop and git-hygiene are the worked examples.
+`guardrails` still keeps its upgrade notes in the README and wants the same treatment.
 
 **Nothing personal belongs in this repository, because it is public.** That covers the
 maintainer's own vocabulary, worked examples and transcripts. A test fixture is a publishing
