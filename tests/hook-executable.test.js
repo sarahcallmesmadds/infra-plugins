@@ -129,8 +129,6 @@ const announcedNotRunnable = (target) => (target.startsWith(PLUGIN_ROOT_PREFIX)
   ? notRunnableMessage(`${target.slice(PLUGIN_ROOT_PREFIX.length)} inside the plugin directory`)
   : notRunnableMessage(target));
 
-// Both shapes are live while this rolls out one plugin at a time, so a hook
-// carrying either is a guarded hook. A hook carrying neither is not.
 // Which events can carry it at all, measured rather than assumed. Codex
 // validates the announced event name, but a name matching its declaration is
 // not the same question as whether that event delivers anything.
@@ -155,18 +153,9 @@ function sayFor(event) {
     + `exit ${CODEX_EXIT}; fi; printf '%s\\n' "$1" >&2; exit ${GUARD_EXIT}; }; `;
 }
 
-// The stderr-only branch below writes `printf`, as CLAUDE.md requires. It wrote
-// `echo` until 2026-08-18, knowingly, because /bin/sh and /bin/zsh both read a
-// backslash in an `echo` argument as an instruction, and that shape was carried
-// by four other plugins that a single pull request is not allowed to touch.
-//
-// What changed is only which form this generator emits, and so which one the
-// "Prefix each command with" hint teaches. GUARD_RE accepts both, so
-// unconverted commands still parse as guards and are still checked. Queue entry
-// 2026-08-17T18-32-15-hook-executable-test holds the agreement: each plugin's
-// share lands in that plugin's next release, and slop-check's landed in the
-// pull request that added the SubagentStop hook, where two reviewers
-// independently flagged the twelfth `echo` being written.
+// The stderr-only branch writes `printf`, as CLAUDE.md requires. /bin/sh and
+// /bin/zsh can interpret a backslash in an `echo` argument as an instruction,
+// splitting the absolute path and repair instruction across two stderr lines.
 function clausesFor(target, say) {
   const fire = (message, announced) => {
     if (!say) return `{ printf '%s\\n' "${message}" >&2; exit ${GUARD_EXIT}; }`;
@@ -177,30 +166,25 @@ function clausesFor(target, say) {
     + `[ -x "${target}" ] || ${fire(notRunnableMessage(target), announcedNotRunnable(target))}; `;
 }
 
-// event omitted gives the stderr-only shape, which is what the plugins that
-// have not been converted yet still carry.
+// Omitting the event selects the stderr-only shape.
 function guardFor(target, event) {
   return event ? sayFor(event) + clausesFor(target, true) : clausesFor(target, false);
 }
 
-// Either printing form, because both are live and neither is wrong to find.
-// `printf '%s\\n'` is what CLAUDE.md requires of anything newly written. `echo`
-// is what commands predating that rule may still carry, and they are
-// converted a plugin at a time as each plugin's next release comes round rather
-// than in one repo-wide change. Non-capturing on purpose: every group position
-// below this line is counted on by matchGuard.
-const PRINTER = "(?:echo|printf '%s\\\\n')";
+// Non-capturing on purpose: every group position below this line is counted on
+// by matchGuard.
+const STDERR_PRINTER = "printf '%s\\\\n'";
 
 // Deliberately loose about the messages and the codes, so that a guard carrying
 // the wrong ones is still recognised as a guard and reported as wrong, rather
 // than not matching and being reported as absent.
 const GUARD_RE = new RegExp(
-  '^\\[ -n "\\$\\{CLAUDE_PLUGIN_ROOT\\}" \\] \\|\\| \\{ ' + PRINTER + ' "([^"]*)" >&2; exit (\\d+); \\}; '
-  + '\\[ -e "([^"]+)" \\] \\|\\| \\{ ' + PRINTER + ' "([^"]*)" >&2; exit (\\d+); \\}; '
-  + '\\[ -x "([^"]+)" \\] \\|\\| \\{ ' + PRINTER + ' "([^"]*)" >&2; exit (\\d+); \\}; ',
+  '^\\[ -n "\\$\\{CLAUDE_PLUGIN_ROOT\\}" \\] \\|\\| \\{ ' + STDERR_PRINTER + ' "([^"]*)" >&2; exit (\\d+); \\}; '
+  + '\\[ -e "([^"]+)" \\] \\|\\| \\{ ' + STDERR_PRINTER + ' "([^"]*)" >&2; exit (\\d+); \\}; '
+  + '\\[ -x "([^"]+)" \\] \\|\\| \\{ ' + STDERR_PRINTER + ' "([^"]*)" >&2; exit (\\d+); \\}; ',
 );
 
-// Same looseness for the newer shape, and the event name is captured rather
+// Same looseness for the announcing shape, and the event name is captured rather
 // than fixed so a hook declaring one event and announcing another is reported
 // instead of silently accepted. Codex validates that name, so a wrong one is a
 // hook whose message is thrown away for a second reason.
@@ -217,8 +201,8 @@ const SAY_GUARD_RE = new RegExp(
   + '\\[ -x "([^"]+)" \\] \\|\\| say "([^"]*)"(?: "([^"]*)")?; ',
 );
 
-// One reading for either shape, so every check below asks the same questions of
-// both and a hook cannot escape a check by being written in the other one.
+// One reading for both supported shapes, so every check below asks the same
+// questions of both and a hook cannot escape a check by using the other one.
 function matchGuard(command) {
   const say = SAY_GUARD_RE.exec(command);
   if (say) {
@@ -234,9 +218,9 @@ function matchGuard(command) {
       unsetCode: Number(exitCode), goneCode: Number(exitCode), execCode: Number(exitCode),
     };
   }
-  const legacy = GUARD_RE.exec(command);
-  if (!legacy) return null;
-  const [matched, unset, unsetCode, gonePath, gone, goneCode, execPath, notRunnable, execCode] = legacy;
+  const stderrOnly = GUARD_RE.exec(command);
+  if (!stderrOnly) return null;
+  const [matched, unset, unsetCode, gonePath, gone, goneCode, execPath, notRunnable, execCode] = stderrOnly;
   return {
     matched, event: null, codexExit: null, announces: false,
     unsetMessage: unset, goneMessage: gone, execMessage: notRunnable,
@@ -897,7 +881,7 @@ check('the guard actually fires, and only when it should', () => {
       }
     }
 
-    // The unset state against the announcing shape, which the legacy probe
+    // The unset state against the announcing shape, which the stderr-only probe
     // covers and this one did not until a review of #129 said so.
     for (const [what, extra] of [
       ['unset', {}],
@@ -1019,9 +1003,9 @@ check('the three command forms are told apart', () => {
     'a directly-invoked hook does not resolve to itself, so it escapes the shebang checks');
   assert.strictEqual(directly.viaInterpreter, false);
 
-  // Both guard shapes, built by the generator and read back by the recogniser.
+  // Both host-output guard shapes, built by the generator and read back by the recogniser.
   // Without this the two can drift by one character and nothing notices: a
-  // converted hook stops matching, gets reported as unguarded, and worse, comes
+  // generated guard stops matching, gets reported as unguarded, and worse, comes
   // back from parseCommand with executed: null, so every executable and shebang
   // check downstream goes green over an empty list. That is the failure this
   // file exists to keep out, and it would arrive through the parser rather than
@@ -1094,9 +1078,9 @@ check('the three command forms are told apart', () => {
   // A guard whose message or exit code is wrong is still a guard, and has to be
   // stepped over so the check above can report it as wrong rather than absent.
   const wrongEverything = parseCommand(
-    `[ -n "\${CLAUDE_PLUGIN_ROOT}" ] || { echo "nope" >&2; exit 7; }; `
-    + `[ -e "\${CLAUDE_PLUGIN_ROOT}/bin/hook-node" ] || { echo "other" >&2; exit 9; }; `
-    + `[ -x "\${CLAUDE_PLUGIN_ROOT}/bin/hook-node" ] || { echo "different" >&2; exit 8; }; `
+    `[ -n "\${CLAUDE_PLUGIN_ROOT}" ] || { printf '%s\\n' "nope" >&2; exit 7; }; `
+    + `[ -e "\${CLAUDE_PLUGIN_ROOT}/bin/hook-node" ] || { printf '%s\\n' "other" >&2; exit 9; }; `
+    + `[ -x "\${CLAUDE_PLUGIN_ROOT}/bin/hook-node" ] || { printf '%s\\n' "different" >&2; exit 8; }; `
     + `"\${CLAUDE_PLUGIN_ROOT}"/bin/hook-node "\${CLAUDE_PLUGIN_ROOT}"/hooks/x.js`, dir);
   assert.strictEqual(wrongEverything.executed, 'plugins/example/bin/hook-node',
     'a guard with the wrong messages and codes was not recognised as a guard, so the command '
@@ -1106,8 +1090,8 @@ check('the three command forms are told apart', () => {
   // and must not be stepped over as though it were. Otherwise the command
   // behind a half-guard parses fine and the missing clause is never reported.
   const halfGuard = parseCommand(
-    `[ -n "\${CLAUDE_PLUGIN_ROOT}" ] || { echo "${UNSET_MESSAGE}" >&2; exit ${GUARD_EXIT}; }; `
-    + `[ -e "\${CLAUDE_PLUGIN_ROOT}/bin/hook-node" ] || { echo "${GONE_MESSAGE}" >&2; exit ${GUARD_EXIT}; }; `
+    `[ -n "\${CLAUDE_PLUGIN_ROOT}" ] || { printf '%s\\n' "${UNSET_MESSAGE}" >&2; exit ${GUARD_EXIT}; }; `
+    + `[ -e "\${CLAUDE_PLUGIN_ROOT}/bin/hook-node" ] || { printf '%s\\n' "${GONE_MESSAGE}" >&2; exit ${GUARD_EXIT}; }; `
     + `"\${CLAUDE_PLUGIN_ROOT}"/bin/hook-node "\${CLAUDE_PLUGIN_ROOT}"/hooks/x.js`, dir);
   assert.strictEqual(halfGuard.executed, null,
     'a guard missing its not-runnable clause was treated as complete, so the command behind it '
@@ -1116,8 +1100,8 @@ check('the three command forms are told apart', () => {
   // And missing the first clause, which is the one that was absent for four
   // rounds and whose absence produced a confidently wrong cause.
   const noUnsetClause = parseCommand(
-    `[ -e "\${CLAUDE_PLUGIN_ROOT}/bin/hook-node" ] || { echo "${GONE_MESSAGE}" >&2; exit ${GUARD_EXIT}; }; `
-    + `[ -x "\${CLAUDE_PLUGIN_ROOT}/bin/hook-node" ] || { echo "${notRunnableMessage('${CLAUDE_PLUGIN_ROOT}/bin/hook-node')}" >&2; exit ${GUARD_EXIT}; }; `
+    `[ -e "\${CLAUDE_PLUGIN_ROOT}/bin/hook-node" ] || { printf '%s\\n' "${GONE_MESSAGE}" >&2; exit ${GUARD_EXIT}; }; `
+    + `[ -x "\${CLAUDE_PLUGIN_ROOT}/bin/hook-node" ] || { printf '%s\\n' "${notRunnableMessage('${CLAUDE_PLUGIN_ROOT}/bin/hook-node')}" >&2; exit ${GUARD_EXIT}; }; `
     + `"\${CLAUDE_PLUGIN_ROOT}"/bin/hook-node "\${CLAUDE_PLUGIN_ROOT}"/hooks/x.js`, dir);
   assert.strictEqual(noUnsetClause.executed, null,
     'a guard with no unset clause was treated as complete, so an unset CLAUDE_PLUGIN_ROOT would be '
@@ -1162,10 +1146,6 @@ check('the guard survives a plugin root holding a backslash', () => {
   // message in two. Claude Code shows the first line of stderr and drops the
   // rest, which means the reader is cut off before the part naming the file or
   // saying to run chmod.
-  //
-  // Queue entry 2026-08-17T18-32-15-hook-executable-test recorded this as live
-  // and untested, because nothing here had ever been run against an awkward
-  // root. This is that test.
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hook-awkward-'));
   const root = path.join(dir, 'awk\\nward');           // one literal backslash, then n
   fs.mkdirSync(path.join(root, 'bin'), { recursive: true });
@@ -1191,28 +1171,6 @@ check('the guard survives a plugin root holding a backslash', () => {
   // pass every assertion above while guarding nothing.
   assert.strictEqual(good.status, GUARD_EXIT,
     'the guard printed its message and then exited on a code that stops nothing');
-
-  // The other half, and the reason this file cannot simply be switched over.
-  //
-  // `guardFor` emits the converted shape now, so the three assertions above
-  // exercise `printf` and nothing else. The defect being guarded against is
-  // carried by commands that have not been converted, and running
-  // the new shape says nothing about those. So the old shape is run here too,
-  // and pinned to the behaviour that makes it a defect: it splits, and the
-  // first line is all a reader ever sees.
-  //
-  // This is deliberately an assertion that the old form is broken rather than a
-  // description of it. When a plugin converts, this fails and tells whoever did
-  // it that the last echo is gone, which is a better prompt than a comment.
-  const legacy = fire(guardFor('${CLAUDE_PLUGIN_ROOT}/bin/hook-node')
-    .split(`printf '%s\\n' `).join('echo '));
-  const legacyErr = legacy.stderr.replace(/\n$/, '');
-
-  assert.strictEqual(legacyErr.split('\n').length, 2,
-    'the echo form no longer splits on a backslash root. If every command has '
-    + 'been converted, delete this half and the queue entry it belongs to');
-  assert.ok(!legacyErr.split('\n')[0].includes('chmod +x'),
-    'the echo form split somewhere harmless, so this no longer demonstrates the defect');
 
   fs.rmSync(dir, { recursive: true, force: true });
 });
