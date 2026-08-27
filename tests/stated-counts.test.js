@@ -3,19 +3,12 @@
 //
 // Run: node tests/stated-counts.test.js
 //
-// The bug, three times in three days:
-//
-//   The 0.3.0 upgrade note said the hook "checks four things" directly above a
-//   table of five, and inspect() implements five. REBUILD-INDEX.md called the
-//   export 112 files, when 112 is the zip's entry count including directories
-//   and 88 are files. Earlier, EXPECTED_CHECKS printed 17 while 20 ran, and
-//   `UPDATERS.length * 2 + 4` printed 10 while 13 ran.
-//
-// Each was fixed by correcting the number, which is the fix that lasts until
-// somebody adds a row. The queue entry asked for something else: a count stated
-// in prose should be derived from the list it describes, or checked against it,
-// and where neither is possible it should not be stated at all, because the
-// list is already the count.
+// This failure has appeared in several live shapes: a heading said "four
+// things" above a five-row table, a constant reported 17 checks while 20
+// executed, and a derived expression reported 10 updaters while 13 executed.
+// Correcting the number lasts only until somebody adds a row.
+// A count stated in prose should therefore be derived from the list it
+// describes, checked against it, or omitted when the list already is the count.
 //
 // Prose cannot derive, so this checks. It finds a count sitting immediately
 // above a table or a bullet list and compares it to what is actually there.
