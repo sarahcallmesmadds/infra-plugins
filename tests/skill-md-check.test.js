@@ -3,9 +3,8 @@
 //
 // Run: node tests/skill-md-check.test.js
 //
-// The hook is a rebuild of one recovered from the Fermat work laptop on
-// 2026-07-28. Two things changed in the port, and both are the point of this
-// file.
+// The hook was adapted from an earlier implementation. Two deliberate changes
+// define this repository's contract.
 //
 // 1. The original required `type: human|agent`. Eight of the twenty-one skills
 //    in this repository do not set it, so requiring it would report eight files

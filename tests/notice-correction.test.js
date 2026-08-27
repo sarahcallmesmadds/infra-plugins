@@ -324,44 +324,40 @@ check('notice-correction is declared on UserPromptSubmit', () => {
 check('the case file is well formed, so it does not rot unnoticed', () => {
   const file = path.join(__dirname, 'fixtures', 'correction-cases.json');
   const corpus = JSON.parse(fs.readFileSync(file, 'utf8'));
+  const expectedIds = [
+    'correction-001', 'correction-002', 'correction-003', 'correction-004',
+    'correction-005', 'correction-006', 'correction-007', 'correction-008',
+    'correction-009', 'correction-010', 'correction-011', 'correction-012',
+    'correction-013', 'correction-014', 'correction-015', 'correction-016',
+    'correction-017', 'correction-018', 'correction-019', 'correction-020',
+    'correction-021', 'correction-022', 'correction-023', 'correction-024',
+    'correction-025', 'correction-026', 'correction-027', 'correction-028',
+    'correction-029', 'correction-030', 'correction-031', 'correction-032',
+    'correction-033', 'correction-034', 'correction-035', 'correction-036',
+    'correction-037', 'correction-038', 'correction-039', 'correction-040',
+    'correction-041', 'correction-042', 'correction-043', 'correction-044',
+    'correction-045', 'correction-046', 'correction-047', 'correction-048',
+  ];
   assert.ok(Array.isArray(corpus.cases) && corpus.cases.length > 0, 'no cases');
   for (const c of corpus.cases) {
+    assert.match(c.id || '', /^correction-\d{3}$/, `bad id: ${JSON.stringify(c)}`);
     assert.ok(['user', 'assistant'].includes(c.side), `bad side: ${JSON.stringify(c)}`);
     assert.ok(['suggest', 'quiet', 'either'].includes(c.expected), `bad expected: ${JSON.stringify(c)}`);
     assert.ok(typeof c.input === 'string' && c.input.length > 0, `empty input: ${JSON.stringify(c)}`);
-    assert.ok(Number.isInteger(c.found), `no round recorded: ${JSON.stringify(c)}`);
   }
+  const actualIds = corpus.cases.map((c) => c.id);
+  assert.strictEqual(new Set(actualIds).size, actualIds.length, 'duplicate case id');
+  assert.deepStrictEqual(actualIds, expectedIds,
+    'the correction corpus changed; add a new stable id, but never remove or reuse an existing one');
   // Both answers have to be represented or the corpus only measures one
   // direction, and the quiet direction is the one that makes this a nuisance.
   const kinds = new Set(corpus.cases.map((c) => c.expected));
   assert.ok(kinds.has('suggest') && kinds.has('quiet'), 'the corpus only tests one direction');
 
-  // `either` is a verdict, not a gap in the policy, and this pins that so the
-  // point does not get relitigated. A review round asked for a rule that
-  // disambiguates the `either` cases, having itself recommended marking one of
-  // them `either` a round earlier. Those two asks cannot both be met: a case is
-  // marked `either` precisely because both readings are defensible, and writing
-  // a rule that forces one is how the policy grew the phrase lists this hook
-  // spent four rounds removing. Some sentences are genuinely ambiguous and the
-  // corpus records which, rather than pretending a rule settles them.
+  // `either` is a verdict, not a gap in the policy. Some sentences are genuinely
+  // ambiguous, and the corpus records which instead of pretending a rule can
+  // settle them.
   assert.ok(kinds.has('either'), 'no ambiguous cases, so nothing records where judgement runs out');
-
-  // The file claims to hold every round, and nothing held it to that: deleting
-  // every case from the newest round left the suite green, because the older
-  // ones already supply a non-empty corpus and all three verdicts. So the rounds
-  // present have to run from 0 with no gaps, and the highest one has to be the
-  // one the documentation names. Delete a round and one of these fails.
-  const rounds = [...new Set(corpus.cases.map((c) => c.found))].sort((a, b) => a - b);
-  const highest = rounds[rounds.length - 1];
-  assert.deepStrictEqual(
-    rounds,
-    Array.from({ length: highest + 1 }, (_, i) => i),
-    `rounds present are ${rounds.join(', ')}, which skips one, so a round was dropped rather than added`
-  );
-  assert.ok(
-    new RegExp(`round ${highest}\\b`, 'i').test(corpus.how_to_read_a_case.found),
-    `the newest round is ${highest} and the documentation does not mention it`
-  );
   assert.ok(
     /must not be counted as a failure/i.test(corpus.how_to_read_a_case.expected),
     'the corpus no longer says an `either` case cannot fail, which is the whole meaning of the verdict'

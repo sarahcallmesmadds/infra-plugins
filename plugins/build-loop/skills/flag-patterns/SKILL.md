@@ -29,7 +29,7 @@ To run on a schedule, use a local-only mechanism:
 - A terminal-launched `cron` job that opens a Claude Code session
 - Manual invocation in a Claude Code terminal session
 
-**Why this matters:** scheduling this skill via Claude Desktop's New Task UI fires the task in Cowork, which silently does nothing — no flags written, no summary generated — because the queue files don't exist in that runtime. The failure is silent, so the schedule looks healthy when it isn't (queue entry 2026-04-24T22-07-34-skill-summary).
+**Why this matters:** scheduling this skill via Claude Desktop's New Task UI fires the task in Cowork, which silently does nothing — no flags written, no summary generated — because the queue files do not exist in that runtime. The failure is silent, so the schedule looks healthy when it is not.
 
 **Scheduling-research lesson:** when adding a schedule for ANY skill that reads or writes local paths, verify the chosen runtime can access those paths BEFORE declaring the schedule complete. Cloud-only schedulers (Cowork, /schedule, remote-agent) cannot reach `~/.claude/`.
 
@@ -41,14 +41,11 @@ This skill is the weekly rhythm for the build loop. It reads the correction queu
 
 **When to invoke:** Manually any time you want a fresh read of the queue, or automatically via a local `launchd` or terminal `cron` job that opens a Claude Code session (NOT Claude Desktop's "New Task" UI — see Runtime Requirements above; that path runs in Cowork and silently does nothing).
 
-**Plan 04-02 implemented Steps 1–6 (pattern detection + pattern-flags.json).**
-**Plan 04-03 adds Steps 7–10 (summary report generation, file write to `summaries/YYYY-WW.md`, optional Slack post, hot-cache.md update).**
-
-**Load-bearing context from Phase 4 design (see `.planning/phases/04-intelligence-layer/04-DESIGN.md` in the build loop project if you need the full spec):**
+**Load-bearing behavior:**
 - "Same type" for pattern flagging = target-level grouping. 3+ closed primary corrections for the same target on 3+ occurrences = structural flag. No semantic classification.
 - Pattern detection runs ONLY inside this skill. Not on every queue close. Not as a standalone hook. Weekly cadence is correct at current volume.
 - One flag entry per target in pattern-flags.json, forever. Updates are always in-place — never create a second flag for the same target.
-- Structural fixes from pattern flags are NEVER auto-applied. PATT-03 requires the maintainer co-development review. The flag surfaces the problem; it does not trigger changes. Status stays `pending-review` until the maintainer and the user change it manually.
+- Structural fixes from pattern flags are NEVER auto-applied. The maintainer review gate requires the maintainer and user to decide together. The flag surfaces the problem; it does not trigger changes. Status stays `pending-review` until they change it manually.
 - Summary file front-loads Pattern Flags before Fixes Applied and Still Open — the session-start hook truncates at 2,000 chars and truncation cuts the tail.
 
 ---
@@ -95,7 +92,7 @@ Missing fields should be treated as follows:
 
 ## Step 2: Pattern Detection
 
-This is the reasoning step Claude executes against the loaded entries. The algorithm below comes directly from `04-DESIGN.md` Section 2 and is the single source of truth for pattern detection.
+This is the reasoning step Claude executes against the loaded entries. The algorithm below is the single source of truth for pattern detection.
 
 ### Step 2a — Filter to closed primary corrections
 
@@ -141,7 +138,7 @@ not any more, and the number is printed to somebody who will act on it. Three
 sitting. Reporting that as "three sessions" tells the reader a problem recurred
 across three separate occasions when it happened on one, which turns a single bad
 afternoon into a standing pattern: exactly the thing the dedup half of this rule
-exists to prevent. Devin caught it on PR #96, in the round that introduced it.
+exists to prevent. Keep the occasion-level deduplication intact.
 
 **Counting rule:** the rule has always had two jobs. A stop-hook can fire many
 times in one sitting, and counting each firing would let one afternoon look like
@@ -156,14 +153,11 @@ deliberate. That argument is not evidence, no fault ever motivated it, and the
 effect would have been to let a few hand-written entries cross the threshold on
 their own. A behaviour here changes on a fault, not on a reason it might be nice.
 
-**Read that from `source`, never from an empty `session_id`.** Until 0.9.6
-`/flag-issue` left `session_id` blank, so slash-capture entries fell through to
-`entry.id` and got the per-entry counting by accident. The rule looked like it
-was about missing session context and was actually about who filed the entry.
-When 0.9.6 started resolving the id, three corrections filed in one sitting
-collapsed to one data point and dropped below the threshold, silently. Devin
-caught it on PR #96 before it shipped. `source` says what the entry is, and it
-cannot be quietly changed by an unrelated fix somewhere else.
+**Read that from `source`, never from `session_id`.** A session id can group
+several slash-capture entries from one sitting, collapsing distinct user-filed
+corrections into one data point and dropping below the threshold silently.
+`source` says what the entry is, and it cannot be quietly changed by an
+unrelated fix somewhere else.
 
 Entries of type `dep-review` never reach this step. Step 2a discards them, so a
 dep-review copying its parent's `session_id` cannot affect any count.
@@ -197,7 +191,7 @@ far the problem has spread.
 
 **Hard cap: 500 characters.** This cap exists so the diagnosis fits in the summary file without blowing the 9,000-char session-start context cap downstream.
 
-**What the diagnosis is NOT:** It is not a fix prescription. It names the problem and hypothesizes the structural cause. Fix design is the maintainer's domain (PATT-03). Do NOT propose fixes in the diagnosis. Do NOT include action items. Describe the pattern, name the likely structural cause, stop.
+**What the diagnosis is NOT:** It is not a fix prescription. It names the problem and hypothesizes the structural cause. Fix design belongs behind the maintainer review gate. Do NOT propose fixes in the diagnosis. Do NOT include action items. Describe the pattern, name the likely structural cause, stop.
 
 Also collect for each flagged target:
 - `correction_count` = total number of qualifying entries for this target (not deduped)
@@ -266,7 +260,7 @@ Create a new flag entry:
 }
 ```
 
-Append to the flags array. `status` is always `"pending-review"` on creation — PATT-03 gate.
+Append to the flags array. `status` is always `"pending-review"` on creation — the maintainer review gate.
 
 **Case B — Existing flag for this target with status NOT `"resolved"`:**
 Update the existing flag entry in place:
@@ -433,7 +427,7 @@ becomes a tracked defect rather than a note nobody reads.
 
 Using the queue entries loaded in Step 1 and the detection results from Steps 2-6b, build the weekly summary report. The report covers the current ISO week — use the ISO week computation below to determine which entries are "this week" vs older.
 
-**Compute the ISO week filename** using this exact logic (from 04-RESEARCH.md Pattern 5 — do NOT use calendar year/week, it produces wrong filenames at year boundaries):
+**Compute the ISO week filename** using this exact logic. Do NOT use calendar year/week; it produces wrong filenames at year boundaries:
 
 ```bash
 node -e "
@@ -451,7 +445,7 @@ This outputs `YYYY-WW` (e.g. `2026-17`). The summary filename is `{YYYY-WW}.md`.
 
 **"This week" definition:** An entry is "this week" if its `id` timestamp (for example, `"2026-04-24T..."`) falls within the machine's current local ISO week, from Monday 00:00 local time through now. Entries outside this window still appear in the "Still Open" section if their status is `"Open"`, but are NOT listed as "Fixed This Week."
 
-**Build the report content** in this order (Pattern Flags FIRST — front-loading rule from 04-DESIGN.md Section 6):
+**Build the report content** in this order, with Pattern Flags first so truncation keeps the highest-value section:
 
 ```markdown
 # Build Loop: Week {WW}, {YYYY}
@@ -539,7 +533,7 @@ Post this summary to Slack?
 **If no:**
 Confirm: `Summary saved locally. Not posted to Slack.`
 
-**Channel safety:** the user's DM is the safe default per 04-DESIGN.md Section 9. For a public channel, confirm the channel name back to them before posting — "Posting to #{channel-name}, correct?" — and wait for confirmation.
+**Channel safety:** the user's DM is the safe default. For a public channel, confirm the channel name back to them before posting — "Posting to #{channel-name}, correct?" — and wait for confirmation.
 
 **The saved report is counts-only.** A separate interactive run with `--quotes`
 may show examples on the user's screen, but that output never belongs in the
@@ -560,7 +554,7 @@ when `--quotes` is passed, and refuses any argument it does not recognise rather
 than ignoring it. So a typo, a wrong flag, or a half-remembered option produces
 counts or an error, never the quotes. An earlier version had this the other way
 round, with quoting on by default and one string comparison guarding it, and
-three different spellings got past it in a single review. **Never add `--quotes`
+several plausible spellings can bypass it. **Never add `--quotes`
 to a command whose output is going anywhere but the user's own screen.**
 
 ---
@@ -585,7 +579,7 @@ After appending, print: `hot-cache.md updated.`
 
 ## Notes
 
-- **PATT-03 gate (non-negotiable):** Never auto-apply structural fixes from pattern flags. Flags are information for the maintainer co-development review. `"pending-review"` status means no automatic action is taken. Status transitions (`pending-review` → `in-review` → `resolved`) are made manually by the maintainer and the user, not by this skill.
+- **Maintainer review gate (non-negotiable):** Never auto-apply structural fixes from pattern flags. Flags are information for maintainer and user review. `"pending-review"` status means no automatic action is taken. Status transitions (`pending-review` → `in-review` → `resolved`) are made manually by the maintainer and the user, not by this skill.
 - **Empty queue:** If no .json files exist in `~/.claude/build-loop/queue/`, that's fine — write pattern-flags.json with empty flags array, write the summary with "No fixes applied this week" / "No open items in the queue", and continue through Steps 9-10 normally.
 - **Malformed queue entries:** Skip silently. Count them. Note the count in Step 6 output. Never throw.
 - **Counting safety:** The `source`-driven token in Step 2b is the only dedup rule. Do not introduce additional dedup (e.g., by what_happened similarity). The design deliberately counts each `/flag-issue` entry as its own data point, and anything layered on top takes that away again.
@@ -593,13 +587,4 @@ After appending, print: `hot-cache.md updated.`
 - **Atomic write is non-optional here.** `pattern-flags.json` is not a queue entry, so it uses the `.tmp` plus parse-check plus `mv` pattern. Queue and to-build writes do not: they go through `scripts/queue.js`, which does the read, the check and the write under one lock. `flag-issue` used to be named here as the exception, on the grounds that creating an entry has no existing file to lose. Its header no longer says that, because the dedup check and the write were the part that needed the lock. Never use a direct single-step write to pattern-flags.json.
 - **Slack is never hardcoded:** Channel is asked at post time. The user's DM is the default. Never assume a channel.
 - **ISO week (not calendar week):** The filename logic uses the Thursday-anchor ISO 8601 method. At year boundaries (late December / early January) the ISO year can differ from the calendar year — always trust the ISO computation, not `new Date().getFullYear()`.
-- **Front-loading is intentional:** Pattern Flags appears BEFORE Fixes Applied and Still Open in the summary file. The session-start hook (SUMM-04, Plan 04-04) truncates at 2,000 chars and truncation cuts the tail. New patterns and critical opens must appear in the first ~800 characters.
-
----
-
-## What Plan 04-04 Adds (not yet implemented)
-
-Plan 04-04 will add:
-- Session-start hook extension (SUMM-04) that reads the most recent `summaries/YYYY-WW.md` and surfaces it in new sessions (2,000-char budget, 14-day staleness cutoff, silent try/catch so it never blocks session start)
-
-A local `launchd` plist named `build-loop-weekly` that runs this skill automatically is created in Plan 04-03 alongside these Steps 7-10. (Earlier planning called for Claude Desktop's "New Task" UI — that approach was retired because it runs in Cowork and cannot access local paths. See Runtime Requirements at the top of this file.)
+- **Front-loading is intentional:** Pattern Flags appears BEFORE Fixes Applied and Still Open in the summary file. Session-start context truncates at 2,000 chars and truncation cuts the tail. New patterns and critical opens must appear in the first ~800 characters.
