@@ -3,6 +3,14 @@
 Upgrade notes for past versions, moved out of the README so that file says what
 the plugin is and how to use it. Nothing here is needed to install or run it.
 
+## Upgrading to 0.10.19
+
+**Hook failure notices keep plugin paths intact.** Nothing to change on your side.
+
+The two PostToolUse hooks now print their failure notices with `printf`. A
+plugin path containing a backslash stays on one stderr line, including the
+`bin/hook-node` path and the `chmod +x` instruction.
+
 ## Upgrading to 0.10.18
 
 No behavior changed. The flag-patterns skill no longer depends on private
