@@ -3,6 +3,13 @@
 Upgrade notes for past versions, moved out of the README so that file says what
 the plugin is and how to use it. Nothing here is needed to install or run it.
 
+## Upgrading to 0.10.18
+
+No behavior changed. The flag-patterns skill no longer depends on private
+planning files or review transcripts, and the correction-policy regression
+corpus now uses stable identifiers that make accidental case loss fail the test
+suite.
+
 ## Upgrading to 0.10.17
 
 **The `/flag-issue` nudge only speaks up for corrections you made.** Nothing to
@@ -544,4 +551,3 @@ fail, a malformed cutoff, the wrong `date` flag, or a root that is not a
 repository, ends at the same place: no commits, and a confident "no sign of it".
 One line saying the log returned nothing is the only thing that separates
 "nothing was built" from "nothing was looked at".
-
