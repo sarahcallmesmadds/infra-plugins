@@ -12,7 +12,7 @@
       "name": "guardrails",
       "source": "./plugins/guardrails",
       "description": "Blocks commits to protected branches, asks before irreversible deletes, flags prompt injection in content the model reads or writes, and can require a governing document be read before a directory is written. Enforced automatically in both Claude Code and Codex.",
-      "version": "0.5.6",
+      "version": "0.5.7",
       "author": {
         "name": "Sarah Madden"
       },
