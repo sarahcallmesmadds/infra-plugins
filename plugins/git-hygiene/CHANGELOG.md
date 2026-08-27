@@ -3,6 +3,14 @@
 Upgrade notes for past versions, moved out of the README so that file stays
 focused on current installation, configuration and behavior.
 
+## 0.3.11 — 2026-08-27
+
+**Hook failure notices keep plugin paths intact.** Nothing to change on your side.
+
+The session-start hook now prints its warning with `printf`. A plugin path
+containing a backslash stays on one stderr line, including the file name and
+the `chmod +x` instruction.
+
 ## 0.3.10 — 2026-08-27
 
 No runtime behavior changed. Historical upgrade notes moved here, while the
