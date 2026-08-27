@@ -596,14 +596,14 @@ check('the sweep says out loud that it touched the index', () => {
 // ---------------------------------------------------------- memory dir ----
 
 check('the memory directory is found via the same slug Claude Code uses', () => {
-  // Verified against a captured SessionStart event: cwd
-  //   /private/tmp/claude-501/-Users-sarahmadden/3667d77f/scratchpad/capture
-  // produced the project directory
-  //   -private-tmp-claude-501--Users-sarahmadden-3667d77f-scratchpad-capture
+  // The synthetic path preserves the SessionStart slug shape: cwd
+  //   /private/tmp/claude-example/-Users-example/run-id/scratchpad/capture
+  // produces the project directory
+  //   -private-tmp-claude-example--Users-example-run-id-scratchpad-capture
   // including the doubled hyphen where the path itself contained one.
   const home = tmpHome();
-  const cwd = '/private/tmp/claude-501/-Users-sarahmadden/abc/scratchpad';
-  const slug = '-private-tmp-claude-501--Users-sarahmadden-abc-scratchpad';
+  const cwd = '/private/tmp/claude-example/-Users-example/run-id/scratchpad';
+  const slug = '-private-tmp-claude-example--Users-example-run-id-scratchpad';
   const dir = path.join(home, '.claude', 'projects', slug, 'memory');
   fs.mkdirSync(dir, { recursive: true });
   assert.strictEqual(handoffs.memoryDir(cwd, home), dir);

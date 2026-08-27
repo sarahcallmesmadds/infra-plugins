@@ -42,11 +42,10 @@ function archiveRoot(home = os.homedir()) {
 // The per-project directory Claude Code keeps transcripts and memory in.
 //
 // The slug is the working directory with every character outside [A-Za-z0-9]
-// replaced by a hyphen. That is not a guess: it was checked against a captured
-// SessionStart event, whose cwd
-//   /private/tmp/claude-501/-Users-sarahmadden/3667d77f-.../scratchpad/capture
-// produced the transcript directory
-//   -private-tmp-claude-501--Users-sarahmadden-3667d77f-...-scratchpad-capture
+// replaced by a hyphen. A representative SessionStart cwd such as
+//   /private/tmp/claude-example/-Users-example/run-id/scratchpad/capture
+// produces the transcript directory
+//   -private-tmp-claude-example--Users-example-run-id-scratchpad-capture
 // including the doubled hyphen where the path itself contained one.
 //
 // Returns null when the directory is absent. A project that has never had a

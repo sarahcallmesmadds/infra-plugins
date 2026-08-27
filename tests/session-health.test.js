@@ -12,8 +12,8 @@
 // toward the difference between "everything is fine" and "we did not find out".
 // Those two look identical on a status line and are not the same answer.
 //
-// The `claude mcp list` sample is real output, with two servers genuinely
-// needing authentication at the time it was captured.
+// The `claude mcp list` sample is synthetic but preserves the output shapes,
+// including two servers that need authentication.
 
 'use strict';
 
@@ -32,41 +32,41 @@ function check(name, fn) {
   catch (e) { failures += 1; process.stdout.write(`  FAIL ${name}\n       ${e.message}\n`); }
 }
 
-const REAL_MCP_LIST = [
+const MCP_LIST_SAMPLE = [
   'Checking MCP server health…',
   '',
-  'claude.ai Intuit QuickBooks: https://ai-inc.quickbooks.intuit.com/v1/mcp - ✔ Connected',
-  'claude.ai Mercury: https://mcp.mercury.com/mcp - ! Needs authentication',
-  'claude.ai Microsoft 365: https://microsoft365.mcp.claude.com/mcp - ✔ Connected',
-  'claude.ai n8n: https://sarahcallmesmadds.app.n8n.cloud/mcp-server/http - ! Needs authentication',
-  'claude.ai Google Calendar: https://calendarmcp.googleapis.com/mcp/v1 - ✔ Connected',
-  'claude.ai Gmail: https://gmailmcp.googleapis.com/mcp/v1 - ✔ Connected',
-  'claude.ai Notion: https://mcp.notion.com/mcp - ✔ Connected',
+  'claude.ai Intuit QuickBooks: https://ledger.example.test/v1/mcp - ✔ Connected',
+  'claude.ai Mercury: https://bank.example.test/mcp - ! Needs authentication',
+  'claude.ai Microsoft 365: https://suite.example.test/mcp - ✔ Connected',
+  'claude.ai n8n: https://workflow.example.test/mcp-server/http - ! Needs authentication',
+  'claude.ai Google Calendar: https://calendar.example.test/mcp/v1 - ✔ Connected',
+  'claude.ai Gmail: https://mail.example.test/mcp/v1 - ✔ Connected',
+  'claude.ai Notion: https://notes.example.test/mcp - ✔ Connected',
 ].join('\n');
 
 // ---------------------------------------------------------------- parsing ----
 
-check('parses real `claude mcp list` output', () => {
-  const servers = health.parseMcpList(REAL_MCP_LIST);
+check('parses representative `claude mcp list` output', () => {
+  const servers = health.parseMcpList(MCP_LIST_SAMPLE);
   assert.strictEqual(servers.length, 7, `got ${servers.length}`);
 });
 
 check('the "Checking MCP server health" header is not a server', () => {
-  const servers = health.parseMcpList(REAL_MCP_LIST);
+  const servers = health.parseMcpList(MCP_LIST_SAMPLE);
   assert.ok(!servers.some((s) => /Checking/.test(s.name)), 'header parsed as a server');
 });
 
 check('a server name containing a dot and a space survives intact', () => {
   // "claude.ai Intuit QuickBooks" breaks anything that splits on a dot, a
   // space, or the first colon.
-  const servers = health.parseMcpList(REAL_MCP_LIST);
+  const servers = health.parseMcpList(MCP_LIST_SAMPLE);
   assert.ok(servers.some((s) => s.name === 'claude.ai Intuit QuickBooks'));
 });
 
 check('the URL is not truncated at its own colon', () => {
-  const servers = health.parseMcpList(REAL_MCP_LIST);
+  const servers = health.parseMcpList(MCP_LIST_SAMPLE);
   const gmail = servers.find((s) => s.name.includes('Gmail'));
-  assert.strictEqual(gmail.url, 'https://gmailmcp.googleapis.com/mcp/v1');
+  assert.strictEqual(gmail.url, 'https://mail.example.test/mcp/v1');
 });
 
 check('needs-authentication is distinguished from unreachable', () => {
@@ -412,7 +412,7 @@ check('an overlapping scheduled probe stays silent rather than duplicating an al
 
 // ------------------------------------------------------------ resolution ----
 
-const SERVERS = health.parseMcpList(REAL_MCP_LIST);
+const SERVERS = health.parseMcpList(MCP_LIST_SAMPLE);
 
 check('a configured tool matches its server case-insensitively by substring', () => {
   const rows = health.resolve([{ label: 'Email', match: 'gmail' }], SERVERS);
