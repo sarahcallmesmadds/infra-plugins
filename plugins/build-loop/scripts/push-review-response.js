@@ -68,23 +68,42 @@ function isolatedGitEnvironment() {
   return env;
 }
 
+function repositoryGitPath(repoRoot, name) {
+  let result = spawnSync('git', [
+    'rev-parse', '--path-format=absolute', '--git-path', name,
+  ], { cwd: repoRoot, encoding: 'utf8' });
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    result = spawnSync('git', ['rev-parse', '--git-path', name], {
+      cwd: repoRoot, encoding: 'utf8',
+    });
+    if (result.error) throw result.error;
+  }
+  if (result.status !== 0) {
+    throw new Error(`cannot locate repository ${name}: ${(result.stderr || result.stdout || '').trim()}`);
+  }
+  const value = result.stdout.trim();
+  if (!value || /[\r\n]/.test(value)) throw new Error(`repository ${name} path is malformed`);
+  return path.isAbsolute(value) ? value : path.resolve(repoRoot, value);
+}
+
 function pushWithIsolatedConfig(repoRoot, args, stdio = 'inherit') {
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'devin-review-push-'));
   const gitDir = path.join(scratch, 'repository.git');
   try {
-    const objectResult = spawnSync('git', [
-      'rev-parse', '--path-format=absolute', '--git-path', 'objects',
-    ], { cwd: repoRoot, encoding: 'utf8' });
-    if (objectResult.error) throw objectResult.error;
-    if (objectResult.status !== 0) {
-      throw new Error(`cannot locate repository objects: ${(objectResult.stderr || objectResult.stdout || '').trim()}`);
-    }
-    const objectDirectory = fs.realpathSync(objectResult.stdout.trim());
-    if (/[\r\n]/.test(objectDirectory)) throw new Error('repository object path contains a line break');
+    const objectDirectory = fs.realpathSync(repositoryGitPath(repoRoot, 'objects'));
+    const shallowFile = repositoryGitPath(repoRoot, 'shallow');
     fs.mkdirSync(path.join(gitDir, 'objects', 'info'), { recursive: true, mode: 0o700 });
     fs.mkdirSync(path.join(gitDir, 'refs', 'heads'), { recursive: true, mode: 0o700 });
     fs.writeFileSync(path.join(gitDir, 'HEAD'), 'ref: refs/heads/unused\n', { mode: 0o600 });
     fs.writeFileSync(path.join(gitDir, 'objects', 'info', 'alternates'), `${objectDirectory}\n`, { mode: 0o600 });
+    if (fs.existsSync(shallowFile)) {
+      const boundaries = fs.readFileSync(shallowFile, 'utf8').trim().split('\n');
+      if (boundaries.length === 0 || boundaries.some((sha) => !/^[0-9a-f]{40}$/i.test(sha))) {
+        throw new Error('repository shallow boundaries are malformed');
+      }
+      fs.writeFileSync(path.join(gitDir, 'shallow'), `${boundaries.join('\n')}\n`, { mode: 0o600 });
+    }
     fs.writeFileSync(path.join(gitDir, 'config'), [
       '[core]',
       '\trepositoryformatversion = 0',
@@ -139,5 +158,6 @@ module.exports = {
   parseArguments,
   pushArguments,
   pushWithIsolatedConfig,
+  repositoryGitPath,
   selectPushDestination,
 };

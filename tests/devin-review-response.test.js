@@ -435,6 +435,93 @@ check('push helper neutralizes Git URL rewrites after destination validation', (
   assert.strictEqual(redirectedHead, reviewed);
 }));
 
+check('push helper preserves a shallow clone boundary', () => temp((dir) => {
+  const source = initRepo(dir);
+  const remote = path.join(dir, 'shallow-origin.git');
+  let command = spawnSync('git', ['init', '--bare', remote], { encoding: 'utf8' });
+  assert.strictEqual(command.status, 0, command.stderr);
+  command = spawnSync('git', ['push', '--end-of-options', remote,
+    'refs/heads/feature/example:refs/heads/feature/example'], { cwd: source, encoding: 'utf8' });
+  assert.strictEqual(command.status, 0, command.stderr);
+  const shallow = path.join(dir, 'shallow');
+  command = spawnSync('git', ['clone', '--depth=1', '--branch', 'feature/example',
+    `file://${remote}`, shallow], { encoding: 'utf8' });
+  assert.strictEqual(command.status, 0, command.stderr);
+  spawnSync('git', ['config', 'user.email', 'test@example.invalid'], { cwd: shallow });
+  spawnSync('git', ['config', 'user.name', 'Synthetic Test'], { cwd: shallow });
+  const reviewed = spawnSync('git', ['rev-parse', 'HEAD'], {
+    cwd: shallow, encoding: 'utf8',
+  }).stdout.trim();
+  fs.writeFileSync(path.join(shallow, 'response.txt'), 'response\n');
+  spawnSync('git', ['add', 'response.txt'], { cwd: shallow });
+  spawnSync('git', ['commit', '-m', 'response'], { cwd: shallow });
+  const response = spawnSync('git', ['rev-parse', 'HEAD'], {
+    cwd: shallow, encoding: 'utf8',
+  }).stdout.trim();
+
+  delete require.cache[require.resolve(PUSH_HELPER)];
+  const { pushArguments, pushWithIsolatedConfig } = require(PUSH_HELPER);
+  const result = pushWithIsolatedConfig(shallow, pushArguments({
+    response_mode: 'commit', push_remote: 'origin', branch: 'feature/example',
+    review_head_sha: reviewed, response_head_sha: response,
+  }, remote), 'pipe');
+  assert.strictEqual(result.status, 0, result.stderr);
+  const remoteHead = spawnSync('git', ['--git-dir', remote, 'rev-parse',
+    'refs/heads/feature/example'], { encoding: 'utf8' }).stdout.trim();
+  assert.strictEqual(remoteHead, response);
+}));
+
+check('push helper falls back when Git lacks path-format', () => temp((dir) => {
+  const repo = initRepo(dir);
+  const remote = path.join(dir, 'legacy-origin.git');
+  let command = spawnSync('git', ['init', '--bare', remote], { encoding: 'utf8' });
+  assert.strictEqual(command.status, 0, command.stderr);
+  const reviewed = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).stdout.trim();
+  command = spawnSync('git', ['push', '--end-of-options', remote,
+    `${reviewed}:refs/heads/feature/example`], { cwd: repo, encoding: 'utf8' });
+  assert.strictEqual(command.status, 0, command.stderr);
+  fs.writeFileSync(path.join(repo, 'legacy.txt'), 'response\n');
+  spawnSync('git', ['add', 'legacy.txt'], { cwd: repo });
+  spawnSync('git', ['commit', '-m', 'legacy response'], { cwd: repo });
+  const response = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).stdout.trim();
+  const realGit = (process.env.PATH || '').split(path.delimiter)
+    .map((entry) => path.join(entry, 'git')).find((candidate) => fs.existsSync(candidate));
+  assert.ok(realGit, 'git executable is unavailable');
+  const bin = path.join(dir, 'legacy-bin');
+  fs.mkdirSync(bin);
+  const wrapper = path.join(bin, 'git');
+  fs.writeFileSync(wrapper, [
+    '#!/bin/sh',
+    'case " $* " in',
+    '  *" --path-format=absolute "*) printf "unknown option: --path-format=absolute\\n" >&2; exit 129 ;;',
+    'esac',
+    'exec "$SYNTHETIC_REAL_GIT" "$@"',
+    '',
+  ].join('\n'));
+  fs.chmodSync(wrapper, 0o755);
+  const priorPath = process.env.PATH;
+  const priorRealGit = process.env.SYNTHETIC_REAL_GIT;
+  process.env.PATH = `${bin}${path.delimiter}${priorPath || ''}`;
+  process.env.SYNTHETIC_REAL_GIT = realGit;
+  try {
+    delete require.cache[require.resolve(PUSH_HELPER)];
+    const { pushArguments, pushWithIsolatedConfig } = require(PUSH_HELPER);
+    const result = pushWithIsolatedConfig(repo, pushArguments({
+      response_mode: 'commit', push_remote: 'origin', branch: 'feature/example',
+      review_head_sha: reviewed, response_head_sha: response,
+    }, remote), 'pipe');
+    assert.strictEqual(result.status, 0, result.stderr);
+  } finally {
+    if (priorPath === undefined) delete process.env.PATH;
+    else process.env.PATH = priorPath;
+    if (priorRealGit === undefined) delete process.env.SYNTHETIC_REAL_GIT;
+    else process.env.SYNTHETIC_REAL_GIT = priorRealGit;
+  }
+  const remoteHead = spawnSync('git', ['--git-dir', remote, 'rev-parse',
+    'refs/heads/feature/example'], { encoding: 'utf8' }).stdout.trim();
+  assert.strictEqual(remoteHead, response);
+}));
+
 check('skill shell-quotes every substituted path in command blocks', () => {
   const body = fs.readFileSync(path.join(SKILL, 'SKILL.md'), 'utf8');
   assert.doesNotMatch(body,
