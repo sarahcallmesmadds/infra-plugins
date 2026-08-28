@@ -5,6 +5,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
+const { sanitizedGitEnvironment } = require('./git-environment');
 
 const DEVIN_REVIEWER_ID = 158243242;
 const MAX_REPORT_COUNT = 10000;
@@ -440,7 +441,9 @@ function collectAppEvidence(options, getPages = (endpoint) => githubPages(option
 }
 
 function git(repositoryRoot, args) {
-  const result = spawnSync('git', args, { cwd: repositoryRoot, encoding: 'utf8' });
+  const result = spawnSync('git', args, {
+    cwd: repositoryRoot, encoding: 'utf8', env: sanitizedGitEnvironment(),
+  });
   if (result.status !== 0) throw new Error(`git ${args.join(' ')} failed: ${spawnDiagnostic(result)}`);
   return result.stdout.trim();
 }

@@ -5,6 +5,10 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
+const {
+  isolatedGitEnvironment,
+  sanitizedGitEnvironment,
+} = require('./git-environment');
 const { inspectPushUrls, validateRound } = require('./pre-push-check');
 
 function parseArguments(argv) {
@@ -47,38 +51,18 @@ function selectPushDestination(urls) {
   return urls[0];
 }
 
-function isolatedGitEnvironment() {
-  const env = { ...process.env };
-  delete env.GIT_ALTERNATE_OBJECT_DIRECTORIES;
-  delete env.GIT_COMMON_DIR;
-  delete env.GIT_CONFIG;
-  delete env.GIT_DIR;
-  delete env.GIT_INDEX_FILE;
-  delete env.GIT_NAMESPACE;
-  delete env.GIT_OBJECT_DIRECTORY;
-  delete env.GIT_CONFIG_PARAMETERS;
-  delete env.GIT_WORK_TREE;
-  for (const key of Object.keys(env)) {
-    if (/^GIT_CONFIG_(?:KEY|VALUE)_\d+$/.test(key)) delete env[key];
-  }
-  env.GIT_CONFIG_COUNT = '0';
-  env.GIT_CONFIG_GLOBAL = os.devNull;
-  env.GIT_CONFIG_NOSYSTEM = '1';
-  env.GIT_CONFIG_SYSTEM = os.devNull;
-  return env;
-}
-
 function repositoryGitPath(repoRoot, name) {
+  const env = sanitizedGitEnvironment();
   let result = spawnSync('git', [
     'rev-parse', '--path-format=absolute', '--git-path', name,
-  ], { cwd: repoRoot, encoding: 'utf8' });
+  ], { cwd: repoRoot, encoding: 'utf8', env });
   if (result.error) throw result.error;
   let value = result.status === 0 ? result.stdout.trim() : '';
   // Git before 2.31 can echo an unknown option to stdout and still exit zero.
   // Treat any non-path-shaped answer as unsupported and retry without the flag.
   if (result.status !== 0 || !value || /[\r\n]/.test(value)) {
     result = spawnSync('git', ['rev-parse', '--git-path', name], {
-      cwd: repoRoot, encoding: 'utf8',
+      cwd: repoRoot, encoding: 'utf8', env,
     });
     if (result.error) throw result.error;
     value = result.status === 0 ? result.stdout.trim() : '';

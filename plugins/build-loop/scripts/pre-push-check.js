@@ -5,6 +5,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
+const { sanitizedGitEnvironment } = require('./git-environment');
 const {
   APP_KEYS,
   CLI_KEYS,
@@ -146,7 +147,9 @@ function checkKeys(value, required, optional, label, errors) {
 }
 
 function git(root, args, errors, label) {
-  const result = spawnSync('git', args, { cwd: root, encoding: 'utf8' });
+  const result = spawnSync('git', args, {
+    cwd: root, encoding: 'utf8', env: sanitizedGitEnvironment(),
+  });
   if (result.status !== 0) {
     errors.push(`${label}: ${spawnDiagnostic(result)}`);
     return null;
@@ -155,7 +158,9 @@ function git(root, args, errors, label) {
 }
 
 function gitPaths(root, args, errors, label) {
-  const result = spawnSync('git', [...args, '-z'], { cwd: root, encoding: 'utf8' });
+  const result = spawnSync('git', [...args, '-z'], {
+    cwd: root, encoding: 'utf8', env: sanitizedGitEnvironment(),
+  });
   if (result.status !== 0) {
     errors.push(`${label}: ${spawnDiagnostic(result)}`);
     return null;
@@ -227,7 +232,7 @@ function githubRepositoryFromRemote(remoteUrl) {
 
 function inspectPushUrls(root, remote, expectedRepository) {
   const result = spawnSync('git', ['remote', 'get-url', '--push', '--all', '--', remote], {
-    cwd: root, encoding: 'utf8',
+    cwd: root, encoding: 'utf8', env: sanitizedGitEnvironment(),
   });
   if (result.status !== 0) {
     return {

@@ -23,7 +23,16 @@ syntax. It pushes the recorded response SHA only when the remote branch still
 equals the reviewed SHA, and uses the validated URLs directly so a concurrent
 remote-config change cannot redirect it. When a remote lists equivalent URLs,
 the helper validates all of them but pushes once so it does not replay the
-one-time lease. CLI retries preserve each attempt in
+one-time lease. Every Git subprocess also clears inherited repository and
+injected configuration overrides, so an ambient `GIT_DIR`, `GIT_WORK_TREE`, or
+related repository-local variable cannot redirect validation or evidence
+capture to another checkout or substitute a different commit graph. Validation
+also disables repository replacement refs so it always checks the canonical
+commit graph that will be pushed, and ignores an inherited attributes source
+that could hide worktree changes through a clean filter. Read checks
+retain normal on-disk Git configuration; only the final push suppresses it to
+prevent URL rewrites after destination validation.
+CLI retries preserve each attempt in
 separate checksum-backed files; capture metadata cannot stand in for raw CLI
 output, every attempt reserves a new export path before Devin runs, and mixed
 partial-result/refusal output fails closed. A final completion marker makes

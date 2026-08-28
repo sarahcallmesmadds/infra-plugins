@@ -11,6 +11,7 @@ const { spawnSync } = require('child_process');
 const ROOT = path.resolve(__dirname, '..');
 const SKILL = path.join(ROOT, 'plugins/build-loop/skills/devin-review-response');
 const EVIDENCE = path.join(ROOT, 'plugins/build-loop/scripts/review-evidence.js');
+const GIT_ENVIRONMENT = path.join(ROOT, 'plugins/build-loop/scripts/git-environment.js');
 const VALIDATOR = path.join(ROOT, 'plugins/build-loop/scripts/pre-push-check.js');
 const PUSH_HELPER = path.join(ROOT, 'plugins/build-loop/scripts/push-review-response.js');
 const TEMPLATES = path.join(SKILL, 'references/templates.md');
@@ -200,7 +201,7 @@ function validate(mutator, options = {}) {
     if (phase !== null) args.push('--phase', phase);
     if (options.repoRoot) args.push('--repo-root', options.repoRoot);
     args.push(roundFile);
-    const env = options.env || (options.currentPrHead
+    const baseEnv = options.currentPrHead
       ? fakeGhEnvironment(dir, options.currentPrHead, state.capture, {
         reviews: options.liveReviews,
         comments: options.liveComments,
@@ -210,7 +211,8 @@ function validate(mutator, options = {}) {
         remoteMutationRepo: options.remoteMutationRepo,
         remoteMutationUrl: options.remoteMutationUrl,
       })
-      : process.env);
+      : process.env;
+    const env = { ...baseEnv, ...(options.env || {}) };
     return spawnSync(process.execPath, args, { encoding: 'utf8', env });
   });
 }
@@ -523,6 +525,188 @@ check('push helper falls back when Git lacks path-format', () => temp((dir) => {
   const remoteHead = spawnSync('git', ['--git-dir', remote, 'rev-parse',
     'refs/heads/feature/example'], { encoding: 'utf8' }).stdout.trim();
   assert.strictEqual(remoteHead, response);
+}));
+
+check('Git environment helper removes repository and config overrides', () => {
+  delete require.cache[require.resolve(GIT_ENVIRONMENT)];
+  const { isolatedGitEnvironment, sanitizedGitEnvironment } = require(GIT_ENVIRONMENT);
+  const source = {
+    PATH: process.env.PATH || '',
+    GIT_DIR: '/hostile/git-dir',
+    GIT_WORK_TREE: '/hostile/work-tree',
+    GIT_INDEX_FILE: '/hostile/index',
+    GIT_COMMON_DIR: '/hostile/common',
+    GIT_OBJECT_DIRECTORY: '/hostile/objects',
+    GIT_ALTERNATE_OBJECT_DIRECTORIES: '/hostile/alternates',
+    GIT_ATTR_SOURCE: 'hostile-attributes',
+    GIT_NAMESPACE: 'hostile',
+    GIT_CONFIG: '/hostile/config',
+    GIT_CONFIG_PARAMETERS: "'core.bare=true'",
+    GIT_CONFIG_COUNT: '1',
+    GIT_CONFIG_KEY_0: 'core.bare',
+    GIT_CONFIG_VALUE_0: 'true',
+    GIT_CONFIG_GLOBAL: '/hostile/global',
+    GIT_CONFIG_SYSTEM: '/hostile/system',
+    GIT_CONFIG_NOSYSTEM: '1',
+  };
+  const localVariables = spawnSync('git', ['rev-parse', '--local-env-vars'], {
+    encoding: 'utf8',
+  });
+  assert.strictEqual(localVariables.status, 0, localVariables.stderr);
+  const localKeys = localVariables.stdout.trim().split('\n').filter(Boolean);
+  for (const key of localKeys) {
+    if (!Object.prototype.hasOwnProperty.call(source, key)) source[key] = '/hostile/local';
+  }
+  const sanitized = sanitizedGitEnvironment(source);
+  for (const key of [
+    'GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR',
+    'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_ATTR_SOURCE',
+    'GIT_NAMESPACE',
+    'GIT_CONFIG', 'GIT_CONFIG_PARAMETERS', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0',
+    'GIT_CONFIG_COUNT', 'GIT_CONFIG_GLOBAL', 'GIT_CONFIG_SYSTEM', 'GIT_CONFIG_NOSYSTEM',
+  ]) {
+    assert.ok(!Object.prototype.hasOwnProperty.call(sanitized, key), `${key} survived sanitization`);
+  }
+  for (const key of localKeys) {
+    if (key === 'GIT_GRAFT_FILE') {
+      assert.strictEqual(sanitized[key], os.devNull);
+    } else if (key === 'GIT_NO_REPLACE_OBJECTS') {
+      assert.strictEqual(sanitized[key], '1');
+    } else {
+      assert.ok(!Object.prototype.hasOwnProperty.call(sanitized, key),
+        `git --local-env-vars entry ${key} survived sanitization`);
+    }
+  }
+  assert.strictEqual(sanitized.GIT_GRAFT_FILE, os.devNull);
+  assert.strictEqual(sanitized.GIT_NO_REPLACE_OBJECTS, '1');
+  const env = isolatedGitEnvironment(source);
+  assert.strictEqual(env.GIT_GRAFT_FILE, os.devNull);
+  assert.strictEqual(env.GIT_NO_REPLACE_OBJECTS, '1');
+  assert.strictEqual(env.GIT_CONFIG_COUNT, '0');
+  assert.strictEqual(env.GIT_CONFIG_GLOBAL, os.devNull);
+  assert.strictEqual(env.GIT_CONFIG_SYSTEM, os.devNull);
+  assert.strictEqual(env.GIT_CONFIG_NOSYSTEM, '1');
+});
+
+check('read checks retain standard on-disk Git configuration', () => temp((dir) => {
+  const repo = initRepo(dir);
+  let result = spawnSync('git', ['remote', 'set-url', 'origin', 'corp:o/r.git'], {
+    cwd: repo, encoding: 'utf8',
+  });
+  assert.strictEqual(result.status, 0, result.stderr);
+  const configRoot = path.join(dir, 'xdg');
+  fs.mkdirSync(path.join(configRoot, 'git'), { recursive: true });
+  fs.writeFileSync(path.join(configRoot, 'git', 'config'), [
+    '[url "https://github.com/"]',
+    '\tinsteadOf = corp:',
+    '',
+  ].join('\n'));
+  const prior = process.env.XDG_CONFIG_HOME;
+  process.env.XDG_CONFIG_HOME = configRoot;
+  try {
+    delete require.cache[require.resolve(VALIDATOR)];
+    const { inspectPushUrls } = require(VALIDATOR);
+    assert.deepStrictEqual(inspectPushUrls(repo, 'origin', 'o/r'), {
+      urls: ['https://github.com/o/r.git'], errors: [],
+    });
+  } finally {
+    if (prior === undefined) delete process.env.XDG_CONFIG_HOME;
+    else process.env.XDG_CONFIG_HOME = prior;
+  }
+}));
+
+check('CLI evidence cannot use inherited attributes to hide a dirty worktree', () => temp((dir) => {
+  const repo = initRepo(dir);
+  let result = spawnSync('git', ['checkout', '-b', 'attribute-source'], {
+    cwd: repo, encoding: 'utf8',
+  });
+  assert.strictEqual(result.status, 0, result.stderr);
+  fs.writeFileSync(path.join(repo, '.gitattributes'), 'file.txt filter=hide\n');
+  spawnSync('git', ['add', '.gitattributes'], { cwd: repo });
+  spawnSync('git', ['commit', '-m', 'synthetic attributes'], { cwd: repo });
+  const attributeSource = spawnSync('git', ['rev-parse', 'HEAD'], {
+    cwd: repo, encoding: 'utf8',
+  }).stdout.trim();
+  result = spawnSync('git', ['checkout', 'feature/example'], {
+    cwd: repo, encoding: 'utf8',
+  });
+  assert.strictEqual(result.status, 0, result.stderr);
+  spawnSync('git', ['config', 'filter.hide.clean', 'sed s/modified/base/'], { cwd: repo });
+  spawnSync('git', ['config', 'filter.hide.smudge', 'cat'], { cwd: repo });
+  fs.writeFileSync(path.join(repo, 'file.txt'), 'modified\n');
+  const capture = path.join(dir, 'attributes-cli.json');
+  const output = path.join(dir, 'attributes-cli.txt');
+  result = spawnSync(process.execPath, [EVIDENCE, 'start-cli', '--repo-root', repo,
+    '--purpose', 'proactive', '--output', output, '--out', capture], {
+    encoding: 'utf8', env: { ...process.env, GIT_ATTR_SOURCE: attributeSource },
+  });
+  assert.notStrictEqual(result.status, 0);
+  assert.match(result.stderr, /clean worktree and index/i);
+}));
+
+check('explicit repository wins over inherited Git repository overrides', () => temp((dir) => {
+  const targetParent = path.join(dir, 'target');
+  const hostileParent = path.join(dir, 'hostile');
+  fs.mkdirSync(targetParent);
+  fs.mkdirSync(hostileParent);
+  const repo = initRepo(targetParent);
+  const hostile = initRepo(hostileParent);
+  fs.writeFileSync(path.join(hostile, 'hostile.txt'), 'different repository\n');
+  spawnSync('git', ['add', 'hostile.txt'], { cwd: hostile });
+  spawnSync('git', ['commit', '-m', 'different repository'], { cwd: hostile });
+  const targetHead = spawnSync('git', ['rev-parse', 'HEAD'], {
+    cwd: repo, encoding: 'utf8',
+  }).stdout.trim();
+  const hostileConfig = path.join(dir, 'hostile.gitconfig');
+  fs.writeFileSync(hostileConfig, '[core]\n\tbare = true\n');
+  const overrides = {
+    GIT_DIR: path.join(hostile, '.git'),
+    GIT_WORK_TREE: hostile,
+    GIT_INDEX_FILE: path.join(hostile, '.git', 'index'),
+    GIT_COMMON_DIR: path.join(hostile, '.git'),
+    GIT_OBJECT_DIRECTORY: path.join(hostile, '.git', 'objects'),
+    GIT_ALTERNATE_OBJECT_DIRECTORIES: path.join(repo, '.git', 'objects'),
+    GIT_NAMESPACE: 'hostile',
+    GIT_CONFIG: hostileConfig,
+    GIT_CONFIG_PARAMETERS: "'core.bare=true'",
+    GIT_CONFIG_COUNT: '1',
+    GIT_CONFIG_KEY_0: 'core.bare',
+    GIT_CONFIG_VALUE_0: 'true',
+  };
+
+  const capture = path.join(dir, 'environment-cli.json');
+  const output = path.join(dir, 'environment-cli.txt');
+  let result = spawnSync(process.execPath, [EVIDENCE, 'start-cli', '--repo-root', repo,
+    '--purpose', 'proactive', '--output', output, '--out', capture], {
+    encoding: 'utf8', env: { ...process.env, ...overrides },
+  });
+  assert.strictEqual(result.status, 0, result.stderr);
+  assert.strictEqual(JSON.parse(fs.readFileSync(capture)).review_head_sha, targetHead);
+
+  result = validate((state) => {
+    makeClean(state); setReviewedSha(state, targetHead, true);
+    state.round.response_mode = 'no-change';
+    state.round.response_head_sha = targetHead;
+  }, {
+    phase: 'pre-push', repoRoot: repo, currentPrHead: targetHead, env: overrides,
+  });
+  assert.strictEqual(result.status, 0, result.stderr);
+
+  const prior = new Map(Object.keys(overrides).map((key) => [key, process.env[key]]));
+  Object.assign(process.env, overrides);
+  try {
+    delete require.cache[require.resolve(PUSH_HELPER)];
+    const { repositoryGitPath } = require(PUSH_HELPER);
+    assert.strictEqual(
+      fs.realpathSync(repositoryGitPath(repo, 'objects')),
+      fs.realpathSync(path.join(repo, '.git', 'objects'))
+    );
+  } finally {
+    for (const [key, value] of prior) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
 }));
 
 check('skill shell-quotes every substituted path in command blocks', () => {
@@ -1230,6 +1414,87 @@ check('pre-push commit requires one clean non-merge direct child', () => temp((d
     state.round.findings[0].changed_files = ['file.txt'];
   }, { phase: 'pre-push', repoRoot: repo, currentPrHead: reviewed });
   assert.strictEqual(result.status, 0, result.stderr);
+}));
+
+check('pre-push ignores inherited grafts when checking the response parent', () => temp((dir) => {
+  const repo = initRepo(dir);
+  const reviewed = spawnSync('git', ['rev-parse', 'HEAD'], {
+    cwd: repo, encoding: 'utf8',
+  }).stdout.trim();
+  spawnSync('git', ['commit', '--allow-empty', '-m', 'intervening commit'], { cwd: repo });
+  fs.writeFileSync(path.join(repo, 'file.txt'), 'response after intervening commit\n');
+  spawnSync('git', ['add', 'file.txt'], { cwd: repo });
+  spawnSync('git', ['commit', '-m', 'response'], { cwd: repo });
+  const response = spawnSync('git', ['rev-parse', 'HEAD'], {
+    cwd: repo, encoding: 'utf8',
+  }).stdout.trim();
+  const graft = path.join(dir, 'forged-grafts');
+  fs.writeFileSync(graft, `${response} ${reviewed}\n`);
+  const result = validate((state) => {
+    setReviewedSha(state, reviewed);
+    state.round.response_mode = 'commit';
+    state.round.response_head_sha = response;
+    state.round.findings[0].changed_files = ['file.txt'];
+  }, {
+    phase: 'pre-push', repoRoot: repo, currentPrHead: reviewed,
+    env: { GIT_GRAFT_FILE: graft },
+  });
+  assert.strictEqual(result.status, 1);
+  assert.match(result.stderr, /direct child of review_head_sha/i);
+}));
+
+check('pre-push ignores repository replacement refs when checking the response parent', () => temp((dir) => {
+  const repo = initRepo(dir);
+  const reviewed = spawnSync('git', ['rev-parse', 'HEAD'], {
+    cwd: repo, encoding: 'utf8',
+  }).stdout.trim();
+  spawnSync('git', ['commit', '--allow-empty', '-m', 'intervening commit'], { cwd: repo });
+  fs.writeFileSync(path.join(repo, 'file.txt'), 'response after intervening commit\n');
+  spawnSync('git', ['add', 'file.txt'], { cwd: repo });
+  spawnSync('git', ['commit', '-m', 'response'], { cwd: repo });
+  const response = spawnSync('git', ['rev-parse', 'HEAD'], {
+    cwd: repo, encoding: 'utf8',
+  }).stdout.trim();
+  const replace = spawnSync('git', ['replace', '--graft', response, reviewed], {
+    cwd: repo, encoding: 'utf8',
+  });
+  assert.strictEqual(replace.status, 0, replace.stderr);
+  const result = validate((state) => {
+    setReviewedSha(state, reviewed);
+    state.round.response_mode = 'commit';
+    state.round.response_head_sha = response;
+    state.round.findings[0].changed_files = ['file.txt'];
+  }, {
+    phase: 'pre-push', repoRoot: repo, currentPrHead: reviewed,
+  });
+  assert.strictEqual(result.status, 1);
+  assert.match(result.stderr, /direct child of review_head_sha/i);
+}));
+
+check('pre-push ignores repository graft files when checking the response parent', () => temp((dir) => {
+  const repo = initRepo(dir);
+  const reviewed = spawnSync('git', ['rev-parse', 'HEAD'], {
+    cwd: repo, encoding: 'utf8',
+  }).stdout.trim();
+  spawnSync('git', ['commit', '--allow-empty', '-m', 'intervening commit'], { cwd: repo });
+  fs.writeFileSync(path.join(repo, 'file.txt'), 'response after intervening commit\n');
+  spawnSync('git', ['add', 'file.txt'], { cwd: repo });
+  spawnSync('git', ['commit', '-m', 'response'], { cwd: repo });
+  const response = spawnSync('git', ['rev-parse', 'HEAD'], {
+    cwd: repo, encoding: 'utf8',
+  }).stdout.trim();
+  fs.mkdirSync(path.join(repo, '.git', 'info'), { recursive: true });
+  fs.writeFileSync(path.join(repo, '.git', 'info', 'grafts'), `${response} ${reviewed}\n`);
+  const result = validate((state) => {
+    setReviewedSha(state, reviewed);
+    state.round.response_mode = 'commit';
+    state.round.response_head_sha = response;
+    state.round.findings[0].changed_files = ['file.txt'];
+  }, {
+    phase: 'pre-push', repoRoot: repo, currentPrHead: reviewed,
+  });
+  assert.strictEqual(result.status, 1);
+  assert.match(result.stderr, /direct child of review_head_sha/i);
 }));
 
 check('pre-push commit must contain exactly the declared fixed files', () => temp((dir) => {
