@@ -397,6 +397,44 @@ check('push helper pins the recorded response and exact remote head', () => temp
   assert.notStrictEqual(command.status, 0, 'stale expected-old lease unexpectedly pushed');
 }));
 
+check('push helper neutralizes Git URL rewrites after destination validation', () => temp((dir) => {
+  const repo = initRepo(dir);
+  const intended = path.join(dir, 'intended.git');
+  const redirected = path.join(dir, 'redirected.git');
+  for (const remote of [intended, redirected]) {
+    const initialized = spawnSync('git', ['init', '--bare', remote], { encoding: 'utf8' });
+    assert.strictEqual(initialized.status, 0, initialized.stderr);
+  }
+  const branchRef = 'refs/heads/feature/example';
+  const reviewed = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).stdout.trim();
+  for (const remote of [intended, redirected]) {
+    const seeded = spawnSync('git', ['push', '--end-of-options', remote, `${reviewed}:${branchRef}`],
+      { cwd: repo, encoding: 'utf8' });
+    assert.strictEqual(seeded.status, 0, seeded.stderr);
+  }
+  fs.writeFileSync(path.join(repo, 'file.txt'), 'isolated response\n');
+  spawnSync('git', ['add', 'file.txt'], { cwd: repo });
+  spawnSync('git', ['commit', '-m', 'isolated response'], { cwd: repo });
+  const response = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).stdout.trim();
+  const rewriteKey = `url.file://${redirected}.insteadOf`;
+  const configured = spawnSync('git', ['config', rewriteKey, intended], { cwd: repo, encoding: 'utf8' });
+  assert.strictEqual(configured.status, 0, configured.stderr);
+
+  delete require.cache[require.resolve(PUSH_HELPER)];
+  const { pushArguments, pushWithIsolatedConfig } = require(PUSH_HELPER);
+  const result = pushWithIsolatedConfig(repo, pushArguments({
+    response_mode: 'commit', push_remote: 'origin', branch: 'feature/example',
+    review_head_sha: reviewed, response_head_sha: response,
+  }, intended), 'pipe');
+  assert.strictEqual(result.status, 0, result.stderr);
+  const intendedHead = spawnSync('git', ['--git-dir', intended, 'rev-parse', branchRef],
+    { encoding: 'utf8' }).stdout.trim();
+  const redirectedHead = spawnSync('git', ['--git-dir', redirected, 'rev-parse', branchRef],
+    { encoding: 'utf8' }).stdout.trim();
+  assert.strictEqual(intendedHead, response);
+  assert.strictEqual(redirectedHead, reviewed);
+}));
+
 check('skill shell-quotes every substituted path in command blocks', () => {
   const body = fs.readFileSync(path.join(SKILL, 'SKILL.md'), 'utf8');
   assert.doesNotMatch(body,
@@ -1394,6 +1432,13 @@ check('finish-cli rejects incomplete or unknown Devin export envelopes', () => t
         { source: 'agent', message: 'DEVIN_REVIEW_COMPLETE outcome=clean finding_count=0' },
         { source: 'agent', message: '', tool_calls: [{ function_name: 'grep' }] },
       ],
+    }],
+    ['refusal-marker', {
+      schema_version: 'ATIF-v1.7',
+      steps: [{
+        source: 'agent',
+        message: 'Error: Tool call rejected by permission mode auto: synthetic read\nDEVIN_REVIEW_COMPLETE outcome=clean finding_count=0',
+      }],
     }],
     ['unknown-schema', {
       schema_version: 'ATIF-v9.9',

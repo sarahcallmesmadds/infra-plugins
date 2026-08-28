@@ -2,6 +2,7 @@
 'use strict';
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
 const { inspectPushUrls, validateRound } = require('./pre-push-check');
@@ -46,6 +47,63 @@ function selectPushDestination(urls) {
   return urls[0];
 }
 
+function isolatedGitEnvironment() {
+  const env = { ...process.env };
+  delete env.GIT_ALTERNATE_OBJECT_DIRECTORIES;
+  delete env.GIT_COMMON_DIR;
+  delete env.GIT_CONFIG;
+  delete env.GIT_DIR;
+  delete env.GIT_INDEX_FILE;
+  delete env.GIT_NAMESPACE;
+  delete env.GIT_OBJECT_DIRECTORY;
+  delete env.GIT_CONFIG_PARAMETERS;
+  delete env.GIT_WORK_TREE;
+  for (const key of Object.keys(env)) {
+    if (/^GIT_CONFIG_(?:KEY|VALUE)_\d+$/.test(key)) delete env[key];
+  }
+  env.GIT_CONFIG_COUNT = '0';
+  env.GIT_CONFIG_GLOBAL = os.devNull;
+  env.GIT_CONFIG_NOSYSTEM = '1';
+  env.GIT_CONFIG_SYSTEM = os.devNull;
+  return env;
+}
+
+function pushWithIsolatedConfig(repoRoot, args, stdio = 'inherit') {
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'devin-review-push-'));
+  const gitDir = path.join(scratch, 'repository.git');
+  try {
+    const objectResult = spawnSync('git', [
+      'rev-parse', '--path-format=absolute', '--git-path', 'objects',
+    ], { cwd: repoRoot, encoding: 'utf8' });
+    if (objectResult.error) throw objectResult.error;
+    if (objectResult.status !== 0) {
+      throw new Error(`cannot locate repository objects: ${(objectResult.stderr || objectResult.stdout || '').trim()}`);
+    }
+    const objectDirectory = fs.realpathSync(objectResult.stdout.trim());
+    if (/[\r\n]/.test(objectDirectory)) throw new Error('repository object path contains a line break');
+    fs.mkdirSync(path.join(gitDir, 'objects', 'info'), { recursive: true, mode: 0o700 });
+    fs.mkdirSync(path.join(gitDir, 'refs', 'heads'), { recursive: true, mode: 0o700 });
+    fs.writeFileSync(path.join(gitDir, 'HEAD'), 'ref: refs/heads/unused\n', { mode: 0o600 });
+    fs.writeFileSync(path.join(gitDir, 'objects', 'info', 'alternates'), `${objectDirectory}\n`, { mode: 0o600 });
+    fs.writeFileSync(path.join(gitDir, 'config'), [
+      '[core]',
+      '\trepositoryformatversion = 0',
+      '\tbare = true',
+      '[credential "https://github.com"]',
+      '\thelper =',
+      '\thelper = !gh auth git-credential',
+      '',
+    ].join('\n'), { mode: 0o600 });
+    return spawnSync('git', ['--git-dir', gitDir, ...args], {
+      cwd: scratch,
+      stdio,
+      env: isolatedGitEnvironment(),
+    });
+  } finally {
+    fs.rmSync(scratch, { recursive: true, force: true });
+  }
+}
+
 function main(argv) {
   try {
     const args = parseArguments(argv);
@@ -61,10 +119,9 @@ function main(argv) {
     const inspection = inspectPushUrls(args.repoRoot, round.push_remote, round.head_repository);
     if (inspection.errors.length > 0) throw new Error(inspection.errors.join('; '));
     const destination = selectPushDestination(inspection.urls);
-    const result = spawnSync('git', pushArguments(round, destination), {
-      cwd: args.repoRoot,
-      stdio: 'inherit',
-    });
+    const result = pushWithIsolatedConfig(
+      args.repoRoot, pushArguments(round, destination)
+    );
     if (result.error) throw result.error;
     if (result.status !== 0) return Number.isInteger(result.status) ? result.status : 1;
     return 0;
@@ -76,4 +133,11 @@ function main(argv) {
 
 if (require.main === module) process.exitCode = main(process.argv.slice(2));
 
-module.exports = { main, parseArguments, pushArguments, selectPushDestination };
+module.exports = {
+  isolatedGitEnvironment,
+  main,
+  parseArguments,
+  pushArguments,
+  pushWithIsolatedConfig,
+  selectPushDestination,
+};

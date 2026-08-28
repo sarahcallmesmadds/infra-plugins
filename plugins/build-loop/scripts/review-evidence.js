@@ -547,7 +547,7 @@ function classifyCliExecution(exitCode, output) {
   }
   const text = Buffer.isBuffer(output) ? output.toString('utf8') : String(output || '');
   if (exitCode === 0) {
-    if (containsRecognizedPreflightLine(text)) return 'incomplete';
+    if (containsRecognizedPreflightLine(cliResponseText(text))) return 'incomplete';
     return parseCliCompletion(text) ? 'complete' : 'incomplete';
   }
   return recognizedPreflight(text) ? 'preflight-failed' : 'incomplete';
