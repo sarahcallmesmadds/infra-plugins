@@ -3,6 +3,39 @@
 Upgrade notes for past versions, moved out of the README so that file says what
 the plugin is and how to use it. Nothing here is needed to install or run it.
 
+## Upgrading to 0.10.20
+
+**`/devin-review-response` now checks the GitHub app and Devin CLI separately
+for the same commit.** This command now requires an installed, authenticated
+GitHub CLI; run `gh auth login --hostname github.com` yourself once if needed.
+
+A clean result from one source can no longer erase findings from the other.
+The skill captures a stable app snapshot without posting or mutating anything,
+records every known proactive CLI attempt, and reconciles the complete evidence
+before implementation. Its validator blocks pending, incomplete, mixed-commit,
+or dirty-worktree records before a response can ship. Every report within one
+app review remains a distinct finding, including hidden ordinals, while
+equivalent reports across retries can still share one recovery. The final gate
+also binds the live PR branch and head repository to every encrypted HTTPS or
+GitHub SSH URL on an explicit local push remote, including fork PRs. An approved
+argv-based helper reruns that gate and keeps unusual branch names out of shell
+syntax. It pushes the recorded response SHA only when the remote branch still
+equals the reviewed SHA, and uses the validated URLs directly so a concurrent
+remote-config change cannot redirect it. When a remote lists equivalent URLs,
+the helper validates all of them but pushes once so it does not replay the
+one-time lease. CLI retries preserve each attempt in
+separate checksum-backed files; capture metadata cannot stand in for raw CLI
+output, every attempt reserves a new export path before Devin runs, and mixed
+partial-result/refusal output fails closed. A final completion marker makes
+zero-exit transport errors and partial answers incomplete too, and the path
+reservation is atomic across concurrent attempts. The GitHub CLI reads are pinned to
+`github.com`, matching the only accepted push host.
+CLI status is re-derived from the recorded exit code and checksummed raw output,
+so changing capture labels cannot turn an incomplete run into a clean one.
+After a validated response is current remotely, the skill asks before posting
+the complete disposition table back to the PR in both commit and no-change modes,
+then rechecks the live PR head immediately before the approved comment.
+
 ## Upgrading to 0.10.19
 
 **Hook failure notices keep plugin paths intact.** Nothing to change on your side.
