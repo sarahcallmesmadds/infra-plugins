@@ -3,6 +3,52 @@
 Upgrade notes for past versions, moved out of the README so that file says what
 the plugin is and how to use it. Nothing here is needed to install or run it.
 
+## Upgrading to 0.10.20
+
+**`/devin-review-response` now checks the GitHub app and Devin CLI separately
+for the same commit.** This command now requires an installed, authenticated
+GitHub CLI; run `gh auth login --hostname github.com` yourself once if needed.
+
+A clean result from one source can no longer erase findings from the other.
+The skill captures a stable app snapshot without posting or mutating anything,
+records every known proactive CLI attempt, and reconciles the complete evidence
+before implementation. Its validator blocks pending, incomplete, mixed-commit,
+or dirty-worktree records before a response can ship. Every report within one
+app review remains a distinct finding, including hidden ordinals, while
+equivalent reports across retries can still share one recovery. The final gate
+also binds the live PR branch and head repository to every encrypted HTTPS or
+GitHub SSH URL on an explicit local push remote, including fork PRs. An approved
+argv-based helper reruns that gate and keeps unusual branch names out of shell
+syntax. It pushes the recorded response SHA only when the remote branch still
+equals the reviewed SHA, and uses the validated URLs directly so a concurrent
+remote-config change cannot redirect it. When a remote lists equivalent URLs,
+the helper validates all of them but pushes once so it does not replay the
+one-time lease. Every Git subprocess also clears inherited repository and
+injected configuration overrides, so an ambient `GIT_DIR`, `GIT_WORK_TREE`, or
+related repository-local variable cannot redirect validation or evidence
+capture to another checkout or substitute a different commit graph. Validation
+also disables repository replacement refs so it always checks the canonical
+commit graph that will be pushed, and ignores an inherited attributes source
+that could hide worktree changes through a clean filter. Read checks
+retain normal on-disk Git configuration; only the final push suppresses it to
+prevent URL rewrites after destination validation. The push also disables
+terminal, askpass, credential-manager and interactive SSH prompts, and stops
+the complete push process group after two minutes instead of leaving a network
+or helper process behind. OpenSSH and PuTTY-family transports get their own
+non-interactive flags; an unsupported SSH variant is rejected before push.
+CLI retries preserve each attempt in
+separate checksum-backed files; capture metadata cannot stand in for raw CLI
+output, every attempt reserves a new export path before Devin runs, and mixed
+partial-result/refusal output fails closed. A final completion marker makes
+zero-exit transport errors and partial answers incomplete too, and the path
+reservation is atomic across concurrent attempts. The GitHub CLI reads are pinned to
+`github.com`, matching the only accepted push host.
+CLI status is re-derived from the recorded exit code and checksummed raw output,
+so changing capture labels cannot turn an incomplete run into a clean one.
+After a validated response is current remotely, the skill asks before posting
+the complete disposition table back to the PR in both commit and no-change modes,
+then rechecks the live PR head immediately before the approved comment.
+
 ## Upgrading to 0.10.19
 
 **Hook failure notices keep plugin paths intact.** Nothing to change on your side.

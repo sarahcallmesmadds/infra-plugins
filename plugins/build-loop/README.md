@@ -47,10 +47,12 @@ them are things you forget you meant to fix.
 
 **Keep it honest**
 
-- `/devin-review-response` — work one complete Devin review round: classify
-  every finding, map dependencies before editing, sweep paired files, validate
-  the round record, and ship one atomic commit rather than a trail of point
-  fixes.
+- `/devin-review-response` — work one complete Devin review round across the
+  GitHub app and every known proactive CLI run for the same commit. A clean
+  result from one source cannot erase findings from another; the skill then
+  classifies every finding, validates the PR branch and every push destination,
+  ships one atomic commit when needed, and asks before posting the disposition
+  table.
 - `/audit-deps` — scan every configured root and reconcile what is on disk
   against the dependency map.
 - `/flag-patterns` — a weekly view of what broke, what got fixed, and what
@@ -136,6 +138,13 @@ to install, and `node` does not have to be on your `PATH`. Each hook is
 started by `bin/hook-node`, which tries `$CLAUDE_HOOK_NODE`, then your
 `PATH`, then `~/.local/bin`, `/opt/homebrew/bin`, `/usr/local/bin` and
 `/usr/bin`, and uses the first one it finds.
+
+`/devin-review-response` also requires the GitHub CLI (`gh`) to be installed and
+authenticated for the repository it reviews. Run
+`gh auth login --hostname github.com` yourself once if needed. The skill checks
+`gh auth status --hostname github.com` before starting and stops plainly
+when GitHub evidence cannot be read; other Build Loop commands do not require
+this setup.
 
 That list exists because an app launched from the Dock never reads your shell
 profile, so it starts with a bare `PATH` that has none of those directories

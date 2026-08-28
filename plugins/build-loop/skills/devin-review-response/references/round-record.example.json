@@ -1,22 +1,100 @@
 {
   "repository": "owner/repository",
+  "head_repository": "owner/repository",
+  "push_remote": "origin",
   "pr": 123,
   "round": 1,
   "branch": "feature/example",
-  "head_sha": "0123456789abcdef0123456789abcdef01234567",
+  "review_head_sha": "0123456789abcdef0123456789abcdef01234567",
+  "response_head_sha": null,
+  "response_mode": null,
+  "expected_reviewer_id": 158243242,
+  "app_capture": "{scratch}/github-app.json",
+  "cli_not_run_reason": null,
   "finding_set_complete": true,
   "review_outcome": "findings",
+  "review_runs": [
+    {
+      "id": "GITHUB-APP-1",
+      "source": "github_app",
+      "purpose": "posted",
+      "capture_id": "github-review-987",
+      "report_ids": ["APP-REPORT-1", "APP-HIDDEN-1"]
+    },
+    {
+      "id": "DEVIN-CLI-1",
+      "source": "devin_cli",
+      "purpose": "recovery",
+      "capture": "{scratch}/devin-cli-1.json",
+      "status": "preflight-failed",
+      "outcome": null,
+      "reported_finding_count": 0,
+      "evidence": ["{scratch}/devin-cli-1.json", "{scratch}/devin-cli-1.txt"],
+      "superseded_by": "DEVIN-CLI-2"
+    },
+    {
+      "id": "DEVIN-CLI-2",
+      "source": "devin_cli",
+      "purpose": "recovery",
+      "capture": "{scratch}/devin-cli-2.json",
+      "status": "complete",
+      "outcome": "findings",
+      "reported_finding_count": 1,
+      "evidence": ["{scratch}/devin-cli-2.json", "{scratch}/devin-cli-2.txt"],
+      "superseded_by": null
+    }
+  ],
+  "source_reports": [
+    {
+      "id": "APP-REPORT-1",
+      "run_id": "GITHUB-APP-1",
+      "capture_report_id": "comment-456",
+      "finding_id": "FINDING-1",
+      "same_as": []
+    },
+    {
+      "id": "APP-HIDDEN-1",
+      "run_id": "GITHUB-APP-1",
+      "capture_report_id": "hidden-987-1",
+      "finding_id": "FINDING-2",
+      "same_as": ["CLI-REPORT-1"]
+    },
+    {
+      "id": "CLI-REPORT-1",
+      "run_id": "DEVIN-CLI-2",
+      "ordinal": 1,
+      "finding_id": "FINDING-2",
+      "same_as": ["APP-HIDDEN-1"]
+    }
+  ],
   "findings": [
     {
       "id": "FINDING-1",
+      "source_report_ids": ["APP-REPORT-1"],
       "severity": "high",
       "location": "src/example.js:10",
       "summary": "The failure path reports success",
       "disposition": "fixed",
       "evidence": "Return the error result to the caller",
+      "tracking_id": null,
+      "base_evidence": null,
       "dependency_audit": ["src/caller.js:20 checked"],
       "paired_file_audit": ["tests/example.test.js changed"],
       "changed_files": ["src/example.js", "tests/example.test.js"]
+    },
+    {
+      "id": "FINDING-2",
+      "source_report_ids": ["APP-HIDDEN-1", "CLI-REPORT-1"],
+      "severity": "medium",
+      "location": "src/other.js:30",
+      "summary": "The hidden failure path drops an error",
+      "disposition": "fixed",
+      "evidence": "Propagate the error to the caller",
+      "tracking_id": null,
+      "base_evidence": null,
+      "dependency_audit": ["src/other-caller.js:40 checked"],
+      "paired_file_audit": ["tests/other.test.js changed"],
+      "changed_files": ["src/other.js", "tests/other.test.js"]
     }
   ],
   "verification": [
