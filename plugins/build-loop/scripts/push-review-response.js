@@ -73,16 +73,19 @@ function repositoryGitPath(repoRoot, name) {
     'rev-parse', '--path-format=absolute', '--git-path', name,
   ], { cwd: repoRoot, encoding: 'utf8' });
   if (result.error) throw result.error;
-  if (result.status !== 0) {
+  let value = result.status === 0 ? result.stdout.trim() : '';
+  // Git before 2.31 can echo an unknown option to stdout and still exit zero.
+  // Treat any non-path-shaped answer as unsupported and retry without the flag.
+  if (result.status !== 0 || !value || /[\r\n]/.test(value)) {
     result = spawnSync('git', ['rev-parse', '--git-path', name], {
       cwd: repoRoot, encoding: 'utf8',
     });
     if (result.error) throw result.error;
+    value = result.status === 0 ? result.stdout.trim() : '';
   }
   if (result.status !== 0) {
     throw new Error(`cannot locate repository ${name}: ${(result.stderr || result.stdout || '').trim()}`);
   }
-  const value = result.stdout.trim();
   if (!value || /[\r\n]/.test(value)) throw new Error(`repository ${name} path is malformed`);
   return path.isAbsolute(value) ? value : path.resolve(repoRoot, value);
 }

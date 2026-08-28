@@ -493,7 +493,10 @@ check('push helper falls back when Git lacks path-format', () => temp((dir) => {
   fs.writeFileSync(wrapper, [
     '#!/bin/sh',
     'case " $* " in',
-    '  *" --path-format=absolute "*) printf "unknown option: --path-format=absolute\\n" >&2; exit 129 ;;',
+    '  *" --path-format=absolute "*)',
+    '    printf "%s\\n" "--path-format=absolute"',
+    '    exec "$SYNTHETIC_REAL_GIT" rev-parse --git-path "$4"',
+    '    ;;',
     'esac',
     'exec "$SYNTHETIC_REAL_GIT" "$@"',
     '',
