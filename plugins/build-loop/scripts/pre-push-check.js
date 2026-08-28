@@ -43,6 +43,11 @@ function object(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
+function spawnDiagnostic(result) {
+  if (result && result.error) return String(result.error.message || result.error);
+  return String((result && (result.stderr || result.stdout)) || '').trim();
+}
+
 function text(value) {
   return typeof value === 'string' && value.trim().length > 0;
 }
@@ -143,7 +148,7 @@ function checkKeys(value, required, optional, label, errors) {
 function git(root, args, errors, label) {
   const result = spawnSync('git', args, { cwd: root, encoding: 'utf8' });
   if (result.status !== 0) {
-    errors.push(`${label}: ${(result.stderr || result.stdout || '').trim()}`);
+    errors.push(`${label}: ${spawnDiagnostic(result)}`);
     return null;
   }
   return result.stdout.trim();
@@ -152,7 +157,7 @@ function git(root, args, errors, label) {
 function gitPaths(root, args, errors, label) {
   const result = spawnSync('git', [...args, '-z'], { cwd: root, encoding: 'utf8' });
   if (result.status !== 0) {
-    errors.push(`${label}: ${(result.stderr || result.stdout || '').trim()}`);
+    errors.push(`${label}: ${spawnDiagnostic(result)}`);
     return null;
   }
   return new Set(result.stdout.split('\0').filter((value) => value.length > 0));
@@ -164,7 +169,7 @@ function currentPullRequestIdentity(round, errors) {
     '--json', 'headRefOid,headRefName,headRepository',
   ], { encoding: 'utf8' });
   if (result.status !== 0) {
-    errors.push(`cannot read current PR identity: ${(result.stderr || result.stdout || '').trim()}`);
+    errors.push(`cannot read current PR identity: ${spawnDiagnostic(result)}`);
     return null;
   }
   let value;
@@ -227,7 +232,7 @@ function inspectPushUrls(root, remote, expectedRepository) {
   if (result.status !== 0) {
     return {
       urls: [],
-      errors: [`cannot read push remote URLs: ${(result.stderr || result.stdout || '').trim()}`],
+      errors: [`cannot read push remote URLs: ${spawnDiagnostic(result)}`],
     };
   }
   const urls = result.stdout.trim().split('\n').filter(text);
@@ -846,6 +851,8 @@ function validateRound(round, roundFile, args) {
   if (!Number.isInteger(round.round) || round.round < 1) errors.push('round must be a positive integer');
   if (!text(round.branch)) errors.push('branch is required');
   if (!fullSha(round.review_head_sha)) errors.push('review_head_sha must be a full commit SHA');
+  else round.review_head_sha = round.review_head_sha.toLowerCase();
+  if (fullSha(round.response_head_sha)) round.response_head_sha = round.response_head_sha.toLowerCase();
   if (round.expected_reviewer_id !== DEVIN_REVIEWER_ID) errors.push(`expected_reviewer_id must be ${DEVIN_REVIEWER_ID}`);
   if (round.finding_set_complete !== true) errors.push('finding_set_complete must be true');
 

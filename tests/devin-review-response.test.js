@@ -200,7 +200,7 @@ function validate(mutator, options = {}) {
     if (phase !== null) args.push('--phase', phase);
     if (options.repoRoot) args.push('--repo-root', options.repoRoot);
     args.push(roundFile);
-    const env = options.currentPrHead
+    const env = options.env || (options.currentPrHead
       ? fakeGhEnvironment(dir, options.currentPrHead, state.capture, {
         reviews: options.liveReviews,
         comments: options.liveComments,
@@ -210,7 +210,7 @@ function validate(mutator, options = {}) {
         remoteMutationRepo: options.remoteMutationRepo,
         remoteMutationUrl: options.remoteMutationUrl,
       })
-      : process.env;
+      : process.env);
     return spawnSync(process.execPath, args, { encoding: 'utf8', env });
   });
 }
@@ -1029,6 +1029,35 @@ check('pre-push no-change binds reviewed SHA to clean repository HEAD', () => te
   assert.strictEqual(result.status, 0, result.stderr);
 }));
 
+check('pre-push canonicalizes valid mixed-case SHA fields', () => temp((dir) => {
+  const repo = initRepo(dir);
+  const sha = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).stdout.trim();
+  const result = validate((state) => {
+    makeClean(state); setReviewedSha(state, sha, true);
+    state.round.review_head_sha = sha.toUpperCase();
+    state.round.response_mode = 'no-change';
+    state.round.response_head_sha = sha.toUpperCase();
+  }, { phase: 'pre-push', repoRoot: repo, currentPrHead: sha });
+  assert.strictEqual(result.status, 0, result.stderr);
+}));
+
+check('pre-push reports missing git and gh executables', () => temp((dir) => {
+  const repo = initRepo(dir);
+  const emptyPath = path.join(dir, 'empty-bin');
+  fs.mkdirSync(emptyPath);
+  const sha = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).stdout.trim();
+  const result = validate((state) => {
+    makeClean(state); setReviewedSha(state, sha, true);
+    state.round.response_mode = 'no-change'; state.round.response_head_sha = sha;
+  }, {
+    phase: 'pre-push', repoRoot: repo,
+    env: { ...process.env, PATH: emptyPath },
+  });
+  assert.strictEqual(result.status, 1);
+  assert.match(result.stderr, /spawnSync git ENOENT/);
+  assert.match(result.stderr, /spawnSync gh ENOENT/);
+}));
+
 check('pre-push binds every CLI capture to the validated checkout', () => temp((dir) => {
   const repo = initRepo(dir);
   const other = path.join(dir, 'other-checkout');
@@ -1331,6 +1360,76 @@ check('start-cli and finish-cli enforce clean same-SHA captures', () => temp((di
   assert.match(result.stderr, /clean worktree/i);
 }));
 
+check('finish-cli reads the final response from a Devin ATIF export', () => temp((dir) => {
+  const repo = initRepo(dir);
+  const capture = path.join(dir, 'atif.json');
+  const output = path.join(dir, 'atif-output.json');
+  let result = spawnSync(process.execPath, [EVIDENCE, 'start-cli', '--repo-root', repo,
+    '--purpose', 'proactive', '--output', output, '--out', capture], { encoding: 'utf8' });
+  assert.strictEqual(result.status, 0, result.stderr);
+  writeJson(output, {
+    schema_version: 'ATIF-v1.7',
+    steps: [
+      { source: 'user', message: 'Review this change and use the completion marker.' },
+      { source: 'agent', message: '', reasoning_content: 'DEVIN_REVIEW_COMPLETE outcome=clean finding_count=0' },
+      { source: 'agent', message: 'Two findings.\nDEVIN_REVIEW_COMPLETE outcome=findings finding_count=2' },
+    ],
+  });
+  result = spawnSync(process.execPath, [EVIDENCE, 'finish-cli', '--repo-root', repo,
+    '--capture', capture, '--output', output, '--exit-code', '0',
+    '--outcome', 'findings', '--finding-count', '2'], { encoding: 'utf8' });
+  assert.strictEqual(result.status, 0, result.stderr);
+  const finished = JSON.parse(fs.readFileSync(capture));
+  assert.strictEqual(finished.status, 'complete');
+  assert.strictEqual(finished.outcome, 'findings');
+  assert.strictEqual(finished.reported_finding_count, 2);
+}));
+
+check('finish-cli rejects incomplete or unknown Devin export envelopes', () => temp((dir) => {
+  const repo = initRepo(dir);
+  for (const [name, exportBody] of [
+    ['unfinished', {
+      schema_version: 'ATIF-v1.7',
+      steps: [
+        { source: 'agent', message: 'DEVIN_REVIEW_COMPLETE outcome=clean finding_count=0' },
+        { source: 'agent', message: '', tool_calls: [{ function_name: 'grep' }] },
+      ],
+    }],
+    ['unknown-schema', {
+      schema_version: 'ATIF-v9.9',
+      steps: [{ source: 'agent', message: 'DEVIN_REVIEW_COMPLETE outcome=clean finding_count=0' }],
+    }],
+  ]) {
+    const capture = path.join(dir, `${name}.json`);
+    const output = path.join(dir, `${name}-output.json`);
+    let result = spawnSync(process.execPath, [EVIDENCE, 'start-cli', '--repo-root', repo,
+      '--purpose', 'proactive', '--output', output, '--out', capture], { encoding: 'utf8' });
+    assert.strictEqual(result.status, 0, result.stderr);
+    writeJson(output, exportBody);
+    result = spawnSync(process.execPath, [EVIDENCE, 'finish-cli', '--repo-root', repo,
+      '--capture', capture, '--output', output, '--exit-code', '0'], { encoding: 'utf8' });
+    assert.strictEqual(result.status, 0, result.stderr);
+    assert.strictEqual(JSON.parse(fs.readFileSync(capture)).status, 'incomplete');
+  }
+}));
+
+check('review evidence reports a missing git or gh executable', () => temp((dir) => {
+  const repo = initRepo(dir);
+  const emptyPath = path.join(dir, 'empty-bin');
+  fs.mkdirSync(emptyPath);
+  const env = { ...process.env, PATH: emptyPath };
+  let result = spawnSync(process.execPath, [EVIDENCE, 'start-cli', '--repo-root', repo,
+    '--purpose', 'proactive', '--output', path.join(dir, 'missing-git.txt'),
+    '--out', path.join(dir, 'missing-git.json')], { encoding: 'utf8', env });
+  assert.strictEqual(result.status, 2);
+  assert.match(result.stderr, /spawnSync git ENOENT/);
+  result = spawnSync(process.execPath, [EVIDENCE, 'capture-app', '--repo', 'o/r', '--pr', '12',
+    '--head', HEAD, '--reviewer-id', String(BOT_ID), '--out', path.join(dir, 'missing-gh.json')],
+  { encoding: 'utf8', env });
+  assert.strictEqual(result.status, 2);
+  assert.match(result.stderr, /spawnSync gh ENOENT/);
+}));
+
 check('start-cli binds each capture to one fresh output path', () => temp((dir) => {
   const repo = initRepo(dir);
   for (const [capture, output] of [
@@ -1385,6 +1484,11 @@ check('finish-cli distinguishes recognized preflight refusal from unknown failur
   const repo = initRepo(dir);
   for (const [name, outputText, exitCode, expected] of [
     ['trust', 'Error: Refusing to run in an untrusted workspace: /synthetic\n', 1, 'preflight-failed'],
+    ['trust-explained', [
+      'Error: Refusing to run in an untrusted workspace: /synthetic',
+      'Start `devin` interactively in this directory to trust it, or set `respect_workspace_trust: false` in your config to restore the previous behavior.',
+      '',
+    ].join('\n'), 1, 'preflight-failed'],
     ['permission', 'Error: Tool call rejected by permission mode auto: synthetic read\n', 1, 'preflight-failed'],
     ['mixed', 'Synthetic partial finding\nError: Refusing to run in an untrusted workspace: /synthetic\n', 1, 'incomplete'],
     ['mixed-zero', 'Synthetic partial finding\nError: Refusing to run in an untrusted workspace: /synthetic\n', 0, 'incomplete'],

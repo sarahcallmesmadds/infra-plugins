@@ -31,6 +31,11 @@ function isObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
+function spawnDiagnostic(result) {
+  if (result && result.error) return String(result.error.message || result.error);
+  return String((result && (result.stderr || result.stdout)) || '').trim();
+}
+
 function sameKeys(value, keys) {
   if (!isObject(value)) return false;
   const actual = Object.keys(value).sort();
@@ -381,7 +386,7 @@ function githubPages(options, endpoint) {
     maxBuffer: 20 * 1024 * 1024,
   });
   if (result.status !== 0) {
-    throw new Error(`GitHub ${endpoint} capture failed: ${(result.stderr || result.stdout || '').trim()}`);
+    throw new Error(`GitHub ${endpoint} capture failed: ${spawnDiagnostic(result)}`);
   }
   let parsed;
   try { parsed = JSON.parse(result.stdout); }
@@ -436,7 +441,7 @@ function collectAppEvidence(options, getPages = (endpoint) => githubPages(option
 
 function git(repositoryRoot, args) {
   const result = spawnSync('git', args, { cwd: repositoryRoot, encoding: 'utf8' });
-  if (result.status !== 0) throw new Error(`git ${args.join(' ')} failed: ${(result.stderr || result.stdout || '').trim()}`);
+  if (result.status !== 0) throw new Error(`git ${args.join(' ')} failed: ${spawnDiagnostic(result)}`);
   return result.stdout.trim();
 }
 
@@ -501,9 +506,13 @@ function startCli(flags) {
 }
 
 function recognizedPreflight(text) {
-  const output = String(text || '').replace(/\r\n/g, '\n').trim();
-  return /^Error: Refusing to run in an untrusted workspace:[^\n]*$/.test(output)
-    || /^Error: Tool call rejected by permission mode auto:[^\n]*$/.test(output);
+  const lines = String(text || '').replace(/\r\n/g, '\n').trim().split('\n');
+  const trustRefusal = /^Error: Refusing to run in an untrusted workspace:[^\n]*$/.test(lines[0]);
+  const permissionRefusal = /^Error: Tool call rejected by permission mode auto:[^\n]*$/.test(lines[0]);
+  if ((!trustRefusal && !permissionRefusal) || lines.length === 0) return false;
+  if (lines.length === 1) return true;
+  return trustRefusal && lines.length === 2
+    && lines[1] === 'Start `devin` interactively in this directory to trust it, or set `respect_workspace_trust: false` in your config to restore the previous behavior.';
 }
 
 function containsRecognizedPreflightLine(text) {
@@ -511,8 +520,19 @@ function containsRecognizedPreflightLine(text) {
   return lines.some((line) => recognizedPreflight(line));
 }
 
+function cliResponseText(text) {
+  const output = String(text || '').replace(/\r\n/g, '\n');
+  let parsed;
+  try { parsed = JSON.parse(output); }
+  catch (_) { return output; }
+  if (!isObject(parsed) || parsed.schema_version !== 'ATIF-v1.7' || !Array.isArray(parsed.steps)) return '';
+  const finalStep = parsed.steps[parsed.steps.length - 1];
+  if (!isObject(finalStep) || finalStep.source !== 'agent' || typeof finalStep.message !== 'string') return '';
+  return finalStep.message.replace(/\r\n/g, '\n');
+}
+
 function parseCliCompletion(text) {
-  const output = String(text || '').replace(/\r\n/g, '\n').trimEnd();
+  const output = cliResponseText(text).trimEnd();
   const match = output.match(/(?:^|\n)DEVIN_REVIEW_COMPLETE outcome=(clean|findings) finding_count=(0|[1-9][0-9]*)$/);
   if (!match) return null;
   const count = Number(match[2]);
