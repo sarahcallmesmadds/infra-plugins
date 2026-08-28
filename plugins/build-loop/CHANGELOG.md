@@ -31,7 +31,11 @@ also disables repository replacement refs so it always checks the canonical
 commit graph that will be pushed, and ignores an inherited attributes source
 that could hide worktree changes through a clean filter. Read checks
 retain normal on-disk Git configuration; only the final push suppresses it to
-prevent URL rewrites after destination validation.
+prevent URL rewrites after destination validation. The push also disables
+terminal, askpass, credential-manager and interactive SSH prompts, and stops
+the complete push process group after two minutes instead of leaving a network
+or helper process behind. OpenSSH and PuTTY-family transports get their own
+non-interactive flags; an unsupported SSH variant is rejected before push.
 CLI retries preserve each attempt in
 separate checksum-backed files; capture metadata cannot stand in for raw CLI
 output, every attempt reserves a new export path before Devin runs, and mixed

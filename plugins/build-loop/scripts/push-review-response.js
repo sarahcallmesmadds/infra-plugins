@@ -11,6 +11,9 @@ const {
 } = require('./git-environment');
 const { inspectPushUrls, validateRound } = require('./pre-push-check');
 
+const PUSH_TIMEOUT_MS = 120000;
+const PROCESS_GROUP_RUNNER = path.join(__dirname, 'process-group-runner.js');
+
 function parseArguments(argv) {
   if (argv.length !== 4 || argv[0] !== '--repo-root' || argv[2] !== '--round') {
     throw new Error('usage: push-review-response.js --repo-root REPOSITORY --round ROUND.json');
@@ -74,7 +77,7 @@ function repositoryGitPath(repoRoot, name) {
   return path.isAbsolute(value) ? value : path.resolve(repoRoot, value);
 }
 
-function pushWithIsolatedConfig(repoRoot, args, stdio = 'inherit') {
+function pushWithIsolatedConfig(repoRoot, args, stdio = 'inherit', timeoutMs = PUSH_TIMEOUT_MS) {
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'devin-review-push-'));
   const gitDir = path.join(scratch, 'repository.git');
   try {
@@ -95,16 +98,29 @@ function pushWithIsolatedConfig(repoRoot, args, stdio = 'inherit') {
       '[core]',
       '\trepositoryformatversion = 0',
       '\tbare = true',
+      '\taskPass =',
+      '[credential]',
+      '\tinteractive = false',
       '[credential "https://github.com"]',
       '\thelper =',
       '\thelper = !gh auth git-credential',
       '',
     ].join('\n'), { mode: 0o600 });
-    return spawnSync('git', ['--git-dir', gitDir, ...args], {
+    const separator = args.indexOf('--end-of-options');
+    const destination = separator >= 0 ? args[separator + 1] : '';
+    const ssh = /^git@github\.com:|^ssh:\/\//i.test(destination);
+    const result = spawnSync(process.execPath, [
+      PROCESS_GROUP_RUNNER, String(timeoutMs), 'git', '--git-dir', gitDir, ...args,
+    ], {
       cwd: scratch,
       stdio,
-      env: isolatedGitEnvironment(),
+      env: isolatedGitEnvironment(process.env, { ssh }),
     });
+    if (result.status === 124) {
+      throw new Error(`git push timed out after ${timeoutMs} ms`);
+    }
+    if (result.error) throw result.error;
+    return result;
   } finally {
     fs.rmSync(scratch, { recursive: true, force: true });
   }
@@ -128,7 +144,6 @@ function main(argv) {
     const result = pushWithIsolatedConfig(
       args.repoRoot, pushArguments(round, destination)
     );
-    if (result.error) throw result.error;
     if (result.status !== 0) return Number.isInteger(result.status) ? result.status : 1;
     return 0;
   } catch (error) {

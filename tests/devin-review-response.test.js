@@ -527,6 +527,82 @@ check('push helper falls back when Git lacks path-format', () => temp((dir) => {
   assert.strictEqual(remoteHead, response);
 }));
 
+check('push helper disables interactive helpers and times out a stuck push', () => temp((dir) => {
+  const repo = initRepo(dir);
+  const realGit = (process.env.PATH || '').split(path.delimiter)
+    .map((entry) => path.join(entry, 'git')).find((candidate) => fs.existsSync(candidate));
+  assert.ok(realGit, 'git executable is unavailable');
+  const bin = path.join(dir, 'timeout-bin');
+  fs.mkdirSync(bin);
+  const wrapper = path.join(bin, 'git');
+  const log = path.join(dir, 'push-environment.log');
+  fs.writeFileSync(wrapper, [
+    '#!/bin/sh',
+    'case " $* " in',
+    '  *" push "*)',
+    '    {',
+    '      printf "terminal=%s\\n" "${GIT_TERMINAL_PROMPT-unset}"',
+    '      printf "git_askpass=%s\\n" "${GIT_ASKPASS+set}"',
+    '      printf "ssh_askpass=%s\\n" "${SSH_ASKPASS+set}"',
+    '      printf "ssh_command=%s\\n" "${GIT_SSH_COMMAND-unset}"',
+    '      printf "git_ssh=%s\\n" "${GIT_SSH+set}"',
+    '      printf "git_ssh_variant=%s\\n" "${GIT_SSH_VARIANT+set}"',
+    '      printf "core_askpass=%s\\n" "$("$SYNTHETIC_REAL_GIT" --git-dir "$2" config --get core.askPass)"',
+    '      printf "credential_interactive=%s\\n" "$("$SYNTHETIC_REAL_GIT" --git-dir "$2" config --get credential.interactive)"',
+    '    } > "$SYNTHETIC_PUSH_ENV_LOG"',
+    '    trap "" TERM',
+    '    sh -c \"trap \\\"\\\" TERM; exec sleep 5\" &',
+    '    wait',
+    '    ;;',
+    'esac',
+    'exec "$SYNTHETIC_REAL_GIT" "$@"',
+    '',
+  ].join('\n'));
+  fs.chmodSync(wrapper, 0o755);
+  const keys = [
+    'PATH', 'SYNTHETIC_REAL_GIT', 'SYNTHETIC_PUSH_ENV_LOG', 'GIT_ASKPASS',
+    'SSH_ASKPASS', 'GIT_SSH', 'GIT_SSH_COMMAND', 'GIT_SSH_VARIANT',
+    'GIT_TERMINAL_PROMPT',
+  ];
+  const prior = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+  Object.assign(process.env, {
+    PATH: `${bin}${path.delimiter}${process.env.PATH || ''}`,
+    SYNTHETIC_REAL_GIT: realGit,
+    SYNTHETIC_PUSH_ENV_LOG: log,
+    GIT_ASKPASS: '/hostile/git-askpass',
+    SSH_ASKPASS: '/hostile/ssh-askpass',
+    GIT_SSH: '/hostile/git-ssh',
+    GIT_SSH_COMMAND: 'custom-ssh --identity synthetic-key',
+    GIT_SSH_VARIANT: 'ssh',
+    GIT_TERMINAL_PROMPT: '1',
+  });
+  try {
+    delete require.cache[require.resolve(PUSH_HELPER)];
+    const { pushArguments, pushWithIsolatedConfig } = require(PUSH_HELPER);
+    const started = Date.now();
+    assert.throws(() => pushWithIsolatedConfig(repo, pushArguments({
+      response_mode: 'commit', push_remote: 'origin', branch: 'feature/example',
+      review_head_sha: HEAD, response_head_sha: OTHER_HEAD,
+    }, 'ssh://git@github.com:22/o/r.git'), 'pipe', 75), /timed out/i);
+    assert.ok(Date.now() - started < 3000, 'stuck push exceeded its test timeout');
+  } finally {
+    for (const key of keys) {
+      if (prior[key] === undefined) delete process.env[key];
+      else process.env[key] = prior[key];
+    }
+  }
+  assert.deepStrictEqual(fs.readFileSync(log, 'utf8').trim().split('\n'), [
+    'terminal=0',
+    'git_askpass=',
+    'ssh_askpass=',
+    'ssh_command=custom-ssh -o BatchMode=yes --identity synthetic-key',
+    'git_ssh=',
+    'git_ssh_variant=set',
+    'core_askpass=',
+    'credential_interactive=false',
+  ]);
+}));
+
 check('Git environment helper removes repository and config overrides', () => {
   delete require.cache[require.resolve(GIT_ENVIRONMENT)];
   const { isolatedGitEnvironment, sanitizedGitEnvironment } = require(GIT_ENVIRONMENT);
@@ -548,6 +624,12 @@ check('Git environment helper removes repository and config overrides', () => {
     GIT_CONFIG_GLOBAL: '/hostile/global',
     GIT_CONFIG_SYSTEM: '/hostile/system',
     GIT_CONFIG_NOSYSTEM: '1',
+    GIT_ASKPASS: '/hostile/git-askpass',
+    GIT_SSH: '/hostile/git-ssh',
+    GIT_SSH_COMMAND: 'custom-ssh --identity synthetic-key',
+    GIT_SSH_VARIANT: 'ssh',
+    GIT_TERMINAL_PROMPT: '1',
+    SSH_ASKPASS: '/hostile/ssh-askpass',
   };
   const localVariables = spawnSync('git', ['rev-parse', '--local-env-vars'], {
     encoding: 'utf8',
@@ -579,13 +661,47 @@ check('Git environment helper removes repository and config overrides', () => {
   }
   assert.strictEqual(sanitized.GIT_GRAFT_FILE, os.devNull);
   assert.strictEqual(sanitized.GIT_NO_REPLACE_OBJECTS, '1');
-  const env = isolatedGitEnvironment(source);
+  const env = isolatedGitEnvironment(source, { ssh: true });
+  assert.ok(!Object.prototype.hasOwnProperty.call(env, 'GIT_ASKPASS'));
+  assert.ok(!Object.prototype.hasOwnProperty.call(env, 'GIT_SSH'));
+  assert.ok(!Object.prototype.hasOwnProperty.call(env, 'SSH_ASKPASS'));
   assert.strictEqual(env.GIT_GRAFT_FILE, os.devNull);
   assert.strictEqual(env.GIT_NO_REPLACE_OBJECTS, '1');
   assert.strictEqual(env.GIT_CONFIG_COUNT, '0');
   assert.strictEqual(env.GIT_CONFIG_GLOBAL, os.devNull);
   assert.strictEqual(env.GIT_CONFIG_SYSTEM, os.devNull);
   assert.strictEqual(env.GIT_CONFIG_NOSYSTEM, '1');
+  assert.strictEqual(env.GIT_SSH_COMMAND,
+    'custom-ssh -o BatchMode=yes --identity synthetic-key');
+  assert.strictEqual(env.GIT_SSH_VARIANT, 'ssh');
+  assert.strictEqual(env.GIT_TERMINAL_PROMPT, '0');
+  const httpsEnv = isolatedGitEnvironment(source);
+  assert.ok(!Object.prototype.hasOwnProperty.call(httpsEnv, 'GIT_SSH_COMMAND'));
+  assert.ok(!Object.prototype.hasOwnProperty.call(httpsEnv, 'GIT_SSH_VARIANT'));
+  const plinkEnv = isolatedGitEnvironment({
+    ...source,
+    GIT_SSH: '/tools/plink',
+    GIT_SSH_COMMAND: '',
+    GIT_SSH_VARIANT: 'plink',
+  }, { ssh: true });
+  assert.strictEqual(plinkEnv.GIT_SSH_COMMAND, '/tools/plink -batch');
+  assert.strictEqual(plinkEnv.GIT_SSH_VARIANT, 'plink');
+  assert.throws(() => isolatedGitEnvironment({
+    ...source,
+    GIT_SSH_COMMAND: 'simple-client',
+    GIT_SSH_VARIANT: 'simple',
+  }, { ssh: true }), /cannot be made non-interactive/i);
+  assert.throws(() => isolatedGitEnvironment({
+    ...source,
+    GIT_SSH_COMMAND: 'unknown-wrapper',
+    GIT_SSH_VARIANT: '',
+  }, { ssh: true }), /requires GIT_SSH_VARIANT/i);
+  const ordered = isolatedGitEnvironment({
+    ...source,
+    GIT_SSH_COMMAND: 'ssh -o BatchMode=no',
+    GIT_SSH_VARIANT: 'ssh',
+  }, { ssh: true });
+  assert.strictEqual(ordered.GIT_SSH_COMMAND, 'ssh -o BatchMode=yes -o BatchMode=no');
 });
 
 check('read checks retain standard on-disk Git configuration', () => temp((dir) => {
