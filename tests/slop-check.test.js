@@ -146,6 +146,10 @@ check('bullets inside a list-relative raw HTML block are not read as Markdown',
     `- Parent item\n    <pre>\n    ${BROCHURE_BULLETS.split('\n')[0]}\n`
     + `    ${BROCHURE_BULLETS.split('\n')[1]}\n    </pre>`
   )), false);
+check('a comment inside a raw HTML opener does not expose its block contents',
+  Boolean(brochureFinding(`<div><!-- note --></div>\n${BROCHURE_BULLETS}`)), false);
+check('a type-seven tag cannot interrupt an open paragraph',
+  Boolean(brochureFinding(`Intro text\n<custom-box>\n${BROCHURE_BULLETS}`)), true);
 check('a shorter fence inside a four-backtick example does not expose its bullets',
   Boolean(brochureFinding(`\`\`\`\`markdown\n\`\`\`\n${BROCHURE_BULLETS}\n\`\`\`\``)), false);
 check('a tilde fence may begin its info string with a backtick',
@@ -192,6 +196,11 @@ check('same-line HTML comments do not discard visible explanatory copy',
     BROCHURE_BULLETS.replaceAll('** Twelve', '** <!-- source --> Twelve')
       .replaceAll('** The list', '** <!-- source --> The list')
   )), true);
+check('every same-line HTML comment is removed before item matching',
+  Boolean(brochureFinding(
+    '- **Numbers that guide the next call.** <!-- one --> <!-- hidden words provide all copy -->\n'
+    + '- **Where the records really live.** <!-- one --> <!-- hidden words provide all copy -->'
+  )), false);
 check('a fenced block between bullets ends the consecutive run',
   Boolean(brochureFinding(
     `${BROCHURE_BULLETS.split('\n')[0]}\n\`\`\`text\nseparate items\n\`\`\`\n`

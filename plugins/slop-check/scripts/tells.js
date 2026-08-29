@@ -268,8 +268,8 @@ function backtickRunsWithLaterClose(lines) {
   return withLaterClose;
 }
 
-function htmlCommentStart(line, lineIndex, codeDelimiter, withLaterClose) {
-  for (let index = 0; index < line.length; index += 1) {
+function htmlCommentStart(line, lineIndex, codeDelimiter, withLaterClose, startIndex = 0) {
+  for (let index = startIndex; index < line.length; index += 1) {
     if (line[index] === '`') {
       let end = index + 1;
       while (line[end] === '`') end += 1;
@@ -437,40 +437,13 @@ function withoutFencedBlocks(text) {
       continue;
     }
 
-    const commentScan = htmlCommentStart(
-      line, lineIndex, inlineCodeDelimiter, withLaterClose
-    );
-    inlineCodeDelimiter = commentScan.codeDelimiter;
-    const comment = commentScan.index;
-    const commentParent = listParentAt(lineIndent);
-    // Four columns beyond the containing list item make an indented code block.
-    // Treat a comment-looking string there as code; a comment at the same raw
-    // indentation can still be Markdown when it is nested inside a list.
-    if (comment !== -1 && lineIndent - commentParent.base <= 3) {
-      const close = line.indexOf('-->', comment + 4);
-      const before = line.slice(0, comment);
-      const blockComment = !before.trim();
-      htmlComment = close === -1 ? (blockComment ? 'block' : 'inline') : null;
-      if (blockComment) {
-        listContentIndents.length = commentParent.index + 1;
-        visible.push(boundaryLine(lineIndent));
-        afterBlank = false;
-        continue;
-      }
-      const after = close === -1
-        ? ''
-        : ' '.repeat(close + 3 - comment) + line.slice(close + 3);
-      const remaining = before + after;
-      if (remaining.trim()) rememberVisibleLine(remaining);
-      else listContentIndents.length = commentParent.index + 1;
-      visible.push(remaining.trim() ? remaining : boundaryLine(lineIndent));
-      afterBlank = false;
-      continue;
-    }
-
     const htmlOpen = inlineCodeDelimiter === null ? rawHtmlBlockStart(line) : null;
     const htmlParent = listParentAt(lineIndent);
-    if (htmlOpen && lineIndent - htmlParent.base <= 3) {
+    const previousLine = lineIndex > 0 ? lines[lineIndex - 1] : '';
+    const typeSevenCanStart = lineIndex === 0 || afterBlank || !previousLine.trim()
+      || startsMarkdownBlock(previousLine);
+    if (htmlOpen && (htmlOpen.interruptsParagraph || typeSevenCanStart)
+      && lineIndent - htmlParent.base <= 3) {
       const closesHere = (htmlOpen.end && line.includes(htmlOpen.end))
         || (htmlOpen.tag && new RegExp(`</${htmlOpen.tag}(?:[ \\t]|>)`, 'i').test(line));
       rawHtml = closesHere ? null : htmlOpen;
@@ -479,6 +452,53 @@ function withoutFencedBlocks(text) {
       afterBlank = false;
       continue;
     }
+
+    const commentParent = listParentAt(lineIndent);
+    // Four columns beyond the containing list item make an indented code block.
+    // Treat a comment-looking string there as code; a comment at the same raw
+    // indentation can still be Markdown when it is nested inside a list.
+    let remaining = line;
+    let scanStart = 0;
+    let foundComment = false;
+    let blockCommentLine = false;
+    let commentScan = htmlCommentStart(
+      remaining, lineIndex, inlineCodeDelimiter, withLaterClose, scanStart
+    );
+    inlineCodeDelimiter = commentScan.codeDelimiter;
+    while (commentScan.index !== -1 && lineIndent - commentParent.base <= 3) {
+      foundComment = true;
+      const comment = commentScan.index;
+      const close = remaining.indexOf('-->', comment + 4);
+      const before = remaining.slice(0, comment);
+      const blockComment = !before.trim();
+      htmlComment = close === -1 ? (blockComment ? 'block' : 'inline') : null;
+      if (blockComment) {
+        listContentIndents.length = commentParent.index + 1;
+        visible.push(boundaryLine(lineIndent));
+        afterBlank = false;
+        blockCommentLine = true;
+        break;
+      }
+      if (close === -1) {
+        remaining = before;
+        break;
+      }
+      remaining = before + ' '.repeat(close + 3 - comment) + remaining.slice(close + 3);
+      scanStart = close + 3;
+      commentScan = htmlCommentStart(
+        remaining, lineIndex, inlineCodeDelimiter, withLaterClose, scanStart
+      );
+      inlineCodeDelimiter = commentScan.codeDelimiter;
+    }
+    if (blockCommentLine) continue;
+    if (foundComment) {
+      if (remaining.trim()) rememberVisibleLine(remaining);
+      else listContentIndents.length = commentParent.index + 1;
+      visible.push(remaining.trim() ? remaining : boundaryLine(lineIndent));
+      afterBlank = false;
+      continue;
+    }
+
     visible.push(line);
     rememberVisibleLine(line);
   }
