@@ -162,6 +162,9 @@ check('indented code does not supply explanatory copy for a headline',
   )), false);
 for (const [name, invisibleCopy] of [
   ['inline HTML attributes', '<span class="one two three four"></span>'],
+  ['inline HTML processing instructions', '<?hidden words provide all?>'],
+  ['inline HTML declarations', '<!HIDDEN words provide all>'],
+  ['inline HTML CDATA sections', '<![CDATA[hidden words provide all]]>'],
   ['HTML entities', '&nbsp; &nbsp; &nbsp; &nbsp;'],
   ['link destinations', '[x](https://example.test "one two three four")'],
   ['image alt text', '![hidden words provide explanatory copy](x.png)'],

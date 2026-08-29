@@ -459,6 +459,23 @@ const COMPLETE_CLOSING_TAG = /^[ \t]*<\/[A-Za-z][A-Za-z0-9-]*[ \t]*>[ \t]*$/;
 const INLINE_HTML_TAG = /^<\/?[A-Za-z][A-Za-z0-9-]*(?:[ \t]+[A-Za-z_:][A-Za-z0-9_.:-]*(?:[ \t]*=[ \t]*(?:[^ "'=<>`]+|'[^']*'|"[^"]*"))?)*[ \t]*\/?>/;
 const INLINE_HTML_ENTITY = /^&(?:#[0-9]+|#x[0-9a-f]+|[a-z][a-z0-9]+);/i;
 
+function inlineHtmlSpecialEnd(text, start) {
+  let close = -1;
+  if (text.startsWith('<?', start)) {
+    close = text.indexOf('?>', start + 2);
+    return close === -1 ? -1 : close + 1;
+  }
+  if (text.startsWith('<![CDATA[', start)) {
+    close = text.indexOf(']]>', start + 9);
+    return close === -1 ? -1 : close + 2;
+  }
+  if (/^[A-Z]$/.test(text[start + 2] || '') && text.startsWith('<!', start)) {
+    close = text.indexOf('>', start + 3);
+    return close;
+  }
+  return -1;
+}
+
 function rawHtmlBlockStart(line) {
   if (/^[ \t]*<\?/.test(line)) return { end: '?>', interruptsParagraph: true };
   if (/^[ \t]*<!\[CDATA\[/.test(line)) return { end: ']]>', interruptsParagraph: true };
@@ -889,6 +906,12 @@ function visibleInlineText(markdown) {
     // visible when a reader sees it as code. Outside code, the tag itself,
     // attribute values and entity name are Markdown source rather than words.
     if (!escaped && text[index] === '<') {
+      const specialEnd = inlineHtmlSpecialEnd(text, index);
+      if (specialEnd !== -1) {
+        visible += ' ';
+        index = specialEnd;
+        continue;
+      }
       const tag = text.slice(index).match(INLINE_HTML_TAG);
       if (tag) {
         visible += ' ';
