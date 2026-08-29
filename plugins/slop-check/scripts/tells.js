@@ -730,6 +730,19 @@ function startsMarkdownBlock(line) {
   return Boolean(html && html.interruptsParagraph);
 }
 
+function linkReferenceDefinition(line) {
+  const match = line.match(/^[ \t]*\[(?:\\.|[^\[\]])+\]:[ \t]*(.*)$/);
+  if (!match) return null;
+  const rest = match[1].trim();
+  const hasTitle = /[ \t](?:"[^"]*"|'[^']*'|\([^)]*\))[ \t]*$/.test(match[1]);
+  return { continuation: !rest ? 'destination' : (hasTitle ? null : 'title') };
+}
+
+function referenceDestinationLine(line) {
+  const trimmed = line.trim();
+  return /^<[^<>\s]*>$/.test(trimmed) || /^(?:\\.|[^\s<>])+$/.test(trimmed);
+}
+
 function leadingSpaces(line) {
   return columnsAfter(0, (line.match(/^[ \t]*/) || [''])[0]);
 }
@@ -978,6 +991,7 @@ function brochureBulletHeadlines(text) {
   const visible = withoutFencedBlocks(text);
   let repeated = 0;
   let nextItemId = 1;
+  let referenceContinuation = null;
   const stack = [];
   const runs = new Map();
 
@@ -1022,6 +1036,7 @@ function brochureBulletHeadlines(text) {
       .startsWith(MARKDOWN_PARAGRAPH_CONTINUATION);
     const line = forcedParagraphContinuation ? filteredLine.slice(1) : filteredLine;
     if (!line.trim()) {
+      referenceContinuation = null;
       // The source line contains an inline-comment close, so it is not a blank
       // Markdown line even when no visible text follows the close.
       if (forcedParagraphContinuation) continue;
@@ -1030,6 +1045,17 @@ function brochureBulletHeadlines(text) {
         stack[stack.length - 1].afterBlank = true;
       }
       continue;
+    }
+
+    if (referenceContinuation === 'destination') {
+      referenceContinuation = null;
+      if (referenceDestinationLine(line)) {
+        referenceContinuation = 'title';
+        continue;
+      }
+    } else if (referenceContinuation === 'title') {
+      referenceContinuation = null;
+      if (/^[ \t]*(?:"[^"]*"|'[^']*'|\([^)]*\))[ \t]*$/.test(line)) continue;
     }
 
     let marker = forcedParagraphContinuation ? null : parseListMarker(line);
@@ -1067,8 +1093,10 @@ function brochureBulletHeadlines(text) {
 
     const boundary = boundaryIndent(line);
     const indent = boundary !== null ? boundary : leadingSpaces(line);
+    const referenceDefinition = linkReferenceDefinition(line);
     let block = !forcedParagraphContinuation
-      && (boundary !== null || (!lazyOrderedMarker && startsMarkdownBlock(line)));
+      && (boundary !== null || referenceDefinition
+        || (!lazyOrderedMarker && startsMarkdownBlock(line)));
     if (block && boundary === null) {
       let parentIndex = stack.length - 1;
       while (parentIndex >= 0 && indent < stack[parentIndex].contentIndent) parentIndex -= 1;
@@ -1076,6 +1104,9 @@ function brochureBulletHeadlines(text) {
       if (indent - parentBase > 3) block = false;
     }
     if (block) {
+      if (referenceDefinition) {
+        referenceContinuation = referenceDefinition.continuation;
+      }
       const popped = popToIndent(indent);
       if (popped && stack.length) finishContexts(stack[stack.length - 1]);
       if (stack.length) {

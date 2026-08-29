@@ -288,6 +288,27 @@ check('explanatory copy may continue on an indented line',
     '- **Numbers that guide the next call.**\n  Twelve measures appear beside their source and update time.\n'
     + '- **Where the records really live.**\n  The list names each system and the fields it owns.'
   )), true);
+check('hidden reference definitions do not supply explanatory copy',
+  Boolean(brochureFinding(
+    '- **Numbers that guide the next call.**\n\n'
+    + '  [source]: https://example.test "hidden words provide explanation"\n'
+    + '- **Where the records really live.**\n\n'
+    + '  [other]: https://example.test "hidden words provide explanation"'
+  )), false);
+check('a reference title on the next line stays hidden too',
+  Boolean(brochureFinding(
+    '- **Numbers that guide the next call.**\n\n'
+    + '  [source]: https://example.test\n    "hidden words provide explanation"\n'
+    + '- **Where the records really live.**\n\n'
+    + '  [other]: https://example.test\n    "hidden words provide explanation"'
+  )), false);
+check('a reference destination and title may both continue below the label',
+  Boolean(brochureFinding(
+    '- **Numbers that guide the next call.**\n\n'
+    + '  [source]:\n    https://example.test\n    "hidden words provide explanation"\n'
+    + '- **Where the records really live.**\n\n'
+    + '  [other]:\n    https://example.test\n    "hidden words provide explanation"'
+  )), false);
 check('content may begin below an otherwise empty list marker',
   Boolean(brochureFinding(
     `-\n  ${BROCHURE_BULLETS.split('\n')[0].slice(2)}\n`
