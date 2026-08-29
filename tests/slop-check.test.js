@@ -193,6 +193,17 @@ check('parentheses in an angle-bracket link destination stay hidden',
     '- **Numbers that guide the next call.** [x](<https://example.test/(> "one two three four")\n'
     + '- **Where the records really live.** [x](<https://example.test/(> "one two three four")'
   )), false);
+const malformedLinks = '[a]('.repeat(16000);
+const malformedLinksStarted = process.hrtime.bigint();
+brochureFinding(
+  `- **Numbers that guide the next call.** ${malformedLinks}\n`
+  + `- **Where the records really live.** ${malformedLinks}`
+);
+const malformedLinksMilliseconds = Number(
+  process.hrtime.bigint() - malformedLinksStarted
+) / 1e6;
+check('malformed link-heavy copy is checked without repeated suffix scans',
+  malformedLinksMilliseconds < 1500, true);
 check('shortcut-reference image alt text stays hidden',
   Boolean(brochureFinding(
     '- **Numbers that guide the next call.** ![hidden words provide explanatory copy]\n'

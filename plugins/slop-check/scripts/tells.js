@@ -781,6 +781,11 @@ function parseListMarker(line) {
   };
 }
 
+// CommonMark permits implementations to cap nested destination parentheses for
+// performance, while requiring support for at least three levels. Thirty-two
+// keeps ordinary generated links intact and bounds malformed-link scanning.
+const MAX_LINK_DESTINATION_DEPTH = 32;
+
 function linkDestinationEnd(text, opening) {
   let depth = 0;
   let backslashes = 0;
@@ -824,7 +829,10 @@ function linkDestinationEnd(text, opening) {
       continue;
     }
     destinationStarted = true;
-    if (text[index] === '(') depth += 1;
+    if (text[index] === '(') {
+      depth += 1;
+      if (depth > MAX_LINK_DESTINATION_DEPTH) return -1;
+    }
     else if (text[index] === ')') {
       depth -= 1;
       if (depth === 0) return index;
