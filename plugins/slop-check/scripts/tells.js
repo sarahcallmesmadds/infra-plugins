@@ -397,6 +397,7 @@ const HTML_BLOCK_UNTIL_CLOSE = /^(?:script|pre|style|textarea)$/i;
 const HTML_BLOCK_UNTIL_BLANK = /^(?:address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|pre|script|search|section|style|summary|table|tbody|td|textarea|tfoot|th|thead|title|tr|track|ul)$/i;
 const COMPLETE_OPEN_TAG = /^[ \t]*<[A-Za-z][A-Za-z0-9-]*(?:[ \t]+[A-Za-z_:][A-Za-z0-9_.:-]*(?:[ \t]*=[ \t]*(?:[^ "'=<>`]+|'[^']*'|"[^"]*"))?)*[ \t]*\/?>[ \t]*$/;
 const COMPLETE_CLOSING_TAG = /^[ \t]*<\/[A-Za-z][A-Za-z0-9-]*[ \t]*>[ \t]*$/;
+const INLINE_HTML_TAG = /<\/?[A-Za-z][A-Za-z0-9-]*(?:[ \t]+[A-Za-z_:][A-Za-z0-9_.:-]*(?:[ \t]*=[ \t]*(?:[^ "'=<>`]+|'[^']*'|"[^"]*"))?)*[ \t]*\/?>/g;
 
 function rawHtmlBlockStart(line) {
   if (/^[ \t]*<\?/.test(line)) return { end: '?>', interruptsParagraph: true };
@@ -681,12 +682,81 @@ function parseListMarker(line) {
   };
 }
 
+function linkDestinationEnd(text, opening) {
+  let depth = 0;
+  let backslashes = 0;
+  for (let index = opening; index < text.length; index += 1) {
+    if (text[index] === '\\') {
+      backslashes += 1;
+      continue;
+    }
+    const escaped = backslashes % 2 === 1;
+    backslashes = 0;
+    if (escaped) continue;
+    if (text[index] === '(') depth += 1;
+    else if (text[index] === ')') {
+      depth -= 1;
+      if (depth === 0) return index;
+    }
+  }
+  return -1;
+}
+
+function visibleInlineText(markdown) {
+  const text = String(markdown)
+    .replace(INLINE_HTML_TAG, ' ')
+    .replace(/&(?:#[0-9]+|#x[0-9a-f]+|[a-z][a-z0-9]+);/gi, ' ');
+  let visible = '';
+  let bracketDepth = 0;
+  let backslashes = 0;
+
+  for (let index = 0; index < text.length; index += 1) {
+    if (text[index] === '\\') {
+      backslashes += 1;
+      visible += text[index];
+      continue;
+    }
+    const escaped = backslashes % 2 === 1;
+    backslashes = 0;
+
+    if (!escaped && text[index] === '`') {
+      let runEnd = index + 1;
+      while (text[runEnd] === '`') runEnd += 1;
+      const delimiter = text.slice(index, runEnd);
+      const close = text.indexOf(delimiter, runEnd);
+      if (close !== -1) {
+        visible += text.slice(runEnd, close);
+        index = close + delimiter.length - 1;
+        continue;
+      }
+    }
+
+    if (!escaped && text[index] === '[') bracketDepth += 1;
+    if (!escaped && text[index] === ']' && bracketDepth > 0) {
+      bracketDepth -= 1;
+      if (bracketDepth === 0 && text[index + 1] === '(') {
+        const close = linkDestinationEnd(text, index + 1);
+        if (close !== -1) {
+          visible += text[index];
+          index = close;
+          continue;
+        }
+      }
+    }
+    visible += text[index];
+  }
+  return visible;
+}
+
 function brochureItem(body) {
   const labelled = body.trim().match(/^(\*\*|__)(?!\s)(.+?[.!?])\1\s+(.+)$/);
   if (!labelled) return false;
 
   const headlineWords = wordsIn(labelled[2]).length;
-  const explanationWords = wordsIn(labelled[3]).length;
+  // Attribute values, entity names and link destinations are source syntax,
+  // not the explanatory copy a reader sees. Counting them lets four invisible
+  // tokens turn this standalone signal on by themselves.
+  const explanationWords = wordsIn(visibleInlineText(labelled[3])).length;
   return brochureHeadline(labelled[2]) && headlineWords >= 3 && headlineWords <= 12
     && explanationWords >= 4;
 }

@@ -140,6 +140,22 @@ check('indented code does not supply explanatory copy for a headline',
     + '- **Where the records really live.**\n\n'
     + '      The list names each system and the fields it owns.'
   )), false);
+for (const [name, invisibleCopy] of [
+  ['inline HTML attributes', '<span class="one two three four"></span>'],
+  ['HTML entities', '&nbsp; &nbsp; &nbsp; &nbsp;'],
+  ['link destinations', '[x](https://example.test "one two three four")'],
+]) {
+  check(`${name} do not supply explanatory words`,
+    Boolean(brochureFinding(
+      `- **Numbers that guide the next call.** ${invisibleCopy}\n`
+      + `- **Where the records really live.** ${invisibleCopy}`
+    )), false);
+}
+check('visible text inside inline HTML still counts as explanatory copy',
+  Boolean(brochureFinding(
+    '- **Numbers that guide the next call.** <span>Twelve measures appear beside each source.</span>\n'
+    + '- **Where the records really live.** <span>The list names each system and owner.</span>'
+  )), true);
 check('fenced examples are shown rather than used',
   Boolean(brochureFinding(`\`\`\`markdown\n${BROCHURE_BULLETS}\n\`\`\``)), false);
 for (const tag of ['pre', 'script', 'style', 'textarea', 'div']) {
