@@ -88,6 +88,16 @@ check('imperative instructions containing that are not brochure framing',
     '- **Verify that the cache is warm.** Run the health check before deployment.\n'
     + '- **Check that the response is valid.** Compare every field with the schema.'
   )), false);
+check('other that-complement instructions stay clean without a verb denylist',
+  Boolean(brochureFinding(
+    '- **Remember that the cache must be warm.** Run the health check before deployment.\n'
+    + '- **Document that the response is valid.** Record the result in the release notes.'
+  )), false);
+check('where-qualified instructions are not place-shaped headlines',
+  Boolean(brochureFinding(
+    '- **Where possible, reuse the existing client.** This keeps authentication behavior consistent.\n'
+    + '- **Where necessary, add a narrow adapter.** This limits changes to the integration boundary.'
+  )), false);
 check('plain keyword bullets stay clean',
   Boolean(brochureFinding('- Data: source and owner\n- Systems: ledger and warehouse\n- Reporting: weekly totals')), false);
 check('a bold sentence with no explanation after it stays clean',
@@ -101,10 +111,23 @@ check('explanatory copy may continue on an indented line',
     '- **Numbers that guide the next call.**\n  Twelve measures appear beside their source and update time.\n'
     + '- **Where the records really live.**\n  The list names each system and the fields it owns.'
   )), true);
+check('a lazy unindented continuation stays inside its Markdown list item',
+  Boolean(brochureFinding(
+    '- **Numbers that guide the next call.** Twelve measures appear beside their source\n'
+    + 'and update time.\n'
+    + '- **Where the records really live.** The list names each system and the fields\n'
+    + 'it owns.'
+  )), true);
 check('underscore-delimited bold headlines are equivalent Markdown',
   Boolean(brochureFinding(BROCHURE_BULLETS.replaceAll('**', '__'))), true);
 check('four-space-indented code is not read as a top-level list',
   Boolean(brochureFinding(BROCHURE_BULLETS.replaceAll('- ', '    - '))), false);
+const separateBrochureRuns = `${BROCHURE_BULLETS}\n\nA paragraph separates the lists.\n\n`
+  + '- **Systems that track every source.** The table names each system and responsible team.\n'
+  + '- **Where the updates enter the warehouse.** The diagram marks every scheduled ingestion path.\n'
+  + '- **Reports that show each update.** The index names each dashboard and business owner.';
+check('the occurrence count includes every repeated run',
+  brochureFinding(separateBrochureRuns).count, 5);
 
 console.log('\ncode');
 check('shipped placeholder is a hard finding',

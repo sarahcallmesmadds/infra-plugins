@@ -267,39 +267,55 @@ function withoutFencedBlocks(text) {
 }
 
 function brochureHeadline(headline) {
-  if (/^where\b/i.test(headline)) return true;
-  if (!/\bthat\b/i.test(headline)) return false;
+  // "Where the records live" names a place as a marketing headline. "Where
+  // possible, reuse the client" is an instruction. Requiring a determiner is
+  // narrow on purpose: a soft signal that stands alone should prefer silence
+  // over guessing at the grammar.
+  if (/^where\s+(?:the|this|these|those|your|our|their)\b/i.test(headline)) return true;
 
-  // A relative clause can read like a brochure claim; an imperative with a
-  // `that` complement is an ordinary instruction. This deliberately favours
-  // silence when the grammar is ambiguous because this is a soft style signal.
-  return !/^(?:add|ask|avoid|build|call|check|choose|confirm|create|do|ensure|exclude|include|keep|let|make|name|pick|put|read|remove|return|review|run|say|set|test|update|use|verify|write)\b/i
-    .test(headline);
+  // In the reported pattern, `that` is the subject of a relative clause:
+  // "Numbers that guide" and "Reporting that drives". In an instruction such
+  // as "Remember that the cache is warm", a new subject follows `that`. Keeping
+  // only the direct-relative form avoids an open-ended list of imperative verbs.
+  const relational = headline.match(/^(.+?)\s+that\s+(\S+)/i);
+  if (!relational || /^(?:a|an|each|every|he|it|no|our|she|that|the|their|these|they|this|those|we|you|your)\b/i
+    .test(relational[2])) return false;
+
+  const subject = relational[1].trim();
+  const words = wordsIn(subject);
+  if (words.length > 1) return /^(?:a|an|the|this|these|those|your|our|their)\b/i.test(subject);
+  return /(?:s|ing|tion|ment|ness|ity|ance|ence)$/i.test(subject)
+    || /^(?:content|copy|data|software|support|work)$/i.test(subject);
 }
 
 function brochureBulletHeadlines(text) {
   const visible = withoutFencedBlocks(text);
   let run = 0;
-  let longest = 0;
+  let repeated = 0;
+
+  const finishRun = () => {
+    if (run >= 2) repeated += run;
+    run = 0;
+  };
 
   for (let index = 0; index < visible.length; index += 1) {
     const bullet = visible[index].match(/^ {0,3}[-*+]\s+(.+)$/);
     if (!bullet) {
-      if (visible[index].trim()) run = 0;
+      if (visible[index].trim()) finishRun();
       continue;
     }
 
     let item = bullet[1];
     while (index + 1 < visible.length) {
-      const continuation = visible[index + 1].match(/^ {2,}(\S.*)$/);
-      if (!continuation || /^[-*+]\s+/.test(continuation[1])) break;
-      item += ` ${continuation[1]}`;
+      const next = visible[index + 1];
+      if (!next.trim() || /^ {0,3}[-*+]\s+/.test(next)) break;
+      item += ` ${next.trim()}`;
       index += 1;
     }
 
     const labelled = item.match(/^(\*\*|__)(.+?[.!?])\1\s+(.+)$/);
     if (!labelled) {
-      run = 0;
+      finishRun();
       continue;
     }
 
@@ -308,13 +324,13 @@ function brochureBulletHeadlines(text) {
     if (brochureHeadline(labelled[2]) && headlineWords >= 3 && headlineWords <= 12
         && explanationWords >= 4) {
       run += 1;
-      if (run > longest) longest = run;
     } else {
-      run = 0;
+      finishRun();
     }
   }
 
-  return longest >= 2 ? { count: longest, standalone: true } : null;
+  finishRun();
+  return repeated >= 2 ? { count: repeated, standalone: true } : null;
 }
 
 // Human paragraphs breathe unevenly. Near-identical sentence lengths across a
