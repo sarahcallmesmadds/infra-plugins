@@ -250,6 +250,23 @@ function boundaryIndent(line) {
   return line.startsWith(MARKDOWN_BOUNDARY) ? Number(line.slice(1)) : null;
 }
 
+function htmlCommentStart(line) {
+  for (let index = 0; index <= line.length - 4; index += 1) {
+    if (line[index] === '`') {
+      let end = index + 1;
+      while (line[end] === '`') end += 1;
+      const delimiter = line.slice(index, end);
+      const close = line.indexOf(delimiter, end);
+      if (close !== -1) {
+        index = close + delimiter.length - 1;
+        continue;
+      }
+    }
+    if (line.startsWith('<!--', index)) return index;
+  }
+  return -1;
+}
+
 function withoutFencedBlocks(text) {
   let fence = null;
   let htmlComment = false;
@@ -273,10 +290,11 @@ function withoutFencedBlocks(text) {
       visible.push('');
       continue;
     }
-    const comment = line.match(/^(\s*)<!--/);
-    if (comment) {
-      htmlComment = !line.slice(comment[0].length).includes('-->');
-      visible.push(boundaryLine(comment[1].length));
+    const comment = htmlCommentStart(line);
+    if (comment !== -1) {
+      htmlComment = !line.slice(comment + 4).includes('-->');
+      const before = line.slice(0, comment);
+      visible.push(before.trim() ? before : boundaryLine(leadingSpaces(line)));
       continue;
     }
 
@@ -300,6 +318,41 @@ function startsMarkdownBlock(line) {
 
 function leadingSpaces(line) {
   return (line.match(/^ */) || [''])[0].length;
+}
+
+function columnsAfter(start, whitespace) {
+  let column = start;
+  for (const character of whitespace) {
+    column = character === '\t' ? column + (4 - (column % 4)) : column + 1;
+  }
+  return column;
+}
+
+function parseListMarker(line) {
+  const marker = line.match(/^( {0,3})([-*+]|\d{1,9}[.)])([ \t]+)(\S.*)$/);
+  if (!marker) return null;
+
+  const afterMarker = marker[1].length + marker[2].length;
+  const contentIndent = columnsAfter(afterMarker, marker[3]);
+  const padding = contentIndent - afterMarker;
+  if (padding < 1 || padding > 4) return null;
+
+  return {
+    type: /^[-*+]$/.test(marker[2]) ? 'unordered' : 'ordered',
+    indent: marker[1].length,
+    contentIndent,
+    body: marker[4],
+  };
+}
+
+function brochureItem(body) {
+  const labelled = body.match(/^(\*\*|__)(.+?[.!?])\1\s+(.+)$/);
+  if (!labelled) return false;
+
+  const headlineWords = wordsIn(labelled[2]).length;
+  const explanationWords = wordsIn(labelled[3]).length;
+  return brochureHeadline(labelled[2]) && headlineWords >= 3 && headlineWords <= 12
+    && explanationWords >= 4;
 }
 
 function brochureHeadline(headline) {
@@ -326,72 +379,99 @@ function brochureHeadline(headline) {
 
 function brochureBulletHeadlines(text) {
   const visible = withoutFencedBlocks(text);
-  let run = 0;
   let repeated = 0;
+  let nextItemId = 1;
+  const stack = [];
+  const runs = new Map();
 
-  const finishRun = () => {
+  const contextKey = (parent) => `${parent ? parent.id : 'root'}:unordered`;
+  const finishContext = (key) => {
+    const run = runs.get(key) || 0;
     if (run >= 2) repeated += run;
-    run = 0;
+    runs.delete(key);
+  };
+  const finishItem = (item) => {
+    const key = contextKey(item.parent);
+    if (item.type === 'unordered' && brochureItem(item.body)) {
+      runs.set(key, (runs.get(key) || 0) + 1);
+    } else {
+      finishContext(key);
+    }
+    // Every child list is complete when its parent item closes.
+    finishContext(contextKey(item));
+  };
+  const popItem = () => finishItem(stack.pop());
+  const popToIndent = (indent) => {
+    while (stack.length && indent < stack[stack.length - 1].contentIndent) popItem();
+  };
+  const interruptRoot = () => {
+    while (stack.length) popItem();
+    finishContext(contextKey(null));
   };
 
-  for (let index = 0; index < visible.length; index += 1) {
-    const bullet = visible[index].match(/^( {0,3})[-*+]( {1,4})(\S.*)$/);
-    if (!bullet) {
-      if (visible[index].trim()) finishRun();
+  for (const line of visible) {
+    if (!line.trim()) {
+      if (stack.length) {
+        stack[stack.length - 1].paragraphOpen = false;
+        stack[stack.length - 1].afterBlank = true;
+      }
       continue;
     }
 
-    // Markdown decides nesting from the content column, not by comparing the
-    // optional zero-to-three spaces before sibling markers. Content indented to
-    // this column belongs to the current item; a block or marker to its left is
-    // a sibling or an intervening top-level block.
-    const contentIndent = bullet[1].length + 1 + bullet[2].length;
-    let item = bullet[3];
-    while (index + 1 < visible.length) {
-      const next = visible[index + 1];
-      if (!next.trim()) break;
-
-      const boundary = boundaryIndent(next);
-      if (boundary !== null) {
-        if (boundary < contentIndent) break;
-        index += 1;
-        continue;
-      }
-
-      const nextBullet = next.match(/^( {0,3})[-*+]( {1,4})(\S.*)$/);
-      if (nextBullet) {
-        if (nextBullet[1].length < contentIndent) break;
-        index += 1;
-        continue;
-      }
-
-      if (startsMarkdownBlock(next)) {
-        if (leadingSpaces(next) < contentIndent) break;
-        index += 1;
-        continue;
-      }
-
-      item += ` ${next.trim()}`;
-      index += 1;
-    }
-
-    const labelled = item.match(/^(\*\*|__)(.+?[.!?])\1\s+(.+)$/);
-    if (!labelled) {
-      finishRun();
+    const marker = parseListMarker(line);
+    if (marker) {
+      popToIndent(marker.indent);
+      const parent = stack.length ? stack[stack.length - 1] : null;
+      if (parent) parent.paragraphOpen = false;
+      if (marker.type === 'ordered') finishContext(contextKey(parent));
+      stack.push({
+        ...marker,
+        id: nextItemId,
+        parent,
+        paragraphOpen: true,
+        afterBlank: false,
+      });
+      nextItemId += 1;
       continue;
     }
 
-    const headlineWords = wordsIn(labelled[2]).length;
-    const explanationWords = wordsIn(labelled[3]).length;
-    if (brochureHeadline(labelled[2]) && headlineWords >= 3 && headlineWords <= 12
-        && explanationWords >= 4) {
-      run += 1;
-    } else {
-      finishRun();
+    const boundary = boundaryIndent(line);
+    const block = boundary !== null || startsMarkdownBlock(line);
+    if (block) {
+      const indent = boundary !== null ? boundary : leadingSpaces(line);
+      popToIndent(indent);
+      if (stack.length) {
+        stack[stack.length - 1].paragraphOpen = false;
+        stack[stack.length - 1].afterBlank = false;
+      } else {
+        finishContext(contextKey(null));
+      }
+      continue;
     }
+
+    if (stack.length) {
+      let item = stack[stack.length - 1];
+      if (item.paragraphOpen && !item.afterBlank) {
+        item.body += ` ${line.trim()}`;
+        continue;
+      }
+
+      const indent = leadingSpaces(line);
+      popToIndent(indent);
+      if (stack.length) {
+        item = stack[stack.length - 1];
+        item.body += ` ${line.trim()}`;
+        item.paragraphOpen = true;
+        item.afterBlank = false;
+        continue;
+      }
+    }
+
+    interruptRoot();
   }
 
-  finishRun();
+  while (stack.length) popItem();
+  for (const key of [...runs.keys()]) finishContext(key);
   return repeated >= 2 ? { count: repeated, standalone: true } : null;
 }
 

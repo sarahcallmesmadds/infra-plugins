@@ -153,6 +153,25 @@ check('optional root-list indentation does not create false nesting',
   Boolean(brochureFinding(
     ` ${BROCHURE_BULLETS.split('\n')[0]}\n${BROCHURE_BULLETS.split('\n')[1]}`
   )), true);
+check('consecutive child bullets are checked within their own list',
+  Boolean(brochureFinding(
+    `- Parent item\n  ${BROCHURE_BULLETS.split('\n')[0]}\n  ${BROCHURE_BULLETS.split('\n')[1]}`
+  )), true);
+check('a child bullet and a root bullet do not share a run',
+  Boolean(brochureFinding(
+    `1. Parent item\n   ${BROCHURE_BULLETS.split('\n')[0]}\n${BROCHURE_BULLETS.split('\n')[1]}`
+  )), false);
+check('a paragraph after a nested block ends the list item',
+  Boolean(brochureFinding(
+    `${BROCHURE_BULLETS.split('\n')[0]}\n  ## Supporting note\nOutside the list.\n`
+    + BROCHURE_BULLETS.split('\n')[1]
+  )), false);
+check('tab padding after a bullet marker is valid Markdown',
+  Boolean(brochureFinding(BROCHURE_BULLETS.replaceAll('- ', '-\t'))), true);
+check('a multiline HTML comment beginning after prose hides its example bullets',
+  Boolean(brochureFinding(`Intro <!--\n${BROCHURE_BULLETS}\n-->`)), false);
+check('a multiline HTML comment beginning after a marker hides its example bullets',
+  Boolean(brochureFinding(`- <!--\n${BROCHURE_BULLETS}\n-->`)), false);
 check('underscore-delimited bold headlines are equivalent Markdown',
   Boolean(brochureFinding(BROCHURE_BULLETS.replaceAll('**', '__'))), true);
 check('four-space-indented code is not read as a top-level list',
