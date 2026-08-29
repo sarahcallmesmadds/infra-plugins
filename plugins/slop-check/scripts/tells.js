@@ -829,7 +829,7 @@ function brochureItem(body) {
   const trimmed = body.trim();
   const punctuationInside = trimmed.match(/^(\*\*|__)(?!\s)(.+?[.!?])\1\s+(.+)$/);
   const punctuationOutside = punctuationInside ? null
-    : trimmed.match(/^(\*\*|__)(?!\s)(.+?\S)\1([.!?])\s+(.+)$/);
+    : trimmed.match(/^(\*\*|__)(?!\s)(.+?[^\s.!?])\1([.!?])\s+(.+)$/);
   if (!punctuationInside && !punctuationOutside) return false;
 
   const headline = punctuationInside

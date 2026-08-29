@@ -65,11 +65,18 @@ const brochureResult = checkAll(BROCHURE_BULLETS);
 check('two repeated headline-and-explanation bullets are reported',
   Boolean(brochureFinding(BROCHURE_BULLETS)), true);
 for (const delimiter of ['**', '__']) {
-  const punctuationOutside = BROCHURE_BULLETS
-    .replaceAll('**', delimiter)
-    .replaceAll(`.${delimiter}`, `${delimiter}.`);
-  check(`punctuation after ${delimiter} still ends the bold headline`,
-    Boolean(brochureFinding(punctuationOutside)), true);
+  for (const punctuation of ['.', '!', '?']) {
+    const punctuationOutside = BROCHURE_BULLETS
+      .replaceAll('**', delimiter)
+      .replaceAll(`.${delimiter}`, `${delimiter}${punctuation}`);
+    check(`${punctuation} after ${delimiter} still ends the bold headline`,
+      Boolean(brochureFinding(punctuationOutside)), true);
+  }
+}
+for (const punctuation of ['.', '!', '?']) {
+  const doubled = BROCHURE_BULLETS.replaceAll('.**', `.**${punctuation}`);
+  check(`an outside ${punctuation} cannot double-punctuate a bold headline`,
+    Boolean(brochureFinding(doubled)), false);
 }
 check('Windows line endings preserve list-item bodies',
   Boolean(brochureFinding(BROCHURE_BULLETS.replaceAll('\n', '\r\n'))), true);
