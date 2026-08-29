@@ -281,7 +281,9 @@ function backtickRunsWithLaterClose(lines) {
   return withLaterClose;
 }
 
-function stripInlineComments(line, lineIndex, codeDelimiter, withLaterClose) {
+function stripInlineComments(
+  line, lineIndex, codeDelimiter, withLaterClose, commentClosesLater
+) {
   let linkDepth = 0;
   let bracketDepth = 0;
   let backslashes = 0;
@@ -364,6 +366,15 @@ function stripInlineComments(line, lineIndex, codeDelimiter, withLaterClose) {
 
     if (!escaped && linkDepth === 0 && line.startsWith('<!--', index)) {
       const close = line.indexOf('-->', index + 4);
+      // An opener after visible prose is inline syntax only when it eventually
+      // closes. Otherwise it is literal draft text and must not hide every
+      // block that follows. A whole-line opener is a Markdown HTML block and
+      // intentionally remains open through the end of the document.
+      if (close === -1 && hasVisiblePrefix && !commentClosesLater) {
+        hasVisiblePrefix = true;
+        index += 3;
+        continue;
+      }
       foundComment = true;
       if (!hasVisiblePrefix) {
         return {
@@ -401,7 +412,8 @@ const HTML_BLOCK_UNTIL_CLOSE = /^(?:script|pre|style|textarea)$/i;
 const HTML_BLOCK_UNTIL_BLANK = /^(?:address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|pre|script|search|section|style|summary|table|tbody|td|textarea|tfoot|th|thead|title|tr|track|ul)$/i;
 const COMPLETE_OPEN_TAG = /^[ \t]*<[A-Za-z][A-Za-z0-9-]*(?:[ \t]+[A-Za-z_:][A-Za-z0-9_.:-]*(?:[ \t]*=[ \t]*(?:[^ "'=<>`]+|'[^']*'|"[^"]*"))?)*[ \t]*\/?>[ \t]*$/;
 const COMPLETE_CLOSING_TAG = /^[ \t]*<\/[A-Za-z][A-Za-z0-9-]*[ \t]*>[ \t]*$/;
-const INLINE_HTML_TAG = /<\/?[A-Za-z][A-Za-z0-9-]*(?:[ \t]+[A-Za-z_:][A-Za-z0-9_.:-]*(?:[ \t]*=[ \t]*(?:[^ "'=<>`]+|'[^']*'|"[^"]*"))?)*[ \t]*\/?>/g;
+const INLINE_HTML_TAG = /^<\/?[A-Za-z][A-Za-z0-9-]*(?:[ \t]+[A-Za-z_:][A-Za-z0-9_.:-]*(?:[ \t]*=[ \t]*(?:[^ "'=<>`]+|'[^']*'|"[^"]*"))?)*[ \t]*\/?>/;
+const INLINE_HTML_ENTITY = /^&(?:#[0-9]+|#x[0-9a-f]+|[a-z][a-z0-9]+);/i;
 
 function rawHtmlBlockStart(line) {
   if (/^[ \t]*<\?/.test(line)) return { end: '?>', interruptsParagraph: true };
@@ -443,6 +455,12 @@ function withoutFencedBlocks(text) {
   const listContexts = [];
   const lines = String(text || '').split(/\r?\n/);
   const withLaterClose = backtickRunsWithLaterClose(lines);
+  const commentCloseOnLaterLine = new Set();
+  let hasLaterCommentClose = false;
+  for (let lineIndex = lines.length - 1; lineIndex >= 0; lineIndex -= 1) {
+    if (hasLaterCommentClose) commentCloseOnLaterLine.add(lineIndex);
+    if (lines[lineIndex].includes('-->')) hasLaterCommentClose = true;
+  }
 
   const listParentAt = (indent) => {
     let index = listContexts.length - 1;
@@ -616,7 +634,10 @@ function withoutFencedBlocks(text) {
     // Treat a comment-looking string there as code; a comment at the same raw
     // indentation can still be Markdown when it is nested inside a list.
     const commentScan = lineIndent - commentParent.base <= 3
-      ? stripInlineComments(blockLine, lineIndex, inlineCodeDelimiter, withLaterClose)
+      ? stripInlineComments(
+        blockLine, lineIndex, inlineCodeDelimiter, withLaterClose,
+        commentCloseOnLaterLine.has(lineIndex)
+      )
       : {
         remaining: blockLine, foundComment: false, blockCommentLine: false,
         opensComment: false, codeDelimiter: inlineCodeDelimiter,
@@ -726,9 +747,7 @@ function referenceLabelEnd(text, opening) {
 }
 
 function visibleInlineText(markdown) {
-  const text = String(markdown)
-    .replace(INLINE_HTML_TAG, ' ')
-    .replace(/&(?:#[0-9]+|#x[0-9a-f]+|[a-z][a-z0-9]+);/gi, ' ');
+  const text = String(markdown);
   let visible = '';
   let bracketDepth = 0;
   let backslashes = 0;
@@ -750,6 +769,26 @@ function visibleInlineText(markdown) {
       if (close !== -1) {
         visible += text.slice(runEnd, close);
         index = close + delimiter.length - 1;
+        continue;
+      }
+    }
+
+    // Code spans are handled above because tag- and entity-shaped source is
+    // visible when a reader sees it as code. Outside code, the tag itself,
+    // attribute values and entity name are Markdown source rather than words.
+    if (!escaped && text[index] === '<') {
+      const tag = text.slice(index).match(INLINE_HTML_TAG);
+      if (tag) {
+        visible += ' ';
+        index += tag[0].length - 1;
+        continue;
+      }
+    }
+    if (!escaped && text[index] === '&') {
+      const entity = text.slice(index).match(INLINE_HTML_ENTITY);
+      if (entity) {
+        visible += ' ';
+        index += entity[0].length - 1;
         continue;
       }
     }

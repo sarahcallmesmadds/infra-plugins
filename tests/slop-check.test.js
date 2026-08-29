@@ -169,6 +169,18 @@ check('visible text inside inline HTML still counts as explanatory copy',
     '- **Numbers that guide the next call.** <span>Twelve measures appear beside each source.</span>\n'
     + '- **Where the records really live.** <span>The list names each system and owner.</span>'
   )), true);
+for (const [name, first, second] of [
+  ['tag-shaped', '`<alpha>` `<beta>` `<gamma>` `<delta>`',
+    '`<one>` `<two>` `<three>` `<four>`'],
+  ['entity-shaped', '`&alpha;` `&beta;` `&gamma;` `&delta;`',
+    '`&one;` `&two;` `&three;` `&four;`'],
+]) {
+  check(`${name} inline-code tokens count as visible explanatory copy`,
+    Boolean(brochureFinding(
+      `- **Numbers that guide the next call.** ${first}\n`
+      + `- **Where the records really live.** ${second}`
+    )), true);
+}
 check('fenced examples are shown rather than used',
   Boolean(brochureFinding(`\`\`\`markdown\n${BROCHURE_BULLETS}\n\`\`\``)), false);
 for (const tag of ['pre', 'script', 'style', 'textarea', 'div']) {
@@ -318,6 +330,10 @@ check('list-shaped text after a multiline inline comment stays in its paragraph'
     `Intro <!--\n-->${BROCHURE_BULLETS.split('\n')[0]}\n`
     + BROCHURE_BULLETS.split('\n')[1]
   )), false);
+check('an unmatched inline comment opener does not hide later list items',
+  Boolean(brochureFinding(`Intro <!-- unmatched\n\n${BROCHURE_BULLETS}`)), true);
+check('an unmatched whole-line comment opener remains an HTML block',
+  Boolean(brochureFinding(`<!-- unmatched\n${BROCHURE_BULLETS}`)), false);
 check('a fenced block between bullets ends the consecutive run',
   Boolean(brochureFinding(
     `${BROCHURE_BULLETS.split('\n')[0]}\n\`\`\`text\nseparate items\n\`\`\`\n`
