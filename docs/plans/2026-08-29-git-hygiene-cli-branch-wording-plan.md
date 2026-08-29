@@ -61,12 +61,13 @@ comparison and does not offer the branch for deletion.
      distinguish "not proved safe" from "proved to hold unique work." This
      includes the distinction paragraph, sample output, and "What it will not
      do" section, rather than only the sample.
-   - All seven surfaces enforced by
-     `tests/plugin-description-drift.test.js` will move together: the Claude
-     manifest description; the Codex manifest description, short description,
-     and long description; the marketplace entry; the root README table row;
-     and the plugin README opening tagline. Each will describe the held set as
-     not proved safe to delete instead of necessarily holding unique work.
+   - The five discovery surfaces that currently make a unique-work claim will be
+     corrected: the Claude manifest description; the Codex manifest description
+     and long description; the marketplace entry; and the root README table row.
+     The Codex short description and plugin README opening tagline are already
+     neutral, but `tests/plugin-description-drift.test.js` requires them to move
+     deliberately with the other five. Their replacements will remain neutral
+     while aligning with the new not-proved-safe wording.
    - Historical release notes and internal comments that explain past behavior
      remain historical records unless they are also current instructions.
 4. In `tests/stale-branches.test.js`, add outcome-focused coverage that proves:
@@ -95,9 +96,11 @@ comparison and does not offer the branch for deletion.
    plugin-level description surfaces; the skill-specific contract is an
    adjacent eighth route, not a silent expansion of that general inventory.
    Extend `tests/plugin-description-drift.test.js` with a semantic contract for
-   the values it reads from all seven git-hygiene discovery surfaces, so moving
-   all seven together cannot pass while they retain or reintroduce the claim
-   that a kept branch necessarily holds unique work.
+   the current values it reads from all seven git-hygiene discovery surfaces.
+   The contract will reject a unique-work claim wherever it appears, without
+   implying that the already-neutral short description and plugin README
+   tagline previously made that claim, so moving all seven together cannot
+   reintroduce the overstatement.
 7. Release the behavior as `git-hygiene` 0.3.12:
    - add a dated entry to `plugins/git-hygiene/CHANGELOG.md`;
    - update both plugin manifests; and
