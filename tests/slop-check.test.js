@@ -192,6 +192,26 @@ check('a malformed reference definition does not hide visible image text',
     + '- **Where the records really live.** ![four other visible words][image]\n\n'
     + '[image]: not a valid destination'
   )), true);
+check('a definition-shaped paragraph continuation does not resolve images',
+  Boolean(brochureFinding(
+    '- **Numbers that guide the next call.** ![four explanatory words here][image]\n'
+    + '- **Where the records really live.** ![four other visible words][image]\n\n'
+    + 'Outside paragraph\n'
+    + '[image]: image.png'
+  )), true);
+check('a container-relative reference definition still resolves images',
+  Boolean(brochureFinding(
+    '- **Numbers that guide the next call.** ![four explanatory words here][image]\n'
+    + '- **Where the records really live.** ![four other visible words][image]\n\n'
+    + '    [image]: image.png'
+  )), false);
+check('a root indented-code line does not resolve images',
+  Boolean(brochureFinding(
+    '- **Numbers that guide the next call.** ![four explanatory words here][image]\n'
+    + '- **Where the records really live.** ![four other visible words][image]\n\n'
+    + '# Separate block\n\n'
+    + '    [image]: image.png'
+  )), true);
 check('resolved reference-link identifiers stay hidden',
   Boolean(brochureFinding(
     '- **Numbers that guide the next call.** [Read details][hidden words provide copy]\n'
@@ -349,13 +369,13 @@ check('a reference title on the next line stays hidden too',
     + '- **Where the records really live.**\n\n'
     + '  [other]: https://example.test\n    "hidden words provide explanation"'
   )), false);
-check('an outdented title-shaped paragraph separates list items',
+check('definition-shaped lazy continuation text stays inside its list item',
   Boolean(brochureFinding(
     '- **Numbers that guide the next call.** Twelve measures appear beside their source and update time.\n'
     + '  [source]: https://example.test\n'
     + '"A separate paragraph outside the list"\n'
     + '- **Where the records really live.** The list names each system and the fields it owns.'
-  )), false);
+  )), true);
 check('a reference destination and title may both continue below the label',
   Boolean(brochureFinding(
     '- **Numbers that guide the next call.**\n\n'

@@ -1100,6 +1100,7 @@ function brochureBulletHeadlines(text) {
   const visible = withoutFencedBlocks(text);
   let nextItemId = 1;
   let referenceContinuation = null;
+  let rootParagraphOpen = false;
   const stack = [];
   const runs = new Map();
   const segments = [];
@@ -1149,6 +1150,7 @@ function brochureBulletHeadlines(text) {
     const line = forcedParagraphContinuation ? filteredLine.slice(1) : filteredLine;
     if (!line.trim()) {
       referenceContinuation = null;
+      rootParagraphOpen = false;
       // The source line contains an inline-comment close, so it is not a blank
       // Markdown line even when no visible text follows the close.
       if (forcedParagraphContinuation) continue;
@@ -1198,6 +1200,7 @@ function brochureBulletHeadlines(text) {
       else while (stack.length - 1 > parentIndex) popItem();
     }
     if (marker) {
+      rootParagraphOpen = false;
       const parent = stack.length ? stack[stack.length - 1] : null;
       if (parent) parent.paragraphOpen = false;
       if (marker.type === 'ordered') finishContexts(parent);
@@ -1226,7 +1229,15 @@ function brochureBulletHeadlines(text) {
 
     const boundary = boundaryIndent(line);
     const indent = boundary !== null ? boundary : leadingSpaces(line);
-    const referenceDefinition = linkReferenceDefinition(line);
+    const itemParagraphOpen = stack.length
+      && stack[stack.length - 1].paragraphOpen
+      && !stack[stack.length - 1].afterBlank;
+    // A reference definition cannot interrupt a paragraph. Treating a
+    // definition-shaped continuation as hidden source resolves earlier images
+    // that CommonMark leaves literal and visible.
+    const referenceDefinition = !rootParagraphOpen && !itemParagraphOpen
+      ? linkReferenceDefinition(line)
+      : null;
     let block = !forcedParagraphContinuation
       && (boundary !== null || referenceDefinition
         || (!lazyOrderedMarker && startsMarkdownBlock(line)));
@@ -1252,6 +1263,7 @@ function brochureBulletHeadlines(text) {
         stack[stack.length - 1].paragraphOpen = false;
         stack[stack.length - 1].afterBlank = false;
       } else {
+        rootParagraphOpen = false;
         finishContexts(null);
       }
       continue;
@@ -1281,6 +1293,7 @@ function brochureBulletHeadlines(text) {
     }
 
     interruptRoot();
+    rootParagraphOpen = true;
   }
 
   while (stack.length) popItem();
