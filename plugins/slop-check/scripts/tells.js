@@ -435,15 +435,18 @@ function withoutFencedBlocks(text) {
   let afterBlank = false;
   let paragraphBase = null;
   const visible = [];
-  const listContentIndents = [];
+  const listContexts = [];
   const lines = String(text || '').split(/\r?\n/);
   const withLaterClose = backtickRunsWithLaterClose(lines);
 
   const listParentAt = (indent) => {
-    let index = listContentIndents.length - 1;
-    while (index >= 0 && indent < listContentIndents[index]) index -= 1;
-    return { index, base: index >= 0 ? listContentIndents[index] : 0 };
+    let index = listContexts.length - 1;
+    while (index >= 0 && indent < listContexts[index].contentIndent) index -= 1;
+    return { index, base: index >= 0 ? listContexts[index].contentIndent : 0 };
   };
+  const matchesActiveOrderedList = (marker) => marker.type === 'ordered'
+    && listContexts.some((context) => context.type === 'ordered'
+      && context.markerIndent === marker.indent && context.delimiter === marker.delimiter);
   const rememberVisibleLine = (line) => {
     if (!line.trim()) {
       afterBlank = true;
@@ -454,14 +457,19 @@ function withoutFencedBlocks(text) {
     const marker = parseListMarker(line);
     if (marker) {
       if (marker.type === 'ordered' && marker.start !== 1
-        && paragraphBase !== null && !afterBlank) {
+        && !matchesActiveOrderedList(marker) && paragraphBase !== null && !afterBlank) {
         afterBlank = false;
         return;
       }
       const parent = listParentAt(marker.indent);
       if (marker.indent - parent.base <= 3) {
-        listContentIndents.length = parent.index + 1;
-        listContentIndents.push(marker.contentIndent);
+        listContexts.length = parent.index + 1;
+        listContexts.push({
+          contentIndent: marker.contentIndent,
+          markerIndent: marker.indent,
+          type: marker.type,
+          delimiter: marker.delimiter,
+        });
         afterBlank = false;
         paragraphBase = marker.body ? marker.contentIndent : null;
         return;
@@ -472,7 +480,7 @@ function withoutFencedBlocks(text) {
     const parent = listParentAt(indent);
     const markdownBlock = startsMarkdownBlock(line) && indent - parent.base <= 3;
     if (afterBlank || markdownBlock) {
-      listContentIndents.length = parent.index + 1;
+      listContexts.length = parent.index + 1;
     }
     paragraphBase = markdownBlock ? null : listParentAt(indent).base;
     afterBlank = false;
@@ -535,7 +543,8 @@ function withoutFencedBlocks(text) {
     // hidden list item still separates its visible siblings.
     const parsedMarker = parseListMarker(line);
     const lazyOrderedMarker = parsedMarker && parsedMarker.type === 'ordered'
-      && parsedMarker.start !== 1 && paragraphBase !== null && !afterBlank;
+      && parsedMarker.start !== 1 && !matchesActiveOrderedList(parsedMarker)
+      && paragraphBase !== null && !afterBlank;
     const marker = lazyOrderedMarker ? null : parsedMarker;
     let blockLine = line;
     let blockBoundaryIndent = null;
@@ -574,7 +583,7 @@ function withoutFencedBlocks(text) {
     if (inlineCodeDelimiter === null && validFenceInfo
       && openIndent - fenceParent.base <= 3) {
       fence = { char: open[2][0], length: open[2].length, base: fenceParent.base };
-      listContentIndents.length = fenceParent.index + 1;
+      listContexts.length = fenceParent.index + 1;
       hideBlockStart(blockBoundaryIndent ?? openIndent);
       afterBlank = false;
       paragraphBase = null;
@@ -589,7 +598,7 @@ function withoutFencedBlocks(text) {
       const closesHere = (htmlOpen.end && blockLine.includes(htmlOpen.end))
         || (htmlOpen.tag && new RegExp(`</${htmlOpen.tag}[ \\t]*>`, 'i').test(blockLine));
       rawHtml = closesHere ? null : htmlOpen;
-      listContentIndents.length = htmlParent.index + 1;
+      listContexts.length = htmlParent.index + 1;
       hideBlockStart(blockBoundaryIndent ?? lineIndent);
       afterBlank = false;
       paragraphBase = null;
@@ -611,7 +620,7 @@ function withoutFencedBlocks(text) {
       htmlComment = commentScan.blockCommentLine ? 'block' : 'inline';
     }
     if (commentScan.blockCommentLine) {
-      listContentIndents.length = commentParent.index + 1;
+      listContexts.length = commentParent.index + 1;
       hideBlockStart(blockBoundaryIndent ?? lineIndent);
       afterBlank = false;
       paragraphBase = null;
@@ -620,7 +629,7 @@ function withoutFencedBlocks(text) {
     if (commentScan.foundComment) {
       const remaining = commentScan.remaining;
       if (remaining.trim()) rememberVisibleLine(remaining);
-      else listContentIndents.length = commentParent.index + 1;
+      else listContexts.length = commentParent.index + 1;
       visible.push(remaining.trim() ? remaining : boundaryLine(blockBoundaryIndent ?? lineIndent));
       afterBlank = false;
       continue;
@@ -664,6 +673,7 @@ function parseListMarker(line) {
   return {
     type: /^[-*+]$/.test(marker[2]) ? 'unordered' : 'ordered',
     bullet: marker[2],
+    delimiter: /^[-*+]$/.test(marker[2]) ? marker[2] : marker[2].slice(-1),
     start: /^[-*+]$/.test(marker[2]) ? null : parseInt(marker[2], 10),
     indent,
     contentIndent: padding <= 4 ? contentIndent : afterMarker + 1,
@@ -765,8 +775,11 @@ function brochureBulletHeadlines(text) {
     }
 
     let marker = parseListMarker(line);
+    const activeOrderedSibling = marker && marker.type === 'ordered'
+      && stack.some((item) => item.type === 'ordered' && item.indent === marker.indent
+        && item.delimiter === marker.delimiter);
     const lazyOrderedMarker = marker && marker.type === 'ordered' && marker.start !== 1
-      && stack.length && stack[stack.length - 1].paragraphOpen
+      && !activeOrderedSibling && stack.length && stack[stack.length - 1].paragraphOpen
       && !stack[stack.length - 1].afterBlank;
     if (lazyOrderedMarker) marker = null;
     if (marker) {

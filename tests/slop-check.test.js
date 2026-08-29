@@ -327,6 +327,13 @@ check('a child bullet and a root bullet do not share a run',
   Boolean(brochureFinding(
     `1. Parent item\n   ${BROCHURE_BULLETS.split('\n')[0]}\n${BROCHURE_BULLETS.split('\n')[1]}`
   )), false);
+for (const delimiter of ['.', ')']) {
+  check(`child bullets under separate ordered ${delimiter} items do not share a run`,
+    Boolean(brochureFinding(
+      `1${delimiter} First parent\n   ${BROCHURE_BULLETS.split('\n')[0]}\n`
+      + `2${delimiter} Second parent\n   ${BROCHURE_BULLETS.split('\n')[1]}`
+    )), false);
+}
 check('a paragraph after a nested block ends the list item',
   Boolean(brochureFinding(
     `${BROCHURE_BULLETS.split('\n')[0]}\n  ## Supporting note\nOutside the list.\n`
