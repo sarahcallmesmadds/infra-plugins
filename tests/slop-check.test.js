@@ -83,12 +83,28 @@ check('a list of bold instructions is not brochure framing',
     + '- **Pick one primary match.** Let the reader ask for another option.\n'
     + '- **Categorization is a heuristic.** Put uncertain cases in the final group.'
   )), false);
+check('imperative instructions containing that are not brochure framing',
+  Boolean(brochureFinding(
+    '- **Verify that the cache is warm.** Run the health check before deployment.\n'
+    + '- **Check that the response is valid.** Compare every field with the schema.'
+  )), false);
 check('plain keyword bullets stay clean',
   Boolean(brochureFinding('- Data: source and owner\n- Systems: ledger and warehouse\n- Reporting: weekly totals')), false);
 check('a bold sentence with no explanation after it stays clean',
   Boolean(brochureFinding('- **The export completes overnight.**\n'.repeat(2))), false);
 check('fenced examples are shown rather than used',
   Boolean(brochureFinding(`\`\`\`markdown\n${BROCHURE_BULLETS}\n\`\`\``)), false);
+check('a shorter fence inside a four-backtick example does not expose its bullets',
+  Boolean(brochureFinding(`\`\`\`\`markdown\n\`\`\`\n${BROCHURE_BULLETS}\n\`\`\`\``)), false);
+check('explanatory copy may continue on an indented line',
+  Boolean(brochureFinding(
+    '- **Numbers that guide the next call.**\n  Twelve measures appear beside their source and update time.\n'
+    + '- **Where the records really live.**\n  The list names each system and the fields it owns.'
+  )), true);
+check('underscore-delimited bold headlines are equivalent Markdown',
+  Boolean(brochureFinding(BROCHURE_BULLETS.replaceAll('**', '__'))), true);
+check('four-space-indented code is not read as a top-level list',
+  Boolean(brochureFinding(BROCHURE_BULLETS.replaceAll('- ', '    - '))), false);
 
 console.log('\ncode');
 check('shipped placeholder is a hard finding',

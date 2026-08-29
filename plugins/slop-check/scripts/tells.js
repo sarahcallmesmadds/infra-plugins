@@ -238,34 +238,74 @@ function ruleOfThree(prose) {
 // sentence-ending punctuation below, and a headline with no copy after it is
 // outside too. The "that" or "where" cue is load-bearing as well. Without it,
 // three ordinary bold instructions in find-skill/SKILL.md matched this detector
-// exactly. The relational headline is what separates the brochure framing from
-// a rule whose bold sentence simply says what to do.
-function brochureBulletHeadlines(text) {
-  const visible = String(text || '')
-    .replace(/```[\s\S]*?```|~~~[\s\S]*?~~~/g, '');
-  let run = 0;
-  let longest = 0;
+// exactly. Imperative leads are excluded for the same reason: "Verify that..."
+// is an instruction, not a marketing headline.
+function withoutFencedBlocks(text) {
+  let fence = null;
+  const visible = [];
 
-  for (const line of visible.split('\n')) {
-    const bullet = line.match(/^\s*[-*+]\s+(.+)$/);
-    if (!bullet) {
-      // Blank lines and indented continuation lines remain inside one Markdown
-      // list item. A new paragraph or heading ends the list and therefore the
-      // repeated run.
-      if (line.trim() && !/^\s{2,}\S/.test(line)) run = 0;
+  for (const line of String(text || '').split('\n')) {
+    if (fence) {
+      const close = line.match(/^ {0,3}(`+|~+)\s*$/);
+      if (close && close[1][0] === fence.char && close[1].length >= fence.length) {
+        fence = null;
+      }
+      visible.push('');
       continue;
     }
 
-    const labelled = bullet[1].match(/^\*\*([^*\n]+[.!?])\*\*\s+(.+)$/);
+    const open = line.match(/^ {0,3}(`{3,}|~{3,})(?:[^`~].*)?$/);
+    if (open) {
+      fence = { char: open[1][0], length: open[1].length };
+      visible.push('');
+    } else {
+      visible.push(line);
+    }
+  }
+
+  return visible;
+}
+
+function brochureHeadline(headline) {
+  if (/^where\b/i.test(headline)) return true;
+  if (!/\bthat\b/i.test(headline)) return false;
+
+  // A relative clause can read like a brochure claim; an imperative with a
+  // `that` complement is an ordinary instruction. This deliberately favours
+  // silence when the grammar is ambiguous because this is a soft style signal.
+  return !/^(?:add|ask|avoid|build|call|check|choose|confirm|create|do|ensure|exclude|include|keep|let|make|name|pick|put|read|remove|return|review|run|say|set|test|update|use|verify|write)\b/i
+    .test(headline);
+}
+
+function brochureBulletHeadlines(text) {
+  const visible = withoutFencedBlocks(text);
+  let run = 0;
+  let longest = 0;
+
+  for (let index = 0; index < visible.length; index += 1) {
+    const bullet = visible[index].match(/^ {0,3}[-*+]\s+(.+)$/);
+    if (!bullet) {
+      if (visible[index].trim()) run = 0;
+      continue;
+    }
+
+    let item = bullet[1];
+    while (index + 1 < visible.length) {
+      const continuation = visible[index + 1].match(/^ {2,}(\S.*)$/);
+      if (!continuation || /^[-*+]\s+/.test(continuation[1])) break;
+      item += ` ${continuation[1]}`;
+      index += 1;
+    }
+
+    const labelled = item.match(/^(\*\*|__)(.+?[.!?])\1\s+(.+)$/);
     if (!labelled) {
       run = 0;
       continue;
     }
 
-    const headlineWords = wordsIn(labelled[1]).length;
-    const explanationWords = wordsIn(labelled[2]).length;
-    const relationalHeadline = /\b(?:that|where)\b/i.test(labelled[1]);
-    if (relationalHeadline && headlineWords >= 3 && headlineWords <= 12
+    const headlineWords = wordsIn(labelled[2]).length;
+    const explanationWords = wordsIn(labelled[3]).length;
+    if (brochureHeadline(labelled[2]) && headlineWords >= 3 && headlineWords <= 12
         && explanationWords >= 4) {
       run += 1;
       if (run > longest) longest = run;
