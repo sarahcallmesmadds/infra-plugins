@@ -28,9 +28,12 @@ The safety decision is correct. The explanation overstates what was checked.
 Current discovery copy also promises that the plugin "never deletes unmerged
 commits." That is too broad: a branch whose commits remain unreachable but whose
 content is independently proved present by non-ancestry evidence can require
-`git branch -D`, and a user can separately and explicitly request force-deletion
-of a held branch. The implementation will correct that promise without changing
-either approval path.
+`git branch -D`. Separately, the skill currently offers force-deletion for a
+branch under `Keep`, even though the mandatory `--verify` check returns exit 3
+for that branch and the deletion flow says exit 3 always stops deletion. This
+plan resolves that contradiction conservatively: a held branch stays outside
+the cleanup deletion flow. It does not add a new discard path or bypass the
+fresh verification gate.
 
 ## Observable result
 
@@ -46,8 +49,9 @@ The branch remains in `Keep`. The command does not attempt a new content
 comparison and does not offer the branch for deletion.
 
 Discovery copy will describe the conservative default, independent merge
-evidence, and explicit force-delete approval accurately instead of making an
-exceptionless no-unmerged-commit deletion promise.
+evidence, and the verified `needs-force` path accurately instead of making an
+exceptionless no-unmerged-commit deletion promise. It will not promise a second
+force-delete path for a branch that remains under `Keep`.
 
 ## Implementation
 
@@ -67,16 +71,28 @@ exceptionless no-unmerged-commit deletion promise.
      safe. Without independent merge evidence it keeps the branch, but it does
      not prove the work exists nowhere else. Its frontmatter description,
      evidence explanation, sweep summary, force-delete warning, closing
-     summary, and "never does" contract will use the same distinction and will
-     describe the two explicit `-D` paths instead of promising that unreachable
-     commits are never deleted.
+     summary, and "never does" contract will use the same distinction. Step 4
+     will no longer state that deleting a held branch certainly loses work or
+     offer an unsupported `force delete` follow-up. A held-branch request stops
+     inside this workflow with the evidence the tool actually has and options to
+     inspect or preserve the branch. Step 5 will continue to require exit 0 from
+     `--verify` immediately before every deletion; exit 3 never reaches `-d`,
+     `-D`, or the remote delete command.
+   - Rewrite the `needs-force` explanation in
+     `plugins/git-hygiene/scripts/cli.js` and the matching skill section. It will
+     say that lowercase `-d` checks reachability while the branch was cleared by
+     separate non-ancestry content evidence. It will not claim that the history
+     operation was a squash merge. Keep printing lowercase `-d`; only after its
+     expected refusal and one explicit group approval may the skill use `-D`,
+     with another exit-0 `--verify` immediately before each deletion.
    - The current behavior explanation in `plugins/git-hygiene/README.md` will
      distinguish "not proved safe" from "proved to hold unique work." This
      includes the distinction paragraph, sample output, and "What it will not
      do" section, rather than only the sample. Its deletion guarantees will
-     also distinguish the normal safe-delete flow from the separately approved
-     force-delete path and the independently verified non-ancestry path, without
-     claiming which history operation produced the equivalent content.
+     also distinguish the normal safe-delete flow from the independently
+     verified `needs-force` path, without claiming which history operation
+     produced the equivalent content or advertising force deletion of a held
+     branch.
    - The five discovery surfaces that currently make a unique-work claim will be
      corrected: the Claude manifest description; the Codex manifest description
      and long description; the marketplace entry; and the root README table row.
@@ -88,6 +104,16 @@ exceptionless no-unmerged-commit deletion promise.
      also drop "Never deletes unmerged commits." The Codex long description
      will not imply that every deletion uses lowercase `-d`; all replacements
      will describe approval and evidence without an exceptionless promise.
+   - Correct `plugins/git-hygiene/hooks/session-notice.js`, which currently calls
+     every counted branch "fully merged" and every omitted held branch a holder
+     of "unmerged commits." Describe the counted set as proved safe to delete and
+     the omitted set as not proved safe, without changing which branches the hook
+     counts or when it runs.
+   - Make comment-only corrections in `scripts/classify.js`, `scripts/collect.js`,
+     and `scripts/cli.js` wherever current implementation guidance equates a held
+     result with certain work loss, treats unknown evidence as actual unmerged
+     work, or calls non-ancestry content evidence proof of a squash merge. These
+     edits explain the existing conservative contract and do not change code.
    - Historical release notes and internal comments that explain past behavior
      remain historical records unless they are also current instructions.
 4. In `tests/stale-branches.test.js`, add outcome-focused coverage that proves:
@@ -100,13 +126,21 @@ exceptionless no-unmerged-commit deletion promise.
    - a branch carrying both an open-pull-request reason and an unreachable
      commit reason renders both clearly;
    - pre-delete refusal uses the same precise reason;
+   - an exit-3 verification never produces or authorizes a delete command;
+   - the local `needs-force` explanation describes separate content evidence and
+     does not assert that a squash merge occurred;
    - the README sample is coupled to both the Safe and Keep headings;
    - current README prose cannot reintroduce the "only copy," "destroys them,"
      or unconditional "loses work" claims for a held branch;
    - current README prose cannot promise that unreachable or unmerged commits
-     are never deleted while documented, separately approved `-D` paths exist;
-     and
-   - the skill frontmatter and body cannot reintroduce either overstatement.
+     are never deleted while the verified non-ancestry path can require `-D`;
+   - the session notice cannot label held branches as necessarily holding
+     unmerged work;
+   - the skill frontmatter and body cannot reintroduce either overstatement or
+     direct a branch still under `Keep` into `-D` or remote deletion; and
+   - the verified `needs-force` instructions retain the exact sequence: exit-0
+     recheck, lowercase `-d`, explicit group approval after an expected refusal,
+     another exit-0 recheck, then `-D` one branch at a time.
    Preserve comments that quote historical failure output, including the
    squash-merge failure record near the existing output tests; those comments
    describe what an older release literally printed rather than the current
@@ -132,9 +166,11 @@ exceptionless no-unmerged-commit deletion promise.
 
 ## Boundaries
 
-- Do not change `classify.js` or any `safeToDelete` decision.
+- Do not change executable logic in `classify.js` or any `safeToDelete` decision;
+  comment-only corrections to its current evidence contract are in scope.
 - Do not add a patch-equivalence or tree-equivalence algorithm.
-- Do not change local or remote branch collection.
+- Do not change local or remote branch collection; comment-only corrections in
+  `collect.js` are in scope.
 - Do not change deletion commands or the approval gate.
 - Do not change JSON fields or persisted data.
 - Do not update another plugin in the same pull request.
@@ -155,13 +191,17 @@ exceptionless no-unmerged-commit deletion promise.
 8. Exercise the CLI with a saved input containing:
    - one branch held only because its commits are unreachable;
    - one branch with both an open pull request and unreachable commits; and
+   - one local branch cleared by non-ancestry content evidence even though its
+     commits remain unreachable, exercising `needs-force`; and
    - one branch already proved safe.
 9. Confirm text classification is unchanged and `--json` is byte-for-byte
    unchanged for the same saved input.
-10. Sweep current user-facing git-hygiene copy for claims that a positive
-   reachability count proves work exists nowhere else or would certainly be
-   lost on deletion, and for exceptionless promises that unreachable or
-   unmerged commits are never deleted despite the documented `-D` paths.
+10. Sweep current user-facing git-hygiene copy and current implementation-guidance
+    comments for claims that a positive reachability count proves work exists
+    nowhere else or would certainly be lost on deletion; claims that unknown
+    evidence is actual unmerged work; squash-only explanations of non-ancestry
+    evidence; exceptionless promises that unreachable commits are never deleted;
+    and any instruction that bypasses exit-0 verification for a held branch.
 11. Verify an actual marketplace-installed 0.3.12 copy before merge. This
     repository has no separate build artifact: the marketplace copies
     `plugins/git-hygiene` into its cache. Use a private disposable
