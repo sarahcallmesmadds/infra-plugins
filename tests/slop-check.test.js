@@ -131,6 +131,16 @@ for (const tag of ['pre', 'script', 'style', 'textarea', 'div']) {
   check(`bullets inside a raw ${tag} block are not read as Markdown`,
     Boolean(brochureFinding(`<${tag}>\n${BROCHURE_BULLETS}\n</${tag}>`)), false);
 }
+for (const [name, open, close] of [
+  ['processing instruction', '<?sample', '?>'],
+  ['declaration', '<!SAMPLE', '>'],
+  ['CDATA section', '<![CDATA[', ']]>'],
+  ['closing block tag', '</div>', ''],
+  ['custom element', '<custom-box>', '</custom-box>'],
+]) {
+  check(`bullets inside a raw HTML ${name} are not read as Markdown`,
+    Boolean(brochureFinding(`${open}\n${BROCHURE_BULLETS}\n${close}`)), false);
+}
 check('bullets inside a list-relative raw HTML block are not read as Markdown',
   Boolean(brochureFinding(
     `- Parent item\n    <pre>\n    ${BROCHURE_BULLETS.split('\n')[0]}\n`
@@ -193,6 +203,10 @@ check('an inline comment marker in code does not hide later prose',
   Boolean(brochureFinding(`The marker \`<!--\` starts a comment.\n\n${BROCHURE_BULLETS}`)), true);
 check('a comment marker in a multiline code span does not hide later prose',
   Boolean(brochureFinding(`The marker \`<!--\nliteral code\` stays code.\n\n${BROCHURE_BULLETS}`)), true);
+check('unmatched backticks cannot span across a fenced block',
+  Boolean(brochureFinding(
+    `A stray \`\n\n\`\`\`markdown\n${BROCHURE_BULLETS}\n\`\`\`\n\nAnother stray \``
+  )), false);
 check('a block nested inside the first item keeps its sibling run together',
   Boolean(brochureFinding(
     `${BROCHURE_BULLETS.split('\n')[0]}\n  > Supporting note\n${BROCHURE_BULLETS.split('\n')[1]}`
@@ -250,6 +264,10 @@ check('a fenced block at the parent depth separates child-list items',
     `- Parent item\n    ${BROCHURE_BULLETS.split('\n')[0]}\n    \`\`\`text\n`
     + `    separate items\n    \`\`\`\n    ${BROCHURE_BULLETS.split('\n')[1]}`
   )), false);
+check('an outdented fence does not close a list-relative fenced block',
+  Boolean(brochureFinding(
+    `- Parent item\n  \`\`\`markdown\n  nested code\n\`\`\`\n${BROCHURE_BULLETS}\n\`\`\``
+  )), false);
 check('an HTML comment at the parent depth separates child-list items',
   Boolean(brochureFinding(
     `- Parent item\n    ${BROCHURE_BULLETS.split('\n')[0]}\n    <!-- separate items -->\n`
@@ -278,6 +296,10 @@ check('a list-relative fenced block hides nested example bullets',
 check('comment-only list items still separate surrounding brochure bullets',
   Boolean(brochureFinding(
     `${BROCHURE_BULLETS.split('\n')[0]}\n- <!-- separator -->\n${BROCHURE_BULLETS.split('\n')[1]}`
+  )), false);
+check('trailing text on a block-comment line is not parsed as Markdown',
+  Boolean(brochureFinding(
+    `<!-- hidden --> ${BROCHURE_BULLETS.split('\n')[0]}\n${BROCHURE_BULLETS.split('\n')[1]}`
   )), false);
 check('comment-looking text in indented code does not hide later prose',
   Boolean(brochureFinding(`    const marker = '<!--';\n\n${BROCHURE_BULLETS}`)), true);

@@ -254,6 +254,10 @@ function backtickRunsWithLaterClose(lines) {
   const seenLengths = new Set();
   const withLaterClose = new Set();
   for (let lineIndex = lines.length - 1; lineIndex >= 0; lineIndex -= 1) {
+    if (!lines[lineIndex].trim() || startsInlineBlock(lines[lineIndex])) {
+      seenLengths.clear();
+      continue;
+    }
     const runs = [...lines[lineIndex].matchAll(/`+/g)];
     for (let runIndex = runs.length - 1; runIndex >= 0; runIndex -= 1) {
       const run = runs[runIndex];
@@ -299,19 +303,40 @@ function htmlCommentStart(line, lineIndex, codeDelimiter, withLaterClose) {
 }
 
 const HTML_BLOCK_UNTIL_CLOSE = /^(?:script|pre|style|textarea)$/i;
-const HTML_BLOCK_UNTIL_BLANK = /^(?:address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul)$/i;
+const HTML_BLOCK_UNTIL_BLANK = /^(?:address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|pre|script|search|section|style|summary|table|tbody|td|textarea|tfoot|th|thead|title|tr|track|ul)$/i;
 
 function rawHtmlBlockStart(line) {
-  const tag = line.match(/^[ \t]*<([A-Za-z][A-Za-z0-9-]*)(?:[ \t]|>|\/?>|$)/);
-  if (!tag) return null;
-  if (HTML_BLOCK_UNTIL_CLOSE.test(tag[1])) return { tag: tag[1].toLowerCase(), untilBlank: false };
-  if (HTML_BLOCK_UNTIL_BLANK.test(tag[1])) return { tag: tag[1].toLowerCase(), untilBlank: true };
+  if (/^[ \t]*<\?/.test(line)) return { end: '?>', interruptsParagraph: true };
+  if (/^[ \t]*<!\[CDATA\[/.test(line)) return { end: ']]>', interruptsParagraph: true };
+  if (/^[ \t]*<![A-Z]/.test(line)) return { end: '>', interruptsParagraph: true };
+
+  const tag = line.match(/^[ \t]*<(\/)?([A-Za-z][A-Za-z0-9-]*)(?:[ \t]|>|\/?>|$)/);
+  if (tag && !tag[1] && HTML_BLOCK_UNTIL_CLOSE.test(tag[2])) {
+    return { tag: tag[2].toLowerCase(), interruptsParagraph: true };
+  }
+  if (tag && HTML_BLOCK_UNTIL_BLANK.test(tag[2])) {
+    return { untilBlank: true, interruptsParagraph: true };
+  }
+
+  // A complete open or closing tag for a custom element is CommonMark's
+  // seventh HTML-block form. Unlike the forms above it cannot interrupt a
+  // paragraph, so callers use the flag when deciding inline-code boundaries.
+  if (/^[ \t]*<\/?[A-Za-z][A-Za-z0-9-]*(?:[ \t][^<>]*)?\/?>[ \t]*$/.test(line)) {
+    return { untilBlank: true, interruptsParagraph: false };
+  }
   return null;
+}
+
+function startsInlineBlock(line) {
+  if (/^[ \t]*(?:`{3,}|~{3,})/.test(line)) return true;
+  if (/^[ \t]*<!--/.test(line)) return true;
+  const html = rawHtmlBlockStart(line);
+  return Boolean(html && html.interruptsParagraph);
 }
 
 function withoutFencedBlocks(text) {
   let fence = null;
-  let htmlComment = false;
+  let htmlComment = null;
   let rawHtml = null;
   let inlineCodeDelimiter = null;
   let afterBlank = false;
@@ -355,7 +380,7 @@ function withoutFencedBlocks(text) {
     if (fence) {
       const close = line.match(/^([ \t]*)(`+|~+)\s*$/);
       const closeIndent = close ? leadingSpaces(line) : 0;
-      if (close && closeIndent <= fence.base + 3
+      if (close && closeIndent >= fence.base && closeIndent <= fence.base + 3
         && close[2][0] === fence.char && close[2].length >= fence.length) {
         fence = null;
       }
@@ -367,7 +392,9 @@ function withoutFencedBlocks(text) {
       if (rawHtml.untilBlank && !line.trim()) {
         rawHtml = null;
         afterBlank = true;
-      } else if (!rawHtml.untilBlank
+      } else if (rawHtml.end && line.includes(rawHtml.end)) {
+        rawHtml = null;
+      } else if (rawHtml.tag
         && new RegExp(`</${rawHtml.tag}(?:[ \\t]|>)`, 'i').test(line)) {
         rawHtml = null;
       }
@@ -384,12 +411,18 @@ function withoutFencedBlocks(text) {
         visible.push('');
         continue;
       }
+      const commentKind = htmlComment;
       htmlComment = false;
-      const after = line.slice(close + 3);
-      visible.push(after);
-      rememberVisibleLine(after);
+      if (commentKind === 'block') {
+        visible.push('');
+      } else {
+        const after = ' '.repeat(close + 3) + line.slice(close + 3);
+        visible.push(after);
+        rememberVisibleLine(after);
+      }
       continue;
     }
+    if (!line.trim() || startsInlineBlock(line)) inlineCodeDelimiter = null;
     const lineIndent = leadingSpaces(line);
     const open = line.match(/^([ \t]*)(`{3,}|~{3,})(.*)$/);
     const openIndent = open ? leadingSpaces(line) : 0;
@@ -415,9 +448,18 @@ function withoutFencedBlocks(text) {
     // indentation can still be Markdown when it is nested inside a list.
     if (comment !== -1 && lineIndent - commentParent.base <= 3) {
       const close = line.indexOf('-->', comment + 4);
-      htmlComment = close === -1;
       const before = line.slice(0, comment);
-      const after = close === -1 ? '' : line.slice(close + 3);
+      const blockComment = !before.trim();
+      htmlComment = close === -1 ? (blockComment ? 'block' : 'inline') : null;
+      if (blockComment) {
+        listContentIndents.length = commentParent.index + 1;
+        visible.push(boundaryLine(lineIndent));
+        afterBlank = false;
+        continue;
+      }
+      const after = close === -1
+        ? ''
+        : ' '.repeat(close + 3 - comment) + line.slice(close + 3);
       const remaining = before + after;
       if (remaining.trim()) rememberVisibleLine(remaining);
       else listContentIndents.length = commentParent.index + 1;
@@ -429,8 +471,8 @@ function withoutFencedBlocks(text) {
     const htmlOpen = inlineCodeDelimiter === null ? rawHtmlBlockStart(line) : null;
     const htmlParent = listParentAt(lineIndent);
     if (htmlOpen && lineIndent - htmlParent.base <= 3) {
-      const closesHere = !htmlOpen.untilBlank
-        && new RegExp(`</${htmlOpen.tag}(?:[ \\t]|>)`, 'i').test(line);
+      const closesHere = (htmlOpen.end && line.includes(htmlOpen.end))
+        || (htmlOpen.tag && new RegExp(`</${htmlOpen.tag}(?:[ \\t]|>)`, 'i').test(line));
       rawHtml = closesHere ? null : htmlOpen;
       listContentIndents.length = htmlParent.index + 1;
       visible.push(boundaryLine(lineIndent));
