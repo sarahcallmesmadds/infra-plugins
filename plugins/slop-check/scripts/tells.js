@@ -254,43 +254,46 @@ function backtickRunsWithLaterClose(lines) {
   const seenLengths = new Set();
   const withLaterClose = new Set();
   for (let lineIndex = lines.length - 1; lineIndex >= 0; lineIndex -= 1) {
-    if (!lines[lineIndex].trim() || startsInlineBlock(lines[lineIndex])
-      || startsMarkdownBlock(lines[lineIndex])) {
+    const line = lines[lineIndex];
+    if (!line.trim()) {
       seenLengths.clear();
       continue;
     }
-    const runs = [...lines[lineIndex].matchAll(/`+/g)];
+    const blockStart = startsInlineBlock(line) || startsMarkdownBlock(line);
+    const listStart = Boolean(parseListMarker(line));
+    // Most block starts cannot share an inline-code span with the line after
+    // them. A list item can: its paragraph may continue on the following line.
+    // In either case, inspect the current line before clearing again so paired
+    // backticks on a list-marker line are not mistaken for literal link syntax.
+    if (blockStart && !listStart) seenLengths.clear();
+    const runs = [...line.matchAll(/`+/g)];
     for (let runIndex = runs.length - 1; runIndex >= 0; runIndex -= 1) {
       const run = runs[runIndex];
       if (seenLengths.has(run[0].length)) withLaterClose.add(`${lineIndex}:${run.index}`);
       seenLengths.add(run[0].length);
     }
+    if (blockStart) seenLengths.clear();
   }
   return withLaterClose;
 }
 
-function insideLinkDestination(line, endIndex) {
-  let depth = 0;
-  for (let index = 0; index < endIndex; index += 1) {
-    if (line[index] === '\\') {
-      index += 1;
-      continue;
-    }
-    if (depth === 0) {
-      if (line[index] === ']' && line[index + 1] === '(') {
-        depth = 1;
-        index += 1;
-      }
-      continue;
-    }
-    if (line[index] === '(') depth += 1;
-    else if (line[index] === ')') depth -= 1;
-  }
-  return depth > 0;
-}
+function stripInlineComments(line, lineIndex, codeDelimiter, withLaterClose) {
+  let linkDepth = 0;
+  let backslashes = 0;
+  let cursor = 0;
+  let foundComment = false;
+  let hasVisiblePrefix = false;
+  const pieces = [];
 
-function htmlCommentStart(line, lineIndex, codeDelimiter, withLaterClose, startIndex = 0) {
-  for (let index = startIndex; index < line.length; index += 1) {
+  for (let index = 0; index < line.length; index += 1) {
+    if (line[index] === '\\') {
+      backslashes += 1;
+      hasVisiblePrefix = true;
+      continue;
+    }
+    const escaped = backslashes % 2 === 1;
+    backslashes = 0;
+
     if (line[index] === '`') {
       let end = index + 1;
       while (line[end] === '`') end += 1;
@@ -298,31 +301,73 @@ function htmlCommentStart(line, lineIndex, codeDelimiter, withLaterClose, startI
       if (codeDelimiter === length) {
         codeDelimiter = null;
       } else if (codeDelimiter === null) {
-        let escapes = 0;
-        for (let before = index - 1; before >= 0 && line[before] === '\\'; before -= 1) escapes += 1;
-        if (escapes % 2 === 0 && withLaterClose.has(`${lineIndex}:${index}`)) {
+        if (!escaped && withLaterClose.has(`${lineIndex}:${index}`)) {
           codeDelimiter = length;
         }
       }
       // Whether this run opened code, closed it, or is unmatched literal text,
       // inspect it once. Advancing one backtick at a time made a long unmatched
       // run quadratic even though it cannot contain a comment opener.
+      hasVisiblePrefix = true;
       index = end - 1;
       continue;
     }
-    if (codeDelimiter === null && line.startsWith('<!--', index)) {
-      let escapes = 0;
-      for (let before = index - 1; before >= 0 && line[before] === '\\'; before -= 1) escapes += 1;
-      if (escapes % 2 === 1) continue;
-      if (insideLinkDestination(line, index)) continue;
-      return { index, codeDelimiter };
+
+    if (codeDelimiter !== null) {
+      if (!/\s/.test(line[index])) hasVisiblePrefix = true;
+      continue;
     }
+
+    if (!escaped && linkDepth === 0 && line[index] === ']' && line[index + 1] === '(') {
+      linkDepth = 1;
+      hasVisiblePrefix = true;
+      index += 1;
+      continue;
+    }
+    if (!escaped && linkDepth > 0) {
+      if (line[index] === '(') linkDepth += 1;
+      else if (line[index] === ')') linkDepth -= 1;
+    }
+
+    if (!escaped && linkDepth === 0 && line.startsWith('<!--', index)) {
+      const close = line.indexOf('-->', index + 4);
+      foundComment = true;
+      if (!hasVisiblePrefix) {
+        return {
+          remaining: '', foundComment, blockCommentLine: true, opensComment: close === -1,
+          codeDelimiter,
+        };
+      }
+      pieces.push(line.slice(cursor, index));
+      if (close === -1) {
+        return {
+          remaining: pieces.join(''), foundComment, blockCommentLine: false,
+          opensComment: true, codeDelimiter,
+        };
+      }
+      pieces.push(' '.repeat(close + 3 - index));
+      cursor = close + 3;
+      index = close + 2;
+      continue;
+    }
+
+    if (!/\s/.test(line[index])) hasVisiblePrefix = true;
   }
-  return { index: -1, codeDelimiter };
+
+  if (foundComment) pieces.push(line.slice(cursor));
+  return {
+    remaining: foundComment ? pieces.join('') : line,
+    foundComment,
+    blockCommentLine: false,
+    opensComment: false,
+    codeDelimiter,
+  };
 }
 
 const HTML_BLOCK_UNTIL_CLOSE = /^(?:script|pre|style|textarea)$/i;
 const HTML_BLOCK_UNTIL_BLANK = /^(?:address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|pre|script|search|section|style|summary|table|tbody|td|textarea|tfoot|th|thead|title|tr|track|ul)$/i;
+const COMPLETE_OPEN_TAG = /^[ \t]*<[A-Za-z][A-Za-z0-9-]*(?:[ \t]+[A-Za-z_:][A-Za-z0-9_.:-]*(?:[ \t]*=[ \t]*(?:[^ "'=<>`]+|'[^']*'|"[^"]*"))?)*[ \t]*\/?>[ \t]*$/;
+const COMPLETE_CLOSING_TAG = /^[ \t]*<\/[A-Za-z][A-Za-z0-9-]*[ \t]*>[ \t]*$/;
 
 function rawHtmlBlockStart(line) {
   if (/^[ \t]*<\?/.test(line)) return { end: '?>', interruptsParagraph: true };
@@ -340,7 +385,7 @@ function rawHtmlBlockStart(line) {
   // A complete open or closing tag for a custom element is CommonMark's
   // seventh HTML-block form. Unlike the forms above it cannot interrupt a
   // paragraph, so callers use the flag when deciding inline-code boundaries.
-  if (/^[ \t]*<\/?[A-Za-z][A-Za-z0-9-]*(?:[ \t][^<>]*)?\/?>[ \t]*$/.test(line)) {
+  if (COMPLETE_OPEN_TAG.test(line) || COMPLETE_CLOSING_TAG.test(line)) {
     return { untilBlank: true, interruptsParagraph: false };
   }
   return null;
@@ -518,42 +563,25 @@ function withoutFencedBlocks(text) {
     // Four columns beyond the containing list item make an indented code block.
     // Treat a comment-looking string there as code; a comment at the same raw
     // indentation can still be Markdown when it is nested inside a list.
-    let remaining = blockLine;
-    let scanStart = 0;
-    let foundComment = false;
-    let blockCommentLine = false;
-    let commentScan = htmlCommentStart(
-      remaining, lineIndex, inlineCodeDelimiter, withLaterClose, scanStart
-    );
+    const commentScan = lineIndent - commentParent.base <= 3
+      ? stripInlineComments(blockLine, lineIndex, inlineCodeDelimiter, withLaterClose)
+      : {
+        remaining: blockLine, foundComment: false, blockCommentLine: false,
+        opensComment: false, codeDelimiter: inlineCodeDelimiter,
+      };
     inlineCodeDelimiter = commentScan.codeDelimiter;
-    while (commentScan.index !== -1 && lineIndent - commentParent.base <= 3) {
-      foundComment = true;
-      const comment = commentScan.index;
-      const close = remaining.indexOf('-->', comment + 4);
-      const before = remaining.slice(0, comment);
-      const blockComment = !before.trim();
-      htmlComment = close === -1 ? (blockComment ? 'block' : 'inline') : null;
-      if (blockComment) {
-        listContentIndents.length = commentParent.index + 1;
-        hideBlockStart(blockBoundaryIndent ?? lineIndent);
-        afterBlank = false;
-        paragraphBase = null;
-        blockCommentLine = true;
-        break;
-      }
-      if (close === -1) {
-        remaining = before;
-        break;
-      }
-      remaining = before + ' '.repeat(close + 3 - comment) + remaining.slice(close + 3);
-      scanStart = close + 3;
-      commentScan = htmlCommentStart(
-        remaining, lineIndex, inlineCodeDelimiter, withLaterClose, scanStart
-      );
-      inlineCodeDelimiter = commentScan.codeDelimiter;
+    if (commentScan.opensComment) {
+      htmlComment = commentScan.blockCommentLine ? 'block' : 'inline';
     }
-    if (blockCommentLine) continue;
-    if (foundComment) {
+    if (commentScan.blockCommentLine) {
+      listContentIndents.length = commentParent.index + 1;
+      hideBlockStart(blockBoundaryIndent ?? lineIndent);
+      afterBlank = false;
+      paragraphBase = null;
+      continue;
+    }
+    if (commentScan.foundComment) {
+      const remaining = commentScan.remaining;
       if (remaining.trim()) rememberVisibleLine(remaining);
       else listContentIndents.length = commentParent.index + 1;
       visible.push(remaining.trim() ? remaining : boundaryLine(blockBoundaryIndent ?? lineIndent));

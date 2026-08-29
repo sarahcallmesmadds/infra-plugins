@@ -150,6 +150,10 @@ for (const [name, open, close] of [
   check(`bullets inside a raw HTML ${name} are not read as Markdown`,
     Boolean(brochureFinding(`${open}\n${BROCHURE_BULLETS}\n${close}`)), false);
 }
+check('quoted angle brackets are valid inside custom-element attributes',
+  Boolean(brochureFinding(
+    `<custom-box title="1 > 0">\n${BROCHURE_BULLETS}\n</custom-box>`
+  )), false);
 check('bullets inside a list-relative raw HTML block are not read as Markdown',
   Boolean(brochureFinding(
     `- Parent item\n    <pre>\n    ${BROCHURE_BULLETS.split('\n')[0]}\n`
@@ -244,6 +248,17 @@ check('every same-line HTML comment is removed before item matching',
     '- **Numbers that guide the next call.** <!-- one --> <!-- hidden words provide all copy -->\n'
     + '- **Where the records really live.** <!-- one --> <!-- hidden words provide all copy -->'
   )), false);
+const commentHeavyItem = '<!-- note --> '.repeat(8000);
+const commentHeavyStarted = process.hrtime.bigint();
+const commentHeavyFinding = brochureFinding(
+  `- **Numbers that guide the next call.** ${commentHeavyItem}\n`
+  + '- **Where the records really live.** The list names each system and the fields it owns.'
+);
+const commentHeavyMilliseconds = Number(process.hrtime.bigint() - commentHeavyStarted) / 1e6;
+check('comment-heavy lines do not turn hidden copy into explanatory prose',
+  Boolean(commentHeavyFinding), false);
+check('comment-heavy lines are scanned without repeated whole-line work',
+  commentHeavyMilliseconds < 2500, true);
 check('comments are scanned again after a multiline inline comment closes',
   Boolean(brochureFinding(
     '- **Numbers that guide the next call.** <!--\n'
@@ -368,6 +383,11 @@ check('a comment-like link destination does not hide later prose',
   Boolean(brochureFinding(`[marker](<!--)\n\n${BROCHURE_BULLETS}`)), true);
 check('nested parentheses stay balanced in a comment-like link destination',
   Boolean(brochureFinding(`[marker](x(y)<!--)\n\n${BROCHURE_BULLETS}`)), true);
+check('link-like delimiters inside inline code do not expose comment text',
+  Boolean(brochureFinding(
+    '- **Numbers that guide the next call.** `](` <!-- hidden words provide all explanatory copy -->\n'
+    + '- **Where the records really live.** `](` <!-- hidden words provide all explanatory copy -->'
+  )), false);
 for (const [name, block] of [
   ['heading', '# separate section'],
   ['blockquote', '> separate quotation'],
