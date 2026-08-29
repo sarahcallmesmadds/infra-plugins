@@ -834,6 +834,8 @@ function visibleInlineText(markdown) {
   let visible = '';
   let bracketDepth = 0;
   let backslashes = 0;
+  let imageLabel = false;
+  let imageVisibleStart = 0;
 
   for (let index = 0; index < text.length; index += 1) {
     if (text[index] === '\\') {
@@ -876,13 +878,24 @@ function visibleInlineText(markdown) {
       }
     }
 
-    if (!escaped && text[index] === '[') bracketDepth += 1;
+    if (!escaped && text[index] === '[') {
+      if (bracketDepth === 0) {
+        let bangBackslashes = 0;
+        for (let cursor = index - 2; cursor >= 0 && text[cursor] === '\\'; cursor -= 1) {
+          bangBackslashes += 1;
+        }
+        imageLabel = text[index - 1] === '!' && bangBackslashes % 2 === 0;
+        imageVisibleStart = imageLabel ? Math.max(0, visible.length - 1) : visible.length;
+      }
+      bracketDepth += 1;
+    }
     if (!escaped && text[index] === ']' && bracketDepth > 0) {
       bracketDepth -= 1;
       if (bracketDepth === 0 && text[index + 1] === '(') {
         const close = linkDestinationEnd(text, index + 1);
         if (close !== -1) {
-          visible += text[index];
+          visible = imageLabel ? `${visible.slice(0, imageVisibleStart)} ` : visible + text[index];
+          imageLabel = false;
           index = close;
           continue;
         }
@@ -890,11 +903,13 @@ function visibleInlineText(markdown) {
       if (bracketDepth === 0 && text[index + 1] === '[') {
         const close = referenceLabelEnd(text, index + 1);
         if (close !== -1) {
-          visible += text[index];
+          visible = imageLabel ? `${visible.slice(0, imageVisibleStart)} ` : visible + text[index];
+          imageLabel = false;
           index = close;
           continue;
         }
       }
+      if (bracketDepth === 0) imageLabel = false;
     }
     visible += text[index];
   }

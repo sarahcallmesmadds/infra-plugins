@@ -164,6 +164,8 @@ for (const [name, invisibleCopy] of [
   ['inline HTML attributes', '<span class="one two three four"></span>'],
   ['HTML entities', '&nbsp; &nbsp; &nbsp; &nbsp;'],
   ['link destinations', '[x](https://example.test "one two three four")'],
+  ['image alt text', '![hidden words provide explanatory copy](x.png)'],
+  ['reference image alt text', '![hidden words provide explanatory copy][image]'],
   ['reference-link identifiers', '[Read details][hidden words provide copy]'],
 ]) {
   check(`${name} do not supply explanatory words`,
