@@ -186,6 +186,11 @@ for (const quote of ['"', "'"]) {
       + `- **Where the records really live.** ${hiddenTitle}`
     )), false);
 }
+check('parentheses in an angle-bracket link destination stay hidden',
+  Boolean(brochureFinding(
+    '- **Numbers that guide the next call.** [x](<https://example.test/(> "one two three four")\n'
+    + '- **Where the records really live.** [x](<https://example.test/(> "one two three four")'
+  )), false);
 check('visible text inside inline HTML still counts as explanatory copy',
   Boolean(brochureFinding(
     '- **Numbers that guide the next call.** <span>Twelve measures appear beside each source.</span>\n'

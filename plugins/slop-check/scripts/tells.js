@@ -727,6 +727,8 @@ function linkDestinationEnd(text, opening) {
   let depth = 0;
   let backslashes = 0;
   let titleQuote = null;
+  let destinationStarted = false;
+  let angleDestination = false;
   for (let index = opening; index < text.length; index += 1) {
     if (text[index] === '\\') {
       backslashes += 1;
@@ -734,7 +736,16 @@ function linkDestinationEnd(text, opening) {
     }
     const escaped = backslashes % 2 === 1;
     backslashes = 0;
-    if (escaped) continue;
+    if (escaped) {
+      if (index > opening && titleQuote === null && !angleDestination) {
+        destinationStarted = true;
+      }
+      continue;
+    }
+    if (index === opening) {
+      depth = 1;
+      continue;
+    }
     if (titleQuote !== null) {
       if (text[index] === titleQuote) titleQuote = null;
       continue;
@@ -744,6 +755,17 @@ function linkDestinationEnd(text, opening) {
       titleQuote = text[index];
       continue;
     }
+    if (angleDestination) {
+      if (text[index] === '>') angleDestination = false;
+      continue;
+    }
+    if (!destinationStarted && /\s/.test(text[index])) continue;
+    if (!destinationStarted && text[index] === '<') {
+      destinationStarted = true;
+      angleDestination = true;
+      continue;
+    }
+    destinationStarted = true;
     if (text[index] === '(') depth += 1;
     else if (text[index] === ')') {
       depth -= 1;
