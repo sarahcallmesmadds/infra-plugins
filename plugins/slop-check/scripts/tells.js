@@ -278,12 +278,46 @@ function htmlCommentStart(line) {
 function withoutFencedBlocks(text) {
   let fence = null;
   let htmlComment = false;
+  let afterBlank = false;
   const visible = [];
+  const listContentIndents = [];
+
+  const listParentAt = (indent) => {
+    let index = listContentIndents.length - 1;
+    while (index >= 0 && indent < listContentIndents[index]) index -= 1;
+    return { index, base: index >= 0 ? listContentIndents[index] : 0 };
+  };
+  const rememberVisibleLine = (line) => {
+    if (!line.trim()) {
+      afterBlank = true;
+      return;
+    }
+
+    const marker = parseListMarker(line);
+    if (marker) {
+      const parent = listParentAt(marker.indent);
+      if (marker.indent - parent.base <= 3) {
+        listContentIndents.length = parent.index + 1;
+        listContentIndents.push(marker.contentIndent);
+        afterBlank = false;
+        return;
+      }
+    }
+
+    const indent = leadingSpaces(line);
+    const parent = listParentAt(indent);
+    if (afterBlank || (startsMarkdownBlock(line) && indent - parent.base <= 3)) {
+      listContentIndents.length = parent.index + 1;
+    }
+    afterBlank = false;
+  };
 
   for (const line of String(text || '').split('\n')) {
     if (fence) {
-      const close = line.match(/^ {0,3}(`+|~+)\s*$/);
-      if (close && close[1][0] === fence.char && close[1].length >= fence.length) {
+      const close = line.match(/^([ \t]*)(`+|~+)\s*$/);
+      const closeIndent = close ? leadingSpaces(line) : 0;
+      if (close && closeIndent <= fence.base + 3
+        && close[2][0] === fence.char && close[2].length >= fence.length) {
         fence = null;
       }
       visible.push('');
@@ -299,22 +333,32 @@ function withoutFencedBlocks(text) {
       continue;
     }
     const comment = htmlCommentStart(line);
-    // Four leading spaces outside a list make an indented code block. Treat a
-    // comment-looking string there as code; list-relative comments with smaller
-    // raw indentation still pass through as Markdown comment blocks.
-    if (comment !== -1 && leadingSpaces(line) < 4) {
+    const lineIndent = leadingSpaces(line);
+    const commentParent = listParentAt(lineIndent);
+    // Four columns beyond the containing list item make an indented code block.
+    // Treat a comment-looking string there as code; a comment at the same raw
+    // indentation can still be Markdown when it is nested inside a list.
+    if (comment !== -1 && lineIndent - commentParent.base <= 3) {
       htmlComment = !line.slice(comment + 4).includes('-->');
       const before = line.slice(0, comment);
-      visible.push(before.trim() ? before : boundaryLine(leadingSpaces(line)));
+      if (before.trim()) rememberVisibleLine(before);
+      else listContentIndents.length = commentParent.index + 1;
+      visible.push(before.trim() ? before : boundaryLine(lineIndent));
+      afterBlank = false;
       continue;
     }
 
-    const open = line.match(/^( {0,3})(`{3,}|~{3,})(?:[^`~].*)?$/);
-    if (open) {
-      fence = { char: open[2][0], length: open[2].length };
-      visible.push(boundaryLine(open[1].length));
+    const open = line.match(/^([ \t]*)(`{3,}|~{3,})(?:[^`~].*)?$/);
+    const openIndent = open ? leadingSpaces(line) : 0;
+    const fenceParent = listParentAt(openIndent);
+    if (open && openIndent - fenceParent.base <= 3) {
+      fence = { char: open[2][0], length: open[2].length, base: fenceParent.base };
+      listContentIndents.length = fenceParent.index + 1;
+      visible.push(boundaryLine(openIndent));
+      afterBlank = false;
     } else {
       visible.push(line);
+      rememberVisibleLine(line);
     }
   }
 
@@ -322,13 +366,13 @@ function withoutFencedBlocks(text) {
 }
 
 function startsMarkdownBlock(line) {
-  return /^ {0,3}(?:#{1,6}(?:\s|$)|>|\d{1,9}[.)](?:\s|$)|\|)/.test(line)
-    || /^ {0,3}(?:(?:\*\s*){3,}|(?:_\s*){3,}|(?:-\s*){3,}|=+)\s*$/.test(line)
-    || /^ {0,3}<(?:!DOCTYPE\b|\?|\/?[A-Za-z][A-Za-z0-9-]*(?:\s|>|\/))/i.test(line);
+  return /^[ \t]*(?:#{1,6}(?:\s|$)|>|\d{1,9}[.)](?:\s|$)|\|)/.test(line)
+    || /^[ \t]*(?:(?:\*\s*){3,}|(?:_\s*){3,}|(?:-\s*){3,}|=+)\s*$/.test(line)
+    || /^[ \t]*<(?:!DOCTYPE\b|\?|\/?[A-Za-z][A-Za-z0-9-]*(?:\s|>|\/))/i.test(line);
 }
 
 function leadingSpaces(line) {
-  return (line.match(/^ */) || [''])[0].length;
+  return columnsAfter(0, (line.match(/^[ \t]*/) || [''])[0]);
 }
 
 function columnsAfter(start, whitespace) {
@@ -438,9 +482,10 @@ function brochureBulletHeadlines(text) {
     if (marker) {
       let parentIndex = stack.length - 1;
       while (parentIndex >= 0 && marker.indent < stack[parentIndex].contentIndent) parentIndex -= 1;
-      // At the root, four columns are an indented code block. At any active
-      // parent, the same columns are interpreted relative to that list item.
-      if (parentIndex < 0 && marker.indent > 3) marker = null;
+      // Four columns beyond the containing list item are an indented code
+      // block. Apply that cutoff at every list depth, not just at the root.
+      const parentBase = parentIndex >= 0 ? stack[parentIndex].contentIndent : 0;
+      if (marker.indent - parentBase > 3) marker = null;
       else while (stack.length - 1 > parentIndex) popItem();
     }
     if (marker) {
@@ -459,9 +504,15 @@ function brochureBulletHeadlines(text) {
     }
 
     const boundary = boundaryIndent(line);
-    const block = boundary !== null || startsMarkdownBlock(line);
+    const indent = boundary !== null ? boundary : leadingSpaces(line);
+    let block = boundary !== null || startsMarkdownBlock(line);
+    if (block && boundary === null) {
+      let parentIndex = stack.length - 1;
+      while (parentIndex >= 0 && indent < stack[parentIndex].contentIndent) parentIndex -= 1;
+      const parentBase = parentIndex >= 0 ? stack[parentIndex].contentIndent : 0;
+      if (indent - parentBase > 3) block = false;
+    }
     if (block) {
-      const indent = boundary !== null ? boundary : leadingSpaces(line);
       const popped = popToIndent(indent);
       if (popped && stack.length) finishContext(contextKey(stack[stack.length - 1]));
       if (stack.length) {

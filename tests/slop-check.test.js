@@ -161,6 +161,10 @@ check('four-space child bullets are parsed relative to their parent',
   Boolean(brochureFinding(
     `- Parent item\n    ${BROCHURE_BULLETS.split('\n')[0]}\n    ${BROCHURE_BULLETS.split('\n')[1]}`
   )), true);
+check('a list marker four columns beyond its parent content is indented code',
+  Boolean(brochureFinding(
+    `- Parent item\n      ${BROCHURE_BULLETS.split('\n')[0]}\n      ${BROCHURE_BULLETS.split('\n')[1]}`
+  )), false);
 check('grandchild bullets are parsed at their own list depth',
   Boolean(brochureFinding(
     `- Parent item\n  - Child item\n    ${BROCHURE_BULLETS.split('\n')[0]}\n`
@@ -180,6 +184,29 @@ check('parent-level content separates two child-list runs',
     `- Parent item\n  ${BROCHURE_BULLETS.split('\n')[0]}\n\n  ## Parent heading\n`
     + `  ${BROCHURE_BULLETS.split('\n')[1]}`
   )), false);
+for (const [name, block] of [
+  ['heading', '    ## A parent-level section'],
+  ['blockquote', '    > A parent-level quotation'],
+  ['thematic break', '    ---'],
+  ['table', '    | Field | Owner |'],
+  ['HTML block', '    <div>separate items</div>'],
+]) {
+  check(`${name} at the parent depth separates child-list items`,
+    Boolean(brochureFinding(
+      `- Parent item\n    ${BROCHURE_BULLETS.split('\n')[0]}\n${block}\n`
+      + `    ${BROCHURE_BULLETS.split('\n')[1]}`
+    )), false);
+}
+check('a fenced block at the parent depth separates child-list items',
+  Boolean(brochureFinding(
+    `- Parent item\n    ${BROCHURE_BULLETS.split('\n')[0]}\n    \`\`\`text\n`
+    + `    separate items\n    \`\`\`\n    ${BROCHURE_BULLETS.split('\n')[1]}`
+  )), false);
+check('an HTML comment at the parent depth separates child-list items',
+  Boolean(brochureFinding(
+    `- Parent item\n    ${BROCHURE_BULLETS.split('\n')[0]}\n    <!-- separate items -->\n`
+    + `    ${BROCHURE_BULLETS.split('\n')[1]}`
+  )), false);
 check('tab padding after a bullet marker is valid Markdown',
   Boolean(brochureFinding(BROCHURE_BULLETS.replaceAll('- ', '-\t'))), true);
 check('tab-indented child bullets are parsed relative to their parent',
@@ -190,6 +217,16 @@ check('a multiline HTML comment beginning after prose hides its example bullets'
   Boolean(brochureFinding(`Intro <!--\n${BROCHURE_BULLETS}\n-->`)), false);
 check('a multiline HTML comment beginning after a marker hides its example bullets',
   Boolean(brochureFinding(`- <!--\n${BROCHURE_BULLETS}\n-->`)), false);
+check('a list-relative HTML comment hides nested example bullets',
+  Boolean(brochureFinding(
+    `- Parent item\n    <!--\n    ${BROCHURE_BULLETS.split('\n')[0]}\n`
+    + `    ${BROCHURE_BULLETS.split('\n')[1]}\n    -->`
+  )), false);
+check('a list-relative fenced block hides nested example bullets',
+  Boolean(brochureFinding(
+    `- Parent item\n    \`\`\`markdown\n    ${BROCHURE_BULLETS.split('\n')[0]}\n`
+    + `    ${BROCHURE_BULLETS.split('\n')[1]}\n    \`\`\``
+  )), false);
 check('comment-only list items still separate surrounding brochure bullets',
   Boolean(brochureFinding(
     `${BROCHURE_BULLETS.split('\n')[0]}\n- <!-- separator -->\n${BROCHURE_BULLETS.split('\n')[1]}`
