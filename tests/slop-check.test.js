@@ -75,6 +75,10 @@ check('a plain bullet between styled items breaks the repeated run',
     `${BROCHURE_BULLETS.split('\n')[0]}\n- Data: source, owner, update time\n`
     + BROCHURE_BULLETS.split('\n')[1]
   )), false);
+check('changing the unordered bullet marker starts a separate list',
+  Boolean(brochureFinding(
+    `${BROCHURE_BULLETS.split('\n')[0]}\n+ ${BROCHURE_BULLETS.split('\n')[1].slice(2)}`
+  )), false);
 check('ordinary bold labels are not sentence-shaped headlines',
   Boolean(brochureFinding('- **Owner:** Billing team\n- **Status:** Ready\n- **Date:** Friday')), false);
 check('a list of bold instructions is not brochure framing',
@@ -98,12 +102,38 @@ check('where-qualified instructions are not place-shaped headlines',
     '- **Where possible, reuse the existing client.** This keeps authentication behavior consistent.\n'
     + '- **Where necessary, add a narrow adapter.** This limits changes to the integration boundary.'
   )), false);
+check('conditional where instructions are not place-shaped headlines',
+  Boolean(brochureFinding(
+    '- **Where the cache is cold, refresh it.** Run the probe again before continuing.\n'
+    + '- **Where the token is absent, stop.** Return an authentication error to the caller.'
+  )), false);
+check('demonstrative-object commands are not relative-clause headlines',
+  Boolean(brochureFinding(
+    '- **Address that issue before deployment.** Keep the existing authentication behavior intact.\n'
+    + '- **Process that request in one batch.** Return the final status to the caller.'
+  )), false);
 check('plain keyword bullets stay clean',
   Boolean(brochureFinding('- Data: source and owner\n- Systems: ledger and warehouse\n- Reporting: weekly totals')), false);
 check('a bold sentence with no explanation after it stays clean',
   Boolean(brochureFinding('- **The export completes overnight.**\n'.repeat(2))), false);
+check('indented code does not supply explanatory copy for a headline',
+  Boolean(brochureFinding(
+    '- **Numbers that guide the next call.**\n\n'
+    + '      Twelve measures appear beside their source and update time.\n'
+    + '- **Where the records really live.**\n\n'
+    + '      The list names each system and the fields it owns.'
+  )), false);
 check('fenced examples are shown rather than used',
   Boolean(brochureFinding(`\`\`\`markdown\n${BROCHURE_BULLETS}\n\`\`\``)), false);
+for (const tag of ['pre', 'script', 'style', 'textarea', 'div']) {
+  check(`bullets inside a raw ${tag} block are not read as Markdown`,
+    Boolean(brochureFinding(`<${tag}>\n${BROCHURE_BULLETS}\n</${tag}>`)), false);
+}
+check('bullets inside a list-relative raw HTML block are not read as Markdown',
+  Boolean(brochureFinding(
+    `- Parent item\n    <pre>\n    ${BROCHURE_BULLETS.split('\n')[0]}\n`
+    + `    ${BROCHURE_BULLETS.split('\n')[1]}\n    </pre>`
+  )), false);
 check('a shorter fence inside a four-backtick example does not expose its bullets',
   Boolean(brochureFinding(`\`\`\`\`markdown\n\`\`\`\n${BROCHURE_BULLETS}\n\`\`\`\``)), false);
 check('explanatory copy may continue on an indented line',
@@ -136,6 +166,11 @@ check('a comment between bullets ends the consecutive run',
   Boolean(brochureFinding(
     `${BROCHURE_BULLETS.split('\n')[0]}\n<!-- separate items -->\n${BROCHURE_BULLETS.split('\n')[1]}`
   )), false);
+check('same-line HTML comments do not discard visible explanatory copy',
+  Boolean(brochureFinding(
+    BROCHURE_BULLETS.replaceAll('** Twelve', '** <!-- source --> Twelve')
+      .replaceAll('** The list', '** <!-- source --> The list')
+  )), true);
 check('a fenced block between bullets ends the consecutive run',
   Boolean(brochureFinding(
     `${BROCHURE_BULLETS.split('\n')[0]}\n\`\`\`text\nseparate items\n\`\`\`\n`

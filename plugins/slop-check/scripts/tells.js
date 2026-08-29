@@ -275,9 +275,21 @@ function htmlCommentStart(line) {
   return -1;
 }
 
+const HTML_BLOCK_UNTIL_CLOSE = /^(?:script|pre|style|textarea)$/i;
+const HTML_BLOCK_UNTIL_BLANK = /^(?:address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul)$/i;
+
+function rawHtmlBlockStart(line) {
+  const tag = line.match(/^[ \t]*<([A-Za-z][A-Za-z0-9-]*)(?:[ \t]|>|\/?>|$)/);
+  if (!tag) return null;
+  if (HTML_BLOCK_UNTIL_CLOSE.test(tag[1])) return { tag: tag[1].toLowerCase(), untilBlank: false };
+  if (HTML_BLOCK_UNTIL_BLANK.test(tag[1])) return { tag: tag[1].toLowerCase(), untilBlank: true };
+  return null;
+}
+
 function withoutFencedBlocks(text) {
   let fence = null;
   let htmlComment = false;
+  let rawHtml = null;
   let afterBlank = false;
   const visible = [];
   const listContentIndents = [];
@@ -324,12 +336,31 @@ function withoutFencedBlocks(text) {
       continue;
     }
 
+    if (rawHtml) {
+      if (rawHtml.untilBlank && !line.trim()) {
+        rawHtml = null;
+        afterBlank = true;
+      } else if (!rawHtml.untilBlank
+        && new RegExp(`</${rawHtml.tag}(?:[ \\t]|>)`, 'i').test(line)) {
+        rawHtml = null;
+      }
+      visible.push('');
+      continue;
+    }
+
     // Whole-line HTML comments are Markdown blocks. Scan them only after fenced
     // code has been handled so a literal `<!--` in an example cannot hide all
     // visible prose that follows an unclosed example marker.
     if (htmlComment) {
-      if (line.includes('-->')) htmlComment = false;
-      visible.push('');
+      const close = line.indexOf('-->');
+      if (close === -1) {
+        visible.push('');
+        continue;
+      }
+      htmlComment = false;
+      const after = line.slice(close + 3);
+      visible.push(after);
+      rememberVisibleLine(after);
       continue;
     }
     const comment = htmlCommentStart(line);
@@ -339,11 +370,14 @@ function withoutFencedBlocks(text) {
     // Treat a comment-looking string there as code; a comment at the same raw
     // indentation can still be Markdown when it is nested inside a list.
     if (comment !== -1 && lineIndent - commentParent.base <= 3) {
-      htmlComment = !line.slice(comment + 4).includes('-->');
+      const close = line.indexOf('-->', comment + 4);
+      htmlComment = close === -1;
       const before = line.slice(0, comment);
-      if (before.trim()) rememberVisibleLine(before);
+      const after = close === -1 ? '' : line.slice(close + 3);
+      const remaining = before + after;
+      if (remaining.trim()) rememberVisibleLine(remaining);
       else listContentIndents.length = commentParent.index + 1;
-      visible.push(before.trim() ? before : boundaryLine(lineIndent));
+      visible.push(remaining.trim() ? remaining : boundaryLine(lineIndent));
       afterBlank = false;
       continue;
     }
@@ -357,6 +391,17 @@ function withoutFencedBlocks(text) {
       visible.push(boundaryLine(openIndent));
       afterBlank = false;
     } else {
+      const htmlOpen = rawHtmlBlockStart(line);
+      const htmlParent = listParentAt(lineIndent);
+      if (htmlOpen && lineIndent - htmlParent.base <= 3) {
+        const closesHere = !htmlOpen.untilBlank
+          && new RegExp(`</${htmlOpen.tag}(?:[ \\t]|>)`, 'i').test(line);
+        rawHtml = closesHere ? null : htmlOpen;
+        listContentIndents.length = htmlParent.index + 1;
+        visible.push(boundaryLine(lineIndent));
+        afterBlank = false;
+        continue;
+      }
       visible.push(line);
       rememberVisibleLine(line);
     }
@@ -394,6 +439,7 @@ function parseListMarker(line) {
 
   return {
     type: /^[-*+]$/.test(marker[2]) ? 'unordered' : 'ordered',
+    bullet: marker[2],
     indent,
     contentIndent: padding <= 4 ? contentIndent : afterMarker + 1,
     body: padding <= 4 ? (marker[4] || '') : '',
@@ -415,7 +461,8 @@ function brochureHeadline(headline) {
   // possible, reuse the client" is an instruction. Requiring a determiner is
   // narrow on purpose: a soft signal that stands alone should prefer silence
   // over guessing at the grammar.
-  if (/^where\s+(?:the|this|these|those|your|our|their)\b/i.test(headline)) return true;
+  if (/^where\s+(?:the|this|these|those|your|our|their)\b/i.test(headline)
+    && !/[,;:]/.test(headline)) return true;
 
   // In the reported pattern, `that` is the subject of a relative clause:
   // "Numbers that guide" and "Reporting that drives". In an instruction such
@@ -428,8 +475,8 @@ function brochureHeadline(headline) {
   const subject = relational[1].trim();
   const words = wordsIn(subject);
   if (words.length > 1) return /^(?:a|an|the|this|these|those|your|our|their)\b/i.test(subject);
-  return /(?:s|ing|tion|ment|ness|ity|ance|ence)$/i.test(subject)
-    || /^(?:content|copy|data|software|support|work)$/i.test(subject);
+  return /(?:[^s]s|ing|tion|ment|ness|ity|ance|ence)$/i.test(subject)
+    || /^(?:content|copy|data|software)$/i.test(subject);
 }
 
 function brochureBulletHeadlines(text) {
@@ -439,21 +486,27 @@ function brochureBulletHeadlines(text) {
   const stack = [];
   const runs = new Map();
 
-  const contextKey = (parent) => `${parent ? parent.id : 'root'}:unordered`;
+  const contextPrefix = (parent) => `${parent ? parent.id : 'root'}:unordered:`;
+  const contextKey = (parent, bullet) => `${contextPrefix(parent)}${bullet}`;
   const finishContext = (key) => {
     const run = runs.get(key) || 0;
     if (run >= 2) repeated += run;
     runs.delete(key);
   };
+  const finishContexts = (parent, except = null) => {
+    for (const key of [...runs.keys()]) {
+      if (key.startsWith(contextPrefix(parent)) && key !== except) finishContext(key);
+    }
+  };
   const finishItem = (item) => {
-    const key = contextKey(item.parent);
+    const key = contextKey(item.parent, item.bullet);
     if (item.type === 'unordered' && brochureItem(item.body)) {
       runs.set(key, (runs.get(key) || 0) + 1);
     } else {
       finishContext(key);
     }
     // Every child list is complete when its parent item closes.
-    finishContext(contextKey(item));
+    finishContexts(item);
   };
   const popItem = () => finishItem(stack.pop());
   const popToIndent = (indent) => {
@@ -466,7 +519,7 @@ function brochureBulletHeadlines(text) {
   };
   const interruptRoot = () => {
     while (stack.length) popItem();
-    finishContext(contextKey(null));
+    finishContexts(null);
   };
 
   for (const line of visible) {
@@ -491,7 +544,8 @@ function brochureBulletHeadlines(text) {
     if (marker) {
       const parent = stack.length ? stack[stack.length - 1] : null;
       if (parent) parent.paragraphOpen = false;
-      if (marker.type === 'ordered') finishContext(contextKey(parent));
+      if (marker.type === 'ordered') finishContexts(parent);
+      else finishContexts(parent, contextKey(parent, marker.bullet));
       stack.push({
         ...marker,
         id: nextItemId,
@@ -514,12 +568,12 @@ function brochureBulletHeadlines(text) {
     }
     if (block) {
       const popped = popToIndent(indent);
-      if (popped && stack.length) finishContext(contextKey(stack[stack.length - 1]));
+      if (popped && stack.length) finishContexts(stack[stack.length - 1]);
       if (stack.length) {
         stack[stack.length - 1].paragraphOpen = false;
         stack[stack.length - 1].afterBlank = false;
       } else {
-        finishContext(contextKey(null));
+        finishContexts(null);
       }
       continue;
     }
@@ -532,8 +586,12 @@ function brochureBulletHeadlines(text) {
       }
 
       const indent = leadingSpaces(line);
+      if (item.afterBlank && indent - item.contentIndent >= 4) {
+        item.paragraphOpen = false;
+        continue;
+      }
       const popped = popToIndent(indent);
-      if (popped && stack.length) finishContext(contextKey(stack[stack.length - 1]));
+      if (popped && stack.length) finishContexts(stack[stack.length - 1]);
       if (stack.length) {
         item = stack[stack.length - 1];
         item.body += ` ${line.trim()}`;
