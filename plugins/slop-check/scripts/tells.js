@@ -262,7 +262,15 @@ function htmlCommentStart(line) {
         continue;
       }
     }
-    if (line.startsWith('<!--', index)) return index;
+    if (line.startsWith('<!--', index)) {
+      let escapes = 0;
+      for (let before = index - 1; before >= 0 && line[before] === '\\'; before -= 1) escapes += 1;
+      if (escapes % 2 === 1) continue;
+      const linkOpen = line.lastIndexOf('](', index);
+      const linkClose = line.lastIndexOf(')', index);
+      if (linkOpen > linkClose) continue;
+      return index;
+    }
   }
   return -1;
 }
@@ -291,7 +299,10 @@ function withoutFencedBlocks(text) {
       continue;
     }
     const comment = htmlCommentStart(line);
-    if (comment !== -1) {
+    // Four leading spaces outside a list make an indented code block. Treat a
+    // comment-looking string there as code; list-relative comments with smaller
+    // raw indentation still pass through as Markdown comment blocks.
+    if (comment !== -1 && leadingSpaces(line) < 4) {
       htmlComment = !line.slice(comment + 4).includes('-->');
       const before = line.slice(0, comment);
       visible.push(before.trim() ? before : boundaryLine(leadingSpaces(line)));
@@ -329,19 +340,19 @@ function columnsAfter(start, whitespace) {
 }
 
 function parseListMarker(line) {
-  const marker = line.match(/^( {0,3})([-*+]|\d{1,9}[.)])([ \t]+)(\S.*)$/);
+  const marker = line.match(/^([ \t]*)([-*+]|\d{1,9}[.)])(?:([ \t]+)(.*))?$/);
   if (!marker) return null;
 
-  const afterMarker = marker[1].length + marker[2].length;
-  const contentIndent = columnsAfter(afterMarker, marker[3]);
+  const indent = columnsAfter(0, marker[1]);
+  const afterMarker = indent + marker[2].length;
+  const contentIndent = marker[3] ? columnsAfter(afterMarker, marker[3]) : afterMarker + 1;
   const padding = contentIndent - afterMarker;
-  if (padding < 1 || padding > 4) return null;
 
   return {
     type: /^[-*+]$/.test(marker[2]) ? 'unordered' : 'ordered',
-    indent: marker[1].length,
-    contentIndent,
-    body: marker[4],
+    indent,
+    contentIndent: padding <= 4 ? contentIndent : afterMarker + 1,
+    body: padding <= 4 ? (marker[4] || '') : '',
   };
 }
 
@@ -402,7 +413,12 @@ function brochureBulletHeadlines(text) {
   };
   const popItem = () => finishItem(stack.pop());
   const popToIndent = (indent) => {
-    while (stack.length && indent < stack[stack.length - 1].contentIndent) popItem();
+    let popped = 0;
+    while (stack.length && indent < stack[stack.length - 1].contentIndent) {
+      popItem();
+      popped += 1;
+    }
+    return popped;
   };
   const interruptRoot = () => {
     while (stack.length) popItem();
@@ -418,9 +434,16 @@ function brochureBulletHeadlines(text) {
       continue;
     }
 
-    const marker = parseListMarker(line);
+    let marker = parseListMarker(line);
     if (marker) {
-      popToIndent(marker.indent);
+      let parentIndex = stack.length - 1;
+      while (parentIndex >= 0 && marker.indent < stack[parentIndex].contentIndent) parentIndex -= 1;
+      // At the root, four columns are an indented code block. At any active
+      // parent, the same columns are interpreted relative to that list item.
+      if (parentIndex < 0 && marker.indent > 3) marker = null;
+      else while (stack.length - 1 > parentIndex) popItem();
+    }
+    if (marker) {
       const parent = stack.length ? stack[stack.length - 1] : null;
       if (parent) parent.paragraphOpen = false;
       if (marker.type === 'ordered') finishContext(contextKey(parent));
@@ -439,7 +462,8 @@ function brochureBulletHeadlines(text) {
     const block = boundary !== null || startsMarkdownBlock(line);
     if (block) {
       const indent = boundary !== null ? boundary : leadingSpaces(line);
-      popToIndent(indent);
+      const popped = popToIndent(indent);
+      if (popped && stack.length) finishContext(contextKey(stack[stack.length - 1]));
       if (stack.length) {
         stack[stack.length - 1].paragraphOpen = false;
         stack[stack.length - 1].afterBlank = false;
@@ -457,7 +481,8 @@ function brochureBulletHeadlines(text) {
       }
 
       const indent = leadingSpaces(line);
-      popToIndent(indent);
+      const popped = popToIndent(indent);
+      if (popped && stack.length) finishContext(contextKey(stack[stack.length - 1]));
       if (stack.length) {
         item = stack[stack.length - 1];
         item.body += ` ${line.trim()}`;

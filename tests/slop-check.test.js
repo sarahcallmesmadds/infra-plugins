@@ -157,6 +157,15 @@ check('consecutive child bullets are checked within their own list',
   Boolean(brochureFinding(
     `- Parent item\n  ${BROCHURE_BULLETS.split('\n')[0]}\n  ${BROCHURE_BULLETS.split('\n')[1]}`
   )), true);
+check('four-space child bullets are parsed relative to their parent',
+  Boolean(brochureFinding(
+    `- Parent item\n    ${BROCHURE_BULLETS.split('\n')[0]}\n    ${BROCHURE_BULLETS.split('\n')[1]}`
+  )), true);
+check('grandchild bullets are parsed at their own list depth',
+  Boolean(brochureFinding(
+    `- Parent item\n  - Child item\n    ${BROCHURE_BULLETS.split('\n')[0]}\n`
+    + `    ${BROCHURE_BULLETS.split('\n')[1]}`
+  )), true);
 check('a child bullet and a root bullet do not share a run',
   Boolean(brochureFinding(
     `1. Parent item\n   ${BROCHURE_BULLETS.split('\n')[0]}\n${BROCHURE_BULLETS.split('\n')[1]}`
@@ -166,12 +175,31 @@ check('a paragraph after a nested block ends the list item',
     `${BROCHURE_BULLETS.split('\n')[0]}\n  ## Supporting note\nOutside the list.\n`
     + BROCHURE_BULLETS.split('\n')[1]
   )), false);
+check('parent-level content separates two child-list runs',
+  Boolean(brochureFinding(
+    `- Parent item\n  ${BROCHURE_BULLETS.split('\n')[0]}\n\n  ## Parent heading\n`
+    + `  ${BROCHURE_BULLETS.split('\n')[1]}`
+  )), false);
 check('tab padding after a bullet marker is valid Markdown',
   Boolean(brochureFinding(BROCHURE_BULLETS.replaceAll('- ', '-\t'))), true);
+check('tab-indented child bullets are parsed relative to their parent',
+  Boolean(brochureFinding(
+    `- Parent item\n\t${BROCHURE_BULLETS.split('\n')[0]}\n\t${BROCHURE_BULLETS.split('\n')[1]}`
+  )), true);
 check('a multiline HTML comment beginning after prose hides its example bullets',
   Boolean(brochureFinding(`Intro <!--\n${BROCHURE_BULLETS}\n-->`)), false);
 check('a multiline HTML comment beginning after a marker hides its example bullets',
   Boolean(brochureFinding(`- <!--\n${BROCHURE_BULLETS}\n-->`)), false);
+check('comment-only list items still separate surrounding brochure bullets',
+  Boolean(brochureFinding(
+    `${BROCHURE_BULLETS.split('\n')[0]}\n- <!-- separator -->\n${BROCHURE_BULLETS.split('\n')[1]}`
+  )), false);
+check('comment-looking text in indented code does not hide later prose',
+  Boolean(brochureFinding(`    const marker = '<!--';\n\n${BROCHURE_BULLETS}`)), true);
+check('an escaped comment opener does not hide later prose',
+  Boolean(brochureFinding(`\\<!-- literal opener\n\n${BROCHURE_BULLETS}`)), true);
+check('a comment-like link destination does not hide later prose',
+  Boolean(brochureFinding(`[marker](<!--)\n\n${BROCHURE_BULLETS}`)), true);
 check('underscore-delimited bold headlines are equivalent Markdown',
   Boolean(brochureFinding(BROCHURE_BULLETS.replaceAll('**', '__'))), true);
 check('four-space-indented code is not read as a top-level list',
