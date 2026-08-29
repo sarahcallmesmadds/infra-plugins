@@ -699,7 +699,15 @@ function brochureHeadline(headline) {
 
   const subject = relational[1].trim();
   const words = wordsIn(subject);
-  if (words.length > 1) return /^(?:a|an|the|this|these|those|your|our|their)\b/i.test(subject);
+  // A determiner plus one noun is still a noun phrase: "The metrics that
+  // matter". Once another word appears, the same surface shape commonly holds
+  // a complete reporting clause instead: "The audit showed that data differed".
+  // This finding changes the verdict on its own, so keep the narrow noun phrase
+  // and decline longer phrases rather than maintaining a list of reporting verbs.
+  if (words.length > 1) {
+    return words.length === 2
+      && /^(?:a|an|the|this|these|those|your|our|their)\b/i.test(subject);
+  }
   return /(?:[^s]s|ing|tion|ment|ness|ity|ance|ence)$/i.test(subject)
     || /^(?:content|copy|data|software)$/i.test(subject);
 }
