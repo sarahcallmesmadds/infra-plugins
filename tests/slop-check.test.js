@@ -178,6 +178,14 @@ check('visible reference-link labels still count as explanatory copy',
     + '- **Where the records really live.** [See the complete system list][source]\n\n'
     + '[source]: https://example.test'
   )), true);
+for (const quote of ['"', "'"]) {
+  const hiddenTitle = `[x](https://example.test ${quote}one two three four (${quote})`;
+  check(`parentheses in a ${quote}quoted link title stay hidden`,
+    Boolean(brochureFinding(
+      `- **Numbers that guide the next call.** ${hiddenTitle}\n`
+      + `- **Where the records really live.** ${hiddenTitle}`
+    )), false);
+}
 check('visible text inside inline HTML still counts as explanatory copy',
   Boolean(brochureFinding(
     '- **Numbers that guide the next call.** <span>Twelve measures appear beside each source.</span>\n'

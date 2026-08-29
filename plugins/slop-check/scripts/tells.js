@@ -721,6 +721,7 @@ function parseListMarker(line) {
 function linkDestinationEnd(text, opening) {
   let depth = 0;
   let backslashes = 0;
+  let titleQuote = null;
   for (let index = opening; index < text.length; index += 1) {
     if (text[index] === '\\') {
       backslashes += 1;
@@ -729,6 +730,15 @@ function linkDestinationEnd(text, opening) {
     const escaped = backslashes % 2 === 1;
     backslashes = 0;
     if (escaped) continue;
+    if (titleQuote !== null) {
+      if (text[index] === titleQuote) titleQuote = null;
+      continue;
+    }
+    if ((text[index] === '"' || text[index] === "'")
+      && /\s/.test(text[index - 1] || '')) {
+      titleQuote = text[index];
+      continue;
+    }
     if (text[index] === '(') depth += 1;
     else if (text[index] === ')') {
       depth -= 1;
