@@ -146,10 +146,28 @@ check('bullets inside a list-relative raw HTML block are not read as Markdown',
     `- Parent item\n    <pre>\n    ${BROCHURE_BULLETS.split('\n')[0]}\n`
     + `    ${BROCHURE_BULLETS.split('\n')[1]}\n    </pre>`
   )), false);
+check('a raw HTML block may begin in the body of a list marker',
+  Boolean(brochureFinding(
+    `- <div>\n  ${BROCHURE_BULLETS.split('\n')[0]}\n`
+    + `  ${BROCHURE_BULLETS.split('\n')[1]}\n  </div>`
+  )), false);
+check('a fenced block may begin in the body of a list marker',
+  Boolean(brochureFinding(
+    `- \`\`\`markdown\n  ${BROCHURE_BULLETS.split('\n')[0]}\n`
+    + `  ${BROCHURE_BULLETS.split('\n')[1]}\n  \`\`\``
+  )), false);
 check('a comment inside a raw HTML opener does not expose its block contents',
   Boolean(brochureFinding(`<div><!-- note --></div>\n${BROCHURE_BULLETS}`)), false);
 check('a type-seven tag cannot interrupt an open paragraph',
   Boolean(brochureFinding(`Intro text\n<custom-box>\n${BROCHURE_BULLETS}`)), true);
+for (const [name, block] of [
+  ['an HTML comment', '<!-- note -->'],
+  ['a fenced block', '```\nexample\n```'],
+  ['an empty list marker', '-'],
+]) {
+  check(`a type-seven tag may begin after ${name}`,
+    Boolean(brochureFinding(`${block}\n<custom-box>\n${BROCHURE_BULLETS}\n</custom-box>`)), false);
+}
 check('a shorter fence inside a four-backtick example does not expose its bullets',
   Boolean(brochureFinding(`\`\`\`\`markdown\n\`\`\`\n${BROCHURE_BULLETS}\n\`\`\`\``)), false);
 check('a tilde fence may begin its info string with a backtick',
@@ -200,6 +218,13 @@ check('every same-line HTML comment is removed before item matching',
   Boolean(brochureFinding(
     '- **Numbers that guide the next call.** <!-- one --> <!-- hidden words provide all copy -->\n'
     + '- **Where the records really live.** <!-- one --> <!-- hidden words provide all copy -->'
+  )), false);
+check('comments are scanned again after a multiline inline comment closes',
+  Boolean(brochureFinding(
+    '- **Numbers that guide the next call.** <!--\n'
+    + '--> <!-- hidden words provide explanatory copy -->\n'
+    + '- **Where the records really live.** <!--\n'
+    + '--> <!-- hidden words provide explanatory copy -->'
   )), false);
 check('a fenced block between bullets ends the consecutive run',
   Boolean(brochureFinding(

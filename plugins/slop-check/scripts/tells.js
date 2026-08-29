@@ -340,6 +340,7 @@ function withoutFencedBlocks(text) {
   let rawHtml = null;
   let inlineCodeDelimiter = null;
   let afterBlank = false;
+  let paragraphBase = null;
   const visible = [];
   const listContentIndents = [];
   const lines = String(text || '').split(/\r?\n/);
@@ -353,6 +354,7 @@ function withoutFencedBlocks(text) {
   const rememberVisibleLine = (line) => {
     if (!line.trim()) {
       afterBlank = true;
+      paragraphBase = null;
       return;
     }
 
@@ -363,20 +365,23 @@ function withoutFencedBlocks(text) {
         listContentIndents.length = parent.index + 1;
         listContentIndents.push(marker.contentIndent);
         afterBlank = false;
+        paragraphBase = marker.body ? marker.contentIndent : null;
         return;
       }
     }
 
     const indent = leadingSpaces(line);
     const parent = listParentAt(indent);
-    if (afterBlank || (startsMarkdownBlock(line) && indent - parent.base <= 3)) {
+    const markdownBlock = startsMarkdownBlock(line) && indent - parent.base <= 3;
+    if (afterBlank || markdownBlock) {
       listContentIndents.length = parent.index + 1;
     }
+    paragraphBase = markdownBlock ? null : listParentAt(indent).base;
     afterBlank = false;
   };
 
   for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
-    const line = lines[lineIndex];
+    let line = lines[lineIndex];
     if (fence) {
       const close = line.match(/^([ \t]*)(`+|~+)\s*$/);
       const closeIndent = close ? leadingSpaces(line) : 0;
@@ -385,6 +390,7 @@ function withoutFencedBlocks(text) {
         fence = null;
       }
       visible.push('');
+      paragraphBase = null;
       continue;
     }
 
@@ -399,6 +405,7 @@ function withoutFencedBlocks(text) {
         rawHtml = null;
       }
       visible.push('');
+      paragraphBase = null;
       continue;
     }
 
@@ -415,41 +422,65 @@ function withoutFencedBlocks(text) {
       htmlComment = false;
       if (commentKind === 'block') {
         visible.push('');
-      } else {
-        const after = ' '.repeat(close + 3) + line.slice(close + 3);
-        visible.push(after);
-        rememberVisibleLine(after);
+        paragraphBase = null;
+        continue;
       }
-      continue;
+      // An inline comment may close before another comment begins. Feed the
+      // remainder through the ordinary scanner so none of that hidden copy is
+      // mistaken for an explanation attached to a list headline.
+      line = ' '.repeat(close + 3) + line.slice(close + 3);
     }
-    if (!line.trim() || startsInlineBlock(line)) inlineCodeDelimiter = null;
-    const lineIndent = leadingSpaces(line);
-    const open = line.match(/^([ \t]*)(`{3,}|~{3,})(.*)$/);
-    const openIndent = open ? leadingSpaces(line) : 0;
+
+    // A fenced, commented, or raw-HTML block may begin in the body of a list
+    // marker (`- ````, `- <!--`, or `- <div>`). Parse that body at the item's
+    // content column, while emitting a boundary at the marker's column so the
+    // hidden list item still separates its visible siblings.
+    const marker = parseListMarker(line);
+    let blockLine = line;
+    let blockBoundaryIndent = null;
+    let blockMarkerRemembered = false;
+    if (marker && marker.body) {
+      const markerParent = listParentAt(marker.indent);
+      if (marker.indent - markerParent.base <= 3) {
+        const candidate = `${' '.repeat(marker.contentIndent)}${marker.body}`;
+        if (startsInlineBlock(candidate) || rawHtmlBlockStart(candidate)) {
+          rememberVisibleLine(line);
+          blockLine = candidate;
+          blockBoundaryIndent = marker.indent;
+          blockMarkerRemembered = true;
+        }
+      }
+    }
+
+    if (!blockLine.trim() || startsInlineBlock(blockLine)) inlineCodeDelimiter = null;
+    const lineIndent = leadingSpaces(blockLine);
+    const open = blockLine.match(/^([ \t]*)(`{3,}|~{3,})(.*)$/);
+    const openIndent = open ? leadingSpaces(blockLine) : 0;
     const fenceParent = listParentAt(openIndent);
     const validFenceInfo = open && (open[2][0] === '~' || !open[3].includes('`'));
     if (inlineCodeDelimiter === null && validFenceInfo
       && openIndent - fenceParent.base <= 3) {
       fence = { char: open[2][0], length: open[2].length, base: fenceParent.base };
       listContentIndents.length = fenceParent.index + 1;
-      visible.push(boundaryLine(openIndent));
+      visible.push(boundaryLine(blockBoundaryIndent ?? openIndent));
       afterBlank = false;
+      paragraphBase = null;
       continue;
     }
 
-    const htmlOpen = inlineCodeDelimiter === null ? rawHtmlBlockStart(line) : null;
+    const htmlOpen = inlineCodeDelimiter === null ? rawHtmlBlockStart(blockLine) : null;
     const htmlParent = listParentAt(lineIndent);
-    const previousLine = lineIndex > 0 ? lines[lineIndex - 1] : '';
-    const typeSevenCanStart = lineIndex === 0 || afterBlank || !previousLine.trim()
-      || startsMarkdownBlock(previousLine);
+    const typeSevenCanStart = blockMarkerRemembered || paragraphBase === null
+      || paragraphBase !== htmlParent.base;
     if (htmlOpen && (htmlOpen.interruptsParagraph || typeSevenCanStart)
       && lineIndent - htmlParent.base <= 3) {
-      const closesHere = (htmlOpen.end && line.includes(htmlOpen.end))
-        || (htmlOpen.tag && new RegExp(`</${htmlOpen.tag}(?:[ \\t]|>)`, 'i').test(line));
+      const closesHere = (htmlOpen.end && blockLine.includes(htmlOpen.end))
+        || (htmlOpen.tag && new RegExp(`</${htmlOpen.tag}(?:[ \\t]|>)`, 'i').test(blockLine));
       rawHtml = closesHere ? null : htmlOpen;
       listContentIndents.length = htmlParent.index + 1;
-      visible.push(boundaryLine(lineIndent));
+      visible.push(boundaryLine(blockBoundaryIndent ?? lineIndent));
       afterBlank = false;
+      paragraphBase = null;
       continue;
     }
 
@@ -457,7 +488,7 @@ function withoutFencedBlocks(text) {
     // Four columns beyond the containing list item make an indented code block.
     // Treat a comment-looking string there as code; a comment at the same raw
     // indentation can still be Markdown when it is nested inside a list.
-    let remaining = line;
+    let remaining = blockLine;
     let scanStart = 0;
     let foundComment = false;
     let blockCommentLine = false;
@@ -474,8 +505,9 @@ function withoutFencedBlocks(text) {
       htmlComment = close === -1 ? (blockComment ? 'block' : 'inline') : null;
       if (blockComment) {
         listContentIndents.length = commentParent.index + 1;
-        visible.push(boundaryLine(lineIndent));
+        visible.push(boundaryLine(blockBoundaryIndent ?? lineIndent));
         afterBlank = false;
+        paragraphBase = null;
         blockCommentLine = true;
         break;
       }
@@ -494,13 +526,13 @@ function withoutFencedBlocks(text) {
     if (foundComment) {
       if (remaining.trim()) rememberVisibleLine(remaining);
       else listContentIndents.length = commentParent.index + 1;
-      visible.push(remaining.trim() ? remaining : boundaryLine(lineIndent));
+      visible.push(remaining.trim() ? remaining : boundaryLine(blockBoundaryIndent ?? lineIndent));
       afterBlank = false;
       continue;
     }
 
     visible.push(line);
-    rememberVisibleLine(line);
+    if (!blockMarkerRemembered) rememberVisibleLine(line);
   }
 
   return visible;
