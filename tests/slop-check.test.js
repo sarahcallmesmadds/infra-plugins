@@ -332,6 +332,10 @@ check('list-shaped text after a multiline inline comment stays in its paragraph'
   )), false);
 check('an unmatched inline comment opener does not hide later list items',
   Boolean(brochureFinding(`Intro <!-- unmatched\n\n${BROCHURE_BULLETS}`)), true);
+check('an unrelated close after a blank cannot complete an inline comment',
+  Boolean(brochureFinding(
+    `Intro <!-- unmatched\n\n${BROCHURE_BULLETS}\n\nunrelated close -->`
+  )), true);
 check('an unmatched whole-line comment opener remains an HTML block',
   Boolean(brochureFinding(`<!-- unmatched\n${BROCHURE_BULLETS}`)), false);
 check('a fenced block between bullets ends the consecutive run',

@@ -458,6 +458,13 @@ function withoutFencedBlocks(text) {
   const commentCloseOnLaterLine = new Set();
   let hasLaterCommentClose = false;
   for (let lineIndex = lines.length - 1; lineIndex >= 0; lineIndex -= 1) {
+    // Inline syntax cannot cross the blank line that ends its paragraph. A
+    // close in some later block must not make an earlier literal opener hide
+    // everything in between.
+    if (!lines[lineIndex].trim()) {
+      hasLaterCommentClose = false;
+      continue;
+    }
     if (hasLaterCommentClose) commentCloseOnLaterLine.add(lineIndex);
     if (lines[lineIndex].includes('-->')) hasLaterCommentClose = true;
   }
