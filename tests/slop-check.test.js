@@ -220,6 +220,13 @@ check('a lazy unindented continuation stays inside its Markdown list item',
     + '- **Where the records really live.** The list names each system and the fields\n'
     + 'it owns.'
   )), true);
+for (const start of [0, 2, 10]) {
+  check(`an ordered marker starting at ${start} is a lazy paragraph continuation`,
+    Boolean(brochureFinding(
+      `${BROCHURE_BULLETS.split('\n')[0]}\n${start}. This remains part of the first item.\n`
+      + BROCHURE_BULLETS.split('\n')[1]
+    )), true);
+}
 for (const [name, block] of [
   ['heading', '## A separate section'],
   ['blockquote', '> A separate quotation'],
@@ -383,6 +390,13 @@ check('a comment-like link destination does not hide later prose',
   Boolean(brochureFinding(`[marker](<!--)\n\n${BROCHURE_BULLETS}`)), true);
 check('nested parentheses stay balanced in a comment-like link destination',
   Boolean(brochureFinding(`[marker](x(y)<!--)\n\n${BROCHURE_BULLETS}`)), true);
+for (const malformed of ['](', '[unfinished](']) {
+  check(`${malformed} does not turn a later comment into visible prose`,
+    Boolean(brochureFinding(
+      `- **Numbers that guide the next call.** ${malformed} <!-- hidden words provide all explanatory copy -->\n`
+      + `- **Where the records really live.** ${malformed} <!-- hidden words provide all explanatory copy -->`
+    )), false);
+}
 check('link-like delimiters inside inline code do not expose comment text',
   Boolean(brochureFinding(
     '- **Numbers that guide the next call.** `](` <!-- hidden words provide all explanatory copy -->\n'

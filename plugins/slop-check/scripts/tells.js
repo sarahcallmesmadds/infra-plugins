@@ -279,11 +279,32 @@ function backtickRunsWithLaterClose(lines) {
 
 function stripInlineComments(line, lineIndex, codeDelimiter, withLaterClose) {
   let linkDepth = 0;
+  let bracketDepth = 0;
   let backslashes = 0;
   let cursor = 0;
   let foundComment = false;
   let hasVisiblePrefix = false;
   const pieces = [];
+  const parenthesisStack = [];
+  const matchedOpeningParentheses = new Set();
+
+  // A bare or unfinished `](` is ordinary draft text, not a destination that
+  // can contain a literal `<!--`. Match the parentheses first so the comment
+  // pass only enters a destination that has both a label and a closing `)`.
+  let parenthesisBackslashes = 0;
+  for (let index = 0; index < line.length; index += 1) {
+    if (line[index] === '\\') {
+      parenthesisBackslashes += 1;
+      continue;
+    }
+    const escaped = parenthesisBackslashes % 2 === 1;
+    parenthesisBackslashes = 0;
+    if (escaped) continue;
+    if (line[index] === '(') parenthesisStack.push(index);
+    else if (line[index] === ')' && parenthesisStack.length) {
+      matchedOpeningParentheses.add(parenthesisStack.pop());
+    }
+  }
 
   for (let index = 0; index < line.length; index += 1) {
     if (line[index] === '\\') {
@@ -318,11 +339,19 @@ function stripInlineComments(line, lineIndex, codeDelimiter, withLaterClose) {
       continue;
     }
 
-    if (!escaped && linkDepth === 0 && line[index] === ']' && line[index + 1] === '(') {
-      linkDepth = 1;
-      hasVisiblePrefix = true;
-      index += 1;
-      continue;
+    if (!escaped && linkDepth === 0) {
+      if (line[index] === '[') bracketDepth += 1;
+      if (line[index] === ']') {
+        if (bracketDepth > 0 && line[index + 1] === '('
+          && matchedOpeningParentheses.has(index + 1)) {
+          bracketDepth -= 1;
+          linkDepth = 1;
+          hasVisiblePrefix = true;
+          index += 1;
+          continue;
+        }
+        if (bracketDepth > 0) bracketDepth -= 1;
+      }
     }
     if (!escaped && linkDepth > 0) {
       if (line[index] === '(') linkDepth += 1;
@@ -424,6 +453,11 @@ function withoutFencedBlocks(text) {
 
     const marker = parseListMarker(line);
     if (marker) {
+      if (marker.type === 'ordered' && marker.start !== 1
+        && paragraphBase !== null && !afterBlank) {
+        afterBlank = false;
+        return;
+      }
       const parent = listParentAt(marker.indent);
       if (marker.indent - parent.base <= 3) {
         listContentIndents.length = parent.index + 1;
@@ -499,7 +533,10 @@ function withoutFencedBlocks(text) {
     // marker (`- ````, `- <!--`, or `- <div>`). Parse that body at the item's
     // content column, while emitting a boundary at the marker's column so the
     // hidden list item still separates its visible siblings.
-    const marker = parseListMarker(line);
+    const parsedMarker = parseListMarker(line);
+    const lazyOrderedMarker = parsedMarker && parsedMarker.type === 'ordered'
+      && parsedMarker.start !== 1 && paragraphBase !== null && !afterBlank;
+    const marker = lazyOrderedMarker ? null : parsedMarker;
     let blockLine = line;
     let blockBoundaryIndent = null;
     let blockMarkerRemembered = false;
@@ -528,7 +565,7 @@ function withoutFencedBlocks(text) {
     };
 
     if (!blockLine.trim() || startsInlineBlock(blockLine)
-      || startsMarkdownBlock(blockLine)) inlineCodeDelimiter = null;
+      || (startsMarkdownBlock(blockLine) && !lazyOrderedMarker)) inlineCodeDelimiter = null;
     const lineIndent = leadingSpaces(blockLine);
     const open = blockLine.match(/^([ \t]*)(`{3,}|~{3,})(.*)$/);
     const openIndent = open ? leadingSpaces(blockLine) : 0;
@@ -627,6 +664,7 @@ function parseListMarker(line) {
   return {
     type: /^[-*+]$/.test(marker[2]) ? 'unordered' : 'ordered',
     bullet: marker[2],
+    start: /^[-*+]$/.test(marker[2]) ? null : parseInt(marker[2], 10),
     indent,
     contentIndent: padding <= 4 ? contentIndent : afterMarker + 1,
     body: padding <= 4 ? (marker[4] || '') : '',
@@ -719,6 +757,10 @@ function brochureBulletHeadlines(text) {
     }
 
     let marker = parseListMarker(line);
+    const lazyOrderedMarker = marker && marker.type === 'ordered' && marker.start !== 1
+      && stack.length && stack[stack.length - 1].paragraphOpen
+      && !stack[stack.length - 1].afterBlank;
+    if (lazyOrderedMarker) marker = null;
     if (marker) {
       let parentIndex = stack.length - 1;
       while (parentIndex >= 0 && marker.indent < stack[parentIndex].contentIndent) parentIndex -= 1;
@@ -746,7 +788,7 @@ function brochureBulletHeadlines(text) {
 
     const boundary = boundaryIndent(line);
     const indent = boundary !== null ? boundary : leadingSpaces(line);
-    let block = boundary !== null || startsMarkdownBlock(line);
+    let block = boundary !== null || (!lazyOrderedMarker && startsMarkdownBlock(line));
     if (block && boundary === null) {
       let parentIndex = stack.length - 1;
       while (parentIndex >= 0 && indent < stack[parentIndex].contentIndent) parentIndex -= 1;
