@@ -55,6 +55,41 @@ check(
   'strong'
 );
 
+console.log('\nbrochure-style bullet headlines');
+const BROCHURE_BULLETS = '- **Numbers that guide the next call.** Twelve measures appear beside their source and update time.\n'
+  + '- **Where the records really live.** The list names each system and the fields it owns.';
+const brochureFinding = (text) =>
+  checkAll(text).soft.find((finding) => finding.name === 'brochure-style-bullet-headlines');
+const brochureResult = checkAll(BROCHURE_BULLETS);
+
+check('two repeated headline-and-explanation bullets are reported',
+  Boolean(brochureFinding(BROCHURE_BULLETS)), true);
+check('the repeated structure supports a some reading on its own',
+  brochureResult.reading, 'some');
+check('the repeated structure remains one category rather than two',
+  brochureResult.categories, 1);
+check('one styled bullet is ordinary Markdown rather than a pattern',
+  Boolean(brochureFinding(BROCHURE_BULLETS.split('\n')[0])), false);
+check('a plain bullet between styled items breaks the repeated run',
+  Boolean(brochureFinding(
+    `${BROCHURE_BULLETS.split('\n')[0]}\n- Data: source, owner, update time\n`
+    + BROCHURE_BULLETS.split('\n')[1]
+  )), false);
+check('ordinary bold labels are not sentence-shaped headlines',
+  Boolean(brochureFinding('- **Owner:** Billing team\n- **Status:** Ready\n- **Date:** Friday')), false);
+check('a list of bold instructions is not brochure framing',
+  Boolean(brochureFinding(
+    '- **Do not invent missing routes.** Say plainly when no route exists.\n'
+    + '- **Pick one primary match.** Let the reader ask for another option.\n'
+    + '- **Categorization is a heuristic.** Put uncertain cases in the final group.'
+  )), false);
+check('plain keyword bullets stay clean',
+  Boolean(brochureFinding('- Data: source and owner\n- Systems: ledger and warehouse\n- Reporting: weekly totals')), false);
+check('a bold sentence with no explanation after it stays clean',
+  Boolean(brochureFinding('- **The export completes overnight.**\n'.repeat(2))), false);
+check('fenced examples are shown rather than used',
+  Boolean(brochureFinding(`\`\`\`markdown\n${BROCHURE_BULLETS}\n\`\`\``)), false);
+
 console.log('\ncode');
 check('shipped placeholder is a hard finding',
   checkCode('const KEY = "your-api-key";').some((f) => f.hard), true);
@@ -797,6 +832,14 @@ function runCliWithNoStdin(args) {
     env: { ...process.env, HOME: dir },
   });
 }
+
+const brochureReport = runCli(['--prose'], BROCHURE_BULLETS);
+check('the prose report names the brochure-style finding',
+  brochureReport.includes('brochure-style-bullet-headlines: 2 occurrences'), true);
+check('the prose report explains why one structural category supports some',
+  brochureReport.includes('same pattern appears twice'), true);
+check('the prose report does not contradict its standalone reading',
+  brochureReport.includes('nothing alone'), false);
 
 const BANNED = 'This approach is worth stealing. The team shipped it last week and it held up well.';
 const report = runCli(['--prose'], BANNED);

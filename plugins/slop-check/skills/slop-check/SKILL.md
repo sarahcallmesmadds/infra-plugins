@@ -74,8 +74,9 @@ are and counted against nothing. A rule the writer never agreed to is not a
 fault in their draft. Then the
 softer habits: filler, machine vocabulary, avoiding plain "is" and "has",
 participles bolted onto sentence ends, claims sourced to nobody, hedging with
-no position, antithesis, lists of three, forced enthusiasm, melodrama, and
-sentences that are all the same length.
+no position, antithesis, lists of three, forced enthusiasm, melodrama,
+brochure-style lists that repeat a bold "that" or "where" headline followed
+by explanatory copy, and sentences that are all the same length.
 
 **Code.** Placeholders that shipped (`your-api-key`, `TODO: implement`), broad
 catches that swallow every error, comments restating the line below them,
@@ -117,7 +118,10 @@ version that works, and treat a missing cut line as the finding.
 
 Never quote a single hit as evidence. Every soft signal here appears in good
 human work, which is why the scorer counts distinct categories rather than
-total matches. Measured against 68 real documents and 26 real source files
+total matches. The brochure-style list check first requires two consecutive
+items with the same headline-and-explanation structure, so it can support a
+"some" reading on its own but never a "strong" one. Measured against 68 real
+documents and 26 real source files
 from the user's own repositories, none scored strong, so a strong reading is
 signal rather than noise.
 

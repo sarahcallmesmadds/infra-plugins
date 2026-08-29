@@ -119,8 +119,9 @@ names them as yours and counts them towards no verdict.
 Softer, and only meaningful together: filler, machine vocabulary, avoiding
 plain "is" and "has" in favour of "serves as", participles bolted onto sentence
 ends, claims sourced to nobody, hedging with no position, "not X but Y"
-antithesis, lists of three, forced enthusiasm, melodrama, and sentences that
-are all suspiciously similar lengths.
+antithesis, lists of three, forced enthusiasm, melodrama, brochure-style lists
+that repeat a bold "that" or "where" headline followed by explanatory copy,
+and sentences that are all suspiciously similar lengths.
 
 ### Code
 
@@ -202,6 +203,10 @@ selected which checks run, and it does not select these either.
 
 Distinct categories, never a single hit. Every soft signal here appears in
 good human work, and treating one "robust" as evidence produces nonsense.
+A brochure-style list is the narrow exception to needing two categories for a
+"some" reading: it reports only after two consecutive items repeat the full
+headline-and-explanation structure, so the aggregation happens inside the
+category rather than in the final score. It can never produce "strong" alone.
 
 Measured against 68 real documents and 26 real source files from the author's
 own repositories: none scored strong. Deliberately sloppy samples of both kinds

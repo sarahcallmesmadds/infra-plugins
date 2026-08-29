@@ -227,6 +227,56 @@ function ruleOfThree(prose) {
   return (prose.match(re) || []).length;
 }
 
+// A repeated list of sentence-shaped bold labels followed by explanatory copy.
+// One styled bullet is ordinary Markdown. Two in a row is the brochure shape
+// this detects, and the run is what makes it evidence rather than one writer's
+// formatting preference.
+//
+// This reads the list before `proseOf` removes it. Fenced examples come out
+// first, or a style guide showing the pattern would be reported for teaching it.
+// A colon label such as "**Owner:** Billing" is deliberately outside the
+// sentence-ending punctuation below, and a headline with no copy after it is
+// outside too. The "that" or "where" cue is load-bearing as well. Without it,
+// three ordinary bold instructions in find-skill/SKILL.md matched this detector
+// exactly. The relational headline is what separates the brochure framing from
+// a rule whose bold sentence simply says what to do.
+function brochureBulletHeadlines(text) {
+  const visible = String(text || '')
+    .replace(/```[\s\S]*?```|~~~[\s\S]*?~~~/g, '');
+  let run = 0;
+  let longest = 0;
+
+  for (const line of visible.split('\n')) {
+    const bullet = line.match(/^\s*[-*+]\s+(.+)$/);
+    if (!bullet) {
+      // Blank lines and indented continuation lines remain inside one Markdown
+      // list item. A new paragraph or heading ends the list and therefore the
+      // repeated run.
+      if (line.trim() && !/^\s{2,}\S/.test(line)) run = 0;
+      continue;
+    }
+
+    const labelled = bullet[1].match(/^\*\*([^*\n]+[.!?])\*\*\s+(.+)$/);
+    if (!labelled) {
+      run = 0;
+      continue;
+    }
+
+    const headlineWords = wordsIn(labelled[1]).length;
+    const explanationWords = wordsIn(labelled[2]).length;
+    const relationalHeadline = /\b(?:that|where)\b/i.test(labelled[1]);
+    if (relationalHeadline && headlineWords >= 3 && headlineWords <= 12
+        && explanationWords >= 4) {
+      run += 1;
+      if (run > longest) longest = run;
+    } else {
+      run = 0;
+    }
+  }
+
+  return longest >= 2 ? { count: longest, standalone: true } : null;
+}
+
 // Human paragraphs breathe unevenly. Near-identical sentence lengths across a
 // whole document is the least visible tell and one of the most reliable.
 function uniformRhythm(prose) {
@@ -345,6 +395,11 @@ function checkAll(text, config = {}) {
   const three = ruleOfThree(prose);
   if (three >= 3) soft.push({ name: 'rule-of-three', count: three });
 
+  const brochureBullets = brochureBulletHeadlines(text);
+  if (brochureBullets) {
+    soft.push({ name: 'brochure-style-bullet-headlines', ...brochureBullets });
+  }
+
   const rhythm = uniformRhythm(prose);
   if (rhythm) soft.push({ name: 'uniform-rhythm', ...rhythm });
 
@@ -352,10 +407,14 @@ function checkAll(text, config = {}) {
   if (smart >= 6) soft.push({ name: 'typographic-quotes-throughout', count: smart });
 
   // Distinct categories, not raw hits. One phrase repeated ten times is one
-  // habit; six different categories at once is a pattern.
+  // habit; six different categories at once is a pattern. A detector may mark
+  // itself standalone only after it has already aggregated a repeated structure
+  // with its own false-positive guard. That can support "some" on its own, but
+  // never "strong".
   const categories = soft.length;
+  const standalone = soft.some((finding) => finding.standalone === true);
   const reading =
-    categories >= 4 ? 'strong' : categories >= 2 ? 'some' : 'little';
+    categories >= 4 ? 'strong' : categories >= 2 || standalone ? 'some' : 'little';
 
   return { hard: hard.violations, soft, categories, reading };
 }
