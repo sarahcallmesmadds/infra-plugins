@@ -245,6 +245,28 @@ if (!mergeBase) {
   process.exit(0);
 }
 
+check('git-hygiene discovery copy describes evidence without claiming unique work', () => {
+  const forbidden = [
+    /still hold(?:ing|s)? work that exists nowhere else/i,
+    /commits? (?:that )?exist(?:s)? in exactly one place/i,
+    /only copy of (?:those|the) commits/i,
+    /never deletes? unmerged commits/i,
+    /will not delete unmerged commits/i,
+    /refuses to destroy unmerged work/i,
+  ];
+
+  for (const surface of SURFACES) {
+    const value = surface.read(WORKTREE, 'git-hygiene');
+    assert.ok(value, `${surface.label} is missing`);
+    assert.ok(/proved safe/i.test(value),
+      `${surface.label} must describe the positive-evidence boundary:\n  ${value}`);
+    for (const pattern of forbidden) {
+      assert.ok(!pattern.test(value),
+        `${surface.label} makes an unsupported unique-work or unconditional deletion claim:\n  ${value}`);
+    }
+  }
+});
+
 // Returns { moved, still, absent } for one plugin. `absent` is a surface that
 // does not exist on either side, which is not the same as one that did not move.
 function compare(name) {

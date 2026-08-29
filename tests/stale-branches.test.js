@@ -413,6 +413,10 @@ check('the session notice ignores merged branches that are not yet stale', () =>
   const src = fs.readFileSync(path.join(ROOT, 'hooks', 'session-notice.js'), 'utf8');
   assert.ok(/safe\.filter\(\(b\) => b\.stale\)/.test(src),
     'the notice must filter on stale, or it nags about branches merged minutes ago');
+  assert.ok(/proved safe to delete/.test(src),
+    'the notice must describe the positive evidence behind its count');
+  assert.ok(!/sitting fully merged|still holding unmerged commits/.test(src),
+    'the notice must not turn its safe count into claims about every other branch');
 });
 
 check('the notice only speaks when a session actually starts', () => {
@@ -454,6 +458,7 @@ const snapshot = {
     { name: 'main', lastCommitDate: d(0), aheadBy: 0, isDefault: true },
     { name: 'merged-in-march', lastCommitDate: d(144), aheadBy: 0, isDefault: false },
     { name: 'private-workshop-page', lastCommitDate: d(99), aheadBy: 3, isDefault: false },
+    { name: 'reviewing-work', lastCommitDate: d(80), aheadBy: 2, isDefault: false, hasOpenPR: true },
     { name: 'cannot-compare', lastCommitDate: d(50), aheadBy: null, isDefault: false },
   ],
 };
@@ -475,10 +480,16 @@ check('text output names the safe branch and no other', () => {
 
 check('the reason for keeping each branch is spelled out, not left blank', () => {
   const out = runCli(['--input', fixture, '--now', '2026-07-27']);
-  assert.ok(/private-workshop-page.*3 commits not in the default branch/.test(out),
-    `expected the commit count in the reason:\n${out}`);
+  assert.ok(/Keep \(3\), not proved safe to delete:/.test(out),
+    `the Keep heading must describe an evidence boundary, not certain work loss:\n${out}`);
+  assert.ok(/private-workshop-page.*3 commits not reachable from the default branch; that does not prove their work is absent from it/.test(out),
+    `expected a qualified reachability reason:\n${out}`);
+  assert.ok(/reviewing-work.*open pull request, 2 commits not reachable from the default branch; that does not prove their work is absent from it/.test(out),
+    `combined reasons must retain the same reachability qualification:\n${out}`);
   assert.ok(/cannot-compare.*could not work out whether it is merged/.test(out),
     `expected the unknown case to explain itself:\n${out}`);
+  assert.ok(!/deleting these would lose work/.test(out),
+    `Keep must not claim content loss that reachability alone cannot prove:\n${out}`);
   // The bug that shipped in guardrails: a reason rendering as the word undefined.
   assert.ok(!/undefined/.test(out), `output must never contain the word undefined:\n${out}`);
 });
@@ -499,7 +510,7 @@ check('--json emits parseable output with the same split', () => {
   const parsed = JSON.parse(out);
   assert.strictEqual(parsed.safe.length, 1);
   assert.strictEqual(parsed.safe[0].name, 'merged-in-march');
-  assert.strictEqual(parsed.keep.length, 3);
+  assert.strictEqual(parsed.keep.length, 4);
 });
 
 check('outside a repo with no --repo, it explains rather than reporting nothing', () => {
@@ -700,6 +711,12 @@ checkWriteTree('--verify clears a squash-merged branch and asks for the delete t
   assert.strictEqual(ok.code, 0, `a squash-merged branch must still verify, got:\n${ok.out}`);
   assert.ok(/needs-force:/.test(ok.out),
     `-d is going to refuse this, and saying so is what stops it being reported as a disagreement:\n${ok.out}`);
+  assert.ok(/only checks whether the commits are reachable from the default branch/.test(ok.out),
+    `the refusal must describe the narrower reachability check:\n${ok.out}`);
+  assert.ok(/cleared by separate content evidence/.test(ok.out),
+    `the refusal must name the independent evidence that cleared the branch:\n${ok.out}`);
+  assert.ok(!/needs-force:.*squash/i.test(ok.out),
+    `the generic force explanation must not infer squash provenance:\n${ok.out}`);
   assert.ok(/git branch -d squashed/.test(ok.out),
     `the printed command stays -d; forcing is the user's call, not this tool's:\n${ok.out}`);
   assert.ok(!/git branch -D/.test(ok.out), 'nothing here composes -D on the user\'s behalf');
@@ -707,6 +724,8 @@ checkWriteTree('--verify clears a squash-merged branch and asks for the delete t
   const no = verify('unmerged');
   assert.strictEqual(no.code, 3, 'a branch with unmerged work must not verify');
   assert.ok(!/git branch/.test(no.out), 'a refused branch must not be handed a delete command');
+  assert.ok(/not reachable from the default branch; that does not prove their work is absent from it/.test(no.out),
+    `a pre-delete refusal must qualify what reachability does and does not prove:\n${no.out}`);
 
   const gone = verify('never-existed');
   assert.strictEqual(gone.code, 3, 'a branch that is not there must not verify');
@@ -840,6 +859,39 @@ check('the force path re-checks each branch immediately before deleting it', () 
     'and one branch at a time, so a change part way through cannot reach a branch already cleared');
 });
 
+check('a branch still under Keep is stopped before every delete path', () => {
+  const skill = fs.readFileSync(path.join(ROOT, 'skills', 'stale-branches', 'SKILL.md'), 'utf8');
+  const start = skill.indexOf('**If the user asks to delete something under "Keep"**');
+  const end = skill.indexOf('## Step 5', start);
+  assert.ok(start !== -1 && end > start, 'expected the held-branch instructions in Step 4');
+  const held = skill.slice(start, end);
+  assert.ok(/has not proved it safe to delete/.test(held),
+    'the refusal must describe missing safety evidence rather than certain work loss');
+  assert.ok(/Do not print or run `git branch -d`, `git branch -D`, or a remote ref deletion/.test(held),
+    'held branches must be stopped before local and remote deletion commands');
+  assert.ok(!/say 'force delete|Only on that explicit second phrasing, act/.test(held),
+    'Step 4 must not offer an override that sends a held branch to -D');
+});
+
+check('the current README and skill distinguish reachability from content absence', () => {
+  const readme = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8');
+  const skill = fs.readFileSync(path.join(ROOT, 'skills', 'stale-branches', 'SKILL.md'), 'utf8');
+
+  for (const [name, text] of [['README', readme], ['skill', skill]]) {
+    assert.ok(/not prove (?:the|their) (?:work|content) (?:is|exists) absent|not proof that the content is absent/i.test(text),
+      `${name} must state the limit of commit reachability`);
+    assert.ok(/not proved safe to delete/i.test(text),
+      `${name} must name the Keep evidence boundary`);
+  }
+
+  assert.ok(!/It will not delete unmerged commits/.test(readme),
+    'README must not make an exceptionless promise contradicted by the confirmed force path');
+  assert.ok(!/One or more means those commits exist in exactly one place/.test(skill),
+    'skill must not infer unique work from a positive reachability count');
+  assert.ok(!/\{K\} still have work on them|left alone, still holding work/.test(skill),
+    'skill summaries must not turn Keep into a content-loss conclusion');
+});
+
 check('sweep guidance limits pull-request caveats to GitHub repositories', () => {
   const skill = fs.readFileSync(path.join(ROOT, 'skills', 'stale-branches', 'SKILL.md'), 'utf8');
   const line = skill.split('\n').find((x) => x.includes('`openPRCheckUnavailable`')) || '';
@@ -964,13 +1016,18 @@ check('the README sample output matches what the command actually prints', () =>
   const cliSrc = fs.readFileSync(CLI, 'utf8');
   const readme = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8');
 
-  const m = cliSrc.match(/Safe to delete \(\$\{safe\.length\}\)(.*?)`\);/);
-  assert.ok(m, 'expected to find the safe-list header in cli.js');
-  const phrase = m[1].replace(/^[^A-Za-z]+/, '').replace(/:\s*$/, '').trim();
-  assert.ok(phrase.length > 0, 'expected a readable phrase in the safe-list header');
+  const headings = [
+    ['safe', cliSrc.match(/Safe to delete \(\$\{safe\.length\}\)(.*?)`\);/)],
+    ['Keep', cliSrc.match(/Keep \(\$\{keep\.length\}\)(.*?)`\);/)],
+  ];
 
-  assert.ok(readme.includes(phrase),
-    `README shows a safe-list header the command no longer prints. Expected to find:\n  ${phrase}`);
+  for (const [name, match] of headings) {
+    assert.ok(match, `expected to find the ${name}-list header in cli.js`);
+    const phrase = match[1].replace(/:\s*$/, '').trim();
+    assert.ok(phrase.length > 0, `expected a readable phrase in the ${name}-list header`);
+    assert.ok(readme.includes(phrase),
+      `README shows a ${name}-list header the command no longer prints. Expected to find:\n  ${phrase}`);
+  }
 });
 
 check('the skip count rides in the final line, where run-all can see it', () => {

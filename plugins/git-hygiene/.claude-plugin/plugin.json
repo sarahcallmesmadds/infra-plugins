@@ -1,7 +1,7 @@
 {
   "name": "git-hygiene",
-  "version": "0.3.11",
-  "description": "Tells you which old branches are safe to delete and which still hold work that exists nowhere else, then cleans up the safe ones once you approve them. Never deletes unmerged commits.",
+  "version": "0.3.12",
+  "description": "Tells you which branches are proved safe to delete and which are not, then cleans up the proved-safe ones once you approve them. Held branches stay untouched unless separate evidence clears them; commit reachability alone is never described as proof that their work exists nowhere else.",
   "author": {
     "name": "Sarah Madden",
     "url": "https://github.com/sarahcallmesmadds"

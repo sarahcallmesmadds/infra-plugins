@@ -1,21 +1,18 @@
 // Decides which branches are safe to delete and which are not.
 //
 // The whole plugin turns on one distinction: a branch being OLD and a branch
-// being MERGED are unrelated. Age is why you notice a branch. Merge state is
-// the only thing that decides whether deleting it loses work. A tool that
-// conflates the two eats months of unpushed work and reports success.
+// being PROVED SAFE TO DELETE are unrelated. Age is why you notice a branch.
+// Positive evidence is what decides whether it can be offered for deletion.
 //
 // So: only positive evidence of a merge can put a branch in the safe list, and
 // anything uncertain fails into the unsafe list. There is deliberately no
 // option to override that, because the override is the bug.
 //
 // There are two kinds of positive evidence, and `merged` is the second one.
-// `aheadBy` reads ancestry, which a squash merge never creates: the branch is
-// rewritten into one new commit on the default branch, so its own commits stay
-// unreachable and `aheadBy` stays above zero permanently. In a repository that
-// squash-merges every pull request, ancestry alone can never clear a branch.
-// `merged` carries the other kind: a merged pull request, or a tree comparison
-// showing the branch adds nothing the default branch does not already have.
+// `aheadBy` reads ancestry, which does not establish whether equivalent content
+// is already present under different commits. `merged` carries separate
+// evidence: a merged pull request, or a tree comparison showing the branch adds
+// nothing the default branch does not already have.
 //
 // This is not the override the paragraph above rules out. `merged` is positive
 // evidence, not a way to ignore the absence of it. A branch with no merge
@@ -130,12 +127,11 @@ function classify(branches, config, now) {
 // itself is a second opinion on top of our classification, and it is the
 // default here for that reason.
 //
-// That second opinion is ancestry-based, so it shares the exact blind spot the
-// `merged` signal exists to cover: it refuses a squash-merged branch every
-// time, however certain we are. Leaving `-d` as the only option meant every
+// That second opinion is ancestry-based, so it cannot confirm a branch cleared
+// by separate content evidence. Leaving `-d` as the only option meant every
 // branch the new signal cleared was listed as safe, approved by the user, and
 // then refused at the last step with a message saying git disagreed. Nothing
-// disagreed. Git was answering a question it cannot answer for that branch.
+// disagreed. Git was answering a narrower question for that branch.
 //
 // This file still never produces `-D`, and there is no argument that makes it.
 // The refusal is real and it is the user's to override, not ours to route

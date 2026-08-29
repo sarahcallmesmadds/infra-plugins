@@ -13,9 +13,9 @@
 // --verify exits 0 only when that branch is still safe, and prints the delete
 // command to use for it. It exists because the check that runs before a delete
 // must be the same check that produced the listing. The skill used to re-read
-// an ancestry count in prose, which a squash merge never satisfies, so every
-// branch the merge signal cleared was then refused at the last step and the
-// user was told something had landed in between. Nothing had.
+// an ancestry count in prose, which branches cleared by separate content
+// evidence may not satisfy, so every such branch was then refused at the last
+// step and the user was told something had landed in between. Nothing had.
 //
 // --stale-after sets the `stale` flag in --json output and nothing else. It does
 // NOT filter what is listed and it does NOT affect what is safe to delete. Every
@@ -64,7 +64,7 @@ const KEEP_TEXT = {
 function reasonText(b) {
   return b.keepReasons
     .map((r) => (r === KEEP.UNMERGED
-      ? `${b.aheadBy} commit${b.aheadBy === 1 ? '' : 's'} not in the default branch`
+      ? `${b.aheadBy} commit${b.aheadBy === 1 ? '' : 's'} not reachable from the default branch; that does not prove their work is absent from it`
       : KEEP_TEXT[r]))
     .filter(Boolean)
     .join(', ');
@@ -121,8 +121,9 @@ function render(result, where, lookup) {
   }
 
   // Said out loud rather than left to look like a clean result. Without the
-  // comparison, a squash-merged branch is indistinguishable here from one
-  // holding real work, and every one of them lands in Keep.
+  // comparison, some branches whose content is already present cannot be
+  // distinguished from branches that still need inspection, so they stay in
+  // Keep.
   if (lookup && lookup.mergeCheckUnavailable) {
     lines.push('');
     lines.push('Note: this git cannot run `merge-tree --write-tree`, which needs 2.38 or newer,');
@@ -131,11 +132,9 @@ function render(result, where, lookup) {
     lines.push('`--repo owner/name` uses merged pull requests instead and does not need it.');
   }
 
-  // A GitHub repository's merged pull requests could not be read, so
-  // the run is missing the one piece of evidence that survives a squash merge
-  // into a default branch that has since moved on. Said plainly, because the
-  // alternative is a Keep list that looks settled and is not: this is the exact
-  // shape of the answer that disagreed with `--repo` for the same repository.
+  // A GitHub repository's merged pull requests could not be read, so the run
+  // is missing one source of separate merge evidence. Said plainly, because
+  // the alternative is a Keep list that looks settled and is not.
   if (lookup && lookup.mergedPRCheckUnavailable) {
     lines.push('');
     lines.push('Note: the merged pull requests for this repository could not be read, so a');
@@ -155,7 +154,7 @@ function render(result, where, lookup) {
   }
 
   if (keep.length) {
-    lines.push(`Keep (${keep.length}) — deleting these would lose work:`);
+    lines.push(`Keep (${keep.length}), not proved safe to delete:`);
     for (const b of keep) lines.push(`  ${b.name}  (${age(b)}) — ${reasonText(b)}`);
   } else {
     lines.push('Keep (0).');
@@ -208,19 +207,18 @@ function verifyOne(result, name, repo, lookup) {
 
   process.stdout.write(`${b.name} is safe to delete: ${b.mergedVia || 'every commit is already in the default branch'}\n`);
 
-  // A branch cleared by merge evidence rather than by ancestry will be refused
-  // by `git branch -d`, every time, because git asks only whether the commits
-  // are reachable and a squash merge rewrites them. Saying so here is the
-  // difference between an expected refusal and one reported to the user as
-  // though something changed underneath them.
+  // A branch cleared by separate content evidence rather than by ancestry will
+  // be refused by `git branch -d`, because git asks only whether the commits
+  // are reachable. Saying so here is the difference between an expected
+  // refusal and one reported as though something changed underneath the user.
   //
   // The command printed below is still `-d`. Forcing past a refusal is the
   // user's decision and the skill asks for it; nothing in this tool composes
   // `-D` on their behalf.
   if (!repo && b.merged) {
     process.stdout.write('needs-force: git branch -d will refuse this. It only checks whether the '
-      + 'commits are reachable from the default branch, and a squash merge rewrites them, so the '
-      + 'refusal is expected rather than a disagreement.\n');
+      + 'commits are reachable from the default branch. This branch was cleared by separate content '
+      + 'evidence, so the refusal is expected rather than a disagreement.\n');
   }
 
   const cmd = repo ? remoteDeleteCommand(repo, b.name) : localDeleteCommand(b.name);

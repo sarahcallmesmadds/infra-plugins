@@ -1,11 +1,10 @@
 #!/usr/bin/env node
-// SessionStart notice: mentions merged-and-undeleted branches once, quietly.
+// SessionStart notice: mentions old branches proved safe to delete once, quietly.
 //
 // Deliberately narrow. It counts ONLY branches in the current checkout whose
-// commits are all already in the default branch, which is the set that can be
-// removed without losing anything. It never mentions branches holding work,
-// because a notice you cannot safely act on is just noise at the top of every
-// session, and noise at the top of every session gets the plugin uninstalled.
+// classification has positive deletion evidence. It never mentions branches
+// that remain under Keep, because a notice you cannot safely act on is just
+// noise at the top of every session, and that gets the plugin uninstalled.
 //
 // It never blocks, never asks, and stays silent unless there is something worth
 // saying. Any error at all exits 0 without output.
@@ -90,11 +89,11 @@ function main(event, deadline) {
     hookSpecificOutput: {
       hookEventName: 'SessionStart',
       additionalContext:
-        `${worthMentioning.length} branches in this repository have been sitting fully merged `
-        + `into ${defaultBranch} for a while, and can be deleted without losing anything: `
+        `${worthMentioning.length} branches in this repository have been proved safe to delete `
+        + `against ${defaultBranch} and have been sitting there for a while: `
         + `${names}${more}. `
         + 'Run /stale-branches to review and clean them up. It shows every branch, including '
-        + 'recently merged ones and any still holding unmerged commits, which this count leaves out.',
+        + 'recently cleared ones and any not proved safe to delete, which this count leaves out.',
     },
   }));
 }

@@ -1,7 +1,7 @@
 {
   "name": "git-hygiene",
-  "version": "0.3.11",
-  "description": "Tells you which old branches are safe to delete and which still hold work that exists nowhere else, then cleans up the safe ones once you approve them. Never deletes unmerged commits.",
+  "version": "0.3.12",
+  "description": "Tells you which branches are proved safe to delete and which are not, then cleans up the proved-safe ones once you approve them. Held branches stay untouched unless separate evidence clears them; commit reachability alone is never described as proof that their work exists nowhere else.",
   "author": {
     "name": "Sarah Madden",
     "url": "https://github.com/sarahcallmesmadds"
@@ -19,8 +19,8 @@
   "skills": "./skills/",
   "interface": {
     "displayName": "Git Hygiene",
-    "shortDescription": "Which old branches are safe to delete, and which are not",
-    "longDescription": "Branches pile up and nothing tells you which ones matter. The dangerous part is that the two things you care about are unrelated: how old a branch is, and whether its commits are already saved in your main branch. Git Hygiene separates them. It shows the branches whose work is already merged, which can go without losing anything, apart from the ones still holding commits that exist in exactly one place. It deletes only what you approve, uses the form of the delete command that refuses to destroy unmerged work, and re-checks every branch on GitHub immediately before removing it. Anything it cannot classify is kept and the reason is shown.",
+    "shortDescription": "Which branches are proved safe to delete, and which are not",
+    "longDescription": "Branches pile up and nothing tells you which ones matter. Git Hygiene separates age from deletion evidence. It shows branches proved safe by reachability or independent merge or content evidence, and keeps everything else as not proved safe without claiming the work exists nowhere else. It deletes only after approval, re-checks each branch immediately before deletion, and uses a separate confirmed force step only when a locally verified branch is safe but lowercase git branch -d refuses it. Anything it cannot classify is kept and the reason is shown.",
     "developerName": "Sarah Madden",
     "category": "Engineering",
     "capabilities": [
