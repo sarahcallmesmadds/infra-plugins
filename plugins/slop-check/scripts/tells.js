@@ -243,8 +243,13 @@ function ruleOfThree(prose) {
 function withoutFencedBlocks(text) {
   let fence = null;
   const visible = [];
+  // Comments can contain example Markdown too. Preserve their newlines so a
+  // comment between two real bullets remains a boundary rather than joining
+  // the surrounding lines after removal.
+  const source = String(text || '').replace(/<!--[\s\S]*?(?:-->|$)/g,
+    (comment) => comment.replace(/[^\n]/g, ''));
 
-  for (const line of String(text || '').split('\n')) {
+  for (const line of source.split('\n')) {
     if (fence) {
       const close = line.match(/^ {0,3}(`+|~+)\s*$/);
       if (close && close[1][0] === fence.char && close[1].length >= fence.length) {
@@ -264,6 +269,12 @@ function withoutFencedBlocks(text) {
   }
 
   return visible;
+}
+
+function startsMarkdownBlock(line) {
+  return /^ {0,3}(?:#{1,6}(?:\s|$)|>|\d{1,9}[.)](?:\s|$)|\|)/.test(line)
+    || /^ {0,3}(?:(?:\*\s*){3,}|(?:_\s*){3,}|(?:-\s*){3,}|=+)\s*$/.test(line)
+    || /^ {0,3}<(?:!DOCTYPE\b|\?|\/?[A-Za-z][A-Za-z0-9-]*(?:\s|>|\/))/i.test(line);
 }
 
 function brochureHeadline(headline) {
@@ -291,24 +302,27 @@ function brochureHeadline(headline) {
 function brochureBulletHeadlines(text) {
   const visible = withoutFencedBlocks(text);
   let run = 0;
+  let runIndent = null;
   let repeated = 0;
 
   const finishRun = () => {
     if (run >= 2) repeated += run;
     run = 0;
+    runIndent = null;
   };
 
   for (let index = 0; index < visible.length; index += 1) {
-    const bullet = visible[index].match(/^ {0,3}[-*+]\s+(.+)$/);
+    const bullet = visible[index].match(/^( {0,3})[-*+]\s+(.+)$/);
     if (!bullet) {
       if (visible[index].trim()) finishRun();
       continue;
     }
 
-    let item = bullet[1];
+    const indent = bullet[1].length;
+    let item = bullet[2];
     while (index + 1 < visible.length) {
       const next = visible[index + 1];
-      if (!next.trim() || /^ {0,3}[-*+]\s+/.test(next)) break;
+      if (!next.trim() || /^ {0,3}[-*+]\s+/.test(next) || startsMarkdownBlock(next)) break;
       item += ` ${next.trim()}`;
       index += 1;
     }
@@ -323,6 +337,8 @@ function brochureBulletHeadlines(text) {
     const explanationWords = wordsIn(labelled[3]).length;
     if (brochureHeadline(labelled[2]) && headlineWords >= 3 && headlineWords <= 12
         && explanationWords >= 4) {
+      if (run > 0 && runIndent !== indent) finishRun();
+      runIndent = indent;
       run += 1;
     } else {
       finishRun();

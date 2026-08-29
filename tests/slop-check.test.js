@@ -118,6 +118,24 @@ check('a lazy unindented continuation stays inside its Markdown list item',
     + '- **Where the records really live.** The list names each system and the fields\n'
     + 'it owns.'
   )), true);
+for (const [name, block] of [
+  ['heading', '## A separate section'],
+  ['blockquote', '> A separate quotation'],
+  ['numbered item', '1. A separate step'],
+  ['thematic break', '---'],
+  ['table', '| Field | Owner |'],
+]) {
+  check(`${name} ends a run instead of becoming lazy continuation text`,
+    Boolean(brochureFinding(
+      `${BROCHURE_BULLETS.split('\n')[0]}\n${block}\n${BROCHURE_BULLETS.split('\n')[1]}`
+    )), false);
+}
+check('bullets inside an HTML comment are not read as visible prose',
+  Boolean(brochureFinding(`<!--\n${BROCHURE_BULLETS}\n-->`)), false);
+check('a nested bullet and a top-level bullet are not one consecutive run',
+  Boolean(brochureFinding(
+    `  ${BROCHURE_BULLETS.split('\n')[0]}\n${BROCHURE_BULLETS.split('\n')[1]}`
+  )), false);
 check('underscore-delimited bold headlines are equivalent Markdown',
   Boolean(brochureFinding(BROCHURE_BULLETS.replaceAll('**', '__'))), true);
 check('four-space-indented code is not read as a top-level list',
