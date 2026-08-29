@@ -254,7 +254,8 @@ function backtickRunsWithLaterClose(lines) {
   const seenLengths = new Set();
   const withLaterClose = new Set();
   for (let lineIndex = lines.length - 1; lineIndex >= 0; lineIndex -= 1) {
-    if (!lines[lineIndex].trim() || startsInlineBlock(lines[lineIndex])) {
+    if (!lines[lineIndex].trim() || startsInlineBlock(lines[lineIndex])
+      || startsMarkdownBlock(lines[lineIndex])) {
       seenLengths.clear();
       continue;
     }
@@ -266,6 +267,26 @@ function backtickRunsWithLaterClose(lines) {
     }
   }
   return withLaterClose;
+}
+
+function insideLinkDestination(line, endIndex) {
+  let depth = 0;
+  for (let index = 0; index < endIndex; index += 1) {
+    if (line[index] === '\\') {
+      index += 1;
+      continue;
+    }
+    if (depth === 0) {
+      if (line[index] === ']' && line[index + 1] === '(') {
+        depth = 1;
+        index += 1;
+      }
+      continue;
+    }
+    if (line[index] === '(') depth += 1;
+    else if (line[index] === ')') depth -= 1;
+  }
+  return depth > 0;
 }
 
 function htmlCommentStart(line, lineIndex, codeDelimiter, withLaterClose, startIndex = 0) {
@@ -293,9 +314,7 @@ function htmlCommentStart(line, lineIndex, codeDelimiter, withLaterClose, startI
       let escapes = 0;
       for (let before = index - 1; before >= 0 && line[before] === '\\'; before -= 1) escapes += 1;
       if (escapes % 2 === 1) continue;
-      const linkOpen = line.lastIndexOf('](', index);
-      const linkClose = line.lastIndexOf(')', index);
-      if (linkOpen > linkClose) continue;
+      if (insideLinkDestination(line, index)) continue;
       return { index, codeDelimiter };
     }
   }
@@ -401,7 +420,7 @@ function withoutFencedBlocks(text) {
       } else if (rawHtml.end && line.includes(rawHtml.end)) {
         rawHtml = null;
       } else if (rawHtml.tag
-        && new RegExp(`</${rawHtml.tag}(?:[ \\t]|>)`, 'i').test(line)) {
+        && new RegExp(`</${rawHtml.tag}[ \\t]*>`, 'i').test(line)) {
         rawHtml = null;
       }
       visible.push('');
@@ -463,7 +482,8 @@ function withoutFencedBlocks(text) {
       }
     };
 
-    if (!blockLine.trim() || startsInlineBlock(blockLine)) inlineCodeDelimiter = null;
+    if (!blockLine.trim() || startsInlineBlock(blockLine)
+      || startsMarkdownBlock(blockLine)) inlineCodeDelimiter = null;
     const lineIndent = leadingSpaces(blockLine);
     const open = blockLine.match(/^([ \t]*)(`{3,}|~{3,})(.*)$/);
     const openIndent = open ? leadingSpaces(blockLine) : 0;
@@ -485,7 +505,7 @@ function withoutFencedBlocks(text) {
     if (htmlOpen && (htmlOpen.interruptsParagraph || typeSevenCanStart)
       && lineIndent - htmlParent.base <= 3) {
       const closesHere = (htmlOpen.end && blockLine.includes(htmlOpen.end))
-        || (htmlOpen.tag && new RegExp(`</${htmlOpen.tag}(?:[ \\t]|>)`, 'i').test(blockLine));
+        || (htmlOpen.tag && new RegExp(`</${htmlOpen.tag}[ \\t]*>`, 'i').test(blockLine));
       rawHtml = closesHere ? null : htmlOpen;
       listContentIndents.length = htmlParent.index + 1;
       hideBlockStart(blockBoundaryIndent ?? lineIndent);
@@ -549,9 +569,10 @@ function withoutFencedBlocks(text) {
 }
 
 function startsMarkdownBlock(line) {
-  return /^[ \t]*(?:#{1,6}(?:\s|$)|>|\d{1,9}[.)](?:\s|$)|\|)/.test(line)
-    || /^[ \t]*(?:(?:\*\s*){3,}|(?:_\s*){3,}|(?:-\s*){3,}|=+)\s*$/.test(line)
-    || /^[ \t]*<(?:!DOCTYPE\b|\?|\/?[A-Za-z][A-Za-z0-9-]*(?:\s|>|\/))/i.test(line);
+  if (/^[ \t]*(?:#{1,6}(?:\s|$)|>|(?:[-*+]|\d{1,9}[.)])(?:\s|$)|\|)/.test(line)
+    || /^[ \t]*(?:(?:\*\s*){3,}|(?:_\s*){3,}|(?:-\s*){3,}|=+)\s*$/.test(line)) return true;
+  const html = rawHtmlBlockStart(line);
+  return Boolean(html && html.interruptsParagraph);
 }
 
 function leadingSpaces(line) {

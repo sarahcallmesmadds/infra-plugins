@@ -136,6 +136,10 @@ for (const tag of ['pre', 'script', 'style', 'textarea', 'div']) {
   check(`bullets inside a raw ${tag} block are not read as Markdown`,
     Boolean(brochureFinding(`<${tag}>\n${BROCHURE_BULLETS}\n</${tag}>`)), false);
 }
+check('text resembling a script close does not end a raw HTML block',
+  Boolean(brochureFinding(
+    `<script>\nconst example = "</script fake>";\n${BROCHURE_BULLETS}\n</script>`
+  )), false);
 for (const [name, open, close] of [
   ['processing instruction', '<?sample', '?>'],
   ['declaration', '<!SAMPLE', '>'],
@@ -177,6 +181,10 @@ check('a type-seven tag cannot interrupt an open paragraph',
   Boolean(brochureFinding(`Intro text\n<custom-box>\n${BROCHURE_BULLETS}`)), true);
 check('an outdented type-seven tag remains a lazy list continuation',
   Boolean(brochureFinding(`- Parent paragraph\n<custom-box>\n${BROCHURE_BULLETS}`)), true);
+check('a type-seven lazy continuation does not split sibling brochure bullets',
+  Boolean(brochureFinding(
+    `${BROCHURE_BULLETS.split('\n')[0]}\n<custom-box>\n${BROCHURE_BULLETS.split('\n')[1]}`
+  )), true);
 for (const [name, block] of [
   ['an HTML comment', '<!-- note -->'],
   ['a fenced block', '```\nexample\n```'],
@@ -358,6 +366,19 @@ check('an escaped comment opener does not hide later prose',
   Boolean(brochureFinding(`\\<!-- literal opener\n\n${BROCHURE_BULLETS}`)), true);
 check('a comment-like link destination does not hide later prose',
   Boolean(brochureFinding(`[marker](<!--)\n\n${BROCHURE_BULLETS}`)), true);
+check('nested parentheses stay balanced in a comment-like link destination',
+  Boolean(brochureFinding(`[marker](x(y)<!--)\n\n${BROCHURE_BULLETS}`)), true);
+for (const [name, block] of [
+  ['heading', '# separate section'],
+  ['blockquote', '> separate quotation'],
+  ['list', '- separate item'],
+  ['thematic break', '---'],
+]) {
+  check(`${name} stops an unmatched backtick from hiding a later comment`,
+    Boolean(brochureFinding(
+      `A stray \`\n${block}\ntext <!-- \`\n${BROCHURE_BULLETS}\n-->`
+    )), false);
+}
 check('underscore-delimited bold headlines are equivalent Markdown',
   Boolean(brochureFinding(BROCHURE_BULLETS.replaceAll('**', '__'))), true);
 check('four-space-indented code is not read as a top-level list',
