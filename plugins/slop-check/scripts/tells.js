@@ -814,6 +814,12 @@ function brochureHeadline(headline) {
     return words.length === 2
       && /^(?:a|an|the|this|these|those|your|our|their)\b/i.test(subject);
   }
+  // A plural-looking final `s` is useful for noun headlines such as "Numbers
+  // that guide", but it also matches closed-class words and auxiliaries such
+  // as "Is", "Was", "Does", and "This". Those begin questions or clauses,
+  // not the noun phrase this narrow signal is looking for.
+  if (/^(?:as|being|does|has|his|is|its|ours|theirs|this|thus|was|yes|yours)$/i
+    .test(subject)) return false;
   return /(?:[^s]s|ing|tion|ment|ness|ity|ance|ence)$/i.test(subject)
     || /^(?:content|copy|data|software)$/i.test(subject);
 }

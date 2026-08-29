@@ -99,6 +99,12 @@ check('other that-complement instructions stay clean without a verb denylist',
     '- **Remember that the cache must be warm.** Run the health check before deployment.\n'
     + '- **Document that the response is valid.** Record the result in the release notes.'
   )), false);
+check('question headlines with auxiliary subjects are not brochure framing',
+  Boolean(brochureFinding(
+    '- **Is that true?** This is the question we ask before publishing.\n'
+    + '- **Was that clear?** Here is the summary each reader receives afterward.\n'
+    + '- **Does that work?** Run the result through the normal validation path.'
+  )), false);
 check('that-complements in ordinary summaries are not relative headlines',
   Boolean(brochureFinding(
     '- **The audit showed that data differed.** The report compares current totals with prior records.\n'
