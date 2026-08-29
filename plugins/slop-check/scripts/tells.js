@@ -250,29 +250,52 @@ function boundaryIndent(line) {
   return line.startsWith(MARKDOWN_BOUNDARY) ? Number(line.slice(1)) : null;
 }
 
-function htmlCommentStart(line) {
-  for (let index = 0; index <= line.length - 4; index += 1) {
+function backtickRunsWithLaterClose(lines) {
+  const seenLengths = new Set();
+  const withLaterClose = new Set();
+  for (let lineIndex = lines.length - 1; lineIndex >= 0; lineIndex -= 1) {
+    const runs = [...lines[lineIndex].matchAll(/`+/g)];
+    for (let runIndex = runs.length - 1; runIndex >= 0; runIndex -= 1) {
+      const run = runs[runIndex];
+      if (seenLengths.has(run[0].length)) withLaterClose.add(`${lineIndex}:${run.index}`);
+      seenLengths.add(run[0].length);
+    }
+  }
+  return withLaterClose;
+}
+
+function htmlCommentStart(line, lineIndex, codeDelimiter, withLaterClose) {
+  for (let index = 0; index < line.length; index += 1) {
     if (line[index] === '`') {
       let end = index + 1;
       while (line[end] === '`') end += 1;
-      const delimiter = line.slice(index, end);
-      const close = line.indexOf(delimiter, end);
-      if (close !== -1) {
-        index = close + delimiter.length - 1;
-        continue;
+      const length = end - index;
+      if (codeDelimiter === length) {
+        codeDelimiter = null;
+      } else if (codeDelimiter === null) {
+        let escapes = 0;
+        for (let before = index - 1; before >= 0 && line[before] === '\\'; before -= 1) escapes += 1;
+        if (escapes % 2 === 0 && withLaterClose.has(`${lineIndex}:${index}`)) {
+          codeDelimiter = length;
+        }
       }
+      // Whether this run opened code, closed it, or is unmatched literal text,
+      // inspect it once. Advancing one backtick at a time made a long unmatched
+      // run quadratic even though it cannot contain a comment opener.
+      index = end - 1;
+      continue;
     }
-    if (line.startsWith('<!--', index)) {
+    if (codeDelimiter === null && line.startsWith('<!--', index)) {
       let escapes = 0;
       for (let before = index - 1; before >= 0 && line[before] === '\\'; before -= 1) escapes += 1;
       if (escapes % 2 === 1) continue;
       const linkOpen = line.lastIndexOf('](', index);
       const linkClose = line.lastIndexOf(')', index);
       if (linkOpen > linkClose) continue;
-      return index;
+      return { index, codeDelimiter };
     }
   }
-  return -1;
+  return { index: -1, codeDelimiter };
 }
 
 const HTML_BLOCK_UNTIL_CLOSE = /^(?:script|pre|style|textarea)$/i;
@@ -290,9 +313,12 @@ function withoutFencedBlocks(text) {
   let fence = null;
   let htmlComment = false;
   let rawHtml = null;
+  let inlineCodeDelimiter = null;
   let afterBlank = false;
   const visible = [];
   const listContentIndents = [];
+  const lines = String(text || '').split(/\r?\n/);
+  const withLaterClose = backtickRunsWithLaterClose(lines);
 
   const listParentAt = (indent) => {
     let index = listContentIndents.length - 1;
@@ -324,7 +350,8 @@ function withoutFencedBlocks(text) {
     afterBlank = false;
   };
 
-  for (const line of String(text || '').split('\n')) {
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+    const line = lines[lineIndex];
     if (fence) {
       const close = line.match(/^([ \t]*)(`+|~+)\s*$/);
       const closeIndent = close ? leadingSpaces(line) : 0;
@@ -363,8 +390,25 @@ function withoutFencedBlocks(text) {
       rememberVisibleLine(after);
       continue;
     }
-    const comment = htmlCommentStart(line);
     const lineIndent = leadingSpaces(line);
+    const open = line.match(/^([ \t]*)(`{3,}|~{3,})(.*)$/);
+    const openIndent = open ? leadingSpaces(line) : 0;
+    const fenceParent = listParentAt(openIndent);
+    const validFenceInfo = open && (open[2][0] === '~' || !open[3].includes('`'));
+    if (inlineCodeDelimiter === null && validFenceInfo
+      && openIndent - fenceParent.base <= 3) {
+      fence = { char: open[2][0], length: open[2].length, base: fenceParent.base };
+      listContentIndents.length = fenceParent.index + 1;
+      visible.push(boundaryLine(openIndent));
+      afterBlank = false;
+      continue;
+    }
+
+    const commentScan = htmlCommentStart(
+      line, lineIndex, inlineCodeDelimiter, withLaterClose
+    );
+    inlineCodeDelimiter = commentScan.codeDelimiter;
+    const comment = commentScan.index;
     const commentParent = listParentAt(lineIndent);
     // Four columns beyond the containing list item make an indented code block.
     // Treat a comment-looking string there as code; a comment at the same raw
@@ -382,29 +426,19 @@ function withoutFencedBlocks(text) {
       continue;
     }
 
-    const open = line.match(/^([ \t]*)(`{3,}|~{3,})(?:[^`~].*)?$/);
-    const openIndent = open ? leadingSpaces(line) : 0;
-    const fenceParent = listParentAt(openIndent);
-    if (open && openIndent - fenceParent.base <= 3) {
-      fence = { char: open[2][0], length: open[2].length, base: fenceParent.base };
-      listContentIndents.length = fenceParent.index + 1;
-      visible.push(boundaryLine(openIndent));
+    const htmlOpen = inlineCodeDelimiter === null ? rawHtmlBlockStart(line) : null;
+    const htmlParent = listParentAt(lineIndent);
+    if (htmlOpen && lineIndent - htmlParent.base <= 3) {
+      const closesHere = !htmlOpen.untilBlank
+        && new RegExp(`</${htmlOpen.tag}(?:[ \\t]|>)`, 'i').test(line);
+      rawHtml = closesHere ? null : htmlOpen;
+      listContentIndents.length = htmlParent.index + 1;
+      visible.push(boundaryLine(lineIndent));
       afterBlank = false;
-    } else {
-      const htmlOpen = rawHtmlBlockStart(line);
-      const htmlParent = listParentAt(lineIndent);
-      if (htmlOpen && lineIndent - htmlParent.base <= 3) {
-        const closesHere = !htmlOpen.untilBlank
-          && new RegExp(`</${htmlOpen.tag}(?:[ \\t]|>)`, 'i').test(line);
-        rawHtml = closesHere ? null : htmlOpen;
-        listContentIndents.length = htmlParent.index + 1;
-        visible.push(boundaryLine(lineIndent));
-        afterBlank = false;
-        continue;
-      }
-      visible.push(line);
-      rememberVisibleLine(line);
+      continue;
     }
+    visible.push(line);
+    rememberVisibleLine(line);
   }
 
   return visible;
@@ -447,7 +481,7 @@ function parseListMarker(line) {
 }
 
 function brochureItem(body) {
-  const labelled = body.match(/^(\*\*|__)(.+?[.!?])\1\s+(.+)$/);
+  const labelled = body.trim().match(/^(\*\*|__)(.+?[.!?])\1\s+(.+)$/);
   if (!labelled) return false;
 
   const headlineWords = wordsIn(labelled[2]).length;

@@ -64,6 +64,8 @@ const brochureResult = checkAll(BROCHURE_BULLETS);
 
 check('two repeated headline-and-explanation bullets are reported',
   Boolean(brochureFinding(BROCHURE_BULLETS)), true);
+check('Windows line endings preserve list-item bodies',
+  Boolean(brochureFinding(BROCHURE_BULLETS.replaceAll('\n', '\r\n'))), true);
 check('the repeated structure supports a some reading on its own',
   brochureResult.reading, 'some');
 check('the repeated structure remains one category rather than two',
@@ -136,10 +138,19 @@ check('bullets inside a list-relative raw HTML block are not read as Markdown',
   )), false);
 check('a shorter fence inside a four-backtick example does not expose its bullets',
   Boolean(brochureFinding(`\`\`\`\`markdown\n\`\`\`\n${BROCHURE_BULLETS}\n\`\`\`\``)), false);
+check('a tilde fence may begin its info string with a backtick',
+  Boolean(brochureFinding(`~~~\`literal\n${BROCHURE_BULLETS}\n~~~`)), false);
+check('a backtick fence may begin its info string with a tilde',
+  Boolean(brochureFinding(`\`\`\`~literal\n${BROCHURE_BULLETS}\n\`\`\``)), false);
 check('explanatory copy may continue on an indented line',
   Boolean(brochureFinding(
     '- **Numbers that guide the next call.**\n  Twelve measures appear beside their source and update time.\n'
     + '- **Where the records really live.**\n  The list names each system and the fields it owns.'
+  )), true);
+check('content may begin below an otherwise empty list marker',
+  Boolean(brochureFinding(
+    `-\n  ${BROCHURE_BULLETS.split('\n')[0].slice(2)}\n`
+    + `-\n  ${BROCHURE_BULLETS.split('\n')[1].slice(2)}`
   )), true);
 check('a lazy unindented continuation stays inside its Markdown list item',
   Boolean(brochureFinding(
@@ -180,6 +191,8 @@ check('an unclosed comment marker inside fenced code does not hide later prose',
   Boolean(brochureFinding(`\`\`\`\`html\n<!--\n\`\`\`\`\n${BROCHURE_BULLETS}`)), true);
 check('an inline comment marker in code does not hide later prose',
   Boolean(brochureFinding(`The marker \`<!--\` starts a comment.\n\n${BROCHURE_BULLETS}`)), true);
+check('a comment marker in a multiline code span does not hide later prose',
+  Boolean(brochureFinding(`The marker \`<!--\nliteral code\` stays code.\n\n${BROCHURE_BULLETS}`)), true);
 check('a block nested inside the first item keeps its sibling run together',
   Boolean(brochureFinding(
     `${BROCHURE_BULLETS.split('\n')[0]}\n  > Supporting note\n${BROCHURE_BULLETS.split('\n')[1]}`
