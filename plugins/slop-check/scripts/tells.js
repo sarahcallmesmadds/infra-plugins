@@ -744,7 +744,7 @@ function withoutFencedBlocks(text) {
 }
 
 function startsMarkdownBlock(line) {
-  if (/^[ \t]*(?:#{1,6}(?:\s|$)|>|(?:[-*+]|\d{1,9}[.)])(?:\s|$)|\|)/.test(line)
+  if (/^[ \t]*(?:#{1,6}(?:\s|$)|>|(?:[-*+]|\d{1,9}[.)])(?:\s|$))/.test(line)
     || /^[ \t]*(?:(?:\*\s*){3,}|(?:_\s*){3,}|(?:-\s*){3,}|=+)\s*$/.test(line)
     || /^[ \t]*\|?[ \t]*:?-{3,}:?[ \t]*(?:\|[ \t]*:?-{3,}:?[ \t]*)+\|?[ \t]*$/.test(line)) {
     return true;
@@ -933,6 +933,7 @@ function visibleInlineText(markdown, referenceLabels) {
   let backslashes = 0;
   let imageLabel = false;
   let labelStart = 0;
+  let labelVisibleStart = 0;
   let imageVisibleStart = 0;
 
   for (let index = 0; index < text.length; index += 1) {
@@ -990,6 +991,7 @@ function visibleInlineText(markdown, referenceLabels) {
         }
         imageLabel = text[index - 1] === '!' && bangBackslashes % 2 === 0;
         labelStart = index + 1;
+        labelVisibleStart = visible.length;
         imageVisibleStart = imageLabel ? Math.max(0, visible.length - 1) : visible.length;
       }
       bracketDepth += 1;
@@ -999,7 +1001,9 @@ function visibleInlineText(markdown, referenceLabels) {
       if (bracketDepth === 0 && text[index + 1] === '(') {
         const close = linkDestinationEnd(text, index + 1);
         if (close !== -1) {
-          visible = imageLabel ? `${visible.slice(0, imageVisibleStart)} ` : visible + text[index];
+          visible = imageLabel
+            ? `${visible.slice(0, imageVisibleStart)} `
+            : `${visible.slice(0, labelVisibleStart)}${visible.slice(labelVisibleStart + 1)}`;
           imageLabel = false;
           index = close;
           continue;
@@ -1017,7 +1021,7 @@ function visibleInlineText(markdown, referenceLabels) {
           }
           visible = imageLabel
             ? `${visible.slice(0, imageVisibleStart)} `
-            : visible + text[index];
+            : `${visible.slice(0, labelVisibleStart)}${visible.slice(labelVisibleStart + 1)}`;
           imageLabel = false;
           index = close;
           continue;
@@ -1031,6 +1035,11 @@ function visibleInlineText(markdown, referenceLabels) {
         imageLabel = false;
         continue;
       }
+      if (bracketDepth === 0
+        && referenceLabels.has(normalizeReferenceLabel(text.slice(labelStart, index)))) {
+        visible = `${visible.slice(0, labelVisibleStart)}${visible.slice(labelVisibleStart + 1)}`;
+        continue;
+      }
       if (bracketDepth === 0) imageLabel = false;
     }
     visible += text[index];
@@ -1040,17 +1049,16 @@ function visibleInlineText(markdown, referenceLabels) {
 
 function brochureItem(body, referenceLabels) {
   const trimmed = body.trim();
-  const punctuationInside = trimmed.match(/^(\*\*|__)(?!\s)(.+?[.!?])\1\s+(.+)$/);
-  const punctuationOutside = punctuationInside ? null
-    : trimmed.match(/^(\*\*|__)(?!\s)(.+?[^\s.!?])\1([.!?])\s+(.+)$/);
-  if (!punctuationInside && !punctuationOutside) return false;
+  const styled = trimmed.match(/^(\*\*|__)(?!\s)(.+?)\1([.!?])?\s+(.+)$/);
+  if (!styled) return false;
 
-  const headline = punctuationInside
-    ? punctuationInside[2]
-    : `${punctuationOutside[2]}${punctuationOutside[3]}`;
-  const explanation = punctuationInside ? punctuationInside[3] : punctuationOutside[4];
+  const visibleHeadline = visibleInlineText(styled[2], referenceLabels).trim();
+  const punctuationInside = /[.!?]$/.test(visibleHeadline);
+  if ((!punctuationInside && !styled[3]) || (punctuationInside && styled[3])) return false;
+  const headline = styled[3] ? `${visibleHeadline}${styled[3]}` : visibleHeadline;
+  const explanation = styled[4];
 
-  const headlineWords = wordsIn(headline).length;
+  const headlineWords = wordsIn(visibleHeadline).length;
   // Attribute values, entity names and link destinations are source syntax,
   // not the explanatory copy a reader sees. Counting them lets four invisible
   // tokens turn this standalone signal on by themselves.

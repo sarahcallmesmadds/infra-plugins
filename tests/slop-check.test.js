@@ -129,6 +129,16 @@ check('a determiner and noun can still form a relative headline',
     '- **The numbers that guide the next call.** Twelve measures appear beside their source and update time.\n'
     + '- **The systems that hold the records.** The list names each system and the fields it owns.'
   )), true);
+check('inline links in visible headline text are classified normally',
+  Boolean(brochureFinding(
+    '- **[Metrics](https://example.test) that guide.** These numbers direct the next useful call.\n'
+    + '- **[Where the records live](https://example.test).** These views show the current source status.'
+  )), true);
+check('punctuation inside a linked headline still ends the visible sentence',
+  Boolean(brochureFinding(
+    '- **[Metrics that guide.](https://example.test)** These numbers direct the next useful call.\n'
+    + '- **[Where the records live.](https://example.test)** These views show the current source status.'
+  )), true);
 check('where-qualified instructions are not place-shaped headlines',
   Boolean(brochureFinding(
     '- **Where possible, reuse the existing client.** This keeps authentication behavior consistent.\n'
@@ -407,14 +417,19 @@ for (const [name, block] of [
   ['blockquote', '> A separate quotation'],
   ['numbered item', '1. A separate step'],
   ['thematic break', '---'],
-  ['table', '| Field | Owner |'],
+  ['table', '| Field | Owner |\n| --- | --- |'],
   ['table without a leading pipe', 'Field | Owner\n--- | ---'],
 ]) {
   check(`${name} ends a run instead of becoming lazy continuation text`,
     Boolean(brochureFinding(
       `${BROCHURE_BULLETS.split('\n')[0]}\n${block}\n${BROCHURE_BULLETS.split('\n')[1]}`
-    )), false);
+  )), false);
 }
+check('a pipe-leading lazy continuation does not become a table by itself',
+  Boolean(brochureFinding(
+    `${BROCHURE_BULLETS.split('\n')[0]}\n| supporting note\n`
+    + BROCHURE_BULLETS.split('\n')[1]
+  )), true);
 check('bullets inside an HTML comment are not read as visible prose',
   Boolean(brochureFinding(`<!--\n${BROCHURE_BULLETS}\n-->`)), false);
 check('a comment between bullets ends the consecutive run',
@@ -538,7 +553,7 @@ for (const [name, block] of [
   ['heading', '    ## A parent-level section'],
   ['blockquote', '    > A parent-level quotation'],
   ['thematic break', '    ---'],
-  ['table', '    | Field | Owner |'],
+  ['table', '    | Field | Owner |\n    | --- | --- |'],
   ['HTML block', '    <div>separate items</div>'],
 ]) {
   check(`${name} at the parent depth separates child-list items`,
