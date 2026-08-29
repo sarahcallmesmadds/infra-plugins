@@ -193,6 +193,13 @@ check('parentheses in an angle-bracket link destination stay hidden',
     '- **Numbers that guide the next call.** [x](<https://example.test/(> "one two three four")\n'
     + '- **Where the records really live.** [x](<https://example.test/(> "one two three four")'
   )), false);
+check('shortcut-reference image alt text stays hidden',
+  Boolean(brochureFinding(
+    '- **Numbers that guide the next call.** ![hidden words provide explanatory copy]\n'
+    + '- **Where the records really live.** ![other hidden words provide explanatory copy]\n\n'
+    + '[hidden words provide explanatory copy]: image.png\n'
+    + '[other hidden words provide explanatory copy]: other.png'
+  )), false);
 check('visible text inside inline HTML still counts as explanatory copy',
   Boolean(brochureFinding(
     '- **Numbers that guide the next call.** <span>Twelve measures appear beside each source.</span>\n'
@@ -386,6 +393,13 @@ check('a comment close inside fenced code cannot complete an earlier inline open
   Boolean(brochureFinding(
     `Intro <!-- unmatched\n\`\`\`text\n-->\n\`\`\`\n${BROCHURE_BULLETS}`
   )), true);
+check('a non-1 ordered lazy continuation can close an inline comment',
+  Boolean(brochureFinding(
+    '- **Numbers that guide the next call.** <!--\n'
+    + '2. hidden words provide explanatory copy -->\n'
+    + '- **Where the records really live.** <!--\n'
+    + '2. hidden words provide explanatory copy -->'
+  )), false);
 check('an unrelated close after a blank cannot complete an inline comment',
   Boolean(brochureFinding(
     `Intro <!-- unmatched\n\n${BROCHURE_BULLETS}\n\nunrelated close -->`

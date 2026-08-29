@@ -254,6 +254,12 @@ function boundaryIndent(line) {
   return line.startsWith(MARKDOWN_BOUNDARY) ? Number(line.slice(1)) : null;
 }
 
+function interruptsInlineParagraph(line) {
+  const marker = parseListMarker(line);
+  if (marker && marker.type === 'ordered' && marker.start !== 1) return false;
+  return startsInlineBlock(line) || startsMarkdownBlock(line);
+}
+
 function backtickRunsWithLaterClose(lines) {
   const seenLengths = new Set();
   const withLaterClose = new Set();
@@ -263,7 +269,7 @@ function backtickRunsWithLaterClose(lines) {
       seenLengths.clear();
       continue;
     }
-    const blockStart = startsInlineBlock(line) || startsMarkdownBlock(line);
+    const blockStart = interruptsInlineParagraph(line);
     const listStart = Boolean(parseListMarker(line));
     // Most block starts cannot share an inline-code span with the line after
     // them. A list item can: its paragraph may continue on the following line.
@@ -286,7 +292,7 @@ function linesWithCommentCloseOutsideCode(lines, withLaterClose) {
   let codeDelimiter = null;
   for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
     const line = lines[lineIndex];
-    const blockStart = startsInlineBlock(line) || startsMarkdownBlock(line);
+    const blockStart = interruptsInlineParagraph(line);
     const listStart = Boolean(parseListMarker(line));
     if (!line.trim() || (blockStart && !listStart)) codeDelimiter = null;
 
@@ -506,7 +512,7 @@ function withoutFencedBlocks(text) {
       continue;
     }
     if (hasLaterCommentClose) commentCloseOnLaterLine.add(lineIndex);
-    if (startsInlineBlock(lines[lineIndex]) || startsMarkdownBlock(lines[lineIndex])) {
+    if (interruptsInlineParagraph(lines[lineIndex])) {
       hasLaterCommentClose = false;
       continue;
     }
@@ -921,6 +927,11 @@ function visibleInlineText(markdown) {
           index = close;
           continue;
         }
+      }
+      if (bracketDepth === 0 && imageLabel) {
+        visible = `${visible.slice(0, imageVisibleStart)} `;
+        imageLabel = false;
+        continue;
       }
       if (bracketDepth === 0) imageLabel = false;
     }
