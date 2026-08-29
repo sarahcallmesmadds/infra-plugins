@@ -764,6 +764,11 @@ function linkReferenceDefinition(line) {
   };
 }
 
+function referenceTitle(value) {
+  return /^(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\((?:\\.|[^()\\])*\))$/
+    .test(String(value).trim());
+}
+
 function referenceDefinitionTail(value) {
   const text = String(value).trim();
   if (!text) return { hasDestination: false, continuation: 'destination' };
@@ -809,9 +814,7 @@ function referenceDefinitionTail(value) {
 
   const title = text.slice(end).trim();
   if (!title) return { hasDestination: true, continuation: 'title' };
-  if (!/^(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\((?:\\.|[^()\\])*\))$/.test(title)) {
-    return null;
-  }
+  if (!referenceTitle(title)) return null;
   return { hasDestination: true, continuation: null };
 }
 
@@ -1187,7 +1190,7 @@ function brochureBulletHeadlines(text) {
       referenceContinuation = null;
       const indent = leadingSpaces(line);
       if (indent >= pending.baseIndent && indent - pending.baseIndent <= 3
-        && /^[ \t]*(?:"[^"]*"|'[^']*'|\([^)]*\))[ \t]*$/.test(line)) continue;
+        && referenceTitle(line)) continue;
     }
 
     let marker = forcedParagraphContinuation ? null : parseListMarker(line);

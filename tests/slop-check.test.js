@@ -379,6 +379,13 @@ check('a reference title on the next line stays hidden too',
     + '- **Where the records really live.**\n\n'
     + '  [other]: https://example.test\n    "hidden words provide explanation"'
   )), false);
+check('escaped quotes in a continued reference title stay hidden too',
+  Boolean(brochureFinding(
+    '- **Numbers that guide the next call.**\n\n'
+    + '  [source]: https://example.test\n    "hidden \\"quoted\\" words provide explanation"\n'
+    + '- **Where the records really live.**\n\n'
+    + '  [other]: https://example.test\n    "hidden \\"quoted\\" words provide explanation"'
+  )), false);
 check('definition-shaped lazy continuation text stays inside its list item',
   Boolean(brochureFinding(
     '- **Numbers that guide the next call.** Twelve measures appear beside their source and update time.\n'
