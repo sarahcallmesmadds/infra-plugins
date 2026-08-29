@@ -64,6 +64,13 @@ const brochureResult = checkAll(BROCHURE_BULLETS);
 
 check('two repeated headline-and-explanation bullets are reported',
   Boolean(brochureFinding(BROCHURE_BULLETS)), true);
+for (const delimiter of ['**', '__']) {
+  const punctuationOutside = BROCHURE_BULLETS
+    .replaceAll('**', delimiter)
+    .replaceAll(`.${delimiter}`, `${delimiter}.`);
+  check(`punctuation after ${delimiter} still ends the bold headline`,
+    Boolean(brochureFinding(punctuationOutside)), true);
+}
 check('Windows line endings preserve list-item bodies',
   Boolean(brochureFinding(BROCHURE_BULLETS.replaceAll('\n', '\r\n'))), true);
 check('the repeated structure supports a some reading on its own',

@@ -826,15 +826,23 @@ function visibleInlineText(markdown) {
 }
 
 function brochureItem(body) {
-  const labelled = body.trim().match(/^(\*\*|__)(?!\s)(.+?[.!?])\1\s+(.+)$/);
-  if (!labelled) return false;
+  const trimmed = body.trim();
+  const punctuationInside = trimmed.match(/^(\*\*|__)(?!\s)(.+?[.!?])\1\s+(.+)$/);
+  const punctuationOutside = punctuationInside ? null
+    : trimmed.match(/^(\*\*|__)(?!\s)(.+?\S)\1([.!?])\s+(.+)$/);
+  if (!punctuationInside && !punctuationOutside) return false;
 
-  const headlineWords = wordsIn(labelled[2]).length;
+  const headline = punctuationInside
+    ? punctuationInside[2]
+    : `${punctuationOutside[2]}${punctuationOutside[3]}`;
+  const explanation = punctuationInside ? punctuationInside[3] : punctuationOutside[4];
+
+  const headlineWords = wordsIn(headline).length;
   // Attribute values, entity names and link destinations are source syntax,
   // not the explanatory copy a reader sees. Counting them lets four invisible
   // tokens turn this standalone signal on by themselves.
-  const explanationWords = wordsIn(visibleInlineText(labelled[3])).length;
-  return brochureHeadline(labelled[2]) && headlineWords >= 3 && headlineWords <= 12
+  const explanationWords = wordsIn(visibleInlineText(explanation)).length;
+  return brochureHeadline(headline) && headlineWords >= 3 && headlineWords <= 12
     && explanationWords >= 4;
 }
 
