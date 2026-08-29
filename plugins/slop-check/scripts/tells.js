@@ -240,16 +240,22 @@ function ruleOfThree(prose) {
 // three ordinary bold instructions in find-skill/SKILL.md matched this detector
 // exactly. Imperative leads are excluded for the same reason: "Verify that..."
 // is an instruction, not a marketing headline.
+const MARKDOWN_BOUNDARY = '\0';
+
+function boundaryLine(indent) {
+  return `${MARKDOWN_BOUNDARY}${indent}`;
+}
+
+function boundaryIndent(line) {
+  return line.startsWith(MARKDOWN_BOUNDARY) ? Number(line.slice(1)) : null;
+}
+
 function withoutFencedBlocks(text) {
   let fence = null;
+  let htmlComment = false;
   const visible = [];
-  // Comments can contain example Markdown too. Preserve their newlines so a
-  // comment between two real bullets remains a boundary rather than joining
-  // the surrounding lines after removal.
-  const source = String(text || '').replace(/<!--[\s\S]*?(?:-->|$)/g,
-    (comment) => comment.replace(/[^\n]/g, ''));
 
-  for (const line of source.split('\n')) {
+  for (const line of String(text || '').split('\n')) {
     if (fence) {
       const close = line.match(/^ {0,3}(`+|~+)\s*$/);
       if (close && close[1][0] === fence.char && close[1].length >= fence.length) {
@@ -259,10 +265,25 @@ function withoutFencedBlocks(text) {
       continue;
     }
 
-    const open = line.match(/^ {0,3}(`{3,}|~{3,})(?:[^`~].*)?$/);
-    if (open) {
-      fence = { char: open[1][0], length: open[1].length };
+    // Whole-line HTML comments are Markdown blocks. Scan them only after fenced
+    // code has been handled so a literal `<!--` in an example cannot hide all
+    // visible prose that follows an unclosed example marker.
+    if (htmlComment) {
+      if (line.includes('-->')) htmlComment = false;
       visible.push('');
+      continue;
+    }
+    const comment = line.match(/^(\s*)<!--/);
+    if (comment) {
+      htmlComment = !line.slice(comment[0].length).includes('-->');
+      visible.push(boundaryLine(comment[1].length));
+      continue;
+    }
+
+    const open = line.match(/^( {0,3})(`{3,}|~{3,})(?:[^`~].*)?$/);
+    if (open) {
+      fence = { char: open[2][0], length: open[2].length };
+      visible.push(boundaryLine(open[1].length));
     } else {
       visible.push(line);
     }
@@ -275,6 +296,10 @@ function startsMarkdownBlock(line) {
   return /^ {0,3}(?:#{1,6}(?:\s|$)|>|\d{1,9}[.)](?:\s|$)|\|)/.test(line)
     || /^ {0,3}(?:(?:\*\s*){3,}|(?:_\s*){3,}|(?:-\s*){3,}|=+)\s*$/.test(line)
     || /^ {0,3}<(?:!DOCTYPE\b|\?|\/?[A-Za-z][A-Za-z0-9-]*(?:\s|>|\/))/i.test(line);
+}
+
+function leadingSpaces(line) {
+  return (line.match(/^ */) || [''])[0].length;
 }
 
 function brochureHeadline(headline) {
@@ -302,27 +327,50 @@ function brochureHeadline(headline) {
 function brochureBulletHeadlines(text) {
   const visible = withoutFencedBlocks(text);
   let run = 0;
-  let runIndent = null;
   let repeated = 0;
 
   const finishRun = () => {
     if (run >= 2) repeated += run;
     run = 0;
-    runIndent = null;
   };
 
   for (let index = 0; index < visible.length; index += 1) {
-    const bullet = visible[index].match(/^( {0,3})[-*+]\s+(.+)$/);
+    const bullet = visible[index].match(/^( {0,3})[-*+]( {1,4})(\S.*)$/);
     if (!bullet) {
       if (visible[index].trim()) finishRun();
       continue;
     }
 
-    const indent = bullet[1].length;
-    let item = bullet[2];
+    // Markdown decides nesting from the content column, not by comparing the
+    // optional zero-to-three spaces before sibling markers. Content indented to
+    // this column belongs to the current item; a block or marker to its left is
+    // a sibling or an intervening top-level block.
+    const contentIndent = bullet[1].length + 1 + bullet[2].length;
+    let item = bullet[3];
     while (index + 1 < visible.length) {
       const next = visible[index + 1];
-      if (!next.trim() || /^ {0,3}[-*+]\s+/.test(next) || startsMarkdownBlock(next)) break;
+      if (!next.trim()) break;
+
+      const boundary = boundaryIndent(next);
+      if (boundary !== null) {
+        if (boundary < contentIndent) break;
+        index += 1;
+        continue;
+      }
+
+      const nextBullet = next.match(/^( {0,3})[-*+]( {1,4})(\S.*)$/);
+      if (nextBullet) {
+        if (nextBullet[1].length < contentIndent) break;
+        index += 1;
+        continue;
+      }
+
+      if (startsMarkdownBlock(next)) {
+        if (leadingSpaces(next) < contentIndent) break;
+        index += 1;
+        continue;
+      }
+
       item += ` ${next.trim()}`;
       index += 1;
     }
@@ -337,8 +385,6 @@ function brochureBulletHeadlines(text) {
     const explanationWords = wordsIn(labelled[3]).length;
     if (brochureHeadline(labelled[2]) && headlineWords >= 3 && headlineWords <= 12
         && explanationWords >= 4) {
-      if (run > 0 && runIndent !== indent) finishRun();
-      runIndent = indent;
       run += 1;
     } else {
       finishRun();

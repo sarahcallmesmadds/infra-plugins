@@ -132,10 +132,27 @@ for (const [name, block] of [
 }
 check('bullets inside an HTML comment are not read as visible prose',
   Boolean(brochureFinding(`<!--\n${BROCHURE_BULLETS}\n-->`)), false);
-check('a nested bullet and a top-level bullet are not one consecutive run',
+check('a comment between bullets ends the consecutive run',
   Boolean(brochureFinding(
-    `  ${BROCHURE_BULLETS.split('\n')[0]}\n${BROCHURE_BULLETS.split('\n')[1]}`
+    `${BROCHURE_BULLETS.split('\n')[0]}\n<!-- separate items -->\n${BROCHURE_BULLETS.split('\n')[1]}`
   )), false);
+check('a fenced block between bullets ends the consecutive run',
+  Boolean(brochureFinding(
+    `${BROCHURE_BULLETS.split('\n')[0]}\n\`\`\`text\nseparate items\n\`\`\`\n`
+    + BROCHURE_BULLETS.split('\n')[1]
+  )), false);
+check('an unclosed comment marker inside fenced code does not hide later prose',
+  Boolean(brochureFinding(`\`\`\`\`html\n<!--\n\`\`\`\`\n${BROCHURE_BULLETS}`)), true);
+check('an inline comment marker in code does not hide later prose',
+  Boolean(brochureFinding(`The marker \`<!--\` starts a comment.\n\n${BROCHURE_BULLETS}`)), true);
+check('a block nested inside the first item keeps its sibling run together',
+  Boolean(brochureFinding(
+    `${BROCHURE_BULLETS.split('\n')[0]}\n  > Supporting note\n${BROCHURE_BULLETS.split('\n')[1]}`
+  )), true);
+check('optional root-list indentation does not create false nesting',
+  Boolean(brochureFinding(
+    ` ${BROCHURE_BULLETS.split('\n')[0]}\n${BROCHURE_BULLETS.split('\n')[1]}`
+  )), true);
 check('underscore-delimited bold headlines are equivalent Markdown',
   Boolean(brochureFinding(BROCHURE_BULLETS.replaceAll('**', '__'))), true);
 check('four-space-indented code is not read as a top-level list',
