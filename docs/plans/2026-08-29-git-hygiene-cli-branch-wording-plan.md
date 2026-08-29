@@ -25,6 +25,12 @@ been proved to hold work that exists nowhere else. Its logical changes may have
 reached the default branch in a later or otherwise different form.
 
 The safety decision is correct. The explanation overstates what was checked.
+Current discovery copy also promises that the plugin "never deletes unmerged
+commits." That is too broad: a branch whose commits remain unreachable but whose
+content is independently proved present by non-ancestry evidence can require
+`git branch -D`, and a user can separately and explicitly request force-deletion
+of a held branch. The implementation will correct that promise without changing
+either approval path.
 
 ## Observable result
 
@@ -38,6 +44,10 @@ Keep (N), not proved safe to delete:
 
 The branch remains in `Keep`. The command does not attempt a new content
 comparison and does not offer the branch for deletion.
+
+Discovery copy will describe the conservative default, independent merge
+evidence, and explicit force-delete approval accurately instead of making an
+exceptionless no-unmerged-commit deletion promise.
 
 ## Implementation
 
@@ -53,14 +63,20 @@ comparison and does not offer the branch for deletion.
 3. Correct the same reachability overstatement in the user-facing instruction
    and discovery surfaces:
    - `plugins/git-hygiene/skills/stale-branches/SKILL.md` will say that a
-     positive reachability count prevents a safe-delete verdict, not that it
-     proves the work exists nowhere else. Its frontmatter description,
+     positive reachability count is insufficient by itself to prove a branch
+     safe. Without independent merge evidence it keeps the branch, but it does
+     not prove the work exists nowhere else. Its frontmatter description,
      evidence explanation, sweep summary, force-delete warning, closing
-     summary, and "never does" contract will use the same distinction.
+     summary, and "never does" contract will use the same distinction and will
+     describe the two explicit `-D` paths instead of promising that unreachable
+     commits are never deleted.
    - The current behavior explanation in `plugins/git-hygiene/README.md` will
      distinguish "not proved safe" from "proved to hold unique work." This
      includes the distinction paragraph, sample output, and "What it will not
-     do" section, rather than only the sample.
+     do" section, rather than only the sample. Its deletion guarantees will
+     also distinguish the normal safe-delete flow from the separately approved
+     force-delete path and the independently verified non-ancestry path, without
+     claiming which history operation produced the equivalent content.
    - The five discovery surfaces that currently make a unique-work claim will be
      corrected: the Claude manifest description; the Codex manifest description
      and long description; the marketplace entry; and the root README table row.
@@ -68,6 +84,10 @@ comparison and does not offer the branch for deletion.
      neutral, but `tests/plugin-description-drift.test.js` requires them to move
      deliberately with the other five. Their replacements will remain neutral
      while aligning with the new not-proved-safe wording.
+     The Claude and Codex manifest descriptions and the marketplace entry will
+     also drop "Never deletes unmerged commits." The Codex long description
+     will not imply that every deletion uses lowercase `-d`; all replacements
+     will describe approval and evidence without an exceptionless promise.
    - Historical release notes and internal comments that explain past behavior
      remain historical records unless they are also current instructions.
 4. In `tests/stale-branches.test.js`, add outcome-focused coverage that proves:
@@ -82,8 +102,11 @@ comparison and does not offer the branch for deletion.
    - pre-delete refusal uses the same precise reason;
    - the README sample is coupled to both the Safe and Keep headings;
    - current README prose cannot reintroduce the "only copy," "destroys them,"
-     or unconditional "loses work" claims for a held branch; and
-   - the skill frontmatter and body cannot reintroduce the same overstatement.
+     or unconditional "loses work" claims for a held branch;
+   - current README prose cannot promise that unreachable or unmerged commits
+     are never deleted while documented, separately approved `-D` paths exist;
+     and
+   - the skill frontmatter and body cannot reintroduce either overstatement.
    Preserve comments that quote historical failure output, including the
    squash-merge failure record near the existing output tests; those comments
    describe what an older release literally printed rather than the current
@@ -97,10 +120,11 @@ comparison and does not offer the branch for deletion.
    adjacent eighth route, not a silent expansion of that general inventory.
    Extend `tests/plugin-description-drift.test.js` with a semantic contract for
    the current values it reads from all seven git-hygiene discovery surfaces.
-   The contract will reject a unique-work claim wherever it appears, without
-   implying that the already-neutral short description and plugin README
-   tagline previously made that claim, so moving all seven together cannot
-   reintroduce the overstatement.
+   The contract will reject a unique-work claim and an exceptionless promise
+   that unreachable or unmerged commits are never deleted wherever either
+   appears. It will not imply that the already-neutral short description and
+   plugin README tagline previously made either claim, so moving all seven
+   together cannot reintroduce an overstatement.
 7. Release the behavior as `git-hygiene` 0.3.12:
    - add a dated entry to `plugins/git-hygiene/CHANGELOG.md`;
    - update both plugin manifests; and
@@ -136,7 +160,8 @@ comparison and does not offer the branch for deletion.
    unchanged for the same saved input.
 10. Sweep current user-facing git-hygiene copy for claims that a positive
    reachability count proves work exists nowhere else or would certainly be
-   lost on deletion.
+   lost on deletion, and for exceptionless promises that unreachable or
+   unmerged commits are never deleted despite the documented `-D` paths.
 11. Verify an actual marketplace-installed 0.3.12 copy before merge. This
     repository has no separate build artifact: the marketplace copies
     `plugins/git-hygiene` into its cache. Use a private disposable
