@@ -186,6 +186,12 @@ check('unresolved reference image text stays visible',
     '- **Numbers that guide the next call.** ![four explanatory words here][missing]\n'
     + '- **Where the records really live.** ![four other visible words][missing]'
   )), true);
+check('a malformed reference definition does not hide visible image text',
+  Boolean(brochureFinding(
+    '- **Numbers that guide the next call.** ![four explanatory words here][image]\n'
+    + '- **Where the records really live.** ![four other visible words][image]\n\n'
+    + '[image]: not a valid destination'
+  )), true);
 check('resolved reference-link identifiers stay hidden',
   Boolean(brochureFinding(
     '- **Numbers that guide the next call.** [Read details][hidden words provide copy]\n'
@@ -604,6 +610,14 @@ const separateBrochureRuns = `${BROCHURE_BULLETS}\n\nA paragraph separates the l
   + '- **Reports that show each update.** The index names each dashboard and business owner.';
 check('the occurrence count includes every repeated run',
   brochureFinding(separateBrochureRuns).count, 5);
+const largePlainList = '- ordinary bullet text\n'.repeat(20000);
+const largePlainListStarted = process.hrtime.bigint();
+brochureFinding(largePlainList);
+const largePlainListMilliseconds = Number(
+  process.hrtime.bigint() - largePlainListStarted
+) / 1e6;
+check('large flat lists are checked without copying every earlier item',
+  largePlainListMilliseconds < 1500, true);
 
 console.log('\ncode');
 check('shipped placeholder is a hard finding',

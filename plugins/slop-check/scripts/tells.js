@@ -756,18 +756,63 @@ function startsMarkdownBlock(line) {
 function linkReferenceDefinition(line) {
   const match = line.match(/^[ \t]*\[((?:\\.|[^\[\]])+)\]:[ \t]*(.*)$/);
   if (!match) return null;
-  const rest = match[2].trim();
-  const hasTitle = /[ \t](?:"[^"]*"|'[^']*'|\([^)]*\))[ \t]*$/.test(match[2]);
+  const tail = referenceDefinitionTail(match[2]);
+  if (!tail) return null;
   return {
     label: normalizeReferenceLabel(match[1]),
-    hasDestination: Boolean(rest),
-    continuation: !rest ? 'destination' : (hasTitle ? null : 'title'),
+    ...tail,
   };
 }
 
-function referenceDestinationLine(line) {
-  const trimmed = line.trim();
-  return /^<[^<>\s]*>$/.test(trimmed) || /^(?:\\.|[^\s<>])+$/.test(trimmed);
+function referenceDefinitionTail(value) {
+  const text = String(value).trim();
+  if (!text) return { hasDestination: false, continuation: 'destination' };
+
+  let end = 0;
+  if (text[0] === '<') {
+    let backslashes = 0;
+    for (end = 1; end < text.length; end += 1) {
+      if (text[end] === '\\') {
+        backslashes += 1;
+        continue;
+      }
+      const escaped = backslashes % 2 === 1;
+      backslashes = 0;
+      if (!escaped && text[end] === '<') return null;
+      if (!escaped && text[end] === '>') {
+        end += 1;
+        break;
+      }
+      if (/\r|\n/.test(text[end])) return null;
+    }
+    if (text[end - 1] !== '>') return null;
+  } else {
+    let backslashes = 0;
+    let depth = 0;
+    for (end = 0; end < text.length && !/\s/.test(text[end]); end += 1) {
+      if (text[end] === '\\') {
+        backslashes += 1;
+        continue;
+      }
+      const escaped = backslashes % 2 === 1;
+      backslashes = 0;
+      if (escaped) continue;
+      if (text[end] === '<' || text[end] === '>') return null;
+      if (text[end] === '(') depth += 1;
+      if (text[end] === ')') {
+        if (depth === 0) return null;
+        depth -= 1;
+      }
+    }
+    if (end === 0 || depth !== 0) return null;
+  }
+
+  const title = text.slice(end).trim();
+  if (!title) return { hasDestination: true, continuation: 'title' };
+  if (!/^(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\((?:\\.|[^()\\])*\))$/.test(title)) {
+    return null;
+  }
+  return { hasDestination: true, continuation: null };
 }
 
 function leadingSpaces(line) {
@@ -1075,7 +1120,9 @@ function brochureBulletHeadlines(text) {
   const finishItem = (item) => {
     const key = contextKey(item.parent, item.bullet);
     if (item.type === 'unordered') {
-      runs.set(key, [...(runs.get(key) || []), item.body]);
+      const run = runs.get(key);
+      if (run) run.push(item.body);
+      else runs.set(key, [item.body]);
     } else {
       finishContext(key);
     }
@@ -1116,10 +1163,13 @@ function brochureBulletHeadlines(text) {
       const pending = referenceContinuation;
       referenceContinuation = null;
       const indent = leadingSpaces(line);
+      const destination = referenceDefinitionTail(line);
       if (indent >= pending.baseIndent && indent - pending.baseIndent <= 3
-        && referenceDestinationLine(line)) {
+        && destination?.hasDestination) {
         referenceLabels.add(pending.label);
-        referenceContinuation = { ...pending, type: 'title' };
+        referenceContinuation = destination.continuation
+          ? { ...pending, type: destination.continuation }
+          : null;
         continue;
       }
     } else if (referenceContinuation?.type === 'title') {
