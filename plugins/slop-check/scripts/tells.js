@@ -754,11 +754,15 @@ function startsMarkdownBlock(line) {
 }
 
 function linkReferenceDefinition(line) {
-  const match = line.match(/^[ \t]*\[(?:\\.|[^\[\]])+\]:[ \t]*(.*)$/);
+  const match = line.match(/^[ \t]*\[((?:\\.|[^\[\]])+)\]:[ \t]*(.*)$/);
   if (!match) return null;
-  const rest = match[1].trim();
-  const hasTitle = /[ \t](?:"[^"]*"|'[^']*'|\([^)]*\))[ \t]*$/.test(match[1]);
-  return { continuation: !rest ? 'destination' : (hasTitle ? null : 'title') };
+  const rest = match[2].trim();
+  const hasTitle = /[ \t](?:"[^"]*"|'[^']*'|\([^)]*\))[ \t]*$/.test(match[2]);
+  return {
+    label: normalizeReferenceLabel(match[1]),
+    hasDestination: Boolean(rest),
+    continuation: !rest ? 'destination' : (hasTitle ? null : 'title'),
+  };
 }
 
 function referenceDestinationLine(line) {
@@ -873,12 +877,17 @@ function referenceLabelEnd(text, opening) {
   return -1;
 }
 
-function visibleInlineText(markdown) {
+function normalizeReferenceLabel(label) {
+  return String(label).trim().replace(/[ \t\r\n]+/g, ' ').toLowerCase();
+}
+
+function visibleInlineText(markdown, referenceLabels) {
   const text = String(markdown);
   let visible = '';
   let bracketDepth = 0;
   let backslashes = 0;
   let imageLabel = false;
+  let labelStart = 0;
   let imageVisibleStart = 0;
 
   for (let index = 0; index < text.length; index += 1) {
@@ -935,6 +944,7 @@ function visibleInlineText(markdown) {
           bangBackslashes += 1;
         }
         imageLabel = text[index - 1] === '!' && bangBackslashes % 2 === 0;
+        labelStart = index + 1;
         imageVisibleStart = imageLabel ? Math.max(0, visible.length - 1) : visible.length;
       }
       bracketDepth += 1;
@@ -953,14 +963,26 @@ function visibleInlineText(markdown) {
       if (bracketDepth === 0 && text[index + 1] === '[') {
         const close = referenceLabelEnd(text, index + 1);
         if (close !== -1) {
-          visible = imageLabel ? `${visible.slice(0, imageVisibleStart)} ` : visible + text[index];
+          const explicitLabel = text.slice(index + 2, close);
+          const label = explicitLabel || text.slice(labelStart, index);
+          if (!referenceLabels.has(normalizeReferenceLabel(label))) {
+            imageLabel = false;
+            visible += text[index];
+            continue;
+          }
+          visible = imageLabel
+            ? `${visible.slice(0, imageVisibleStart)} `
+            : visible + text[index];
           imageLabel = false;
           index = close;
           continue;
         }
       }
       if (bracketDepth === 0 && imageLabel) {
-        visible = `${visible.slice(0, imageVisibleStart)} `;
+        const label = text.slice(labelStart, index);
+        if (referenceLabels.has(normalizeReferenceLabel(label))) {
+          visible = `${visible.slice(0, imageVisibleStart)} `;
+        }
         imageLabel = false;
         continue;
       }
@@ -971,7 +993,7 @@ function visibleInlineText(markdown) {
   return visible;
 }
 
-function brochureItem(body) {
+function brochureItem(body, referenceLabels) {
   const trimmed = body.trim();
   const punctuationInside = trimmed.match(/^(\*\*|__)(?!\s)(.+?[.!?])\1\s+(.+)$/);
   const punctuationOutside = punctuationInside ? null
@@ -987,7 +1009,7 @@ function brochureItem(body) {
   // Attribute values, entity names and link destinations are source syntax,
   // not the explanatory copy a reader sees. Counting them lets four invisible
   // tokens turn this standalone signal on by themselves.
-  const explanationWords = wordsIn(visibleInlineText(explanation)).length;
+  const explanationWords = wordsIn(visibleInlineText(explanation, referenceLabels)).length;
   return brochureHeadline(headline) && headlineWords >= 3 && headlineWords <= 12
     && explanationWords >= 4;
 }
@@ -1031,17 +1053,18 @@ function brochureHeadline(headline) {
 
 function brochureBulletHeadlines(text) {
   const visible = withoutFencedBlocks(text);
-  let repeated = 0;
   let nextItemId = 1;
   let referenceContinuation = null;
   const stack = [];
   const runs = new Map();
+  const segments = [];
+  const referenceLabels = new Set();
 
   const contextPrefix = (parent) => `${parent ? parent.id : 'root'}:unordered:`;
   const contextKey = (parent, bullet) => `${contextPrefix(parent)}${bullet}`;
   const finishContext = (key) => {
-    const run = runs.get(key) || 0;
-    if (run >= 2) repeated += run;
+    const run = runs.get(key) || [];
+    if (run.length) segments.push(run);
     runs.delete(key);
   };
   const finishContexts = (parent, except = null) => {
@@ -1051,8 +1074,8 @@ function brochureBulletHeadlines(text) {
   };
   const finishItem = (item) => {
     const key = contextKey(item.parent, item.bullet);
-    if (item.type === 'unordered' && brochureItem(item.body)) {
-      runs.set(key, (runs.get(key) || 0) + 1);
+    if (item.type === 'unordered') {
+      runs.set(key, [...(runs.get(key) || []), item.body]);
     } else {
       finishContext(key);
     }
@@ -1089,15 +1112,22 @@ function brochureBulletHeadlines(text) {
       continue;
     }
 
-    if (referenceContinuation === 'destination') {
+    if (referenceContinuation?.type === 'destination') {
+      const pending = referenceContinuation;
       referenceContinuation = null;
-      if (referenceDestinationLine(line)) {
-        referenceContinuation = 'title';
+      const indent = leadingSpaces(line);
+      if (indent >= pending.baseIndent && indent - pending.baseIndent <= 3
+        && referenceDestinationLine(line)) {
+        referenceLabels.add(pending.label);
+        referenceContinuation = { ...pending, type: 'title' };
         continue;
       }
-    } else if (referenceContinuation === 'title') {
+    } else if (referenceContinuation?.type === 'title') {
+      const pending = referenceContinuation;
       referenceContinuation = null;
-      if (/^[ \t]*(?:"[^"]*"|'[^']*'|\([^)]*\))[ \t]*$/.test(line)) continue;
+      const indent = leadingSpaces(line);
+      if (indent >= pending.baseIndent && indent - pending.baseIndent <= 3
+        && /^[ \t]*(?:"[^"]*"|'[^']*'|\([^)]*\))[ \t]*$/.test(line)) continue;
     }
 
     let marker = forcedParagraphContinuation ? null : parseListMarker(line);
@@ -1129,6 +1159,17 @@ function brochureBulletHeadlines(text) {
         paragraphOpen: true,
         afterBlank: false,
       });
+      const markerReference = linkReferenceDefinition(marker.body);
+      if (markerReference) {
+        if (markerReference.hasDestination) referenceLabels.add(markerReference.label);
+        if (markerReference.continuation) {
+          referenceContinuation = {
+            type: markerReference.continuation,
+            label: markerReference.label,
+            baseIndent: marker.contentIndent,
+          };
+        }
+      }
       nextItemId += 1;
       continue;
     }
@@ -1146,11 +1187,17 @@ function brochureBulletHeadlines(text) {
       if (indent - parentBase > 3) block = false;
     }
     if (block) {
-      if (referenceDefinition) {
-        referenceContinuation = referenceDefinition.continuation;
-      }
       const popped = popToIndent(indent);
       if (popped && stack.length) finishContexts(stack[stack.length - 1]);
+      if (referenceDefinition) {
+        const baseIndent = stack.length ? stack[stack.length - 1].contentIndent : 0;
+        if (referenceDefinition.hasDestination) referenceLabels.add(referenceDefinition.label);
+        referenceContinuation = referenceDefinition.continuation ? {
+          type: referenceDefinition.continuation,
+          label: referenceDefinition.label,
+          baseIndent,
+        } : null;
+      }
       if (stack.length) {
         stack[stack.length - 1].paragraphOpen = false;
         stack[stack.length - 1].afterBlank = false;
@@ -1188,6 +1235,18 @@ function brochureBulletHeadlines(text) {
 
   while (stack.length) popItem();
   for (const key of [...runs.keys()]) finishContext(key);
+  let repeated = 0;
+  for (const segment of segments) {
+    let run = 0;
+    for (const body of segment) {
+      if (brochureItem(body, referenceLabels)) run += 1;
+      else {
+        if (run >= 2) repeated += run;
+        run = 0;
+      }
+    }
+    if (run >= 2) repeated += run;
+  }
   return repeated >= 2 ? { count: repeated, standalone: true } : null;
 }
 

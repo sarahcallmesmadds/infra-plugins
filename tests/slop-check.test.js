@@ -168,8 +168,6 @@ for (const [name, invisibleCopy] of [
   ['HTML entities', '&nbsp; &nbsp; &nbsp; &nbsp;'],
   ['link destinations', '[x](https://example.test "one two three four")'],
   ['image alt text', '![hidden words provide explanatory copy](x.png)'],
-  ['reference image alt text', '![hidden words provide explanatory copy][image]'],
-  ['reference-link identifiers', '[Read details][hidden words provide copy]'],
 ]) {
   check(`${name} do not supply explanatory words`,
     Boolean(brochureFinding(
@@ -177,6 +175,28 @@ for (const [name, invisibleCopy] of [
       + `- **Where the records really live.** ${invisibleCopy}`
     )), false);
 }
+check('resolved reference image alt text stays hidden',
+  Boolean(brochureFinding(
+    '- **Numbers that guide the next call.** ![hidden words provide explanatory copy][image]\n'
+    + '- **Where the records really live.** ![hidden words provide explanatory copy][image]\n\n'
+    + '[image]: image.png'
+  )), false);
+check('unresolved reference image text stays visible',
+  Boolean(brochureFinding(
+    '- **Numbers that guide the next call.** ![four explanatory words here][missing]\n'
+    + '- **Where the records really live.** ![four other visible words][missing]'
+  )), true);
+check('resolved reference-link identifiers stay hidden',
+  Boolean(brochureFinding(
+    '- **Numbers that guide the next call.** [Read details][hidden words provide copy]\n'
+    + '- **Where the records really live.** [Read details][hidden words provide copy]\n\n'
+    + '[hidden words provide copy]: https://example.test'
+  )), false);
+check('unresolved reference-link identifiers stay visible',
+  Boolean(brochureFinding(
+    '- **Numbers that guide the next call.** [Read details][four words provide copy]\n'
+    + '- **Where the records really live.** [Read details][four words provide copy]'
+  )), true);
 check('visible reference-link labels still count as explanatory copy',
   Boolean(brochureFinding(
     '- **Numbers that guide the next call.** [Read the complete source details][source]\n'
@@ -322,6 +342,13 @@ check('a reference title on the next line stays hidden too',
     + '  [source]: https://example.test\n    "hidden words provide explanation"\n'
     + '- **Where the records really live.**\n\n'
     + '  [other]: https://example.test\n    "hidden words provide explanation"'
+  )), false);
+check('an outdented title-shaped paragraph separates list items',
+  Boolean(brochureFinding(
+    '- **Numbers that guide the next call.** Twelve measures appear beside their source and update time.\n'
+    + '  [source]: https://example.test\n'
+    + '"A separate paragraph outside the list"\n'
+    + '- **Where the records really live.** The list names each system and the fields it owns.'
   )), false);
 check('a reference destination and title may both continue below the label',
   Boolean(brochureFinding(
