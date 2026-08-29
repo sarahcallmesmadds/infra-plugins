@@ -247,6 +247,16 @@ for (const quote of ['"', "'"]) {
       + `- **Where the records really live.** ${hiddenTitle}`
     )), false);
 }
+check('a title after an omitted link destination stays hidden',
+  Boolean(brochureFinding(
+    '- **Numbers that guide the next call.** [x]( "one two three four")\n'
+    + '- **Where the records really live.** [x]( "one two three four")'
+  )), false);
+check('a backslash cannot make whitespace valid inside an unquoted destination',
+  Boolean(brochureFinding(
+    '- **Numbers that guide the next call.** [x](four\\ visible words here)\n'
+    + '- **Where the records really live.** [x](four\\ visible words here)'
+  )), true);
 check('parentheses in an angle-bracket link destination stay hidden',
   Boolean(brochureFinding(
     '- **Numbers that guide the next call.** [x](<https://example.test/(> "one two three four")\n'
@@ -263,6 +273,16 @@ const malformedLinksMilliseconds = Number(
 ) / 1e6;
 check('malformed link-heavy copy is checked without repeated suffix scans',
   malformedLinksMilliseconds < 1500, true);
+check('words in an unquoted destination containing spaces stay visible',
+  Boolean(brochureFinding(
+    '- **Numbers that guide the next call.** [x](four visible words here)\n'
+    + '- **Where the records really live.** [x](four visible words here)'
+  )), true);
+check('a longer backtick run cannot close a shorter code-span delimiter',
+  Boolean(brochureFinding(
+    '- **Numbers that guide the next call.** ``<span one two three four>```\n'
+    + '- **Where the records really live.** ``<span one two three four>```'
+  )), false);
 check('shortcut-reference image alt text stays hidden',
   Boolean(brochureFinding(
     '- **Numbers that guide the next call.** ![hidden words provide explanatory copy]\n'

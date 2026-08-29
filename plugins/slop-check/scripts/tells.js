@@ -855,59 +855,112 @@ function parseListMarker(line) {
 // keeps ordinary generated links intact and bounds malformed-link scanning.
 const MAX_LINK_DESTINATION_DEPTH = 32;
 
-function linkDestinationEnd(text, opening) {
-  let depth = 0;
-  let backslashes = 0;
-  let titleQuote = null;
-  let destinationStarted = false;
-  let angleDestination = false;
-  for (let index = opening; index < text.length; index += 1) {
-    if (text[index] === '\\') {
-      backslashes += 1;
+function isMarkdownPunctuation(character) {
+  if (!character) return false;
+  const code = character.charCodeAt(0);
+  return (code >= 33 && code <= 47) || (code >= 58 && code <= 64)
+    || (code >= 91 && code <= 96) || (code >= 123 && code <= 126);
+}
+
+function inlineLinkTitleEnd(text, opening) {
+  const delimiter = text[opening];
+  if (delimiter !== '"' && delimiter !== "'" && delimiter !== '(') return -1;
+  const closing = delimiter === '(' ? ')' : delimiter;
+  for (let index = opening + 1; index < text.length; index += 1) {
+    if (text[index] === '\\' && isMarkdownPunctuation(text[index + 1])) {
+      index += 1;
       continue;
     }
-    const escaped = backslashes % 2 === 1;
-    backslashes = 0;
-    if (escaped) {
-      if (index > opening && titleQuote === null && !angleDestination) {
-        destinationStarted = true;
-      }
-      continue;
-    }
-    if (index === opening) {
-      depth = 1;
-      continue;
-    }
-    if (titleQuote !== null) {
-      if (text[index] === titleQuote) titleQuote = null;
-      continue;
-    }
-    if ((text[index] === '"' || text[index] === "'")
-      && /\s/.test(text[index - 1] || '')) {
-      titleQuote = text[index];
-      continue;
-    }
-    if (angleDestination) {
-      if (text[index] === '>') angleDestination = false;
-      continue;
-    }
-    if (!destinationStarted && /\s/.test(text[index])) continue;
-    if (!destinationStarted && text[index] === '<') {
-      destinationStarted = true;
-      angleDestination = true;
-      continue;
-    }
-    destinationStarted = true;
-    if (text[index] === '(') {
-      depth += 1;
-      if (depth > MAX_LINK_DESTINATION_DEPTH) return -1;
-    }
-    else if (text[index] === ')') {
-      depth -= 1;
-      if (depth === 0) return index;
-    }
+    if (delimiter === '(' && text[index] === '(') return -1;
+    if (text[index] === closing) return index + 1;
   }
   return -1;
+}
+
+function linkDestinationEnd(text, opening) {
+  let index = opening + 1;
+  const beforeWhitespace = index;
+  while (/\s/.test(text[index] || '')) index += 1;
+  if (text[index] === ')') return index;
+
+  // An omitted destination may be followed by a title. The whitespace after
+  // `(` distinguishes that title from an ordinary unquoted destination.
+  if (index > beforeWhitespace && /["'(]/.test(text[index] || '')) {
+    index = inlineLinkTitleEnd(text, index);
+    if (index === -1) return -1;
+    while (/\s/.test(text[index] || '')) index += 1;
+    return text[index] === ')' ? index : -1;
+  }
+
+  if (text[index] === '<') {
+    index += 1;
+    let closed = false;
+    for (; index < text.length; index += 1) {
+      if (text[index] === '\\' && isMarkdownPunctuation(text[index + 1])) {
+        index += 1;
+        continue;
+      }
+      if (text[index] === '<' || /\r|\n/.test(text[index])) return -1;
+      if (text[index] === '>') {
+        index += 1;
+        closed = true;
+        break;
+      }
+    }
+    if (!closed) return -1;
+  } else {
+    let depth = 0;
+    let destinationStarted = false;
+    for (; index < text.length; index += 1) {
+      if (text[index] === '\\' && isMarkdownPunctuation(text[index + 1])) {
+        destinationStarted = true;
+        index += 1;
+        continue;
+      }
+      if (/\s/.test(text[index])) break;
+      if (text[index] === '<' || text[index] === '>') return -1;
+      destinationStarted = true;
+      if (text[index] === '(') {
+        depth += 1;
+        if (depth > MAX_LINK_DESTINATION_DEPTH) return -1;
+      } else if (text[index] === ')') {
+        if (depth === 0) return index;
+        depth -= 1;
+      }
+    }
+    if (!destinationStarted || depth !== 0) return -1;
+  }
+
+  // Once a destination ends, only whitespace, an optional title, and the
+  // link's closing parenthesis may follow. Treating later plain words as part
+  // of the destination hides source that CommonMark leaves visible.
+  if (!/\s/.test(text[index] || '')) return text[index] === ')' ? index : -1;
+  while (/\s/.test(text[index] || '')) index += 1;
+  if (text[index] === ')') return index;
+
+  index = inlineLinkTitleEnd(text, index);
+  if (index === -1) return -1;
+  while (/\s/.test(text[index] || '')) index += 1;
+  return text[index] === ')' ? index : -1;
+}
+
+function codeSpanClosers(text) {
+  const previousByLength = new Map();
+  const closers = new Map();
+  for (let index = 0; index < text.length;) {
+    if (text[index] !== '`') {
+      index += 1;
+      continue;
+    }
+    let runEnd = index + 1;
+    while (text[runEnd] === '`') runEnd += 1;
+    const length = runEnd - index;
+    const previous = previousByLength.get(length);
+    if (previous !== undefined) closers.set(previous, index);
+    previousByLength.set(length, index);
+    index = runEnd;
+  }
+  return closers;
 }
 
 function referenceLabelEnd(text, opening) {
@@ -931,6 +984,7 @@ function normalizeReferenceLabel(label) {
 
 function visibleInlineText(markdown, referenceLabels) {
   const text = String(markdown);
+  const codeSpanClose = codeSpanClosers(text);
   let visible = '';
   let bracketDepth = 0;
   let backslashes = 0;
@@ -952,12 +1006,15 @@ function visibleInlineText(markdown, referenceLabels) {
       let runEnd = index + 1;
       while (text[runEnd] === '`') runEnd += 1;
       const delimiter = text.slice(index, runEnd);
-      const close = text.indexOf(delimiter, runEnd);
-      if (close !== -1) {
+      const close = codeSpanClose.get(index);
+      if (close !== undefined) {
         visible += text.slice(runEnd, close);
         index = close + delimiter.length - 1;
         continue;
       }
+      visible += delimiter;
+      index = runEnd - 1;
+      continue;
     }
 
     // Code spans are handled above because tag- and entity-shaped source is
