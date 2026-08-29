@@ -458,14 +458,19 @@ function withoutFencedBlocks(text) {
   const commentCloseOnLaterLine = new Set();
   let hasLaterCommentClose = false;
   for (let lineIndex = lines.length - 1; lineIndex >= 0; lineIndex -= 1) {
-    // Inline syntax cannot cross the blank line that ends its paragraph. A
-    // close in some later block must not make an earlier literal opener hide
-    // everything in between.
+    // Inline syntax cannot cross the blank line or fenced block that ends its
+    // paragraph. A close inside a later fenced example must not make an earlier
+    // literal opener hide everything in between. Let the fence line itself see
+    // a later close first: it may still be literal text inside a real comment.
     if (!lines[lineIndex].trim()) {
       hasLaterCommentClose = false;
       continue;
     }
     if (hasLaterCommentClose) commentCloseOnLaterLine.add(lineIndex);
+    if (/^[ \t]*(?:`{3,}|~{3,})/.test(lines[lineIndex])) {
+      hasLaterCommentClose = false;
+      continue;
+    }
     if (lines[lineIndex].includes('-->')) hasLaterCommentClose = true;
   }
 
