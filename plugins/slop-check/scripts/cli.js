@@ -107,8 +107,13 @@ function formatReport(result) {
   }[result.reading];
   lines.push(verdict);
   lines.push('');
-  lines.push('The softer signals are aggregate only. Any one of them appears in good');
-  lines.push('human writing, so they mean something together and nothing alone.');
+  if (result.soft.some((finding) => finding.standalone === true)) {
+    lines.push('This structural signal reports only after the same pattern appears twice.');
+    lines.push('It can support "some" on its own, but never "strong".');
+  } else {
+    lines.push('The softer signals are aggregate only. Any one of them appears in good');
+    lines.push('human writing, so they mean something together and nothing alone.');
+  }
 
   return lines.join('\n');
 }

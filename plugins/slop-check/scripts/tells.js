@@ -227,6 +227,1160 @@ function ruleOfThree(prose) {
   return (prose.match(re) || []).length;
 }
 
+// A repeated list of sentence-shaped bold labels followed by explanatory copy.
+// One styled bullet is ordinary Markdown. Two in a row is the brochure shape
+// this detects, and the run is what makes it evidence rather than one writer's
+// formatting preference.
+//
+// This reads the list before `proseOf` removes it. Fenced examples come out
+// first, or a style guide showing the pattern would be reported for teaching it.
+// A colon label such as "**Owner:** Billing" is deliberately outside the
+// sentence-ending punctuation below, and a headline with no copy after it is
+// outside too. The "that" or "where" cue is load-bearing as well. Without it,
+// three ordinary bold instructions in find-skill/SKILL.md matched this detector
+// exactly. Imperative leads are excluded for the same reason: "Verify that..."
+// is an instruction, not a marketing headline.
+const MARKDOWN_BOUNDARY = '\0';
+// Block parsing happens before inline comments are removed. Keep that fact in
+// the filtered stream when a multiline inline comment closes before text that
+// merely looks like a block marker (`-->- item`, for example).
+const MARKDOWN_PARAGRAPH_CONTINUATION = '\u0001';
+
+function boundaryLine(indent) {
+  return `${MARKDOWN_BOUNDARY}${indent}`;
+}
+
+function boundaryIndent(line) {
+  return line.startsWith(MARKDOWN_BOUNDARY) ? Number(line.slice(1)) : null;
+}
+
+function interruptsInlineParagraph(line) {
+  const marker = parseListMarker(line);
+  if (marker && marker.type === 'ordered' && marker.start !== 1) return false;
+  return startsInlineBlock(line) || startsMarkdownBlock(line);
+}
+
+function backtickRunsWithLaterClose(lines) {
+  const seenLengths = new Set();
+  const withLaterClose = new Set();
+  for (let lineIndex = lines.length - 1; lineIndex >= 0; lineIndex -= 1) {
+    const line = lines[lineIndex];
+    if (!line.trim()) {
+      seenLengths.clear();
+      continue;
+    }
+    const blockStart = interruptsInlineParagraph(line);
+    const listStart = Boolean(parseListMarker(line));
+    // Most block starts cannot share an inline-code span with the line after
+    // them. A list item can: its paragraph may continue on the following line.
+    // In either case, inspect the current line before clearing again so paired
+    // backticks on a list-marker line are not mistaken for literal link syntax.
+    if (blockStart && !listStart) seenLengths.clear();
+    const runs = [...line.matchAll(/`+/g)];
+    for (let runIndex = runs.length - 1; runIndex >= 0; runIndex -= 1) {
+      const run = runs[runIndex];
+      if (seenLengths.has(run[0].length)) withLaterClose.add(`${lineIndex}:${run.index}`);
+      seenLengths.add(run[0].length);
+    }
+    if (blockStart) seenLengths.clear();
+  }
+  return withLaterClose;
+}
+
+function linesWithCommentCloseOutsideCode(lines, withLaterClose) {
+  const closes = new Set();
+  let codeDelimiter = null;
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+    const line = lines[lineIndex];
+    const blockStart = interruptsInlineParagraph(line);
+    const listStart = Boolean(parseListMarker(line));
+    if (!line.trim() || (blockStart && !listStart)) codeDelimiter = null;
+
+    let backslashes = 0;
+    for (let index = 0; index < line.length; index += 1) {
+      if (line[index] === '\\') {
+        backslashes += 1;
+        continue;
+      }
+      const escaped = backslashes % 2 === 1;
+      backslashes = 0;
+      if (!escaped && line[index] === '`') {
+        let end = index + 1;
+        while (line[end] === '`') end += 1;
+        const length = end - index;
+        if (codeDelimiter === length) codeDelimiter = null;
+        else if (codeDelimiter === null && withLaterClose.has(`${lineIndex}:${index}`)) {
+          codeDelimiter = length;
+        }
+        index = end - 1;
+        continue;
+      }
+      if (!escaped && codeDelimiter === null && line.startsWith('-->', index)) {
+        closes.add(lineIndex);
+        index += 2;
+      }
+    }
+    if (blockStart) codeDelimiter = null;
+  }
+  return closes;
+}
+
+function stripInlineComments(
+  line, lineIndex, codeDelimiter, withLaterClose, commentClosesLater
+) {
+  let linkDepth = 0;
+  let bracketDepth = 0;
+  let backslashes = 0;
+  let cursor = 0;
+  let foundComment = false;
+  let hasVisiblePrefix = false;
+  const pieces = [];
+  const parenthesisStack = [];
+  const matchedOpeningParentheses = new Set();
+
+  // A bare or unfinished `](` is ordinary draft text, not a destination that
+  // can contain a literal `<!--`. Match the parentheses first so the comment
+  // pass only enters a destination that has both a label and a closing `)`.
+  let parenthesisBackslashes = 0;
+  for (let index = 0; index < line.length; index += 1) {
+    if (line[index] === '\\') {
+      parenthesisBackslashes += 1;
+      continue;
+    }
+    const escaped = parenthesisBackslashes % 2 === 1;
+    parenthesisBackslashes = 0;
+    if (escaped) continue;
+    if (line[index] === '(') parenthesisStack.push(index);
+    else if (line[index] === ')' && parenthesisStack.length) {
+      matchedOpeningParentheses.add(parenthesisStack.pop());
+    }
+  }
+
+  for (let index = 0; index < line.length; index += 1) {
+    if (line[index] === '\\') {
+      backslashes += 1;
+      hasVisiblePrefix = true;
+      continue;
+    }
+    const escaped = backslashes % 2 === 1;
+    backslashes = 0;
+
+    if (line[index] === '`') {
+      let end = index + 1;
+      while (line[end] === '`') end += 1;
+      const length = end - index;
+      if (codeDelimiter === length) {
+        codeDelimiter = null;
+      } else if (codeDelimiter === null) {
+        if (!escaped && withLaterClose.has(`${lineIndex}:${index}`)) {
+          codeDelimiter = length;
+        }
+      }
+      // Whether this run opened code, closed it, or is unmatched literal text,
+      // inspect it once. Advancing one backtick at a time made a long unmatched
+      // run quadratic even though it cannot contain a comment opener.
+      hasVisiblePrefix = true;
+      index = end - 1;
+      continue;
+    }
+
+    if (codeDelimiter !== null) {
+      if (!/\s/.test(line[index])) hasVisiblePrefix = true;
+      continue;
+    }
+
+    if (!escaped && linkDepth === 0) {
+      if (line[index] === '[') bracketDepth += 1;
+      if (line[index] === ']') {
+        if (bracketDepth > 0 && line[index + 1] === '('
+          && matchedOpeningParentheses.has(index + 1)) {
+          bracketDepth -= 1;
+          linkDepth = 1;
+          hasVisiblePrefix = true;
+          index += 1;
+          continue;
+        }
+        if (bracketDepth > 0) bracketDepth -= 1;
+      }
+    }
+    if (!escaped && linkDepth > 0) {
+      if (line[index] === '(') linkDepth += 1;
+      else if (line[index] === ')') linkDepth -= 1;
+    }
+
+    if (!escaped && linkDepth === 0 && line.startsWith('<!--', index)) {
+      const close = line.indexOf('-->', index + 4);
+      // An opener after visible prose is inline syntax only when it eventually
+      // closes. Otherwise it is literal draft text and must not hide every
+      // block that follows. A whole-line opener is a Markdown HTML block and
+      // intentionally remains open through the end of the document.
+      if (close === -1 && hasVisiblePrefix && !commentClosesLater) {
+        hasVisiblePrefix = true;
+        index += 3;
+        continue;
+      }
+      foundComment = true;
+      if (!hasVisiblePrefix) {
+        return {
+          remaining: '', foundComment, blockCommentLine: true, opensComment: close === -1,
+          codeDelimiter,
+        };
+      }
+      pieces.push(line.slice(cursor, index));
+      if (close === -1) {
+        return {
+          remaining: pieces.join(''), foundComment, blockCommentLine: false,
+          opensComment: true, codeDelimiter,
+        };
+      }
+      pieces.push(' '.repeat(close + 3 - index));
+      cursor = close + 3;
+      index = close + 2;
+      continue;
+    }
+
+    if (!/\s/.test(line[index])) hasVisiblePrefix = true;
+  }
+
+  if (foundComment) pieces.push(line.slice(cursor));
+  return {
+    remaining: foundComment ? pieces.join('') : line,
+    foundComment,
+    blockCommentLine: false,
+    opensComment: false,
+    codeDelimiter,
+  };
+}
+
+const HTML_BLOCK_UNTIL_CLOSE = /^(?:script|pre|style|textarea)$/i;
+const HTML_BLOCK_UNTIL_BLANK = /^(?:address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|pre|script|search|section|style|summary|table|tbody|td|textarea|tfoot|th|thead|title|tr|track|ul)$/i;
+const COMPLETE_OPEN_TAG = /^[ \t]*<[A-Za-z][A-Za-z0-9-]*(?:[ \t]+[A-Za-z_:][A-Za-z0-9_.:-]*(?:[ \t]*=[ \t]*(?:[^ "'=<>`]+|'[^']*'|"[^"]*"))?)*[ \t]*\/?>[ \t]*$/;
+const COMPLETE_CLOSING_TAG = /^[ \t]*<\/[A-Za-z][A-Za-z0-9-]*[ \t]*>[ \t]*$/;
+const INLINE_HTML_TAG = /^<\/?[A-Za-z][A-Za-z0-9-]*(?:[ \t]+[A-Za-z_:][A-Za-z0-9_.:-]*(?:[ \t]*=[ \t]*(?:[^ "'=<>`]+|'[^']*'|"[^"]*"))?)*[ \t]*\/?>/;
+const INLINE_HTML_ENTITY = /^&(?:#[0-9]+|#x[0-9a-f]+|[a-z][a-z0-9]+);/i;
+
+function inlineHtmlSpecialEnd(text, start) {
+  let close = -1;
+  if (text.startsWith('<?', start)) {
+    close = text.indexOf('?>', start + 2);
+    return close === -1 ? -1 : close + 1;
+  }
+  if (text.startsWith('<![CDATA[', start)) {
+    close = text.indexOf(']]>', start + 9);
+    return close === -1 ? -1 : close + 2;
+  }
+  if (/^[A-Z]$/.test(text[start + 2] || '') && text.startsWith('<!', start)) {
+    close = text.indexOf('>', start + 3);
+    return close;
+  }
+  return -1;
+}
+
+function rawHtmlBlockStart(line) {
+  if (/^[ \t]*<\?/.test(line)) return { end: '?>', interruptsParagraph: true };
+  if (/^[ \t]*<!\[CDATA\[/.test(line)) return { end: ']]>', interruptsParagraph: true };
+  if (/^[ \t]*<![A-Z]/.test(line)) return { end: '>', interruptsParagraph: true };
+
+  const tag = line.match(/^[ \t]*<(\/)?([A-Za-z][A-Za-z0-9-]*)(?:[ \t]|>|\/?>|$)/);
+  if (tag && !tag[1] && HTML_BLOCK_UNTIL_CLOSE.test(tag[2])) {
+    return { tag: tag[2].toLowerCase(), interruptsParagraph: true };
+  }
+  if (tag && HTML_BLOCK_UNTIL_BLANK.test(tag[2])) {
+    return { untilBlank: true, interruptsParagraph: true };
+  }
+
+  // A complete open or closing tag for a custom element is CommonMark's
+  // seventh HTML-block form. Unlike the forms above it cannot interrupt a
+  // paragraph, so callers use the flag when deciding inline-code boundaries.
+  if (COMPLETE_OPEN_TAG.test(line) || COMPLETE_CLOSING_TAG.test(line)) {
+    return { untilBlank: true, interruptsParagraph: false };
+  }
+  return null;
+}
+
+function startsInlineBlock(line) {
+  if (/^[ \t]*(?:`{3,}|~{3,})/.test(line)) return true;
+  if (/^[ \t]*<!--/.test(line)) return true;
+  const html = rawHtmlBlockStart(line);
+  return Boolean(html && html.interruptsParagraph);
+}
+
+function withoutFencedBlocks(text) {
+  let fence = null;
+  let htmlComment = null;
+  let rawHtml = null;
+  let inlineCodeDelimiter = null;
+  let afterBlank = false;
+  let paragraphBase = null;
+  const visible = [];
+  const listContexts = [];
+  const lines = String(text || '').split(/\r?\n/);
+  const withLaterClose = backtickRunsWithLaterClose(lines);
+  const linesWithCommentClose = linesWithCommentCloseOutsideCode(lines, withLaterClose);
+  const commentCloseOnLaterLine = new Set();
+  let hasLaterCommentClose = false;
+  for (let lineIndex = lines.length - 1; lineIndex >= 0; lineIndex -= 1) {
+    // Inline syntax cannot cross the blank line or Markdown block that ends its
+    // paragraph. A close in some later block must not make an earlier literal
+    // opener hide everything in between. Let the boundary line itself see a
+    // later close first: a list item can contain an inline opener in its body.
+    if (!lines[lineIndex].trim()) {
+      hasLaterCommentClose = false;
+      continue;
+    }
+    if (hasLaterCommentClose) commentCloseOnLaterLine.add(lineIndex);
+    if (interruptsInlineParagraph(lines[lineIndex])) {
+      hasLaterCommentClose = false;
+      continue;
+    }
+    if (linesWithCommentClose.has(lineIndex)) hasLaterCommentClose = true;
+  }
+
+  const listParentAt = (indent) => {
+    let index = listContexts.length - 1;
+    while (index >= 0 && indent < listContexts[index].contentIndent) index -= 1;
+    return { index, base: index >= 0 ? listContexts[index].contentIndent : 0 };
+  };
+  const matchesActiveOrderedList = (marker) => marker.type === 'ordered'
+    && listContexts.some((context) => context.type === 'ordered'
+      && context.markerIndent === marker.indent && context.delimiter === marker.delimiter);
+  const rememberVisibleLine = (line) => {
+    if (!line.trim()) {
+      afterBlank = true;
+      paragraphBase = null;
+      return;
+    }
+
+    const marker = parseListMarker(line);
+    if (marker) {
+      if (marker.type === 'ordered' && marker.start !== 1
+        && !matchesActiveOrderedList(marker) && paragraphBase !== null && !afterBlank) {
+        afterBlank = false;
+        return;
+      }
+      const parent = listParentAt(marker.indent);
+      if (marker.indent - parent.base <= 3) {
+        listContexts.length = parent.index + 1;
+        listContexts.push({
+          contentIndent: marker.contentIndent,
+          markerIndent: marker.indent,
+          type: marker.type,
+          delimiter: marker.delimiter,
+        });
+        afterBlank = false;
+        paragraphBase = marker.body ? marker.contentIndent : null;
+        return;
+      }
+    }
+
+    const indent = leadingSpaces(line);
+    const parent = listParentAt(indent);
+    const markdownBlock = startsMarkdownBlock(line) && indent - parent.base <= 3;
+    if (afterBlank || markdownBlock) {
+      listContexts.length = parent.index + 1;
+    }
+    paragraphBase = markdownBlock ? null : listParentAt(indent).base;
+    afterBlank = false;
+  };
+
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+    let line = lines[lineIndex];
+    if (fence) {
+      const close = line.match(/^([ \t]*)(`+|~+)\s*$/);
+      const closeIndent = close ? leadingSpaces(line) : 0;
+      if (close && closeIndent >= fence.base && closeIndent <= fence.base + 3
+        && close[2][0] === fence.char && close[2].length >= fence.length) {
+        fence = null;
+      }
+      visible.push('');
+      paragraphBase = null;
+      continue;
+    }
+
+    if (rawHtml) {
+      if (rawHtml.untilBlank && !line.trim()) {
+        rawHtml = null;
+        afterBlank = true;
+      } else if (rawHtml.end && line.includes(rawHtml.end)) {
+        rawHtml = null;
+      } else if (rawHtml.tag
+        && new RegExp(`</${rawHtml.tag}[ \\t]*>`, 'i').test(line)) {
+        rawHtml = null;
+      }
+      visible.push('');
+      paragraphBase = null;
+      continue;
+    }
+
+    // Whole-line HTML comments are Markdown blocks. Scan them only after fenced
+    // code has been handled so a literal `<!--` in an example cannot hide all
+    // visible prose that follows an unclosed example marker.
+    if (htmlComment) {
+      const close = line.indexOf('-->');
+      if (close === -1) {
+        visible.push('');
+        continue;
+      }
+      const commentKind = htmlComment;
+      htmlComment = false;
+      if (commentKind === 'block') {
+        visible.push('');
+        paragraphBase = null;
+        continue;
+      }
+      // An inline comment may close before another comment begins. Feed the
+      // remainder through the ordinary scanner so none of that hidden copy is
+      // mistaken for an explanation attached to a list headline.
+      line = MARKDOWN_PARAGRAPH_CONTINUATION
+        + ' '.repeat(close + 3) + line.slice(close + 3);
+    }
+
+    // A fenced, commented, or raw-HTML block may begin in the body of a list
+    // marker (`- ````, `- <!--`, or `- <div>`). Parse that body at the item's
+    // content column, while emitting a boundary at the marker's column so the
+    // hidden list item still separates its visible siblings.
+    const parsedMarker = parseListMarker(line);
+    const lazyOrderedMarker = parsedMarker && parsedMarker.type === 'ordered'
+      && parsedMarker.start !== 1 && !matchesActiveOrderedList(parsedMarker)
+      && paragraphBase !== null && !afterBlank;
+    const marker = lazyOrderedMarker ? null : parsedMarker;
+    let blockLine = line;
+    let blockBoundaryIndent = null;
+    let blockMarkerRemembered = false;
+    if (marker && marker.body) {
+      const markerParent = listParentAt(marker.indent);
+      if (marker.indent - markerParent.base <= 3) {
+        const candidate = `${' '.repeat(marker.contentIndent)}${marker.body}`;
+        if (startsInlineBlock(candidate) || rawHtmlBlockStart(candidate)) {
+          rememberVisibleLine(line);
+          blockLine = candidate;
+          blockBoundaryIndent = marker.indent;
+          blockMarkerRemembered = true;
+        }
+      }
+    }
+    const hideBlockStart = (fallbackIndent) => {
+      if (blockMarkerRemembered) {
+        // Keep the empty list item in the filtered stream. Without it, a child
+        // that follows this hidden block is promoted to the parent's level and
+        // can be combined with a sibling from a different list.
+        visible.push(`${' '.repeat(marker.indent)}${marker.bullet}`);
+        visible.push(boundaryLine(marker.contentIndent));
+      } else {
+        visible.push(boundaryLine(fallbackIndent));
+      }
+    };
+
+    if (!blockLine.trim() || startsInlineBlock(blockLine)
+      || (startsMarkdownBlock(blockLine) && !lazyOrderedMarker)) inlineCodeDelimiter = null;
+    const lineIndent = leadingSpaces(blockLine);
+    const open = blockLine.match(/^([ \t]*)(`{3,}|~{3,})(.*)$/);
+    const openIndent = open ? leadingSpaces(blockLine) : 0;
+    const fenceParent = listParentAt(openIndent);
+    const validFenceInfo = open && (open[2][0] === '~' || !open[3].includes('`'));
+    if (inlineCodeDelimiter === null && validFenceInfo
+      && openIndent - fenceParent.base <= 3) {
+      fence = { char: open[2][0], length: open[2].length, base: fenceParent.base };
+      listContexts.length = fenceParent.index + 1;
+      hideBlockStart(blockBoundaryIndent ?? openIndent);
+      afterBlank = false;
+      paragraphBase = null;
+      continue;
+    }
+
+    const htmlOpen = inlineCodeDelimiter === null ? rawHtmlBlockStart(blockLine) : null;
+    const htmlParent = listParentAt(lineIndent);
+    const typeSevenCanStart = blockMarkerRemembered || paragraphBase === null;
+    if (htmlOpen && (htmlOpen.interruptsParagraph || typeSevenCanStart)
+      && lineIndent - htmlParent.base <= 3) {
+      const closesHere = (htmlOpen.end && blockLine.includes(htmlOpen.end))
+        || (htmlOpen.tag && new RegExp(`</${htmlOpen.tag}[ \\t]*>`, 'i').test(blockLine));
+      rawHtml = closesHere ? null : htmlOpen;
+      listContexts.length = htmlParent.index + 1;
+      hideBlockStart(blockBoundaryIndent ?? lineIndent);
+      afterBlank = false;
+      paragraphBase = null;
+      continue;
+    }
+
+    const commentParent = listParentAt(lineIndent);
+    // Four columns beyond the containing list item make an indented code block.
+    // Treat a comment-looking string there as code; a comment at the same raw
+    // indentation can still be Markdown when it is nested inside a list.
+    const commentScan = lineIndent - commentParent.base <= 3
+      ? stripInlineComments(
+        blockLine, lineIndex, inlineCodeDelimiter, withLaterClose,
+        commentCloseOnLaterLine.has(lineIndex)
+      )
+      : {
+        remaining: blockLine, foundComment: false, blockCommentLine: false,
+        opensComment: false, codeDelimiter: inlineCodeDelimiter,
+      };
+    inlineCodeDelimiter = commentScan.codeDelimiter;
+    if (commentScan.opensComment) {
+      htmlComment = commentScan.blockCommentLine ? 'block' : 'inline';
+    }
+    if (commentScan.blockCommentLine) {
+      listContexts.length = commentParent.index + 1;
+      hideBlockStart(blockBoundaryIndent ?? lineIndent);
+      afterBlank = false;
+      paragraphBase = null;
+      continue;
+    }
+    if (commentScan.foundComment) {
+      const remaining = commentScan.remaining;
+      if (remaining.trim()) rememberVisibleLine(remaining);
+      else listContexts.length = commentParent.index + 1;
+      visible.push(remaining.trim() ? remaining : boundaryLine(blockBoundaryIndent ?? lineIndent));
+      afterBlank = false;
+      continue;
+    }
+
+    visible.push(line);
+    if (!blockMarkerRemembered) rememberVisibleLine(line);
+  }
+
+  return visible;
+}
+
+function startsMarkdownBlock(line) {
+  if (/^[ \t]*(?:#{1,6}(?:\s|$)|>|(?:[-*+]|\d{1,9}[.)])(?:\s|$))/.test(line)
+    || /^[ \t]*(?:(?:\*\s*){3,}|(?:_\s*){3,}|(?:-\s*){3,}|=+)\s*$/.test(line)
+    || /^[ \t]*\|?[ \t]*:?-{3,}:?[ \t]*(?:\|[ \t]*:?-{3,}:?[ \t]*)+\|?[ \t]*$/.test(line)) {
+    return true;
+  }
+  const html = rawHtmlBlockStart(line);
+  return Boolean(html && html.interruptsParagraph);
+}
+
+function linkReferenceDefinition(line) {
+  const match = line.match(/^[ \t]*\[((?:\\.|[^\[\]])+)\]:[ \t]*(.*)$/);
+  if (!match) return null;
+  const tail = referenceDefinitionTail(match[2]);
+  if (!tail) return null;
+  return {
+    label: normalizeReferenceLabel(match[1]),
+    ...tail,
+  };
+}
+
+function referenceTitle(value) {
+  return /^(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\((?:\\.|[^()\\])*\))$/
+    .test(String(value).trim());
+}
+
+function referenceDefinitionTail(value) {
+  const text = String(value).trim();
+  if (!text) return { hasDestination: false, continuation: 'destination' };
+
+  let end = 0;
+  if (text[0] === '<') {
+    let backslashes = 0;
+    for (end = 1; end < text.length; end += 1) {
+      if (text[end] === '\\') {
+        backslashes += 1;
+        continue;
+      }
+      const escaped = backslashes % 2 === 1;
+      backslashes = 0;
+      if (!escaped && text[end] === '<') return null;
+      if (!escaped && text[end] === '>') {
+        end += 1;
+        break;
+      }
+      if (/\r|\n/.test(text[end])) return null;
+    }
+    if (text[end - 1] !== '>') return null;
+  } else {
+    let backslashes = 0;
+    let depth = 0;
+    for (end = 0; end < text.length && !/\s/.test(text[end]); end += 1) {
+      if (text[end] === '\\') {
+        backslashes += 1;
+        continue;
+      }
+      const escaped = backslashes % 2 === 1;
+      backslashes = 0;
+      if (escaped) continue;
+      if (text[end] === '<' || text[end] === '>') return null;
+      if (text[end] === '(') depth += 1;
+      if (text[end] === ')') {
+        if (depth === 0) return null;
+        depth -= 1;
+      }
+    }
+    if (end === 0 || depth !== 0) return null;
+  }
+
+  const title = text.slice(end).trim();
+  if (!title) return { hasDestination: true, continuation: 'title' };
+  if (!referenceTitle(title)) return null;
+  return { hasDestination: true, continuation: null };
+}
+
+function leadingSpaces(line) {
+  return columnsAfter(0, (line.match(/^[ \t]*/) || [''])[0]);
+}
+
+function columnsAfter(start, whitespace) {
+  let column = start;
+  for (const character of whitespace) {
+    column = character === '\t' ? column + (4 - (column % 4)) : column + 1;
+  }
+  return column;
+}
+
+function parseListMarker(line) {
+  const marker = line.match(/^([ \t]*)([-*+]|\d{1,9}[.)])(?:([ \t]+)(.*))?$/);
+  if (!marker) return null;
+
+  const indent = columnsAfter(0, marker[1]);
+  const afterMarker = indent + marker[2].length;
+  const contentIndent = marker[3] ? columnsAfter(afterMarker, marker[3]) : afterMarker + 1;
+  const padding = contentIndent - afterMarker;
+
+  return {
+    type: /^[-*+]$/.test(marker[2]) ? 'unordered' : 'ordered',
+    bullet: marker[2],
+    delimiter: /^[-*+]$/.test(marker[2]) ? marker[2] : marker[2].slice(-1),
+    start: /^[-*+]$/.test(marker[2]) ? null : parseInt(marker[2], 10),
+    indent,
+    contentIndent: padding <= 4 ? contentIndent : afterMarker + 1,
+    body: padding <= 4 ? (marker[4] || '') : '',
+  };
+}
+
+// CommonMark permits implementations to cap nested destination parentheses for
+// performance, while requiring support for at least three levels. Thirty-two
+// keeps ordinary generated links intact and bounds malformed-link scanning.
+const MAX_LINK_DESTINATION_DEPTH = 32;
+
+function isMarkdownPunctuation(character) {
+  if (!character) return false;
+  const code = character.charCodeAt(0);
+  return (code >= 33 && code <= 47) || (code >= 58 && code <= 64)
+    || (code >= 91 && code <= 96) || (code >= 123 && code <= 126);
+}
+
+function inlineLinkTitleEnd(text, opening) {
+  const delimiter = text[opening];
+  if (delimiter !== '"' && delimiter !== "'" && delimiter !== '(') return -1;
+  const closing = delimiter === '(' ? ')' : delimiter;
+  for (let index = opening + 1; index < text.length; index += 1) {
+    if (text[index] === '\\' && isMarkdownPunctuation(text[index + 1])) {
+      index += 1;
+      continue;
+    }
+    if (delimiter === '(' && text[index] === '(') return -1;
+    if (text[index] === closing) return index + 1;
+  }
+  return -1;
+}
+
+function linkDestinationEnd(text, opening) {
+  let index = opening + 1;
+  const beforeWhitespace = index;
+  while (/\s/.test(text[index] || '')) index += 1;
+  if (text[index] === ')') return index;
+
+  // An omitted destination may be followed by a title. The whitespace after
+  // `(` distinguishes that title from an ordinary unquoted destination.
+  if (index > beforeWhitespace && /["'(]/.test(text[index] || '')) {
+    index = inlineLinkTitleEnd(text, index);
+    if (index === -1) return -1;
+    while (/\s/.test(text[index] || '')) index += 1;
+    return text[index] === ')' ? index : -1;
+  }
+
+  if (text[index] === '<') {
+    index += 1;
+    let closed = false;
+    for (; index < text.length; index += 1) {
+      if (text[index] === '\\' && isMarkdownPunctuation(text[index + 1])) {
+        index += 1;
+        continue;
+      }
+      if (text[index] === '<' || /\r|\n/.test(text[index])) return -1;
+      if (text[index] === '>') {
+        index += 1;
+        closed = true;
+        break;
+      }
+    }
+    if (!closed) return -1;
+  } else {
+    let depth = 0;
+    let destinationStarted = false;
+    for (; index < text.length; index += 1) {
+      if (text[index] === '\\' && isMarkdownPunctuation(text[index + 1])) {
+        destinationStarted = true;
+        index += 1;
+        continue;
+      }
+      if (/\s/.test(text[index])) break;
+      if (text[index] === '<' || text[index] === '>') return -1;
+      destinationStarted = true;
+      if (text[index] === '(') {
+        depth += 1;
+        if (depth > MAX_LINK_DESTINATION_DEPTH) return -1;
+      } else if (text[index] === ')') {
+        if (depth === 0) return index;
+        depth -= 1;
+      }
+    }
+    if (!destinationStarted || depth !== 0) return -1;
+  }
+
+  // Once a destination ends, only whitespace, an optional title, and the
+  // link's closing parenthesis may follow. Treating later plain words as part
+  // of the destination hides source that CommonMark leaves visible.
+  if (!/\s/.test(text[index] || '')) return text[index] === ')' ? index : -1;
+  while (/\s/.test(text[index] || '')) index += 1;
+  if (text[index] === ')') return index;
+
+  index = inlineLinkTitleEnd(text, index);
+  if (index === -1) return -1;
+  while (/\s/.test(text[index] || '')) index += 1;
+  return text[index] === ')' ? index : -1;
+}
+
+function codeSpanClosers(text) {
+  const previousByLength = new Map();
+  const closers = new Map();
+  for (let index = 0; index < text.length;) {
+    if (text[index] !== '`') {
+      index += 1;
+      continue;
+    }
+    let runEnd = index + 1;
+    while (text[runEnd] === '`') runEnd += 1;
+    const length = runEnd - index;
+    const previous = previousByLength.get(length);
+    if (previous !== undefined) closers.set(previous, index);
+    previousByLength.set(length, index);
+    index = runEnd;
+  }
+  return closers;
+}
+
+function referenceLabelEnd(text, opening) {
+  let backslashes = 0;
+  for (let index = opening + 1; index < text.length; index += 1) {
+    if (text[index] === '\\') {
+      backslashes += 1;
+      continue;
+    }
+    const escaped = backslashes % 2 === 1;
+    backslashes = 0;
+    if (!escaped && text[index] === ']') return index;
+    if (!escaped && text[index] === '[') return -1;
+  }
+  return -1;
+}
+
+function normalizeReferenceLabel(label) {
+  return String(label).trim().replace(/[ \t\r\n]+/g, ' ').toLowerCase();
+}
+
+function visibleInlineText(markdown, referenceLabels) {
+  const text = String(markdown);
+  const codeSpanClose = codeSpanClosers(text);
+  let visible = '';
+  let bracketDepth = 0;
+  let backslashes = 0;
+  let imageLabel = false;
+  let labelStart = 0;
+  let labelVisibleStart = 0;
+  let imageVisibleStart = 0;
+
+  for (let index = 0; index < text.length; index += 1) {
+    if (text[index] === '\\') {
+      backslashes += 1;
+      visible += text[index];
+      continue;
+    }
+    const escaped = backslashes % 2 === 1;
+    backslashes = 0;
+
+    if (!escaped && text[index] === '`') {
+      let runEnd = index + 1;
+      while (text[runEnd] === '`') runEnd += 1;
+      const delimiter = text.slice(index, runEnd);
+      const close = codeSpanClose.get(index);
+      if (close !== undefined) {
+        visible += text.slice(runEnd, close);
+        index = close + delimiter.length - 1;
+        continue;
+      }
+      visible += delimiter;
+      index = runEnd - 1;
+      continue;
+    }
+
+    // Code spans are handled above because tag- and entity-shaped source is
+    // visible when a reader sees it as code. Outside code, the tag itself,
+    // attribute values and entity name are Markdown source rather than words.
+    if (!escaped && text[index] === '<') {
+      const specialEnd = inlineHtmlSpecialEnd(text, index);
+      if (specialEnd !== -1) {
+        visible += ' ';
+        index = specialEnd;
+        continue;
+      }
+      const tag = text.slice(index).match(INLINE_HTML_TAG);
+      if (tag) {
+        visible += ' ';
+        index += tag[0].length - 1;
+        continue;
+      }
+    }
+    if (!escaped && text[index] === '&') {
+      const entity = text.slice(index).match(INLINE_HTML_ENTITY);
+      if (entity) {
+        visible += ' ';
+        index += entity[0].length - 1;
+        continue;
+      }
+    }
+
+    if (!escaped && text[index] === '[') {
+      if (bracketDepth === 0) {
+        let bangBackslashes = 0;
+        for (let cursor = index - 2; cursor >= 0 && text[cursor] === '\\'; cursor -= 1) {
+          bangBackslashes += 1;
+        }
+        imageLabel = text[index - 1] === '!' && bangBackslashes % 2 === 0;
+        labelStart = index + 1;
+        labelVisibleStart = visible.length;
+        imageVisibleStart = imageLabel ? Math.max(0, visible.length - 1) : visible.length;
+      }
+      bracketDepth += 1;
+    }
+    if (!escaped && text[index] === ']' && bracketDepth > 0) {
+      bracketDepth -= 1;
+      if (bracketDepth === 0 && text[index + 1] === '(') {
+        const close = linkDestinationEnd(text, index + 1);
+        if (close !== -1) {
+          visible = imageLabel
+            ? `${visible.slice(0, imageVisibleStart)} `
+            : `${visible.slice(0, labelVisibleStart)}${visible.slice(labelVisibleStart + 1)}`;
+          imageLabel = false;
+          index = close;
+          continue;
+        }
+      }
+      if (bracketDepth === 0 && text[index + 1] === '[') {
+        const close = referenceLabelEnd(text, index + 1);
+        if (close !== -1) {
+          const explicitLabel = text.slice(index + 2, close);
+          const label = explicitLabel || text.slice(labelStart, index);
+          if (!referenceLabels.has(normalizeReferenceLabel(label))) {
+            imageLabel = false;
+            visible += text[index];
+            continue;
+          }
+          visible = imageLabel
+            ? `${visible.slice(0, imageVisibleStart)} `
+            : `${visible.slice(0, labelVisibleStart)}${visible.slice(labelVisibleStart + 1)}`;
+          imageLabel = false;
+          index = close;
+          continue;
+        }
+      }
+      if (bracketDepth === 0 && imageLabel) {
+        const label = text.slice(labelStart, index);
+        if (referenceLabels.has(normalizeReferenceLabel(label))) {
+          visible = `${visible.slice(0, imageVisibleStart)} `;
+        }
+        imageLabel = false;
+        continue;
+      }
+      if (bracketDepth === 0
+        && referenceLabels.has(normalizeReferenceLabel(text.slice(labelStart, index)))) {
+        visible = `${visible.slice(0, labelVisibleStart)}${visible.slice(labelVisibleStart + 1)}`;
+        continue;
+      }
+      if (bracketDepth === 0) imageLabel = false;
+    }
+    visible += text[index];
+  }
+  return visible;
+}
+
+function brochureItem(body, referenceLabels) {
+  const trimmed = body.trim();
+  const styled = trimmed.match(/^(\*\*|__)(?!\s)(.+?)\1([.!?])?\s+(.+)$/);
+  if (!styled) return false;
+
+  const visibleHeadline = visibleInlineText(styled[2], referenceLabels).trim();
+  const punctuationInside = /[.!?]$/.test(visibleHeadline);
+  if ((!punctuationInside && !styled[3]) || (punctuationInside && styled[3])) return false;
+  const headline = styled[3] ? `${visibleHeadline}${styled[3]}` : visibleHeadline;
+  const explanation = styled[4];
+
+  const headlineWords = wordsIn(visibleHeadline).length;
+  // Attribute values, entity names and link destinations are source syntax,
+  // not the explanatory copy a reader sees. Counting them lets four invisible
+  // tokens turn this standalone signal on by themselves.
+  const explanationWords = wordsIn(visibleInlineText(explanation, referenceLabels)).length;
+  return brochureHeadline(headline) && headlineWords >= 3 && headlineWords <= 12
+    && explanationWords >= 4;
+}
+
+function brochureHeadline(headline) {
+  // "Where the records live" names a place as a marketing headline. "Where
+  // possible, reuse the client" is an instruction. Requiring a determiner is
+  // narrow on purpose: a soft signal that stands alone should prefer silence
+  // over guessing at the grammar.
+  if (/^where\s+(?:the|this|these|those|your|our|their)\b/i.test(headline)
+    && !/[,;:]/.test(headline)) return true;
+
+  // In the reported pattern, `that` is the subject of a relative clause:
+  // "Numbers that guide" and "Reporting that drives". In an instruction such
+  // as "Remember that the cache is warm", a new subject follows `that`. Keeping
+  // only the direct-relative form avoids an open-ended list of imperative verbs.
+  const relational = headline.match(/^(.+?)\s+that\s+(\S+)/i);
+  if (!relational || /^(?:a|an|each|every|he|it|no|our|she|that|the|their|these|they|this|those|we|you|your)\b/i
+    .test(relational[2])) return false;
+
+  const subject = relational[1].trim();
+  const words = wordsIn(subject);
+  // A determiner plus one noun is still a noun phrase: "The metrics that
+  // matter". Once another word appears, the same surface shape commonly holds
+  // a complete reporting clause instead: "The audit showed that data differed".
+  // This finding changes the verdict on its own, so keep the narrow noun phrase
+  // and decline longer phrases rather than maintaining a list of reporting verbs.
+  if (words.length > 1) {
+    return words.length === 2
+      && /^(?:a|an|the|this|these|those|your|our|their)\b/i.test(subject);
+  }
+  // A plural-looking final `s` is useful for noun headlines such as "Numbers
+  // that guide", but it also matches closed-class words and auxiliaries such
+  // as "Is", "Was", "Does", and "This". Those begin questions or clauses,
+  // not the noun phrase this narrow signal is looking for.
+  if (/^(?:as|being|does|has|his|is|its|ours|theirs|this|thus|was|yes|yours)$/i
+    .test(subject)) return false;
+  return /(?:[^s]s|ing|tion|ment|ness|ity|ance|ence)$/i.test(subject)
+    || /^(?:content|copy|data|software)$/i.test(subject);
+}
+
+function brochureBulletHeadlines(text) {
+  const visible = withoutFencedBlocks(text);
+  let nextItemId = 1;
+  let referenceContinuation = null;
+  let rootParagraphOpen = false;
+  const stack = [];
+  const runs = new Map();
+  const segments = [];
+  const referenceLabels = new Set();
+
+  const contextPrefix = (parent) => `${parent ? parent.id : 'root'}:unordered:`;
+  const contextKey = (parent, bullet) => `${contextPrefix(parent)}${bullet}`;
+  const finishContext = (key) => {
+    const run = runs.get(key) || [];
+    if (run.length) segments.push(run);
+    runs.delete(key);
+  };
+  const finishContexts = (parent, except = null) => {
+    for (const key of [...runs.keys()]) {
+      if (key.startsWith(contextPrefix(parent)) && key !== except) finishContext(key);
+    }
+  };
+  const finishItem = (item) => {
+    const key = contextKey(item.parent, item.bullet);
+    if (item.type === 'unordered') {
+      const run = runs.get(key);
+      if (run) run.push(item.body);
+      else runs.set(key, [item.body]);
+    } else {
+      finishContext(key);
+    }
+    // Every child list is complete when its parent item closes.
+    finishContexts(item);
+  };
+  const popItem = () => finishItem(stack.pop());
+  const popToIndent = (indent) => {
+    let popped = 0;
+    while (stack.length && indent < stack[stack.length - 1].contentIndent) {
+      popItem();
+      popped += 1;
+    }
+    return popped;
+  };
+  const interruptRoot = () => {
+    while (stack.length) popItem();
+    finishContexts(null);
+  };
+
+  for (const filteredLine of visible) {
+    const forcedParagraphContinuation = filteredLine
+      .startsWith(MARKDOWN_PARAGRAPH_CONTINUATION);
+    const line = forcedParagraphContinuation ? filteredLine.slice(1) : filteredLine;
+    if (!line.trim()) {
+      referenceContinuation = null;
+      rootParagraphOpen = false;
+      // The source line contains an inline-comment close, so it is not a blank
+      // Markdown line even when no visible text follows the close.
+      if (forcedParagraphContinuation) continue;
+      if (stack.length) {
+        stack[stack.length - 1].paragraphOpen = false;
+        stack[stack.length - 1].afterBlank = true;
+      }
+      continue;
+    }
+
+    if (referenceContinuation?.type === 'destination') {
+      const pending = referenceContinuation;
+      referenceContinuation = null;
+      const indent = leadingSpaces(line);
+      const destination = referenceDefinitionTail(line);
+      if (indent >= pending.baseIndent && indent - pending.baseIndent <= 3
+        && destination?.hasDestination) {
+        referenceLabels.add(pending.label);
+        referenceContinuation = destination.continuation
+          ? { ...pending, type: destination.continuation }
+          : null;
+        continue;
+      }
+    } else if (referenceContinuation?.type === 'title') {
+      const pending = referenceContinuation;
+      referenceContinuation = null;
+      const indent = leadingSpaces(line);
+      if (indent >= pending.baseIndent && indent - pending.baseIndent <= 3
+        && referenceTitle(line)) continue;
+    }
+
+    let marker = forcedParagraphContinuation ? null : parseListMarker(line);
+    const activeOrderedSibling = marker && marker.type === 'ordered'
+      && stack.some((item) => item.type === 'ordered' && item.indent === marker.indent
+        && item.delimiter === marker.delimiter);
+    const lazyOrderedMarker = marker && marker.type === 'ordered' && marker.start !== 1
+      && !activeOrderedSibling && stack.length && stack[stack.length - 1].paragraphOpen
+      && !stack[stack.length - 1].afterBlank;
+    if (lazyOrderedMarker) marker = null;
+    if (marker) {
+      let parentIndex = stack.length - 1;
+      while (parentIndex >= 0 && marker.indent < stack[parentIndex].contentIndent) parentIndex -= 1;
+      // Four columns beyond the containing list item are an indented code
+      // block. Apply that cutoff at every list depth, not just at the root.
+      const parentBase = parentIndex >= 0 ? stack[parentIndex].contentIndent : 0;
+      if (marker.indent - parentBase > 3) marker = null;
+      else while (stack.length - 1 > parentIndex) popItem();
+    }
+    if (marker) {
+      rootParagraphOpen = false;
+      const parent = stack.length ? stack[stack.length - 1] : null;
+      if (parent) parent.paragraphOpen = false;
+      if (marker.type === 'ordered') finishContexts(parent);
+      else finishContexts(parent, contextKey(parent, marker.bullet));
+      stack.push({
+        ...marker,
+        id: nextItemId,
+        parent,
+        paragraphOpen: true,
+        afterBlank: false,
+      });
+      const markerReference = linkReferenceDefinition(marker.body);
+      if (markerReference) {
+        if (markerReference.hasDestination) referenceLabels.add(markerReference.label);
+        if (markerReference.continuation) {
+          referenceContinuation = {
+            type: markerReference.continuation,
+            label: markerReference.label,
+            baseIndent: marker.contentIndent,
+          };
+        }
+      }
+      nextItemId += 1;
+      continue;
+    }
+
+    const boundary = boundaryIndent(line);
+    const indent = boundary !== null ? boundary : leadingSpaces(line);
+    const itemParagraphOpen = stack.length
+      && stack[stack.length - 1].paragraphOpen
+      && !stack[stack.length - 1].afterBlank;
+    // A reference definition cannot interrupt a paragraph. Treating a
+    // definition-shaped continuation as hidden source resolves earlier images
+    // that CommonMark leaves literal and visible.
+    const referenceDefinition = !rootParagraphOpen && !itemParagraphOpen
+      ? linkReferenceDefinition(line)
+      : null;
+    let block = !forcedParagraphContinuation
+      && (boundary !== null || referenceDefinition
+        || (!lazyOrderedMarker && startsMarkdownBlock(line)));
+    if (block && boundary === null) {
+      let parentIndex = stack.length - 1;
+      while (parentIndex >= 0 && indent < stack[parentIndex].contentIndent) parentIndex -= 1;
+      const parentBase = parentIndex >= 0 ? stack[parentIndex].contentIndent : 0;
+      if (indent - parentBase > 3) block = false;
+    }
+    if (block) {
+      const popped = popToIndent(indent);
+      if (popped && stack.length) finishContexts(stack[stack.length - 1]);
+      if (referenceDefinition) {
+        const baseIndent = stack.length ? stack[stack.length - 1].contentIndent : 0;
+        if (referenceDefinition.hasDestination) referenceLabels.add(referenceDefinition.label);
+        referenceContinuation = referenceDefinition.continuation ? {
+          type: referenceDefinition.continuation,
+          label: referenceDefinition.label,
+          baseIndent,
+        } : null;
+      }
+      if (stack.length) {
+        stack[stack.length - 1].paragraphOpen = false;
+        stack[stack.length - 1].afterBlank = false;
+      } else {
+        rootParagraphOpen = false;
+        finishContexts(null);
+      }
+      continue;
+    }
+
+    if (stack.length) {
+      let item = stack[stack.length - 1];
+      if (item.paragraphOpen && !item.afterBlank) {
+        item.body += ` ${line.trim()}`;
+        continue;
+      }
+
+      const indent = leadingSpaces(line);
+      if (item.afterBlank && indent - item.contentIndent >= 4) {
+        item.paragraphOpen = false;
+        continue;
+      }
+      const popped = popToIndent(indent);
+      if (popped && stack.length) finishContexts(stack[stack.length - 1]);
+      if (stack.length) {
+        item = stack[stack.length - 1];
+        item.body += ` ${line.trim()}`;
+        item.paragraphOpen = true;
+        item.afterBlank = false;
+        continue;
+      }
+    }
+
+    interruptRoot();
+    rootParagraphOpen = true;
+  }
+
+  while (stack.length) popItem();
+  for (const key of [...runs.keys()]) finishContext(key);
+  let repeated = 0;
+  for (const segment of segments) {
+    let run = 0;
+    for (const body of segment) {
+      if (brochureItem(body, referenceLabels)) run += 1;
+      else {
+        if (run >= 2) repeated += run;
+        run = 0;
+      }
+    }
+    if (run >= 2) repeated += run;
+  }
+  return repeated >= 2 ? { count: repeated, standalone: true } : null;
+}
+
 // Human paragraphs breathe unevenly. Near-identical sentence lengths across a
 // whole document is the least visible tell and one of the most reliable.
 function uniformRhythm(prose) {
@@ -345,6 +1499,11 @@ function checkAll(text, config = {}) {
   const three = ruleOfThree(prose);
   if (three >= 3) soft.push({ name: 'rule-of-three', count: three });
 
+  const brochureBullets = brochureBulletHeadlines(text);
+  if (brochureBullets) {
+    soft.push({ name: 'brochure-style-bullet-headlines', ...brochureBullets });
+  }
+
   const rhythm = uniformRhythm(prose);
   if (rhythm) soft.push({ name: 'uniform-rhythm', ...rhythm });
 
@@ -352,10 +1511,14 @@ function checkAll(text, config = {}) {
   if (smart >= 6) soft.push({ name: 'typographic-quotes-throughout', count: smart });
 
   // Distinct categories, not raw hits. One phrase repeated ten times is one
-  // habit; six different categories at once is a pattern.
+  // habit; six different categories at once is a pattern. A detector may mark
+  // itself standalone only after it has already aggregated a repeated structure
+  // with its own false-positive guard. That can support "some" on its own, but
+  // never "strong".
   const categories = soft.length;
+  const standalone = soft.some((finding) => finding.standalone === true);
   const reading =
-    categories >= 4 ? 'strong' : categories >= 2 ? 'some' : 'little';
+    categories >= 4 ? 'strong' : categories >= 2 || standalone ? 'some' : 'little';
 
   return { hard: hard.violations, soft, categories, reading };
 }

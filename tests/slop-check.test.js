@@ -55,6 +55,632 @@ check(
   'strong'
 );
 
+console.log('\nbrochure-style bullet headlines');
+const BROCHURE_BULLETS = '- **Numbers that guide the next call.** Twelve measures appear beside their source and update time.\n'
+  + '- **Where the records really live.** The list names each system and the fields it owns.';
+const brochureFinding = (text) =>
+  checkAll(text).soft.find((finding) => finding.name === 'brochure-style-bullet-headlines');
+const brochureResult = checkAll(BROCHURE_BULLETS);
+
+check('two repeated headline-and-explanation bullets are reported',
+  Boolean(brochureFinding(BROCHURE_BULLETS)), true);
+for (const delimiter of ['**', '__']) {
+  for (const punctuation of ['.', '!', '?']) {
+    const punctuationOutside = BROCHURE_BULLETS
+      .replaceAll('**', delimiter)
+      .replaceAll(`.${delimiter}`, `${delimiter}${punctuation}`);
+    check(`${punctuation} after ${delimiter} still ends the bold headline`,
+      Boolean(brochureFinding(punctuationOutside)), true);
+  }
+}
+for (const punctuation of ['.', '!', '?']) {
+  const doubled = BROCHURE_BULLETS.replaceAll('.**', `.**${punctuation}`);
+  check(`an outside ${punctuation} cannot double-punctuate a bold headline`,
+    Boolean(brochureFinding(doubled)), false);
+}
+check('Windows line endings preserve list-item bodies',
+  Boolean(brochureFinding(BROCHURE_BULLETS.replaceAll('\n', '\r\n'))), true);
+check('the repeated structure supports a some reading on its own',
+  brochureResult.reading, 'some');
+check('the repeated structure remains one category rather than two',
+  brochureResult.categories, 1);
+check('one styled bullet is ordinary Markdown rather than a pattern',
+  Boolean(brochureFinding(BROCHURE_BULLETS.split('\n')[0])), false);
+check('a plain bullet between styled items breaks the repeated run',
+  Boolean(brochureFinding(
+    `${BROCHURE_BULLETS.split('\n')[0]}\n- Data: source, owner, update time\n`
+    + BROCHURE_BULLETS.split('\n')[1]
+  )), false);
+check('changing the unordered bullet marker starts a separate list',
+  Boolean(brochureFinding(
+    `${BROCHURE_BULLETS.split('\n')[0]}\n+ ${BROCHURE_BULLETS.split('\n')[1].slice(2)}`
+  )), false);
+check('ordinary bold labels are not sentence-shaped headlines',
+  Boolean(brochureFinding('- **Owner:** Billing team\n- **Status:** Ready\n- **Date:** Friday')), false);
+check('a list of bold instructions is not brochure framing',
+  Boolean(brochureFinding(
+    '- **Do not invent missing routes.** Say plainly when no route exists.\n'
+    + '- **Pick one primary match.** Let the reader ask for another option.\n'
+    + '- **Categorization is a heuristic.** Put uncertain cases in the final group.'
+  )), false);
+check('imperative instructions containing that are not brochure framing',
+  Boolean(brochureFinding(
+    '- **Verify that the cache is warm.** Run the health check before deployment.\n'
+    + '- **Check that the response is valid.** Compare every field with the schema.'
+  )), false);
+check('other that-complement instructions stay clean without a verb denylist',
+  Boolean(brochureFinding(
+    '- **Remember that the cache must be warm.** Run the health check before deployment.\n'
+    + '- **Document that the response is valid.** Record the result in the release notes.'
+  )), false);
+check('question headlines with auxiliary subjects are not brochure framing',
+  Boolean(brochureFinding(
+    '- **Is that true?** This is the question we ask before publishing.\n'
+    + '- **Was that clear?** Here is the summary each reader receives afterward.\n'
+    + '- **Does that work?** Run the result through the normal validation path.'
+  )), false);
+check('that-complements in ordinary summaries are not relative headlines',
+  Boolean(brochureFinding(
+    '- **The audit showed that data differed.** The report compares current totals with prior records.\n'
+    + '- **The tests confirmed that errors surfaced.** The results name every route that returned a failure.'
+  )), false);
+check('a determiner and noun can still form a relative headline',
+  Boolean(brochureFinding(
+    '- **The numbers that guide the next call.** Twelve measures appear beside their source and update time.\n'
+    + '- **The systems that hold the records.** The list names each system and the fields it owns.'
+  )), true);
+check('inline links in visible headline text are classified normally',
+  Boolean(brochureFinding(
+    '- **[Metrics](https://example.test) that guide.** These numbers direct the next useful call.\n'
+    + '- **[Where the records live](https://example.test).** These views show the current source status.'
+  )), true);
+check('punctuation inside a linked headline still ends the visible sentence',
+  Boolean(brochureFinding(
+    '- **[Metrics that guide.](https://example.test)** These numbers direct the next useful call.\n'
+    + '- **[Where the records live.](https://example.test)** These views show the current source status.'
+  )), true);
+check('where-qualified instructions are not place-shaped headlines',
+  Boolean(brochureFinding(
+    '- **Where possible, reuse the existing client.** This keeps authentication behavior consistent.\n'
+    + '- **Where necessary, add a narrow adapter.** This limits changes to the integration boundary.'
+  )), false);
+check('conditional where instructions are not place-shaped headlines',
+  Boolean(brochureFinding(
+    '- **Where the cache is cold, refresh it.** Run the probe again before continuing.\n'
+    + '- **Where the token is absent, stop.** Return an authentication error to the caller.'
+  )), false);
+check('demonstrative-object commands are not relative-clause headlines',
+  Boolean(brochureFinding(
+    '- **Address that issue before deployment.** Keep the existing authentication behavior intact.\n'
+    + '- **Process that request in one batch.** Return the final status to the caller.'
+  )), false);
+check('plain keyword bullets stay clean',
+  Boolean(brochureFinding('- Data: source and owner\n- Systems: ledger and warehouse\n- Reporting: weekly totals')), false);
+check('a bold sentence with no explanation after it stays clean',
+  Boolean(brochureFinding('- **The export completes overnight.**\n'.repeat(2))), false);
+check('strong delimiters followed by whitespace are literal Markdown',
+  Boolean(brochureFinding(
+    '- ** Numbers that guide the next call.** Twelve measures appear beside their source and update time.\n'
+    + '- ** Where the records really live.** The list names each system and the fields it owns.'
+  )), false);
+check('indented code does not supply explanatory copy for a headline',
+  Boolean(brochureFinding(
+    '- **Numbers that guide the next call.**\n\n'
+    + '      Twelve measures appear beside their source and update time.\n'
+    + '- **Where the records really live.**\n\n'
+    + '      The list names each system and the fields it owns.'
+  )), false);
+for (const [name, invisibleCopy] of [
+  ['inline HTML attributes', '<span class="one two three four"></span>'],
+  ['inline HTML processing instructions', '<?hidden words provide all?>'],
+  ['inline HTML declarations', '<!HIDDEN words provide all>'],
+  ['inline HTML CDATA sections', '<![CDATA[hidden words provide all]]>'],
+  ['HTML entities', '&nbsp; &nbsp; &nbsp; &nbsp;'],
+  ['link destinations', '[x](https://example.test "one two three four")'],
+  ['image alt text', '![hidden words provide explanatory copy](x.png)'],
+]) {
+  check(`${name} do not supply explanatory words`,
+    Boolean(brochureFinding(
+      `- **Numbers that guide the next call.** ${invisibleCopy}\n`
+      + `- **Where the records really live.** ${invisibleCopy}`
+    )), false);
+}
+check('resolved reference image alt text stays hidden',
+  Boolean(brochureFinding(
+    '- **Numbers that guide the next call.** ![hidden words provide explanatory copy][image]\n'
+    + '- **Where the records really live.** ![hidden words provide explanatory copy][image]\n\n'
+    + '[image]: image.png'
+  )), false);
+check('unresolved reference image text stays visible',
+  Boolean(brochureFinding(
+    '- **Numbers that guide the next call.** ![four explanatory words here][missing]\n'
+    + '- **Where the records really live.** ![four other visible words][missing]'
+  )), true);
+check('a malformed reference definition does not hide visible image text',
+  Boolean(brochureFinding(
+    '- **Numbers that guide the next call.** ![four explanatory words here][image]\n'
+    + '- **Where the records really live.** ![four other visible words][image]\n\n'
+    + '[image]: not a valid destination'
+  )), true);
+check('a definition-shaped paragraph continuation does not resolve images',
+  Boolean(brochureFinding(
+    '- **Numbers that guide the next call.** ![four explanatory words here][image]\n'
+    + '- **Where the records really live.** ![four other visible words][image]\n\n'
+    + 'Outside paragraph\n'
+    + '[image]: image.png'
+  )), true);
+check('a container-relative reference definition still resolves images',
+  Boolean(brochureFinding(
+    '- **Numbers that guide the next call.** ![four explanatory words here][image]\n'
+    + '- **Where the records really live.** ![four other visible words][image]\n\n'
+    + '    [image]: image.png'
+  )), false);
+check('a root indented-code line does not resolve images',
+  Boolean(brochureFinding(
+    '- **Numbers that guide the next call.** ![four explanatory words here][image]\n'
+    + '- **Where the records really live.** ![four other visible words][image]\n\n'
+    + '# Separate block\n\n'
+    + '    [image]: image.png'
+  )), true);
+check('resolved reference-link identifiers stay hidden',
+  Boolean(brochureFinding(
+    '- **Numbers that guide the next call.** [Read details][hidden words provide copy]\n'
+    + '- **Where the records really live.** [Read details][hidden words provide copy]\n\n'
+    + '[hidden words provide copy]: https://example.test'
+  )), false);
+check('unresolved reference-link identifiers stay visible',
+  Boolean(brochureFinding(
+    '- **Numbers that guide the next call.** [Read details][four words provide copy]\n'
+    + '- **Where the records really live.** [Read details][four words provide copy]'
+  )), true);
+check('visible reference-link labels still count as explanatory copy',
+  Boolean(brochureFinding(
+    '- **Numbers that guide the next call.** [Read the complete source details][source]\n'
+    + '- **Where the records really live.** [See the complete system list][source]\n\n'
+    + '[source]: https://example.test'
+  )), true);
+for (const quote of ['"', "'"]) {
+  const hiddenTitle = `[x](https://example.test ${quote}one two three four (${quote})`;
+  check(`parentheses in a ${quote}quoted link title stay hidden`,
+    Boolean(brochureFinding(
+      `- **Numbers that guide the next call.** ${hiddenTitle}\n`
+      + `- **Where the records really live.** ${hiddenTitle}`
+    )), false);
+}
+check('a title after an omitted link destination stays hidden',
+  Boolean(brochureFinding(
+    '- **Numbers that guide the next call.** [x]( "one two three four")\n'
+    + '- **Where the records really live.** [x]( "one two three four")'
+  )), false);
+check('a backslash cannot make whitespace valid inside an unquoted destination',
+  Boolean(brochureFinding(
+    '- **Numbers that guide the next call.** [x](four\\ visible words here)\n'
+    + '- **Where the records really live.** [x](four\\ visible words here)'
+  )), true);
+check('parentheses in an angle-bracket link destination stay hidden',
+  Boolean(brochureFinding(
+    '- **Numbers that guide the next call.** [x](<https://example.test/(> "one two three four")\n'
+    + '- **Where the records really live.** [x](<https://example.test/(> "one two three four")'
+  )), false);
+const malformedLinks = '[a]('.repeat(16000);
+const malformedLinksStarted = process.hrtime.bigint();
+brochureFinding(
+  `- **Numbers that guide the next call.** ${malformedLinks}\n`
+  + `- **Where the records really live.** ${malformedLinks}`
+);
+const malformedLinksMilliseconds = Number(
+  process.hrtime.bigint() - malformedLinksStarted
+) / 1e6;
+check('malformed link-heavy copy is checked without repeated suffix scans',
+  malformedLinksMilliseconds < 1500, true);
+check('words in an unquoted destination containing spaces stay visible',
+  Boolean(brochureFinding(
+    '- **Numbers that guide the next call.** [x](four visible words here)\n'
+    + '- **Where the records really live.** [x](four visible words here)'
+  )), true);
+check('a longer backtick run cannot close a shorter code-span delimiter',
+  Boolean(brochureFinding(
+    '- **Numbers that guide the next call.** ``<span one two three four>```\n'
+    + '- **Where the records really live.** ``<span one two three four>```'
+  )), false);
+check('shortcut-reference image alt text stays hidden',
+  Boolean(brochureFinding(
+    '- **Numbers that guide the next call.** ![hidden words provide explanatory copy]\n'
+    + '- **Where the records really live.** ![other hidden words provide explanatory copy]\n\n'
+    + '[hidden words provide explanatory copy]: image.png\n'
+    + '[other hidden words provide explanatory copy]: other.png'
+  )), false);
+check('visible text inside inline HTML still counts as explanatory copy',
+  Boolean(brochureFinding(
+    '- **Numbers that guide the next call.** <span>Twelve measures appear beside each source.</span>\n'
+    + '- **Where the records really live.** <span>The list names each system and owner.</span>'
+  )), true);
+for (const [name, first, second] of [
+  ['tag-shaped', '`<alpha>` `<beta>` `<gamma>` `<delta>`',
+    '`<one>` `<two>` `<three>` `<four>`'],
+  ['entity-shaped', '`&alpha;` `&beta;` `&gamma;` `&delta;`',
+    '`&one;` `&two;` `&three;` `&four;`'],
+]) {
+  check(`${name} inline-code tokens count as visible explanatory copy`,
+    Boolean(brochureFinding(
+      `- **Numbers that guide the next call.** ${first}\n`
+      + `- **Where the records really live.** ${second}`
+    )), true);
+}
+check('fenced examples are shown rather than used',
+  Boolean(brochureFinding(`\`\`\`markdown\n${BROCHURE_BULLETS}\n\`\`\``)), false);
+for (const tag of ['pre', 'script', 'style', 'textarea', 'div']) {
+  check(`bullets inside a raw ${tag} block are not read as Markdown`,
+    Boolean(brochureFinding(`<${tag}>\n${BROCHURE_BULLETS}\n</${tag}>`)), false);
+}
+check('text resembling a script close does not end a raw HTML block',
+  Boolean(brochureFinding(
+    `<script>\nconst example = "</script fake>";\n${BROCHURE_BULLETS}\n</script>`
+  )), false);
+for (const [name, open, close] of [
+  ['processing instruction', '<?sample', '?>'],
+  ['declaration', '<!SAMPLE', '>'],
+  ['CDATA section', '<![CDATA[', ']]>'],
+  ['closing block tag', '</div>', ''],
+  ['custom element', '<custom-box>', '</custom-box>'],
+]) {
+  check(`bullets inside a raw HTML ${name} are not read as Markdown`,
+    Boolean(brochureFinding(`${open}\n${BROCHURE_BULLETS}\n${close}`)), false);
+}
+check('quoted angle brackets are valid inside custom-element attributes',
+  Boolean(brochureFinding(
+    `<custom-box title="1 > 0">\n${BROCHURE_BULLETS}\n</custom-box>`
+  )), false);
+check('bullets inside a list-relative raw HTML block are not read as Markdown',
+  Boolean(brochureFinding(
+    `- Parent item\n    <pre>\n    ${BROCHURE_BULLETS.split('\n')[0]}\n`
+    + `    ${BROCHURE_BULLETS.split('\n')[1]}\n    </pre>`
+  )), false);
+check('a raw HTML block may begin in the body of a list marker',
+  Boolean(brochureFinding(
+    `- <div>\n  ${BROCHURE_BULLETS.split('\n')[0]}\n`
+    + `  ${BROCHURE_BULLETS.split('\n')[1]}\n  </div>`
+  )), false);
+check('a fenced block may begin in the body of a list marker',
+  Boolean(brochureFinding(
+    `- \`\`\`markdown\n  ${BROCHURE_BULLETS.split('\n')[0]}\n`
+    + `  ${BROCHURE_BULLETS.split('\n')[1]}\n  \`\`\``
+  )), false);
+for (const [name, block] of [
+  ['fenced', '- ```text\n  hidden example\n  ```'],
+  ['raw HTML', '- <pre></pre>'],
+  ['comment', '- <!-- hidden example -->'],
+]) {
+  check(`a ${name} marker-body block keeps its child list below it`,
+    Boolean(brochureFinding(
+      `${block}\n  ${BROCHURE_BULLETS.split('\n')[0]}\n${BROCHURE_BULLETS.split('\n')[1]}`
+    )), false);
+}
+check('a comment inside a raw HTML opener does not expose its block contents',
+  Boolean(brochureFinding(`<div><!-- note --></div>\n${BROCHURE_BULLETS}`)), false);
+check('a type-seven tag cannot interrupt an open paragraph',
+  Boolean(brochureFinding(`Intro text\n<custom-box>\n${BROCHURE_BULLETS}`)), true);
+check('an outdented type-seven tag remains a lazy list continuation',
+  Boolean(brochureFinding(`- Parent paragraph\n<custom-box>\n${BROCHURE_BULLETS}`)), true);
+check('a type-seven lazy continuation does not split sibling brochure bullets',
+  Boolean(brochureFinding(
+    `${BROCHURE_BULLETS.split('\n')[0]}\n<custom-box>\n${BROCHURE_BULLETS.split('\n')[1]}`
+  )), true);
+for (const [name, block] of [
+  ['an HTML comment', '<!-- note -->'],
+  ['a fenced block', '```\nexample\n```'],
+  ['an empty list marker', '-'],
+]) {
+  check(`a type-seven tag may begin after ${name}`,
+    Boolean(brochureFinding(`${block}\n<custom-box>\n${BROCHURE_BULLETS}\n</custom-box>`)), false);
+}
+check('a shorter fence inside a four-backtick example does not expose its bullets',
+  Boolean(brochureFinding(`\`\`\`\`markdown\n\`\`\`\n${BROCHURE_BULLETS}\n\`\`\`\``)), false);
+check('a tilde fence may begin its info string with a backtick',
+  Boolean(brochureFinding(`~~~\`literal\n${BROCHURE_BULLETS}\n~~~`)), false);
+check('a backtick fence may begin its info string with a tilde',
+  Boolean(brochureFinding(`\`\`\`~literal\n${BROCHURE_BULLETS}\n\`\`\``)), false);
+check('explanatory copy may continue on an indented line',
+  Boolean(brochureFinding(
+    '- **Numbers that guide the next call.**\n  Twelve measures appear beside their source and update time.\n'
+    + '- **Where the records really live.**\n  The list names each system and the fields it owns.'
+  )), true);
+check('hidden reference definitions do not supply explanatory copy',
+  Boolean(brochureFinding(
+    '- **Numbers that guide the next call.**\n\n'
+    + '  [source]: https://example.test "hidden words provide explanation"\n'
+    + '- **Where the records really live.**\n\n'
+    + '  [other]: https://example.test "hidden words provide explanation"'
+  )), false);
+check('a reference title on the next line stays hidden too',
+  Boolean(brochureFinding(
+    '- **Numbers that guide the next call.**\n\n'
+    + '  [source]: https://example.test\n    "hidden words provide explanation"\n'
+    + '- **Where the records really live.**\n\n'
+    + '  [other]: https://example.test\n    "hidden words provide explanation"'
+  )), false);
+check('escaped quotes in a continued reference title stay hidden too',
+  Boolean(brochureFinding(
+    '- **Numbers that guide the next call.**\n\n'
+    + '  [source]: https://example.test\n    "hidden \\"quoted\\" words provide explanation"\n'
+    + '- **Where the records really live.**\n\n'
+    + '  [other]: https://example.test\n    "hidden \\"quoted\\" words provide explanation"'
+  )), false);
+check('definition-shaped lazy continuation text stays inside its list item',
+  Boolean(brochureFinding(
+    '- **Numbers that guide the next call.** Twelve measures appear beside their source and update time.\n'
+    + '  [source]: https://example.test\n'
+    + '"A separate paragraph outside the list"\n'
+    + '- **Where the records really live.** The list names each system and the fields it owns.'
+  )), true);
+check('a reference destination and title may both continue below the label',
+  Boolean(brochureFinding(
+    '- **Numbers that guide the next call.**\n\n'
+    + '  [source]:\n    https://example.test\n    "hidden words provide explanation"\n'
+    + '- **Where the records really live.**\n\n'
+    + '  [other]:\n    https://example.test\n    "hidden words provide explanation"'
+  )), false);
+check('content may begin below an otherwise empty list marker',
+  Boolean(brochureFinding(
+    `-\n  ${BROCHURE_BULLETS.split('\n')[0].slice(2)}\n`
+    + `-\n  ${BROCHURE_BULLETS.split('\n')[1].slice(2)}`
+  )), true);
+check('a lazy unindented continuation stays inside its Markdown list item',
+  Boolean(brochureFinding(
+    '- **Numbers that guide the next call.** Twelve measures appear beside their source\n'
+    + 'and update time.\n'
+    + '- **Where the records really live.** The list names each system and the fields\n'
+    + 'it owns.'
+  )), true);
+for (const start of [0, 2, 10]) {
+  check(`an ordered marker starting at ${start} is a lazy paragraph continuation`,
+    Boolean(brochureFinding(
+      `${BROCHURE_BULLETS.split('\n')[0]}\n${start}. This remains part of the first item.\n`
+      + BROCHURE_BULLETS.split('\n')[1]
+    )), true);
+}
+for (const [name, block] of [
+  ['heading', '## A separate section'],
+  ['blockquote', '> A separate quotation'],
+  ['numbered item', '1. A separate step'],
+  ['thematic break', '---'],
+  ['table', '| Field | Owner |\n| --- | --- |'],
+  ['table without a leading pipe', 'Field | Owner\n--- | ---'],
+]) {
+  check(`${name} ends a run instead of becoming lazy continuation text`,
+    Boolean(brochureFinding(
+      `${BROCHURE_BULLETS.split('\n')[0]}\n${block}\n${BROCHURE_BULLETS.split('\n')[1]}`
+  )), false);
+}
+check('a pipe-leading lazy continuation does not become a table by itself',
+  Boolean(brochureFinding(
+    `${BROCHURE_BULLETS.split('\n')[0]}\n| supporting note\n`
+    + BROCHURE_BULLETS.split('\n')[1]
+  )), true);
+check('bullets inside an HTML comment are not read as visible prose',
+  Boolean(brochureFinding(`<!--\n${BROCHURE_BULLETS}\n-->`)), false);
+check('a comment between bullets ends the consecutive run',
+  Boolean(brochureFinding(
+    `${BROCHURE_BULLETS.split('\n')[0]}\n<!-- separate items -->\n${BROCHURE_BULLETS.split('\n')[1]}`
+  )), false);
+check('same-line HTML comments do not discard visible explanatory copy',
+  Boolean(brochureFinding(
+    BROCHURE_BULLETS.replaceAll('** Twelve', '** <!-- source --> Twelve')
+      .replaceAll('** The list', '** <!-- source --> The list')
+  )), true);
+check('every same-line HTML comment is removed before item matching',
+  Boolean(brochureFinding(
+    '- **Numbers that guide the next call.** <!-- one --> <!-- hidden words provide all copy -->\n'
+    + '- **Where the records really live.** <!-- one --> <!-- hidden words provide all copy -->'
+  )), false);
+const commentHeavyItem = '<!-- note --> '.repeat(8000);
+const commentHeavyStarted = process.hrtime.bigint();
+const commentHeavyFinding = brochureFinding(
+  `- **Numbers that guide the next call.** ${commentHeavyItem}\n`
+  + '- **Where the records really live.** The list names each system and the fields it owns.'
+);
+const commentHeavyMilliseconds = Number(process.hrtime.bigint() - commentHeavyStarted) / 1e6;
+check('comment-heavy lines do not turn hidden copy into explanatory prose',
+  Boolean(commentHeavyFinding), false);
+check('comment-heavy lines are scanned without repeated whole-line work',
+  commentHeavyMilliseconds < 2500, true);
+check('comments are scanned again after a multiline inline comment closes',
+  Boolean(brochureFinding(
+    '- **Numbers that guide the next call.** <!--\n'
+    + '--> <!-- hidden words provide explanatory copy -->\n'
+    + '- **Where the records really live.** <!--\n'
+    + '--> <!-- hidden words provide explanatory copy -->'
+  )), false);
+check('list-shaped text after a multiline inline comment stays in its paragraph',
+  Boolean(brochureFinding(
+    `Intro <!--\n-->${BROCHURE_BULLETS.split('\n')[0]}\n`
+    + BROCHURE_BULLETS.split('\n')[1]
+  )), false);
+check('an unmatched inline comment opener does not hide later list items',
+  Boolean(brochureFinding(`Intro <!-- unmatched\n\n${BROCHURE_BULLETS}`)), true);
+check('a comment close inside fenced code cannot complete an earlier inline opener',
+  Boolean(brochureFinding(
+    `Intro <!-- unmatched\n\`\`\`text\n-->\n\`\`\`\n${BROCHURE_BULLETS}`
+  )), true);
+check('a non-1 ordered lazy continuation can close an inline comment',
+  Boolean(brochureFinding(
+    '- **Numbers that guide the next call.** <!--\n'
+    + '2. hidden words provide explanatory copy -->\n'
+    + '- **Where the records really live.** <!--\n'
+    + '2. hidden words provide explanatory copy -->'
+  )), false);
+check('an unrelated close after a blank cannot complete an inline comment',
+  Boolean(brochureFinding(
+    `Intro <!-- unmatched\n\n${BROCHURE_BULLETS}\n\nunrelated close -->`
+  )), true);
+check('an unmatched whole-line comment opener remains an HTML block',
+  Boolean(brochureFinding(`<!-- unmatched\n${BROCHURE_BULLETS}`)), false);
+check('a fenced block between bullets ends the consecutive run',
+  Boolean(brochureFinding(
+    `${BROCHURE_BULLETS.split('\n')[0]}\n\`\`\`text\nseparate items\n\`\`\`\n`
+    + BROCHURE_BULLETS.split('\n')[1]
+  )), false);
+check('an unclosed comment marker inside fenced code does not hide later prose',
+  Boolean(brochureFinding(`\`\`\`\`html\n<!--\n\`\`\`\`\n${BROCHURE_BULLETS}`)), true);
+check('an inline comment marker in code does not hide later prose',
+  Boolean(brochureFinding(`The marker \`<!--\` starts a comment.\n\n${BROCHURE_BULLETS}`)), true);
+check('a comment marker in a multiline code span does not hide later prose',
+  Boolean(brochureFinding(`The marker \`<!--\nliteral code\` stays code.\n\n${BROCHURE_BULLETS}`)), true);
+check('unmatched backticks cannot span across a fenced block',
+  Boolean(brochureFinding(
+    `A stray \`\n\n\`\`\`markdown\n${BROCHURE_BULLETS}\n\`\`\`\n\nAnother stray \``
+  )), false);
+check('a block nested inside the first item keeps its sibling run together',
+  Boolean(brochureFinding(
+    `${BROCHURE_BULLETS.split('\n')[0]}\n  > Supporting note\n${BROCHURE_BULLETS.split('\n')[1]}`
+  )), true);
+check('optional root-list indentation does not create false nesting',
+  Boolean(brochureFinding(
+    ` ${BROCHURE_BULLETS.split('\n')[0]}\n${BROCHURE_BULLETS.split('\n')[1]}`
+  )), true);
+check('consecutive child bullets are checked within their own list',
+  Boolean(brochureFinding(
+    `- Parent item\n  ${BROCHURE_BULLETS.split('\n')[0]}\n  ${BROCHURE_BULLETS.split('\n')[1]}`
+  )), true);
+check('four-space child bullets are parsed relative to their parent',
+  Boolean(brochureFinding(
+    `- Parent item\n    ${BROCHURE_BULLETS.split('\n')[0]}\n    ${BROCHURE_BULLETS.split('\n')[1]}`
+  )), true);
+check('a list marker four columns beyond its parent content is indented code',
+  Boolean(brochureFinding(
+    `- Parent item\n      ${BROCHURE_BULLETS.split('\n')[0]}\n      ${BROCHURE_BULLETS.split('\n')[1]}`
+  )), false);
+check('grandchild bullets are parsed at their own list depth',
+  Boolean(brochureFinding(
+    `- Parent item\n  - Child item\n    ${BROCHURE_BULLETS.split('\n')[0]}\n`
+    + `    ${BROCHURE_BULLETS.split('\n')[1]}`
+  )), true);
+check('a child bullet and a root bullet do not share a run',
+  Boolean(brochureFinding(
+    `1. Parent item\n   ${BROCHURE_BULLETS.split('\n')[0]}\n${BROCHURE_BULLETS.split('\n')[1]}`
+  )), false);
+for (const delimiter of ['.', ')']) {
+  check(`child bullets under separate ordered ${delimiter} items do not share a run`,
+    Boolean(brochureFinding(
+      `1${delimiter} First parent\n   ${BROCHURE_BULLETS.split('\n')[0]}\n`
+      + `2${delimiter} Second parent\n   ${BROCHURE_BULLETS.split('\n')[1]}`
+    )), false);
+}
+check('a paragraph after a nested block ends the list item',
+  Boolean(brochureFinding(
+    `${BROCHURE_BULLETS.split('\n')[0]}\n  ## Supporting note\nOutside the list.\n`
+    + BROCHURE_BULLETS.split('\n')[1]
+  )), false);
+check('parent-level content separates two child-list runs',
+  Boolean(brochureFinding(
+    `- Parent item\n  ${BROCHURE_BULLETS.split('\n')[0]}\n\n  ## Parent heading\n`
+    + `  ${BROCHURE_BULLETS.split('\n')[1]}`
+  )), false);
+for (const [name, block] of [
+  ['heading', '    ## A parent-level section'],
+  ['blockquote', '    > A parent-level quotation'],
+  ['thematic break', '    ---'],
+  ['table', '    | Field | Owner |\n    | --- | --- |'],
+  ['HTML block', '    <div>separate items</div>'],
+]) {
+  check(`${name} at the parent depth separates child-list items`,
+    Boolean(brochureFinding(
+      `- Parent item\n    ${BROCHURE_BULLETS.split('\n')[0]}\n${block}\n`
+      + `    ${BROCHURE_BULLETS.split('\n')[1]}`
+    )), false);
+}
+check('a fenced block at the parent depth separates child-list items',
+  Boolean(brochureFinding(
+    `- Parent item\n    ${BROCHURE_BULLETS.split('\n')[0]}\n    \`\`\`text\n`
+    + `    separate items\n    \`\`\`\n    ${BROCHURE_BULLETS.split('\n')[1]}`
+  )), false);
+check('an outdented fence does not close a list-relative fenced block',
+  Boolean(brochureFinding(
+    `- Parent item\n  \`\`\`markdown\n  nested code\n\`\`\`\n${BROCHURE_BULLETS}\n\`\`\``
+  )), false);
+check('an HTML comment at the parent depth separates child-list items',
+  Boolean(brochureFinding(
+    `- Parent item\n    ${BROCHURE_BULLETS.split('\n')[0]}\n    <!-- separate items -->\n`
+    + `    ${BROCHURE_BULLETS.split('\n')[1]}`
+  )), false);
+check('tab padding after a bullet marker is valid Markdown',
+  Boolean(brochureFinding(BROCHURE_BULLETS.replaceAll('- ', '-\t'))), true);
+check('tab-indented child bullets are parsed relative to their parent',
+  Boolean(brochureFinding(
+    `- Parent item\n\t${BROCHURE_BULLETS.split('\n')[0]}\n\t${BROCHURE_BULLETS.split('\n')[1]}`
+  )), true);
+check('a list block ends an unfinished inline comment after prose',
+  Boolean(brochureFinding(`Intro <!--\n${BROCHURE_BULLETS}\n-->`)), true);
+check('a multiline HTML comment beginning after a marker hides its example bullets',
+  Boolean(brochureFinding(`- <!--\n${BROCHURE_BULLETS}\n-->`)), false);
+check('a list-relative HTML comment hides nested example bullets',
+  Boolean(brochureFinding(
+    `- Parent item\n    <!--\n    ${BROCHURE_BULLETS.split('\n')[0]}\n`
+    + `    ${BROCHURE_BULLETS.split('\n')[1]}\n    -->`
+  )), false);
+check('a list-relative fenced block hides nested example bullets',
+  Boolean(brochureFinding(
+    `- Parent item\n    \`\`\`markdown\n    ${BROCHURE_BULLETS.split('\n')[0]}\n`
+    + `    ${BROCHURE_BULLETS.split('\n')[1]}\n    \`\`\``
+  )), false);
+check('comment-only list items still separate surrounding brochure bullets',
+  Boolean(brochureFinding(
+    `${BROCHURE_BULLETS.split('\n')[0]}\n- <!-- separator -->\n${BROCHURE_BULLETS.split('\n')[1]}`
+  )), false);
+check('trailing text on a block-comment line is not parsed as Markdown',
+  Boolean(brochureFinding(
+    `<!-- hidden --> ${BROCHURE_BULLETS.split('\n')[0]}\n${BROCHURE_BULLETS.split('\n')[1]}`
+  )), false);
+check('comment-looking text in indented code does not hide later prose',
+  Boolean(brochureFinding(`    const marker = '<!--';\n\n${BROCHURE_BULLETS}`)), true);
+check('an escaped comment opener does not hide later prose',
+  Boolean(brochureFinding(`\\<!-- literal opener\n\n${BROCHURE_BULLETS}`)), true);
+check('a comment-like link destination does not hide later prose',
+  Boolean(brochureFinding(`[marker](<!--)\n\n${BROCHURE_BULLETS}`)), true);
+check('nested parentheses stay balanced in a comment-like link destination',
+  Boolean(brochureFinding(`[marker](x(y)<!--)\n\n${BROCHURE_BULLETS}`)), true);
+for (const malformed of ['](', '[unfinished](']) {
+  check(`${malformed} does not turn a later comment into visible prose`,
+    Boolean(brochureFinding(
+      `- **Numbers that guide the next call.** ${malformed} <!-- hidden words provide all explanatory copy -->\n`
+      + `- **Where the records really live.** ${malformed} <!-- hidden words provide all explanatory copy -->`
+    )), false);
+}
+check('link-like delimiters inside inline code do not expose comment text',
+  Boolean(brochureFinding(
+    '- **Numbers that guide the next call.** `](` <!-- hidden words provide all explanatory copy -->\n'
+    + '- **Where the records really live.** `](` <!-- hidden words provide all explanatory copy -->'
+  )), false);
+for (const [name, block] of [
+  ['heading', '# separate section'],
+  ['blockquote', '> separate quotation'],
+  ['list', '- separate item'],
+  ['thematic break', '---'],
+]) {
+  check(`${name} keeps a later unfinished comment within its paragraph`,
+    Boolean(brochureFinding(
+      `A stray \`\n${block}\ntext <!-- \`\n${BROCHURE_BULLETS}\n-->`
+    )), true);
+}
+check('underscore-delimited bold headlines are equivalent Markdown',
+  Boolean(brochureFinding(BROCHURE_BULLETS.replaceAll('**', '__'))), true);
+check('four-space-indented code is not read as a top-level list',
+  Boolean(brochureFinding(BROCHURE_BULLETS.replaceAll('- ', '    - '))), false);
+const separateBrochureRuns = `${BROCHURE_BULLETS}\n\nA paragraph separates the lists.\n\n`
+  + '- **Systems that track every source.** The table names each system and responsible team.\n'
+  + '- **Where the updates enter the warehouse.** The diagram marks every scheduled ingestion path.\n'
+  + '- **Reports that show each update.** The index names each dashboard and business owner.';
+check('the occurrence count includes every repeated run',
+  brochureFinding(separateBrochureRuns).count, 5);
+const largePlainList = '- ordinary bullet text\n'.repeat(20000);
+const largePlainListStarted = process.hrtime.bigint();
+brochureFinding(largePlainList);
+const largePlainListMilliseconds = Number(
+  process.hrtime.bigint() - largePlainListStarted
+) / 1e6;
+check('large flat lists are checked without copying every earlier item',
+  largePlainListMilliseconds < 1500, true);
+
 console.log('\ncode');
 check('shipped placeholder is a hard finding',
   checkCode('const KEY = "your-api-key";').some((f) => f.hard), true);
@@ -797,6 +1423,14 @@ function runCliWithNoStdin(args) {
     env: { ...process.env, HOME: dir },
   });
 }
+
+const brochureReport = runCli(['--prose'], BROCHURE_BULLETS);
+check('the prose report names the brochure-style finding',
+  brochureReport.includes('brochure-style-bullet-headlines: 2 occurrences'), true);
+check('the prose report explains why one structural category supports some',
+  brochureReport.includes('same pattern appears twice'), true);
+check('the prose report does not contradict its standalone reading',
+  brochureReport.includes('nothing alone'), false);
 
 const BANNED = 'This approach is worth stealing. The team shipped it last week and it held up well.';
 const report = runCli(['--prose'], BANNED);
