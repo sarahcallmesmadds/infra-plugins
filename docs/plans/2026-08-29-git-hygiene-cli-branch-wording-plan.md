@@ -54,10 +54,13 @@ comparison and does not offer the branch for deletion.
    and discovery surfaces:
    - `plugins/git-hygiene/skills/stale-branches/SKILL.md` will say that a
      positive reachability count prevents a safe-delete verdict, not that it
-     proves the work exists nowhere else. Its force-delete warning and closing
-     summary will use the same distinction.
+     proves the work exists nowhere else. Its frontmatter description,
+     evidence explanation, sweep summary, force-delete warning, closing
+     summary, and "never does" contract will use the same distinction.
    - The current behavior explanation in `plugins/git-hygiene/README.md` will
-     distinguish "not proved safe" from "proved to hold unique work."
+     distinguish "not proved safe" from "proved to hold unique work." This
+     includes the distinction paragraph, sample output, and "What it will not
+     do" section, rather than only the sample.
    - All seven surfaces enforced by
      `tests/plugin-description-drift.test.js` will move together: the Claude
      manifest description; the Codex manifest description, short description,
@@ -67,18 +70,34 @@ comparison and does not offer the branch for deletion.
    - Historical release notes and internal comments that explain past behavior
      remain historical records unless they are also current instructions.
 4. In `tests/stale-branches.test.js`, add outcome-focused coverage that proves:
+   - existing assertions and comments that describe current output no longer
+     pin the old "not in the default branch" wording;
    - the Keep heading no longer says deletion would lose work;
    - an unreachable commit count is still shown;
    - the output does not turn commit reachability into a claim that the work is
      absent;
    - a branch carrying both an open-pull-request reason and an unreachable
      commit reason renders both clearly;
-   - pre-delete refusal uses the same precise reason; and
-   - the README sample is coupled to both the Safe and Keep headings.
+   - pre-delete refusal uses the same precise reason;
+   - the README sample is coupled to both the Safe and Keep headings;
+   - current README prose cannot reintroduce the "only copy," "destroys them,"
+     or unconditional "loses work" claims for a held branch; and
+   - the skill frontmatter and body cannot reintroduce the same overstatement.
+   Preserve comments that quote historical failure output, including the
+   squash-merge failure record near the existing output tests; those comments
+   describe what an older release literally printed rather than the current
+   contract.
 5. Update the current-output example in `plugins/git-hygiene/README.md` to match
    the executable report.
-6. Add contract coverage for the skill and discovery descriptions so the
-   overstatement cannot remain in or return to another user-facing route.
+6. Add the skill-frontmatter and current-prose contract assertions to
+   `tests/stale-branches.test.js`. Keep
+   `tests/plugin-description-drift.test.js` responsible for its existing seven
+   plugin-level description surfaces; the skill-specific contract is an
+   adjacent eighth route, not a silent expansion of that general inventory.
+   Extend `tests/plugin-description-drift.test.js` with a semantic contract for
+   the values it reads from all seven git-hygiene discovery surfaces, so moving
+   all seven together cannot pass while they retain or reintroduce the claim
+   that a kept branch necessarily holds unique work.
 7. Release the behavior as `git-hygiene` 0.3.12:
    - add a dated entry to `plugins/git-hygiene/CHANGELOG.md`;
    - update both plugin manifests; and
@@ -101,7 +120,9 @@ comparison and does not offer the branch for deletion.
 2. Run `node tests/plugin-versions.test.js`.
 3. Run `node tests/plugin-description-drift.test.js`.
 4. Run `node tests/skill-md-check.test.js`.
-5. Run `claude plugin validate --strict plugins/git-hygiene`.
+5. Run `claude plugin validate --strict plugins/git-hygiene`. The Claude CLI is
+   a required release-tool prerequisite for this repository; if it is absent,
+   stop rather than treating the Node tests as an equivalent validator.
 6. Run `node tests/run-all.js`.
 7. Run `git diff --check`.
 8. Exercise the CLI with a saved input containing:
@@ -113,11 +134,23 @@ comparison and does not offer the branch for deletion.
 10. Sweep current user-facing git-hygiene copy for claims that a positive
    reachability count proves work exists nowhere else or would certainly be
    lost on deletion.
-11. Install the built 0.3.12 plugin from the implementation worktree in local
-    scope, start a clean chat against that installed copy, and verify that
-    natural stale-branch cleanup language discovers `stale-branches` and that
-    its report uses the corrected wording. Confirm the installed files are the
-    built 0.3.12 files before recording the result.
+11. Verify an actual marketplace-installed 0.3.12 copy before merge. This
+    repository has no separate build artifact: the marketplace copies
+    `plugins/git-hygiene` into its cache. Use a private disposable
+    `CLAUDE_CONFIG_DIR`, then run these commands against the implementation
+    worktree:
+    - `claude plugin marketplace add --scope user <worktree>`;
+    - `claude plugin install git-hygiene@infra-plugins --scope user`; and
+    - `claude plugin list` to confirm version 0.3.12 is enabled from that
+      disposable configuration.
+    Inspect and run
+    `<config>/plugins/cache/infra-plugins/git-hygiene/0.3.12/scripts/cli.js`, not
+    the worktree copy, against the saved input. Compare its checksum with the
+    reviewed worktree file. From a neutral directory, start a clean
+    noninteractive chat using the same disposable `CLAUDE_CONFIG_DIR` and
+    natural stale-branch cleanup language, then confirm it discovers
+    `stale-branches`. Keep the disposable configuration and its evidence
+    outside the repository.
 12. Run the required final Code review, Devin CLI review, Devin GitHub app
    review, and CI gates on the implementation head before merge.
 
