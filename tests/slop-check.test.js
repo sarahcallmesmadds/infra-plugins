@@ -313,6 +313,11 @@ check('comments are scanned again after a multiline inline comment closes',
     + '- **Where the records really live.** <!--\n'
     + '--> <!-- hidden words provide explanatory copy -->'
   )), false);
+check('list-shaped text after a multiline inline comment stays in its paragraph',
+  Boolean(brochureFinding(
+    `Intro <!--\n-->${BROCHURE_BULLETS.split('\n')[0]}\n`
+    + BROCHURE_BULLETS.split('\n')[1]
+  )), false);
 check('a fenced block between bullets ends the consecutive run',
   Boolean(brochureFinding(
     `${BROCHURE_BULLETS.split('\n')[0]}\n\`\`\`text\nseparate items\n\`\`\`\n`

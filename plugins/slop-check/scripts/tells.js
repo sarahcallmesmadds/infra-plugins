@@ -241,6 +241,10 @@ function ruleOfThree(prose) {
 // exactly. Imperative leads are excluded for the same reason: "Verify that..."
 // is an instruction, not a marketing headline.
 const MARKDOWN_BOUNDARY = '\0';
+// Block parsing happens before inline comments are removed. Keep that fact in
+// the filtered stream when a multiline inline comment closes before text that
+// merely looks like a block marker (`-->- item`, for example).
+const MARKDOWN_PARAGRAPH_CONTINUATION = '\u0001';
 
 function boundaryLine(indent) {
   return `${MARKDOWN_BOUNDARY}${indent}`;
@@ -535,7 +539,8 @@ function withoutFencedBlocks(text) {
       // An inline comment may close before another comment begins. Feed the
       // remainder through the ordinary scanner so none of that hidden copy is
       // mistaken for an explanation attached to a list headline.
-      line = ' '.repeat(close + 3) + line.slice(close + 3);
+      line = MARKDOWN_PARAGRAPH_CONTINUATION
+        + ' '.repeat(close + 3) + line.slice(close + 3);
     }
 
     // A fenced, commented, or raw-HTML block may begin in the body of a list
@@ -867,8 +872,14 @@ function brochureBulletHeadlines(text) {
     finishContexts(null);
   };
 
-  for (const line of visible) {
+  for (const filteredLine of visible) {
+    const forcedParagraphContinuation = filteredLine
+      .startsWith(MARKDOWN_PARAGRAPH_CONTINUATION);
+    const line = forcedParagraphContinuation ? filteredLine.slice(1) : filteredLine;
     if (!line.trim()) {
+      // The source line contains an inline-comment close, so it is not a blank
+      // Markdown line even when no visible text follows the close.
+      if (forcedParagraphContinuation) continue;
       if (stack.length) {
         stack[stack.length - 1].paragraphOpen = false;
         stack[stack.length - 1].afterBlank = true;
@@ -876,7 +887,7 @@ function brochureBulletHeadlines(text) {
       continue;
     }
 
-    let marker = parseListMarker(line);
+    let marker = forcedParagraphContinuation ? null : parseListMarker(line);
     const activeOrderedSibling = marker && marker.type === 'ordered'
       && stack.some((item) => item.type === 'ordered' && item.indent === marker.indent
         && item.delimiter === marker.delimiter);
@@ -911,7 +922,8 @@ function brochureBulletHeadlines(text) {
 
     const boundary = boundaryIndent(line);
     const indent = boundary !== null ? boundary : leadingSpaces(line);
-    let block = boundary !== null || (!lazyOrderedMarker && startsMarkdownBlock(line));
+    let block = !forcedParagraphContinuation
+      && (boundary !== null || (!lazyOrderedMarker && startsMarkdownBlock(line)));
     if (block && boundary === null) {
       let parentIndex = stack.length - 1;
       while (parentIndex >= 0 && indent < stack[parentIndex].contentIndent) parentIndex -= 1;
