@@ -144,6 +144,7 @@ for (const [name, invisibleCopy] of [
   ['inline HTML attributes', '<span class="one two three four"></span>'],
   ['HTML entities', '&nbsp; &nbsp; &nbsp; &nbsp;'],
   ['link destinations', '[x](https://example.test "one two three four")'],
+  ['reference-link identifiers', '[Read details][hidden words provide copy]'],
 ]) {
   check(`${name} do not supply explanatory words`,
     Boolean(brochureFinding(
@@ -151,6 +152,12 @@ for (const [name, invisibleCopy] of [
       + `- **Where the records really live.** ${invisibleCopy}`
     )), false);
 }
+check('visible reference-link labels still count as explanatory copy',
+  Boolean(brochureFinding(
+    '- **Numbers that guide the next call.** [Read the complete source details][source]\n'
+    + '- **Where the records really live.** [See the complete system list][source]\n\n'
+    + '[source]: https://example.test'
+  )), true);
 check('visible text inside inline HTML still counts as explanatory copy',
   Boolean(brochureFinding(
     '- **Numbers that guide the next call.** <span>Twelve measures appear beside each source.</span>\n'
@@ -259,6 +266,7 @@ for (const [name, block] of [
   ['numbered item', '1. A separate step'],
   ['thematic break', '---'],
   ['table', '| Field | Owner |'],
+  ['table without a leading pipe', 'Field | Owner\n--- | ---'],
 ]) {
   check(`${name} ends a run instead of becoming lazy continuation text`,
     Boolean(brochureFinding(

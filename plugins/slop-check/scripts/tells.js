@@ -645,7 +645,10 @@ function withoutFencedBlocks(text) {
 
 function startsMarkdownBlock(line) {
   if (/^[ \t]*(?:#{1,6}(?:\s|$)|>|(?:[-*+]|\d{1,9}[.)])(?:\s|$)|\|)/.test(line)
-    || /^[ \t]*(?:(?:\*\s*){3,}|(?:_\s*){3,}|(?:-\s*){3,}|=+)\s*$/.test(line)) return true;
+    || /^[ \t]*(?:(?:\*\s*){3,}|(?:_\s*){3,}|(?:-\s*){3,}|=+)\s*$/.test(line)
+    || /^[ \t]*\|?[ \t]*:?-{3,}:?[ \t]*(?:\|[ \t]*:?-{3,}:?[ \t]*)+\|?[ \t]*$/.test(line)) {
+    return true;
+  }
   const html = rawHtmlBlockStart(line);
   return Boolean(html && html.interruptsParagraph);
 }
@@ -702,6 +705,21 @@ function linkDestinationEnd(text, opening) {
   return -1;
 }
 
+function referenceLabelEnd(text, opening) {
+  let backslashes = 0;
+  for (let index = opening + 1; index < text.length; index += 1) {
+    if (text[index] === '\\') {
+      backslashes += 1;
+      continue;
+    }
+    const escaped = backslashes % 2 === 1;
+    backslashes = 0;
+    if (!escaped && text[index] === ']') return index;
+    if (!escaped && text[index] === '[') return -1;
+  }
+  return -1;
+}
+
 function visibleInlineText(markdown) {
   const text = String(markdown)
     .replace(INLINE_HTML_TAG, ' ')
@@ -736,6 +754,14 @@ function visibleInlineText(markdown) {
       bracketDepth -= 1;
       if (bracketDepth === 0 && text[index + 1] === '(') {
         const close = linkDestinationEnd(text, index + 1);
+        if (close !== -1) {
+          visible += text[index];
+          index = close;
+          continue;
+        }
+      }
+      if (bracketDepth === 0 && text[index + 1] === '[') {
+        const close = referenceLabelEnd(text, index + 1);
         if (close !== -1) {
           visible += text[index];
           index = close;
