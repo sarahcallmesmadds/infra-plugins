@@ -463,8 +463,8 @@ check('tab-indented child bullets are parsed relative to their parent',
   Boolean(brochureFinding(
     `- Parent item\n\t${BROCHURE_BULLETS.split('\n')[0]}\n\t${BROCHURE_BULLETS.split('\n')[1]}`
   )), true);
-check('a multiline HTML comment beginning after prose hides its example bullets',
-  Boolean(brochureFinding(`Intro <!--\n${BROCHURE_BULLETS}\n-->`)), false);
+check('a list block ends an unfinished inline comment after prose',
+  Boolean(brochureFinding(`Intro <!--\n${BROCHURE_BULLETS}\n-->`)), true);
 check('a multiline HTML comment beginning after a marker hides its example bullets',
   Boolean(brochureFinding(`- <!--\n${BROCHURE_BULLETS}\n-->`)), false);
 check('a list-relative HTML comment hides nested example bullets',
@@ -511,10 +511,10 @@ for (const [name, block] of [
   ['list', '- separate item'],
   ['thematic break', '---'],
 ]) {
-  check(`${name} stops an unmatched backtick from hiding a later comment`,
+  check(`${name} keeps a later unfinished comment within its paragraph`,
     Boolean(brochureFinding(
       `A stray \`\n${block}\ntext <!-- \`\n${BROCHURE_BULLETS}\n-->`
-    )), false);
+    )), true);
 }
 check('underscore-delimited bold headlines are equivalent Markdown',
   Boolean(brochureFinding(BROCHURE_BULLETS.replaceAll('**', '__'))), true);

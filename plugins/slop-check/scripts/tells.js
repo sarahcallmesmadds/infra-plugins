@@ -281,6 +281,44 @@ function backtickRunsWithLaterClose(lines) {
   return withLaterClose;
 }
 
+function linesWithCommentCloseOutsideCode(lines, withLaterClose) {
+  const closes = new Set();
+  let codeDelimiter = null;
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+    const line = lines[lineIndex];
+    const blockStart = startsInlineBlock(line) || startsMarkdownBlock(line);
+    const listStart = Boolean(parseListMarker(line));
+    if (!line.trim() || (blockStart && !listStart)) codeDelimiter = null;
+
+    let backslashes = 0;
+    for (let index = 0; index < line.length; index += 1) {
+      if (line[index] === '\\') {
+        backslashes += 1;
+        continue;
+      }
+      const escaped = backslashes % 2 === 1;
+      backslashes = 0;
+      if (!escaped && line[index] === '`') {
+        let end = index + 1;
+        while (line[end] === '`') end += 1;
+        const length = end - index;
+        if (codeDelimiter === length) codeDelimiter = null;
+        else if (codeDelimiter === null && withLaterClose.has(`${lineIndex}:${index}`)) {
+          codeDelimiter = length;
+        }
+        index = end - 1;
+        continue;
+      }
+      if (!escaped && codeDelimiter === null && line.startsWith('-->', index)) {
+        closes.add(lineIndex);
+        index += 2;
+      }
+    }
+    if (blockStart) codeDelimiter = null;
+  }
+  return closes;
+}
+
 function stripInlineComments(
   line, lineIndex, codeDelimiter, withLaterClose, commentClosesLater
 ) {
@@ -455,23 +493,24 @@ function withoutFencedBlocks(text) {
   const listContexts = [];
   const lines = String(text || '').split(/\r?\n/);
   const withLaterClose = backtickRunsWithLaterClose(lines);
+  const linesWithCommentClose = linesWithCommentCloseOutsideCode(lines, withLaterClose);
   const commentCloseOnLaterLine = new Set();
   let hasLaterCommentClose = false;
   for (let lineIndex = lines.length - 1; lineIndex >= 0; lineIndex -= 1) {
-    // Inline syntax cannot cross the blank line or fenced block that ends its
-    // paragraph. A close inside a later fenced example must not make an earlier
-    // literal opener hide everything in between. Let the fence line itself see
-    // a later close first: it may still be literal text inside a real comment.
+    // Inline syntax cannot cross the blank line or Markdown block that ends its
+    // paragraph. A close in some later block must not make an earlier literal
+    // opener hide everything in between. Let the boundary line itself see a
+    // later close first: a list item can contain an inline opener in its body.
     if (!lines[lineIndex].trim()) {
       hasLaterCommentClose = false;
       continue;
     }
     if (hasLaterCommentClose) commentCloseOnLaterLine.add(lineIndex);
-    if (/^[ \t]*(?:`{3,}|~{3,})/.test(lines[lineIndex])) {
+    if (startsInlineBlock(lines[lineIndex]) || startsMarkdownBlock(lines[lineIndex])) {
       hasLaterCommentClose = false;
       continue;
     }
-    if (lines[lineIndex].includes('-->')) hasLaterCommentClose = true;
+    if (linesWithCommentClose.has(lineIndex)) hasLaterCommentClose = true;
   }
 
   const listParentAt = (indent) => {
