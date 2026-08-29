@@ -451,6 +451,17 @@ function withoutFencedBlocks(text) {
         }
       }
     }
+    const hideBlockStart = (fallbackIndent) => {
+      if (blockMarkerRemembered) {
+        // Keep the empty list item in the filtered stream. Without it, a child
+        // that follows this hidden block is promoted to the parent's level and
+        // can be combined with a sibling from a different list.
+        visible.push(`${' '.repeat(marker.indent)}${marker.bullet}`);
+        visible.push(boundaryLine(marker.contentIndent));
+      } else {
+        visible.push(boundaryLine(fallbackIndent));
+      }
+    };
 
     if (!blockLine.trim() || startsInlineBlock(blockLine)) inlineCodeDelimiter = null;
     const lineIndent = leadingSpaces(blockLine);
@@ -462,7 +473,7 @@ function withoutFencedBlocks(text) {
       && openIndent - fenceParent.base <= 3) {
       fence = { char: open[2][0], length: open[2].length, base: fenceParent.base };
       listContentIndents.length = fenceParent.index + 1;
-      visible.push(boundaryLine(blockBoundaryIndent ?? openIndent));
+      hideBlockStart(blockBoundaryIndent ?? openIndent);
       afterBlank = false;
       paragraphBase = null;
       continue;
@@ -470,15 +481,14 @@ function withoutFencedBlocks(text) {
 
     const htmlOpen = inlineCodeDelimiter === null ? rawHtmlBlockStart(blockLine) : null;
     const htmlParent = listParentAt(lineIndent);
-    const typeSevenCanStart = blockMarkerRemembered || paragraphBase === null
-      || paragraphBase !== htmlParent.base;
+    const typeSevenCanStart = blockMarkerRemembered || paragraphBase === null;
     if (htmlOpen && (htmlOpen.interruptsParagraph || typeSevenCanStart)
       && lineIndent - htmlParent.base <= 3) {
       const closesHere = (htmlOpen.end && blockLine.includes(htmlOpen.end))
         || (htmlOpen.tag && new RegExp(`</${htmlOpen.tag}(?:[ \\t]|>)`, 'i').test(blockLine));
       rawHtml = closesHere ? null : htmlOpen;
       listContentIndents.length = htmlParent.index + 1;
-      visible.push(boundaryLine(blockBoundaryIndent ?? lineIndent));
+      hideBlockStart(blockBoundaryIndent ?? lineIndent);
       afterBlank = false;
       paragraphBase = null;
       continue;
@@ -505,7 +515,7 @@ function withoutFencedBlocks(text) {
       htmlComment = close === -1 ? (blockComment ? 'block' : 'inline') : null;
       if (blockComment) {
         listContentIndents.length = commentParent.index + 1;
-        visible.push(boundaryLine(blockBoundaryIndent ?? lineIndent));
+        hideBlockStart(blockBoundaryIndent ?? lineIndent);
         afterBlank = false;
         paragraphBase = null;
         blockCommentLine = true;
@@ -575,7 +585,7 @@ function parseListMarker(line) {
 }
 
 function brochureItem(body) {
-  const labelled = body.trim().match(/^(\*\*|__)(.+?[.!?])\1\s+(.+)$/);
+  const labelled = body.trim().match(/^(\*\*|__)(?!\s)(.+?[.!?])\1\s+(.+)$/);
   if (!labelled) return false;
 
   const headlineWords = wordsIn(labelled[2]).length;

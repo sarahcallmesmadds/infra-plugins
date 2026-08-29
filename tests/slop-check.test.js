@@ -118,6 +118,11 @@ check('plain keyword bullets stay clean',
   Boolean(brochureFinding('- Data: source and owner\n- Systems: ledger and warehouse\n- Reporting: weekly totals')), false);
 check('a bold sentence with no explanation after it stays clean',
   Boolean(brochureFinding('- **The export completes overnight.**\n'.repeat(2))), false);
+check('strong delimiters followed by whitespace are literal Markdown',
+  Boolean(brochureFinding(
+    '- ** Numbers that guide the next call.** Twelve measures appear beside their source and update time.\n'
+    + '- ** Where the records really live.** The list names each system and the fields it owns.'
+  )), false);
 check('indented code does not supply explanatory copy for a headline',
   Boolean(brochureFinding(
     '- **Numbers that guide the next call.**\n\n'
@@ -156,10 +161,22 @@ check('a fenced block may begin in the body of a list marker',
     `- \`\`\`markdown\n  ${BROCHURE_BULLETS.split('\n')[0]}\n`
     + `  ${BROCHURE_BULLETS.split('\n')[1]}\n  \`\`\``
   )), false);
+for (const [name, block] of [
+  ['fenced', '- ```text\n  hidden example\n  ```'],
+  ['raw HTML', '- <pre></pre>'],
+  ['comment', '- <!-- hidden example -->'],
+]) {
+  check(`a ${name} marker-body block keeps its child list below it`,
+    Boolean(brochureFinding(
+      `${block}\n  ${BROCHURE_BULLETS.split('\n')[0]}\n${BROCHURE_BULLETS.split('\n')[1]}`
+    )), false);
+}
 check('a comment inside a raw HTML opener does not expose its block contents',
   Boolean(brochureFinding(`<div><!-- note --></div>\n${BROCHURE_BULLETS}`)), false);
 check('a type-seven tag cannot interrupt an open paragraph',
   Boolean(brochureFinding(`Intro text\n<custom-box>\n${BROCHURE_BULLETS}`)), true);
+check('an outdented type-seven tag remains a lazy list continuation',
+  Boolean(brochureFinding(`- Parent paragraph\n<custom-box>\n${BROCHURE_BULLETS}`)), true);
 for (const [name, block] of [
   ['an HTML comment', '<!-- note -->'],
   ['a fenced block', '```\nexample\n```'],
