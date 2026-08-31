@@ -808,6 +808,10 @@ check('an old git is reported rather than silently doing nothing', () => {
     'the command must say the comparison was unavailable rather than print a shorter list');
   assert.ok(/2\.38/.test(cliSrc),
     'and name the version, so the reader can tell whether it applies to them');
+  assert.ok(/separate content comparison was unavailable and affected branches/.test(cliSrc),
+    'the caveat must describe the missing evidence without inferring squash provenance');
+  assert.ok(!/so squash-merged branches could not be detected/.test(cliSrc),
+    'the content comparison can clear more than squash-merged branches');
 });
 
 // The probe itself, driven for real. Passes on any git; on 2.38 and newer it
@@ -1569,6 +1573,11 @@ check('a direct repository check reports an unreadable merged list', () => {
     const r = collect.remoteBranches('example/repo');
     assert.strictEqual(r.mergedPRCheckUnavailable, true,
       'the remote path has to report a merged list it could not read');
+    const out = execFileSync(process.execPath, [CLI, '--repo', 'example/repo'], { encoding: 'utf8' });
+    assert.ok(/branch that merged-pull-request evidence would clear may be listed under/.test(out),
+      `the caveat must describe the missing evidence without inferring squash provenance:\n${out}`);
+    assert.ok(!/branch squash-merged before the default branch moved on/.test(out),
+      `the merged-PR check can clear more than squash-merged branches:\n${out}`);
   } finally {
     process.env.PATH = prevPath;
     fs.rmSync(dir, { recursive: true, force: true });

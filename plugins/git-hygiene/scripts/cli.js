@@ -127,7 +127,7 @@ function render(result, where, lookup) {
   if (lookup && lookup.mergeCheckUnavailable) {
     lines.push('');
     lines.push('Note: this git cannot run `merge-tree --write-tree`, which needs 2.38 or newer,');
-    lines.push('so squash-merged branches could not be detected and are listed under Keep.');
+    lines.push('so the separate content comparison was unavailable and affected branches are listed under Keep.');
     lines.push('Nothing here is wrong, but the list may be longer than it needs to be.');
     lines.push('`--repo owner/name` uses merged pull requests instead and does not need it.');
   }
@@ -138,7 +138,7 @@ function render(result, where, lookup) {
   if (lookup && lookup.mergedPRCheckUnavailable) {
     lines.push('');
     lines.push('Note: the merged pull requests for this repository could not be read, so a');
-    lines.push('branch squash-merged before the default branch moved on may be listed under');
+    lines.push('branch that merged-pull-request evidence would clear may be listed under');
     lines.push('Keep. Check `gh auth status`, then try again.');
   }
 
