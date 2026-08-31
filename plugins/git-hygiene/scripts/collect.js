@@ -5,9 +5,10 @@
 // every path that cannot determine either one says so rather than guessing:
 // `aheadBy` becomes null, `merged` stays false.
 //
-// `merged` exists because `aheadBy` cannot see a squash merge. Locally it comes
-// from a tree comparison and never needs the network. Remotely it comes from
-// GitHub's merged pull requests, because no local trees exist there.
+// `merged` carries separate evidence that branch content is represented in the
+// default branch even when the branch commits are not reachable from it.
+// Locally it comes from a tree comparison and never needs the network. Remotely
+// it comes from GitHub's merged pull requests, because no local trees exist.
 
 'use strict';
 
@@ -62,9 +63,9 @@ function isGitRepo(cwd) {
 
 // `merge-tree --write-tree` arrived in git 2.38. Older installations, Ubuntu
 // 22.04 LTS among them, exit non-zero on it, and `tryRun` turns that into null,
-// which is indistinguishable here from "this branch really does have work". The
-// result was that on those machines every squash-merged branch was reported as
-// unmerged with nothing saying the question had never been asked.
+// which is indistinguishable here from "no separate content evidence". The
+// result was that on those machines some safe branches stayed under Keep with
+// nothing saying the question had never been asked.
 //
 // Probed once per run rather than assumed. Merging a ref into itself is trivial
 // and cheap on any version that has the form at all, so the probe answers
@@ -256,9 +257,9 @@ function localBranches(cwd, opts) {
   // default branch is behind by exactly the merge you are asking about, and
   // that is precisely when someone runs this.
   //
-  // Merged into either one is real evidence: both mean the work exists
-  // somewhere that is not this branch. Skipped when the two agree, which is the
-  // steady state, so it costs nothing in the common case.
+  // An unchanged merge result against either one is real evidence: both mean
+  // the branch adds no content to that default-branch tree. Skipped when the two
+  // agree, which is the steady state, so it costs nothing in the common case.
   const remoteDef = `origin/${def}`;
   const remoteDefRef = `refs/remotes/${remoteDef}`;
   const remoteDefSha = tryRun('git', ['-C', cwd, 'rev-parse', remoteDefRef]);
@@ -342,10 +343,10 @@ function localBranches(cwd, opts) {
         if (n !== null && /^\d+$/.test(n)) aheadBy = parseInt(n, 10);
       }
 
-      // Ancestry says nothing about a squash merge, which rewrites the branch
-      // into one new commit and leaves the originals unreachable. So ask the
-      // question that survives it: does merging this branch into `def` change
-      // `def` at all? An identical resulting tree means it does not.
+      // Ancestry does not establish whether equivalent content is already in
+      // the default branch. So ask a separate question: does merging this
+      // branch into `def` change `def` at all? An identical resulting tree
+      // means it does not.
       //
       // Only worth asking when ancestry already said "unmerged". A conflicting
       // merge exits non-zero, `tryRun` returns null, and the branch is kept.
@@ -468,9 +469,9 @@ function ghStatus(args, opts) {
 //
 // Keyed on `head.sha` rather than `head.ref` because a branch name outlives the
 // commit that merged under it. Someone who reuses a branch after its pull
-// request merged has a ref whose name matches a merged pull request and whose
-// tip is new unmerged work. Matching the name alone would offer that branch for
-// deletion. The evidence has to be about the commit the branch points at now.
+// request merged has a ref whose name matches a merged pull request but whose
+// tip lacks that merge evidence. Matching the name alone would offer that
+// branch for deletion. The evidence has to be about the current commit.
 //
 // Shared by the remote listing and its one-branch pre-delete check so those two
 // GitHub paths cannot drift from one another.
@@ -627,7 +628,7 @@ function remoteBranches(repo) {
     } else {
       const cmp = ghJSON(['api', `repos/${repo}/compare/${encodeURIComponent(def)}...${encodeURIComponent(name)}`, '--jq', '{a: .ahead_by}']);
       // A failed or unparseable comparison stays null. See classify.js: null is
-      // treated as "has unmerged work", never as zero.
+      // treated as "not proved safe to delete", never as zero.
       if (cmp && typeof cmp.a === 'number') aheadBy = cmp.a;
     }
 

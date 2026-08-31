@@ -3,6 +3,18 @@
 Upgrade notes for past versions, moved out of the README so that file stays
 focused on current installation, configuration and behavior.
 
+## 0.3.12 — 2026-08-29
+
+**Keep now means "not proved safe to delete," not "deleting would lose work."**
+
+Commit reachability is one safety signal, not proof that equivalent work exists
+nowhere else. The CLI, skill, session notice and discovery copy now say that
+plainly. A branch still under Keep never enters a delete path, while a branch
+already cleared by separate content evidence retains the existing confirmed
+force-delete sequence when lowercase `git branch -d` refuses it.
+
+Classification, collection, deletion commands and JSON output are unchanged.
+
 ## 0.3.11 — 2026-08-27
 
 **Hook failure notices keep plugin paths intact.** Nothing to change on your side.

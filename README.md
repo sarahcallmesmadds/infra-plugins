@@ -29,7 +29,7 @@ never arrive and installs fail.
 | Plugin | What it does |
 |---|---|
 | [`guardrails`](plugins/guardrails) | Blocks commits to protected branches, asks before irreversible deletes. Flags prompt injection in content the model reads or writes. Enforced automatically in both Claude Code and Codex. |
-| [`git-hygiene`](plugins/git-hygiene) | Separates the old branches that are safe to delete from the ones still holding work that exists nowhere else, and cleans up the safe ones once you approve them. |
+| [`git-hygiene`](plugins/git-hygiene) | Separates branches proved safe to delete from those not proved safe, explains the evidence, and cleans up only the approved proved-safe branches. |
 | [`build-loop`](plugins/build-loop) | Keeps everything you build honest. Log what a skill, hook, command or script got wrong, fix it from the queue behind an approval gate, see what else a fix puts at risk, and keep a to-build list that closes itself when the work ships. |
 | [`slop-check`](plugins/slop-check) | Catches the habits that mean nobody edited it, and rewrites an answer that did not land. Checks any draft, document, pull request, chart or spec for the signs it shipped unreviewed, blocks em dashes and choppy sentence runs in the assistant's own writing in both Claude Code and Codex, and reshapes a confusing answer around what you have to do. |
 | [`session`](plugins/session) | Carries work between sessions, warns about concurrent work, monitors connected tools, and shows cost and context in the Claude Code status line. |

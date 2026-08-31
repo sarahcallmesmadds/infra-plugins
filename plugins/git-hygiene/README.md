@@ -1,6 +1,6 @@
 # git-hygiene
 
-Which old branches are safe to delete, and which are not.
+Which branches are proved safe to delete, and which are not.
 
 Branches pile up. Every so often you notice, feel vaguely bad about it, and
 either delete a pile of them or none of them. Both are bad options, because the
@@ -12,13 +12,14 @@ There are two facts about a branch and they have nothing to do with each other.
 
 **How old it is.** This is why you noticed it.
 
-**Whether its commits are already in your main branch.** This is the only thing
-that decides whether deleting it costs you anything.
+**Whether there is positive evidence that it is safe to delete.** That evidence
+can come from commit reachability or from a separate content or merge check.
 
-A branch untouched since March whose work is all merged is a label pointing at
-something safely stored elsewhere. Deleting it loses nothing. A branch untouched
-since March with three unmerged commits is the only copy of those commits, and
-deleting it destroys them.
+A branch untouched since March whose commits are reachable from the default
+branch is only a label over reachable history. A branch with three commits not
+reachable from the default branch is held unless separate evidence proves its
+content is already represented there. The count alone does not prove the work
+exists nowhere else.
 
 Sorting by age mixes those together. That is how people lose work while tidying
 up. So this never shows you one list. It shows you two, and it will not move
@@ -41,9 +42,9 @@ you/web-app: 3 branches besides the default one.
 Safe to delete (1) — the default branch already has this work:
   deploy/staging-config  (105 days old, merged in #51)
 
-Keep (2) — deleting these would lose work:
-  fix/checkout-redirect  (103 days old) — it has an open pull request, 1 commit not in the default branch
-  spike/pricing-page  (99 days old) — 3 commits not in the default branch
+Keep (2), not proved safe to delete:
+  fix/checkout-redirect  (103 days old) — it has an open pull request, 1 commit not reachable from the default branch; that does not prove their work is absent from it
+  spike/pricing-page  (99 days old) — 3 commits not reachable from the default branch; that does not prove their work is absent from it
 
 Delete the 1 safe one? (all / a list of names / none)
 ```
@@ -63,10 +64,9 @@ It never merges, rebases, pushes, or deletes.
 
 ## What it will not do
 
-**It will not delete unmerged commits.** Not on `all`, not by accident, not
-because a branch is old. If you genuinely want to throw work away it makes you
-say so in a second, explicit sentence, and tells you the commits will not be
-recoverable.
+**It will not route a branch under Keep into deletion.** A held branch stays
+untouched. If the evidence changes, run the listing and `--verify` again so the
+branch can be classified from the current facts.
 
 **It will not treat "I could not tell" as "it is merged."** If the comparison
 fails for any reason, the branch is kept and the reason is shown. Not knowing is
@@ -80,8 +80,8 @@ cannot open terminal, credential-manager or SSH prompts, and is skipped during
 `--verify` and deadline-bound session notices. The pre-delete check makes no
 network call. JSON output always includes `remoteStale` and
 `mergeCheckUnavailable`, so automation keeps the same caveats as the text. The
-trade-off is conservative: a squash merge that local Git cannot prove may remain
-under Keep until you check and remove it yourself.
+trade-off is conservative: a branch that separate local content evidence cannot
+clear may remain under Keep until the evidence can be checked.
 
 `--repo owner/name` is a different environment. It has no local Git objects or
 `git branch -d`, so it uses merged and open pull requests from GitHub and holds
@@ -96,15 +96,15 @@ saved is the entire scope.
 
 ## The two deletes are not the same, and it treats them differently
 
-Locally it starts with `git branch -d`, the lowercase one. That form refuses to
-delete a branch holding commits not reachable by ancestry, so git checks the
-ordinary answer independently. A proved squash merge is the one exception:
-lowercase `-d` is expected to refuse because squash rewrites commit ancestry,
-and after explicit confirmation the plugin may use `-D` for exactly that branch.
-It never forces a branch that lacks separate merge evidence.
+Locally it starts with `git branch -d`, the lowercase one. That form checks
+whether the branch commits are reachable from the default branch. A branch
+cleared by separate content evidence may still be refused by `-d`; after the
+expected refusal and explicit group confirmation, the plugin re-verifies each
+branch and may use `-D` for exactly that branch. It never forces a branch that
+lacks separate content evidence.
 
-Local squash-merge comparison needs Git 2.38 or newer. On an older version the
-check is skipped, the branch stays under Keep, and the command says why.
+The local content comparison needs Git 2.38 or newer. On an older version the
+check is skipped, affected branches stay under Keep, and the command says why.
 
 On GitHub there is no such check. The API deletes whatever ref you name, merged
 or not. So every branch is re-checked immediately before it is deleted, one at a
@@ -115,13 +115,13 @@ necessarily accurate when you answer it.
 ## The session notice
 
 In a git repository, it mentions once when a session starts that three or more
-branches are both fully merged **and** have been sitting there a while.
+branches have been proved safe to delete **and** have been sitting there a while.
 
 Three separate things keep it quiet, and all three matter:
 
-- **It never mentions branches holding work.** A notice you cannot safely act on
-  is noise, and noise at the top of every session is how a plugin gets
-  uninstalled.
+- **It never mentions branches that are not proved safe to delete.** A notice
+  you cannot safely act on is noise, and noise at the top of every session is
+  how a plugin gets uninstalled.
 - **It never mentions branches merged recently.** You were there when it merged.
   "A while" means `staleAfterDays`, 30 days by default, and this is the only
   place that setting decides anything.
