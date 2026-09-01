@@ -1024,18 +1024,50 @@ function handoffDir(text) {
   // So take the whole line, and only strip a trailing parenthetical when the
   // full string is not a directory that exists. Existence is the evidence; the
   // bracket alone never was.
+  //
+  // A comma introduces that same prose as often as a bracket does:
+  //
+  //   **Working directory:** /Users/x, with working files in `~/.planning/y/`
+  //
+  // read as the whole sentence, which is not a directory, carries no trailing
+  // parenthetical to strip, and so became the scope key. It matched nothing, and
+  // that document's constraints were dropped in silence. Measured on 2026-08-31:
+  // one handoff with a header of exactly this shape held 25 live constraints and
+  // contributed none of them.
+  //
+  // Every cut is a guess about where the path stops, so none of them is taken on
+  // sight. The candidates are tried longest-intent first and the first one that
+  // is a real directory wins. A folder name really containing a comma survives
+  // for the same reason a bracket does: the uncut string is tried first.
   const whole = expand(captured);
-  try { if (fs.statSync(whole).isDirectory()) return whole; } catch (_) { /* not a directory */ }
+  // A trailing parenthetical only counts as an annotation at the END of what is
+  // being considered, so this runs again after a comma cut moves the end: a
+  // header reading `<path> (main checkout), and notes in ...` has its bracket in
+  // the middle until the comma cut puts it at the end.
+  const dropParen = (s) => (s ? expand(s.replace(/\s*\([^)]*\)\s*$/, '')) || null : null);
+  const beforeComma = (s) => {
+    if (!s) return null;
+    const i = s.indexOf(',');
+    return i === -1 ? null : expand(s.slice(0, i)) || null;
+  };
+  const trimmed = dropParen(whole);
 
-  const trimmed = expand(whole.replace(/\s*\([^)]*\)\s*$/, ''));
-  if (trimmed && trimmed !== whole) {
-    try { if (fs.statSync(trimmed).isDirectory()) return trimmed; } catch (_) { /* nor this */ }
+  const candidates = [];
+  for (const c of [whole, trimmed, beforeComma(whole), dropParen(beforeComma(whole))]) {
+    if (c && !candidates.includes(c)) candidates.push(c);
+  }
+  for (const c of candidates) {
+    try { if (fs.statSync(c).isDirectory()) return c; } catch (_) { /* keep looking */ }
   }
 
-  // Neither resolves, which is normal: the handoff may describe a machine this
-  // is not, or a volume that is not mounted. Prefer the trimmed form, since a
-  // trailing annotation is far more common in these headers than a bracket in a
-  // real folder name, and grouping is by string in that case anyway.
+  // None of them resolves, which is normal: the handoff may describe a machine
+  // this is not, or a volume that is not mounted. Prefer the trimmed form, since
+  // a trailing annotation is far more common in these headers than a bracket in a
+  // real folder name, and grouping is by string in that case anyway. The comma
+  // cut is deliberately NOT preferred here: unlike a trailing parenthetical it
+  // can land in the middle of a sentence, and a wrong key that two sessions agree
+  // on still groups them, while a wrong key that only one of them computes does
+  // not.
   return trimmed || whole || null;
 }
 

@@ -1008,6 +1008,55 @@ check('an unclosed opening backtick still gives up the path', () => {
   }
 });
 
+check('prose introduced by a comma does not swallow the path', () => {
+  // The real header that found this, from HANDOFF-brand-assets-... on 2026-08-31:
+  //   **Working directory:** /Users/sarahmadden, with working files in `~/.p/a/`
+  // The whole string is not a directory and there is no trailing parenthetical,
+  // so it became the scope key, matched nothing, and dropped that document's 25
+  // live constraints without a word. A dropped constraint is indistinguishable
+  // from a project that never had one, which is why this is a defect and not a
+  // formatting preference.
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'session-comma-'));
+  try {
+    assert.strictEqual(
+      handoffs.handoffDir(`**Working directory:** ${base}, with working files in \`~/.planning/x/\``),
+      base,
+      'prose after a comma was carried into the directory'
+    );
+    // The two shapes together, which is what the real header looked like.
+    assert.strictEqual(
+      handoffs.handoffDir(`**Working directory:** ${base} (main checkout), and notes in \`~/x\``),
+      base
+    );
+  } finally {
+    fs.rmSync(base, { recursive: true, force: true });
+  }
+});
+
+check('a folder name containing a comma is not cut at it', () => {
+  // The mirror of the bracket case. The uncut string is tried first and it is a
+  // real directory, so no cut is taken. Without this, every project under the
+  // parent would collapse onto one key and inherit each other's rules.
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'session-cma-'));
+  const weird = path.join(parent, 'Clients, active', 'repo');
+  fs.mkdirSync(weird, { recursive: true });
+  try {
+    assert.strictEqual(handoffs.handoffDir(`**Working directory:** ${weird}`), weird);
+  } finally {
+    fs.rmSync(parent, { recursive: true, force: true });
+  }
+});
+
+check('a comma header that resolves nowhere still groups by string', () => {
+  // Grouping is by string when nothing resolves, and the string has to match the
+  // one the next session writes. Cutting at the comma here would make two
+  // sessions writing the identical header compute different keys.
+  assert.strictEqual(
+    handoffs.handoffDir('**Working directory:** /no/such/place, with notes in /nor/this'),
+    '/no/such/place, with notes in /nor/this'
+  );
+});
+
 check('a quoted path keeps a bracket that is part of the folder name', () => {
   // Quoting is how an author says the brackets are the name rather than an
   // aside, so the parenthetical strip must not run on a quoted capture.
