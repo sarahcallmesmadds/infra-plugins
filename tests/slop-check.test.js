@@ -1285,6 +1285,103 @@ check('folding the prose does not blind the smart-quote signal',
 check('a bare negative clause is not antithesis',
   softNames('The skill does not touch the warehouse.').includes('antithesis'), false);
 
+console.log('\nstructural prose tells from rejected application drafts');
+
+check('an empty bridge sentence is reported',
+  softNames(
+    'People learn judgment through repeated decisions. '
+    + 'Those decisions expose what matters. '
+    + 'This agenda is built around that same question.'
+  ).includes('empty-bridge-sentence'), true);
+
+check('the second observed bridge shape is reported',
+  softNames(
+    'Judgment comes from making calls without certainty. '
+    + 'The event focuses on that work. '
+    + 'That’s why this agenda works for me.'
+  ).includes('empty-bridge-sentence'), true);
+
+check('the accepted subordinated replacement is not a bridge',
+  softNames(
+    'Most of what I know about judging that came from inside companies where '
+    + 'every decision had consequences for customers and the team.'
+  ).includes('empty-bridge-sentence'), false);
+
+check('a bridge-shaped sentence with a new content word is not empty',
+  softNames(
+    'The team debated the schedule. The event covers judgment. '
+    + 'This agenda is built around a pricing question.'
+  ).includes('empty-bridge-sentence'), false);
+
+check('a bridge-shaped sentence naming a person is not empty',
+  softNames(
+    'The team debated the schedule. The event covers judgment. '
+    + "This agenda is built around Sarah's question."
+  ).includes('empty-bridge-sentence'), false);
+
+const NEAR_EQUAL_DECLARATIVES =
+  'Leaders make careful choices when the evidence remains incomplete. '
+  + 'Teams learn sound judgment by seeing those choices repeated. '
+  + 'Good operators explain their reasoning before the outcome is known.';
+
+check('three near-equal declaratives in one paragraph are reported',
+  softNames(NEAR_EQUAL_DECLARATIVES)
+    .includes('near-equal-declarative-run'), true);
+
+check('paragraph breaks stop a declarative run',
+  softNames(NEAR_EQUAL_DECLARATIVES.replaceAll('. ', '.\n\n'))
+    .includes('near-equal-declarative-run'), false);
+
+check('technical prose with inline code is not treated as a declarative run',
+  softNames(
+    'This document is the single source of truth for the bug queue entry format. '
+    + 'Every skill in the build loop reads from and writes to this schema. '
+    + 'When adding fields, bump `$schema_version` and update this document in the same commit.'
+  ).includes('near-equal-declarative-run'), false);
+
+check('a negating reversal split across sentences is reported',
+  softNames("It isn't a skills day. It's about deciding when nobody's certain.")
+    .includes('antithesis-copular'), true);
+
+check('an ordinary negative followed by a new action is not a reversal',
+  softNames("It isn't ready. It stopped during validation.")
+    .includes('antithesis-copular'), false);
+
+check('a mirrored parallel closer is reported',
+  softNames(
+    "One is how to tell who's worth betting on. "
+    + 'The other is how to be worth betting on.'
+  ).includes('mirrored-parallel-closer'), true);
+
+check('an ordinary parallel pair is not a mirrored closer',
+  softNames('One is how teams work. The other is how systems fail.')
+    .includes('mirrored-parallel-closer'), false);
+
+const fragmentFinding = checkAll(
+  'The work includes the plans. And the people. Three sessions in particular.'
+).soft.find((finding) => finding.name === 'fragment-beat');
+
+check('both observed fragment beats are reported',
+  fragmentFinding ? fragmentFinding.count : 0, 2);
+
+check('a complete sentence beginning with and is not a fragment beat',
+  softNames('And the people joined the discussion after lunch.')
+    .includes('fragment-beat'), false);
+
+check('three matching speaker paragraphs are reported',
+  softNames(
+    'Shensi Ding on learning rate, because judgment compounds.\n\n'
+    + 'Amanda Davenport on not waiting, because timing matters.\n\n'
+    + 'Emily Man on enterprise AI, because adoption is practical.'
+  ).includes('speaker-paragraph-tricolon'), true);
+
+check('a different middle paragraph breaks the speaker tricolon',
+  softNames(
+    'Shensi Ding on learning rate, because judgment compounds.\n\n'
+    + 'The next session covers timing and tradeoffs.\n\n'
+    + 'Emily Man on enterprise AI, because adoption is practical.'
+  ).includes('speaker-paragraph-tricolon'), false);
+
 // Found by review. Two patterns can read the same construction, and summing
 // their counts scored one sentence as two, reaching a threshold written to
 // require two separate ones. "not less noisy and more useful, but" contains
