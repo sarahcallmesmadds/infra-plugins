@@ -213,7 +213,7 @@ function antithesis(prose) {
 // unaffected.
 function copularAntithesis(prose) {
   const patterns = [
-    /\bit'?s not (about )?[^.]{3,50}\. it'?s\b/gi,
+    /\b(?:it'?s not|it (?:is|was) not|it (?:is|was)n'?t) (about )?[^.]{3,50}\. (?:it'?s|it (?:is|was)|that's)\b/gi,
     /\b(is|are|was|were)n'?t (just |merely |only )?[^.,;]{3,50}, (?:it(?:'s| is)|they(?:'re| are)|that's)\b/gi,
     /\b(is|are) not (just |merely |only )?[^.,;]{3,50}, (?:it|they) (?:is|are)\b/gi,
   ];
@@ -226,6 +226,142 @@ function copularAntithesis(prose) {
 function ruleOfThree(prose) {
   const re = /\b[\w'-]+, [\w'-]+,? and [\w'-]+\b/gi;
   return (prose.match(re) || []).length;
+}
+
+function lexicalWords(text) {
+  return flattenQuotes(text).match(/[a-z]+(?:'[a-z]+)?/g) || [];
+}
+
+const BRIDGE_SCAFFOLDING = new Set([
+  'a', 'an', 'and', 'around', 'as', 'at', 'be', 'because', 'been', 'being',
+  'built', 'connection', 'for', 'from', 'gets', 'idea', 'is', 'it', "it's",
+  'link', 'me', 'of', 'on', 'point', 'question', 'reason', 'same', 'that',
+  "that's", 'the', 'theme', 'thing', 'this', 'thread', 'throughline', 'to',
+  'was', 'what', 'why', 'with', 'works', 'agenda',
+]);
+
+function emptyBridgeSentences(prose) {
+  const sentences = sentencesOf(prose);
+  const hits = [];
+
+  for (let index = 2; index < sentences.length; index += 1) {
+    const sentence = sentences[index];
+    const normalized = flattenQuotes(sentence);
+    const words = lexicalWords(sentence);
+
+    if (words.length < 4 || words.length > 14) continue;
+    if (/\d/.test(sentence)) continue;
+
+    const afterFirstWord = sentence.replace(/^[^A-Za-z]*[A-Za-z'’-]+/, '');
+    if (/\b(?:[A-Z][a-z'’-]+|[A-Z]{2,})\b/.test(afterFirstWord)) continue;
+
+    const bridgeShape =
+      /^(?:(?:this|that)(?:\s+[a-z][a-z'-]*){0,2}|it)\s+(?:is|was|works|connects|comes|gets|stays|fits)\b/.test(normalized)
+      || /^that'?s\b/.test(normalized);
+    const relational =
+      /\b(?:agenda|connection|idea|link|point|question|reason|same|theme|thread|throughline|what|why|works)\b/.test(normalized);
+
+    if (!bridgeShape || !relational) continue;
+
+    const previous = new Set(
+      lexicalWords(`${sentences[index - 2]} ${sentences[index - 1]}`)
+    );
+    const content = words.filter((word) => !BRIDGE_SCAFFOLDING.has(word));
+
+    if (content.every((word) => previous.has(word))) hits.push(sentence);
+  }
+
+  return hits;
+}
+
+function nearEqualDeclarativeRun(text) {
+  let worst = 0;
+
+  for (const paragraph of proseParagraphs(text)) {
+    if (paragraph.includes('`')) continue;
+    const run = [];
+
+    for (const sentence of sentencesOf(paragraph)) {
+      const length = wordsIn(sentence).length;
+      if (sentence.endsWith('.') && length >= 8 && length <= 14) {
+        run.push(length);
+        while (Math.max(...run) - Math.min(...run) > 3) run.shift();
+        if (run.length > worst) worst = run.length;
+      } else {
+        run.length = 0;
+      }
+    }
+  }
+
+  return worst >= 3 ? { count: worst } : null;
+}
+
+function mirroredParallelClosers(prose) {
+  const sentences = sentencesOf(prose);
+  let count = 0;
+
+  for (let index = 0; index < sentences.length - 1; index += 1) {
+    const first = flattenQuotes(sentences[index])
+      .match(/^one (?:is|was) (.+?)[.!?]$/);
+    const second = flattenQuotes(sentences[index + 1])
+      .match(/^the other (?:is|was) (.+?)[.!?]$/);
+
+    if (!first || !second) continue;
+
+    const left = lexicalWords(first[1]);
+    const right = lexicalWords(second[1]);
+    if (left.length < 5 || right.length < 5) continue;
+
+    const sameOpening = left[0] === right[0] && left[1] === right[1];
+    const sameClosing =
+      left[left.length - 2] === right[right.length - 2]
+      && left[left.length - 1] === right[right.length - 1];
+
+    if (sameOpening && sameClosing) count += 1;
+  }
+
+  return count;
+}
+
+function fragmentBeats(prose) {
+  return sentencesOf(prose).filter((sentence) => {
+    const length = wordsIn(sentence).length;
+    if (length < 2 || length > 5) return false;
+
+    return /^(?:and|but|or|yet|so) (?:a|an|the|this|that|these|those|my|our|your|their) [a-z][a-z'-]*[.!?]$/i.test(sentence)
+      || /^(?:one|two|three|four|five|six|seven|eight|nine|ten) [a-z][a-z'-]*(?: [a-z][a-z'-]*)? (?:in particular|especially)[.!?]$/i.test(sentence);
+  }).length;
+}
+
+function proseParagraphs(text) {
+  return String(text || '')
+    .replace(/```[\s\S]*?```/g, '')
+    .split(/\n\s*\n/)
+    .map((paragraph) => paragraph
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line && !/^[-*>#|]/.test(line) && !/^\d+\.\s/.test(line))
+      .join(' '))
+    .filter(Boolean);
+}
+
+function speakerParagraphTricolon(text) {
+  const speakerShape =
+    /^[A-Z][A-Za-z'’-]+(?:\s+[A-Z][A-Za-z'’-]+){0,2}\s+on\s+[^.?!]{3,100},\s+because\b/;
+
+  let run = 0;
+  let worst = 0;
+
+  for (const paragraph of proseParagraphs(text)) {
+    if (speakerShape.test(paragraph)) {
+      run += 1;
+      if (run > worst) worst = run;
+    } else {
+      run = 0;
+    }
+  }
+
+  return worst >= 3 ? { count: worst } : null;
 }
 
 // A repeated list of sentence-shaped bold labels followed by explanatory copy.
@@ -1473,7 +1609,8 @@ function checkAll(text, config = {}) {
   //
   // The typographic-quotes signal further down deliberately reads the raw text
   // instead, since folding is exactly what would hide it from itself.
-  const prose = flattenQuotes(proseOf(text));
+  const rawProse = proseOf(text);
+  const prose = flattenQuotes(rawProse);
 
   const soft = [];
   const band = (name, list, threshold) => {
@@ -1491,6 +1628,16 @@ function checkAll(text, config = {}) {
   band('forced-enthusiasm', P.FAKE_ENTHUSIASM, 1);
   band('melodramatic-pivot', P.MELODRAMA, 1);
 
+  const bridges = emptyBridgeSentences(rawProse);
+  if (bridges.length) {
+    soft.push({ name: 'empty-bridge-sentence', count: bridges.length });
+  }
+
+  const declaratives = nearEqualDeclarativeRun(text);
+  if (declaratives) {
+    soft.push({ name: 'near-equal-declarative-run', ...declaratives });
+  }
+
   const anti = antithesis(prose);
   if (anti >= 2) soft.push({ name: 'antithesis', count: anti });
 
@@ -1499,6 +1646,21 @@ function checkAll(text, config = {}) {
 
   const three = ruleOfThree(prose);
   if (three >= 3) soft.push({ name: 'rule-of-three', count: three });
+
+  const mirrored = mirroredParallelClosers(prose);
+  if (mirrored) {
+    soft.push({ name: 'mirrored-parallel-closer', count: mirrored });
+  }
+
+  const fragments = fragmentBeats(prose);
+  if (fragments) {
+    soft.push({ name: 'fragment-beat', count: fragments });
+  }
+
+  const paragraphTricolon = speakerParagraphTricolon(text);
+  if (paragraphTricolon) {
+    soft.push({ name: 'speaker-paragraph-tricolon', ...paragraphTricolon });
+  }
 
   const brochureBullets = brochureBulletHeadlines(text);
   if (brochureBullets) {
