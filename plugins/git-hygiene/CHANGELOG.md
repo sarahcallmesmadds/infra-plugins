@@ -3,6 +3,22 @@
 Upgrade notes for past versions, moved out of the README so that file stays
 focused on current installation, configuration and behavior.
 
+## 0.4.0, 2026-09-02
+
+**Git Hygiene now manages linked worktrees as well as branch labels.**
+
+A deterministic engine discovers registered worktrees, places agent-created
+checkouts under a configured hidden root, classifies unsafe and incomplete
+states conservatively, and re-checks exact paths immediately before removal.
+Dirty, staged, untracked, ignored, locked, detached-review, open, unique, and unknown
+worktrees are held. Worktree cleanup never deletes branches.
+
+The new `worktree-hygiene` skill handles status, creation, activation,
+relocation, finish, and cleanup with approvals at each mutation. A narrow setup
+skill writes only the user-owned path configuration. Session startup reports visible worktree
+clutter without changing it, while a PreToolUse guard routes direct mutating
+`git worktree` commands through the governed flow when enforcement is enabled.
+
 ## 0.3.12 — 2026-08-29
 
 **Keep now means "not proved safe to delete," not "deleting would lose work."**

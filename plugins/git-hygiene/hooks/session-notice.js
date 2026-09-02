@@ -1,10 +1,11 @@
 #!/usr/bin/env node
-// SessionStart notice: mentions old branches proved safe to delete once, quietly.
+// SessionStart notice: mentions actionable branch and worktree hygiene once,
+// quietly.
 //
-// Deliberately narrow. It counts ONLY branches in the current checkout whose
-// classification has positive deletion evidence. It never mentions branches
-// that remain under Keep, because a notice you cannot safely act on is just
-// noise at the top of every session, and that gets the plugin uninstalled.
+// Deliberately narrow. Branches need positive deletion evidence. Worktrees are
+// mentioned only when they remain in a configured visible root or when Git has
+// a missing registration. The hook never uses its bounded scan to authorize a
+// move or removal.
 //
 // It never blocks, never asks, and stays silent unless there is something worth
 // saying. Any error at all exits 0 without output.
@@ -51,19 +52,15 @@ const MIN_TO_MENTION = 3;
 // hand or by a runtime that does not send the field.
 const START_SOURCES = ['startup', 'clear'];
 
-function main(event, deadline) {
-  const cwd = (event && event.cwd) || process.cwd();
-
-  const source = event && event.source;
-  if (source && !START_SOURCES.includes(source)) return;
-
+function branchNotice(cwd, deadline) {
   const collect = require(path.join(__dirname, '..', 'scripts', 'collect.js'));
   const { classify } = require(path.join(__dirname, '..', 'scripts', 'classify.js'));
 
-  if (!collect.isGitRepo(cwd)) return;
+  if (!collect.isGitRepo(cwd, { deadline })) return null;
+  if (Date.now() >= deadline) return null;
 
   const { defaultBranch, branches, truncated } = collect.localBranches(cwd, { deadline });
-  if (!defaultBranch || !branches.length) return;
+  if (!defaultBranch || !branches.length) return null;
 
   // A partial count is worse than no notice. "3 branches are merged" when the
   // real number is 40 is a statement someone will act on, and it is wrong.
@@ -80,20 +77,52 @@ function main(event, deadline) {
   // whatever its age, because when you ask directly you want the whole answer.
   const { safe } = classify(branches, {}, Date.now());
   const worthMentioning = safe.filter((b) => b.stale);
-  if (worthMentioning.length < MIN_TO_MENTION) return;
+  if (worthMentioning.length < MIN_TO_MENTION) return null;
 
   const names = worthMentioning.slice(0, 5).map((b) => b.name).join(', ');
   const more = worthMentioning.length > 5 ? `, and ${worthMentioning.length - 5} more` : '';
 
+  return `${worthMentioning.length} branches in this repository have been proved safe to delete `
+    + `against ${defaultBranch} and have been sitting there for a while: `
+    + `${names}${more}. `
+    + 'Run /stale-branches to review and clean them up. It shows every branch, including '
+    + 'recently cleared ones and any not proved safe to delete, which this count leaves out.';
+}
+
+function worktreeNotice(deadline) {
+  const { loadConfig } = require(path.join(__dirname, '..', 'scripts', 'worktree-config.js'));
+  const { auditConfigured } = require(path.join(__dirname, '..', 'scripts', 'worktrees.js'));
+  const config = loadConfig();
+  if (!config.exists || !config.valid || !config.sessionNotice) return null;
+
+  const audit = auditConfigured({ config, deadline, skipRemote: true });
+  if (audit.truncated) return null;
+  const visible = audit.summary.visible;
+  const missing = audit.summary.missing;
+  if (visible === 0 && missing === 0) return null;
+
+  const facts = [];
+  if (visible) facts.push(`${visible} linked worktree${visible === 1 ? '' : 's'} still ${visible === 1 ? 'sits' : 'sit'} inside a visible project root`);
+  if (missing) facts.push(`${missing} missing worktree registration${missing === 1 ? '' : 's'} ${missing === 1 ? 'needs' : 'need'} review`);
+  return `${facts.join(', and ')}. Run /git-hygiene:worktree-hygiene to inspect them; nothing was moved or removed.`;
+}
+
+function main(event, deadline) {
+  const cwd = (event && event.cwd) || process.cwd();
+  const source = event && event.source;
+  if (source && !START_SOURCES.includes(source)) return;
+
+  const notices = [];
+  const branches = branchNotice(cwd, deadline);
+  if (branches) notices.push(branches);
+  const worktrees = worktreeNotice(deadline);
+  if (worktrees) notices.push(worktrees);
+  if (!notices.length) return;
+
   process.stdout.write(JSON.stringify({
     hookSpecificOutput: {
       hookEventName: 'SessionStart',
-      additionalContext:
-        `${worthMentioning.length} branches in this repository have been proved safe to delete `
-        + `against ${defaultBranch} and have been sitting there for a while: `
-        + `${names}${more}. `
-        + 'Run /stale-branches to review and clean them up. It shows every branch, including '
-        + 'recently cleared ones and any not proved safe to delete, which this count leaves out.',
+      additionalContext: notices.join(' '),
     },
   }));
 }
