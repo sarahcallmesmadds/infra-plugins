@@ -237,7 +237,8 @@ function destinationFor(repo, branch, config = loadConfig()) {
 
 function classifyLocation(candidate, config) {
   const here = canonical(candidate);
-  if (contains(config.worktreeRoot, here)) return 'managed-root';
+  const worktreeRoot = canonicalProspective(config.worktreeRoot);
+  if (contains(worktreeRoot, here)) return 'managed-root';
   if (REVIEW_LOCATION.test(here.replace(/\\/g, '/'))) return 'review-tool';
   if (config.projectRoots.some((root) => contains(root, here))) return 'project-root';
   return 'other';
@@ -308,7 +309,6 @@ function branchEvidence(primary, entry, options = {}) {
     );
   }
 
-  if (!prs.available) return { state: STATES.UNKNOWN, reason: 'pull-request evidence could not be read' };
   if (prs.open) return { state: STATES.OPEN, reason: 'the branch has an open pull request' };
   if (branch.aheadBy === 0 || branch.merged || prs.merged) {
     return {
@@ -502,7 +502,7 @@ function summarize(repositories) {
     removable: worktrees.filter((entry) => entry.removable).length,
     relocatable: worktrees.filter((entry) => entry.relocatable).length,
     missing: worktrees.filter((entry) => entry.absenceConfirmed).length,
-    held: worktrees.filter((entry) => !entry.primary && !entry.removable).length,
+    held: worktrees.filter((entry) => !entry.primary && !entry.removable && !entry.absenceConfirmed).length,
   };
 }
 

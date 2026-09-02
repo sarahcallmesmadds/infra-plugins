@@ -323,6 +323,28 @@ check('a merged worktree is removed through Git and its branch survives', () => 
   } finally { f.cleanup(); }
 });
 
+check('removal does not require GitHub availability', () => {
+  const f = fixture();
+  const bin = fs.mkdtempSync(path.join(os.tmpdir(), 'git-hygiene-no-gh-remove-'));
+  const realGit = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+  fs.writeFileSync(path.join(bin, 'git'), `#!/bin/sh\nexec "${realGit}" "$@"\n`);
+  fs.writeFileSync(path.join(bin, 'gh'), '#!/bin/sh\nexit 1\n');
+  fs.chmodSync(path.join(bin, 'git'), 0o755);
+  fs.chmodSync(path.join(bin, 'gh'), 0o755);
+  const before = process.env.PATH;
+  try {
+    git(f.repo, 'remote', 'add', 'origin', 'https://github.com/owner/example.git');
+    const target = f.add('offline-remove', path.join(f.projects, 'example-offline-remove'));
+    process.env.PATH = `${bin}${path.delimiter}${before}`;
+    const verified = worktrees.verifyRemove(target, { config: f.config, cwd: f.base });
+    assert.strictEqual(verified.state, worktrees.STATES.MERGED);
+  } finally {
+    process.env.PATH = before;
+    fs.rmSync(bin, { recursive: true, force: true });
+    f.cleanup();
+  }
+});
+
 check('removal approval never carries to a later target', () => {
   const f = fixture();
   try {
