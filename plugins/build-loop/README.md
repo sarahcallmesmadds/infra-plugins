@@ -299,9 +299,10 @@ answer, not its conclusion.
 opinion about whether something is any good, and it will not rewrite anything
 you did not complain about.
 
-`type:` is checked rather than required on purpose. 11 of the 23 skills
-here do not set it, and reporting 11 files that are fine is how a check
-teaches you to ignore it.
+`type:` is checked rather than required on purpose. Valid installed skills do
+not all set it, and reporting optional fields as missing is how a check teaches
+you to ignore it. The rule does not embed the current repository inventory, so
+adding a skill cannot make the explanation stale.
 
 ## Codex
 
