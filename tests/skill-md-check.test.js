@@ -169,25 +169,13 @@ check('type is validated when present and not required when absent', () => {
   assert.match(bad.hookSpecificOutput.additionalContext, /type: huamn/);
 });
 
-check('the documented type counts match the repository inventory', () => {
-  const files = [];
-  for (const plugin of fs.readdirSync(PLUGINS)) {
-    const skills = path.join(PLUGINS, plugin, 'skills');
-    if (!fs.existsSync(skills)) continue;
-    for (const name of fs.readdirSync(skills)) {
-      const file = path.join(skills, name, 'SKILL.md');
-      if (fs.existsSync(file)) files.push(file);
-    }
-  }
-  const withoutType = files.filter((file) => !/^type:\s*(human|agent)\s*$/m.test(fs.readFileSync(file, 'utf8')));
-  const claim = `${withoutType.length} of the ${files.length} skills`;
-  const affectedFiles = `${withoutType.length} files that are fine`;
+check('the optional-type explanation does not embed a repository count', () => {
   const hook = fs.readFileSync(HOOK, 'utf8');
   const readme = fs.readFileSync(path.join(PLUGINS, 'build-loop', 'README.md'), 'utf8');
-  assert.ok(hook.includes(claim), `hook does not contain the current count: ${claim}`);
-  assert.ok(hook.includes(affectedFiles), `hook does not contain the current unaffected-file count: ${affectedFiles}`);
-  assert.ok(readme.includes(claim), `README does not contain the current count: ${claim}`);
-  assert.ok(readme.includes(affectedFiles), `README does not contain the current unaffected-file count: ${affectedFiles}`);
+  assert.match(hook, /optional because valid installed skills do not all set it/i);
+  assert.match(readme, /does not embed the current repository inventory/i);
+  assert.doesNotMatch(hook, /\d+ of the \d+ skills/);
+  assert.doesNotMatch(readme, /\d+ of the \d+ skills/);
 });
 
 // --- against the real repository -------------------------------------------

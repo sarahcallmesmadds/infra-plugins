@@ -3,6 +3,13 @@
 Upgrade notes for past versions, moved out of the README so that file says what
 the plugin is and how to use it. Nothing here is needed to install or run it.
 
+## Upgrading to 0.10.21
+
+**The skill frontmatter check no longer embeds the repository's current skill
+count.** Adding a valid skill in another plugin cannot make this hook's error
+message and documentation stale. The rule is unchanged: `type` remains optional,
+and is validated only when a skill sets it.
+
 ## Upgrading to 0.10.20
 
 **`/devin-review-response` now checks the GitHub app and Devin CLI separately

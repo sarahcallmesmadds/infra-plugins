@@ -20,9 +20,9 @@
 //   description           This is the discovery surface. A skill with no
 //                         description never triggers, and never triggering
 //                         looks exactly like never being needed.
-//   type, when present    12 of the 23 skills in this repository set it and 11
-//                         do not, so it is checked but not required. Requiring
-//                         it would flag 11 files that are fine.
+//   type, when present    Valid installed skills do not all set it, so it is
+//                         checked but not required. An absolute inventory count
+//                         becomes stale whenever another plugin adds a skill.
 
 'use strict';
 
@@ -105,7 +105,7 @@ function inspect(filePath) {
   if (fields.type !== undefined && fields.type !== 'human' && fields.type !== 'agent') {
     issues.push(`\`type: ${fields.type}\` is not a value this repository uses. `
       + 'Use `human` when you invoke it or `agent` when it runs on its own, or drop '
-      + 'the field, which 11 of the 23 skills here do.');
+      + 'the field. It is optional because valid installed skills do not all set it.');
   }
 
   return issues;
