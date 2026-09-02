@@ -6,8 +6,8 @@
 // The hook was adapted from an earlier implementation. Two deliberate changes
 // define this repository's contract.
 //
-// 1. The original required `type: human|agent`. Eight of the twenty-one skills
-//    in this repository do not set it, so requiring it would report eight files
+// 1. The original required `type: human|agent`. Eleven of the twenty-five skills
+//    in this repository do not set it, so requiring it would report eleven files
 //    that are fine. Here it is validated when present and never required.
 //
 // 2. The original did not compare the frontmatter name against the directory.

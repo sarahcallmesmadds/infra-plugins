@@ -1,7 +1,7 @@
 {
   "name": "git-hygiene",
-  "version": "0.3.12",
-  "description": "Tells you which branches are proved safe to delete and which are not, then cleans up the proved-safe ones once you approve them. Held branches stay untouched unless separate evidence clears them; commit reachability alone is never described as proof that their work exists nowhere else.",
+  "version": "0.4.0",
+  "description": "Manages branches and linked worktrees through positive evidence rather than guesses. It places agent-created worktrees under a configured hidden root, reports cleanup candidates automatically, and moves or removes only exact worktrees proved safe by a deterministic re-check after approval. Branch cleanup remains separate, and unknown evidence always means keep.",
   "author": {
     "name": "Sarah Madden",
     "url": "https://github.com/sarahcallmesmadds"
@@ -12,6 +12,7 @@
   "keywords": [
     "git",
     "branches",
+    "worktrees",
     "cleanup",
     "housekeeping",
     "safety"
