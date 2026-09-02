@@ -66,7 +66,7 @@ function branchNotice(cwd, deadline) {
   // real number is 40 is a statement someone will act on, and it is wrong.
   // There is nothing in a one-line notice that could carry the caveat. Silence
   // is honest, and /stale-branches gives the full answer with no time limit.
-  if (truncated) return null;
+  if (truncated) return;
 
   // Merged AND old. This is the one place `staleAfterDays` decides anything.
   //
