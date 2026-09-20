@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "last_evaluated": "2026-09-20",
+  "skill_sha256": "d6893c8c304581f140afc62093e113f3ed03d080916615e543c90993b8874ff9",
+  "method": "Forward evaluation in fresh agent contexts, run by hand. Each context was given only the skill file and the prompt, and its answer was graded against the pass condition. Every deck, outline and slide here is made up for the test. The suite cannot rerun these, so skill_sha256 records the skill text they ran against: after any edit to the skill, rerun the three prompts, update what was observed, and update the fingerprint.",
+  "cases": [
+    {
+      "id": "deck-with-a-build-and-a-true-repeat",
+      "mode": "deck",
+      "prompt": "Can you do a title pass on this deck? Slide 1, title 'Pricing', body: a chart comparing flat fee, per seat and usage-based plans, where gross margin falls on the first two as usage grows and stays level on usage-based. Slides 2, 3 and 4, each titled 'Usage-based pricing protects the margin', body: one margin table with one row filled in, then two, then all three. Slide 5, the same title again, body: a rollout timeline with a pilot in the spring and every new contract moving in the summer. Slide 6, title 'Next steps', body: pick the pilot customers by Friday, and finance signs off on how usage is metered.",
+      "pass_condition": "State that six of six slides were read. Leave the titles of slides 3 and 4 alone as a build. Replace the title of slide 5, whose body has moved on to a different claim. Replace the topic titles on slides 1 and 6. Put no number in a title. Write the build's title once in the closing paragraph.",
+      "observed": "Reported six of six slides read. Marked slide 2 'says something', slides 3 and 4 'holds for a build' with the title kept, slide 5 'repeats the slide before' with a replacement taken from the timeline, and slides 1 and 6 'names a topic' with replacements. No title carried a number. Returned a table with a row for every slide, then the final titles as one paragraph with the build's title appearing once.",
+      "status": "pass"
+    },
+    {
+      "id": "outline-with-no-slides",
+      "mode": "outline",
+      "prompt": "I have no slides yet, only an idea. I want to convince my operations team to move on-call from one person covering a whole week to handing over between our three offices as the day moves round the world. People are tired by Thursday, mistakes cluster late in the week, and the three offices already overlap by an hour at each end. Help me with the slide titles.",
+      "pass_condition": "Do not refuse or stall because no deck exists. Write the argument as five to nine plain sentences first, then titles that follow from them. Add no number, name or result the request did not contain.",
+      "observed": "Said there were no slides to read and started from the story. Wrote eight story sentences, then eight titles with the one job each body would have. Added no figures, and kept the one hour of overlap out of the titles. One title states the link between tiredness and mistakes as the argument, and the answer flagged that link as unproven. Named what the idea did not answer instead of inventing it.",
+      "status": "pass"
+    },
+    {
+      "id": "single-slide-from-a-longer-deck",
+      "mode": "single-slide",
+      "prompt": "Here is one slide from a longer deck. Can you give me a better title? Title: 'Support backlog'. Body: a line chart of open support tickets over eight weeks, falling from 1,240 to 310 after a triage step was added in week two. A callout says median time to first reply went from nine hours to two.",
+      "pass_condition": "Do not refuse or stall because the rest of the deck is missing. Give two or three candidates in different shapes and say which one to use. Say that the rest of the deck was not seen. Keep the figures in the body.",
+      "observed": "Said the rest of the deck was not seen, so the candidates were checked against the slide only. Gave three candidates, one claim, one question and one instruction, and picked the claim. No candidate carried a figure, and the answer said the figures stay in the body.",
+      "status": "pass"
+    }
+  ]
+}
