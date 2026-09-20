@@ -21,12 +21,19 @@ A title that names a topic ("Pricing", "The margin math", "#2 Context") fails
 the test even when the slide under it is good, because the reader has to open
 the slide to learn what it says.
 
-## Read the whole deck first
+## Read everything you were given first
 
-Read every slide, title and body, before judging any title. A title can only be
-checked against the body it sits on, and the story can only be checked end to
-end. Say how many slides were read out of how many exist. Never write or judge
-a title from a file name, an outline, or a sample of slides.
+For an existing deck, read every slide, title and body, before judging any
+title. A title can only be checked against the body it sits on, and the story
+can only be checked end to end. Say how many slides were read out of how many
+exist. Never judge an existing deck from a file name, an outline of it, or a
+sample of its slides.
+
+This rule is about the title pass on a deck that exists. It does not block the
+other two ways in. For a single slide, read that slide's whole body, and say
+that the rest of the deck was not seen, so the candidates are checked against
+the slide and not against the story. For an outline or an idea there are no
+slide bodies yet, so start from the story sentences below.
 
 ## For a new deck: story before slides
 
@@ -42,12 +49,19 @@ a title from a file name, an outline, or a sample of slides.
 
 1. List every title in order, numbered by slide.
 2. Read the list as a paragraph and mark each title with one verdict:
-   **says something**, **names a topic**, **repeats the slide before**, or
-   **needs the slide to make sense**.
-3. For every title that is not "says something", write a replacement using the
-   "one thing" sentence, taken from what the slide's body actually shows.
-4. Read the new list as a paragraph again. Fix gaps in the story and claims
-   that appear twice.
+   **says something**, **names a topic**, **repeats the slide before**,
+   **needs the slide to make sense**, or **holds for a build**.
+3. Tell a build from a repeat by the bodies. When consecutive slides show one
+   visual filling in step by step, the matching titles are a build: mark the
+   later steps "holds for a build" and leave them alone. "Repeats the slide
+   before" is only for a matching title whose body has moved on to a different
+   claim.
+4. For every title that is not "says something" or "holds for a build", write a
+   replacement using the "one thing" sentence, taken from what the slide's body
+   actually shows. If the first slide of a build needs a new title, every step
+   of that build takes the same new title.
+5. Read the new list as a paragraph again. Fix gaps in the story and claims
+   that appear twice outside a build.
 
 Return the result as a table: slide number, current title, verdict, proposed
 title, and the evidence on the slide that supports it. Then give the full list

@@ -45,16 +45,44 @@ check('slide-titles does not encode a woman as the default user',
 // "slides were read" is wanted here; only a date or a counted finding is not.
 check('slide-titles does not ship dated or counted findings from one deck',
   /\b20\d{2}-\d{2}-\d{2}\b|\b\d+ of (?:the |her |their )?\d+ titles\b/i.test(titlesSkill), false);
-check('slide-titles reads the whole deck before judging a title',
-  /Read every slide, title and body, before judging any title/.test(titlesSkill), true);
+check('slide-titles reads the whole of an existing deck before judging a title',
+  /For an existing deck, read every slide, title and body, before judging any\s+title/.test(titlesSkill), true);
+// The skill also takes an outline or a single slide. A whole-deck rule with no
+// scope on it forbids both, and the skill then refuses work it offers to do.
+check('slide-titles does not forbid the outline and single-slide routes it offers',
+  /Never write or judge\s+a title from a file name, an outline/.test(titlesSkill), false);
+check('slide-titles leaves the repeated title of a build alone',
+  /not "says something" or "holds for a build"/.test(titlesSkill), true);
 check('slide-titles states how many slides were read',
-  /how many slides were read out of how many exist/.test(titlesSkill), true);
+  /how many slides were read out of how many\s+exist/.test(titlesSkill), true);
 check('slide-titles refuses to invent a claim the slide does not support',
   /states only what the slide's body supports/.test(titlesSkill), true);
 check('slide-titles does not edit the deck without being asked',
   /Do not edit the deck itself unless the user asks/.test(titlesSkill), true);
 check('slide-titles rejects the label with the claim underneath',
   /Promote the subtitle to the title and\s+delete the label/.test(titlesSkill), true);
+
+// A phrase can sit in the skill while the skill still refuses a request it
+// offers to take, so the three ways in are each tried for real and the results
+// are kept here. A route with no recorded, passing trial fails the suite.
+const titlesEvals = JSON.parse(fs.readFileSync(
+  path.join(__dirname, 'fixtures', 'slide-titles-evals.json'), 'utf8'));
+check('slide-titles has a recorded trial for a deck, an outline and a single slide',
+  [...new Set(titlesEvals.cases.map((entry) => entry.mode))].sort().join(','),
+  'deck,outline,single-slide');
+check('every slide-titles trial records what was asked, what counts as a pass, and what happened',
+  titlesEvals.cases.every((entry) =>
+    Boolean(entry.prompt && entry.pass_condition && entry.observed) && entry.status === 'pass'),
+  true);
+check('the deck trial covers a build beside a true repeat',
+  titlesEvals.cases.some((entry) => entry.mode === 'deck'
+    && /holds for a build/.test(entry.observed)
+    && /repeats the slide before/.test(entry.observed)),
+  true);
+check('every route a trial names is a route the skill still offers',
+  [/With a deck in hand/, /With an outline or an idea/, /With a single slide/]
+    .every((route) => route.test(titlesSkill)),
+  true);
 
 console.log('\nhard rules');
 check('em dash is caught', checkHard(`a sentence ${EM} with a dash`).ok, false);

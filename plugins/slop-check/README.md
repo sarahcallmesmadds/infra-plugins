@@ -93,11 +93,13 @@ sentence, so the titles alone tell the story of the deck.
 
 On a deck you already have, it reads every slide, lists the titles in order,
 marks each one as saying something, naming a topic, repeating the slide before,
-or needing the slide to make sense, and proposes a replacement from what the
-slide's body shows. It returns a table and then the final titles as one
-paragraph, so you can read them top to bottom yourself. On a new deck it starts
-from five to nine plain sentences that make the argument, before any slide
-exists.
+needing the slide to make sense, or holding for a build, and proposes a
+replacement from what the slide's body shows. A build, one visual filling in
+across several slides, keeps its title on every step. It returns a table and
+then the final titles as one paragraph, so you can read them top to bottom
+yourself. On a new deck it starts from five to nine plain sentences that make
+the argument, before any slide exists. On a single slide it gives two or three
+candidates and says the rest of the deck was not seen.
 
 It names the two ways titles usually go wrong: the label on a table, where the
 real claim ends up in a banner at the bottom, and the label with the claim in a
