@@ -66,6 +66,9 @@ slide bodies yet, so start from the story sentences below.
 Return the result as a table: slide number, current title, verdict, proposed
 title, and the evidence on the slide that supports it. Then give the full list
 of final titles as one paragraph, so the user can run the core test themselves.
+The table has a row for every slide. In the paragraph a build's title appears
+once, because the same sentence three times in a row is not how the audience
+hears it.
 
 ## The checks
 

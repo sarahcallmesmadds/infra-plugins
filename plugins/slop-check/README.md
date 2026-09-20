@@ -1,6 +1,7 @@
 # slop-check
 
-Catch what nobody edited, and rewrite what did not land, in either host.
+Catch what nobody edited, rewrite what did not land, and make slide titles say
+something, in either host.
 
 The useful question about a piece of work is not whether a machine touched it.
 Almost everything has been touched by one, and no tool can honestly tell you
@@ -9,7 +10,7 @@ it afterwards, because that is the part that actually went missing.
 
 This looks for the evidence that nobody did.
 
-## Four things
+## Five things
 
 **A hook that holds the line on your own writing.** Em dashes and runs of very
 short sentences are blocked in the assistant's output, so it has to rewrite
@@ -67,7 +68,7 @@ says why each is a problem, so the result is something you can act on yourself
 or send back to whoever produced it.
 
 **A skill, `say-it-simply`, that rewrites an answer that did not land.** The
-other three report on writing that already exists. This one shapes an answer as
+first three report on writing that already exists. This one shapes an answer as
 it is being produced, which is a different job.
 
 It comes out of reading every message across ten days where the answer drew "I

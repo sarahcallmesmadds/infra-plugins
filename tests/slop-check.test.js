@@ -51,6 +51,12 @@ check('slide-titles reads the whole of an existing deck before judging a title',
 // scope on it forbids both, and the skill then refuses work it offers to do.
 check('slide-titles does not forbid the outline and single-slide routes it offers',
   /Never write or judge\s+a title from a file name, an outline/.test(titlesSkill), false);
+check('slide-titles says the whole-deck rule does not block the other two routes',
+  /It does not block the\s+other two ways in/.test(titlesSkill), true);
+check('slide-titles says what to read for a single slide and for an outline',
+  /For a single slide, read that slide's whole body/.test(titlesSkill)
+    && /the rest of the deck was not seen/.test(titlesSkill)
+    && /For an outline or an idea there are no\s+slide bodies yet/.test(titlesSkill), true);
 check('slide-titles leaves the repeated title of a build alone',
   /not "says something" or "holds for a build"/.test(titlesSkill), true);
 check('slide-titles states how many slides were read',
@@ -63,8 +69,13 @@ check('slide-titles rejects the label with the claim underneath',
   /Promote the subtitle to the title and\s+delete the label/.test(titlesSkill), true);
 
 // A phrase can sit in the skill while the skill still refuses a request it
-// offers to take, so the three ways in are each tried for real and the results
-// are kept here. A route with no recorded, passing trial fails the suite.
+// offers to take, so each of the three ways in was tried by hand and the results
+// are kept in the fixture. Nothing here reruns a trial, because a model cannot
+// run inside this suite. What the suite can do is refuse stale trials: the
+// fixture records the fingerprint of the skill text the trials ran against, and
+// any edit to the skill fails the check below until the trials are rerun and
+// the fingerprint updated. Drop that check and a recorded pass outlives the
+// text that earned it.
 const titlesEvals = JSON.parse(fs.readFileSync(
   path.join(__dirname, 'fixtures', 'slide-titles-evals.json'), 'utf8'));
 check('slide-titles has a recorded trial for a deck, an outline and a single slide',
@@ -79,6 +90,9 @@ check('the deck trial covers a build beside a true repeat',
     && /holds for a build/.test(entry.observed)
     && /repeats the slide before/.test(entry.observed)),
   true);
+check('the recorded trials were run against the skill text as it stands now',
+  require('crypto').createHash('sha256').update(titlesSkill.replace(/\r\n/g, '\n')).digest('hex'),
+  titlesEvals.skill_sha256);
 check('every route a trial names is a route the skill still offers',
   [/With a deck in hand/, /With an outline or an idea/, /With a single slide/]
     .every((route) => route.test(titlesSkill)),

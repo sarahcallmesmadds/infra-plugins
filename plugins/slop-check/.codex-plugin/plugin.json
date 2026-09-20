@@ -1,7 +1,7 @@
 {
   "name": "slop-check",
   "version": "0.9.0",
-  "description": "Check any draft, document, pull request, chart or spec for the habits that mean nobody edited or reviewed it before it shipped, and name the specific lines. Also rewrites an answer that did not land into a shape the reader can act on. The em dash and choppy-run block runs here too, not only in Claude Code.",
+  "description": "Check any draft, document, pull request, chart or spec for the habits that mean nobody edited or reviewed it before it shipped, and name the specific lines. Also rewrites an answer that did not land into a shape the reader can act on, and makes each slide title state the takeaway of its slide. The em dash and choppy-run block runs here too, not only in Claude Code.",
   "author": {
     "name": "Sarah Madden",
     "url": "https://github.com/sarahcallmesmadds"
@@ -20,8 +20,8 @@
   "skills": "./skills/",
   "interface": {
     "displayName": "Slop Check",
-    "shortDescription": "Catch what nobody edited, and rewrite what did not land, in either host",
-    "longDescription": "The question worth asking about a piece of work is not whether a machine touched it, it is whether a person with judgement went through it afterwards. This checks for the habits that say nobody did: filler and machine vocabulary in prose, placeholders and swallowed errors in code, numbers too round to be measured in a chart, and options laid out with no recommendation in a spec. It names the specific lines, so a finding is something to act on or to send back. It also installs a hook that blocks em dashes and choppy sentence runs in the assistant's own writing, in Codex as well as in Claude Code, and the same check runs on request too. It also carries a second skill, say-it-simply, which rewrites an answer that confused the reader. That one comes from reading every message across ten days where the answer drew \"I don't understand\", and the finding that the failure is order rather than length. It reorders an answer around what the reader has to do, and replaces jargon rather than defining it.",
+    "shortDescription": "Catch what nobody edited, rewrite what did not land, and make slide titles say something, in either host",
+    "longDescription": "The question worth asking about a piece of work is not whether a machine touched it, it is whether a person with judgement went through it afterwards. This checks for the habits that say nobody did: filler and machine vocabulary in prose, placeholders and swallowed errors in code, numbers too round to be measured in a chart, and options laid out with no recommendation in a spec. It names the specific lines, so a finding is something to act on or to send back. It also installs a hook that blocks em dashes and choppy sentence runs in the assistant's own writing, in Codex as well as in Claude Code, and the same check runs on request too. It also carries a second skill, say-it-simply, which rewrites an answer that confused the reader. That one comes from reading every message across ten days where the answer drew \"I don't understand\", and the finding that the failure is order rather than length. It reorders an answer around what the reader has to do, and replaces jargon rather than defining it. A third skill, slide-titles, makes each slide title the takeaway of its slide, written as a sentence, so the titles alone tell the story of the deck.",
     "developerName": "Sarah Madden",
     "category": "Productivity",
     "capabilities": [
