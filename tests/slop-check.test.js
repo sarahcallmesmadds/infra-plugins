@@ -19,6 +19,8 @@ const { checkHard, checkAll } = require(path.join(base, 'tells.js'));
 const { checkCode, checkData, checkSpec, checkTechnical, checkOverbuilt, checkOverplanned } = require(path.join(base, 'technical.js'));
 const simpleSkill = fs.readFileSync(path.join(__dirname, '..', 'plugins', 'slop-check', 'skills', 'say-it-simply', 'SKILL.md'), 'utf8');
 
+const titlesSkill = fs.readFileSync(path.join(__dirname, '..', 'plugins', 'slop-check', 'skills', 'slide-titles', 'SKILL.md'), 'utf8');
+
 const EM = String.fromCharCode(0x2014);
 let failed = 0;
 
@@ -33,6 +35,26 @@ check('say-it-simply does not encode a woman as the default user',
   /\b(?:she|her|hers)\b/i.test(simpleSkill), false);
 check('say-it-simply does not ship dated transcript findings',
   /\b20\d{2}-\d{2}-\d{2}\b|\btranscripts? (?:were |was )?(?:read|measured)\b/i.test(simpleSkill), false);
+
+console.log('\nslide-titles ships the contract it promises');
+check('slide-titles frontmatter name matches its directory',
+  /^---\nname: slide-titles\n/.test(titlesSkill), true);
+check('slide-titles does not encode a woman as the default user',
+  /\b(?:she|her|hers)\b/i.test(titlesSkill), false);
+// The skill tells the reader to say how many slides were read, so the phrase
+// "slides were read" is wanted here; only a date or a counted finding is not.
+check('slide-titles does not ship dated or counted findings from one deck',
+  /\b20\d{2}-\d{2}-\d{2}\b|\b\d+ of (?:the |her |their )?\d+ titles\b/i.test(titlesSkill), false);
+check('slide-titles reads the whole deck before judging a title',
+  /Read every slide, title and body, before judging any title/.test(titlesSkill), true);
+check('slide-titles states how many slides were read',
+  /how many slides were read out of how many exist/.test(titlesSkill), true);
+check('slide-titles refuses to invent a claim the slide does not support',
+  /states only what the slide's body supports/.test(titlesSkill), true);
+check('slide-titles does not edit the deck without being asked',
+  /Do not edit the deck itself unless the user asks/.test(titlesSkill), true);
+check('slide-titles rejects the label with the claim underneath',
+  /Promote the subtitle to the title and\s+delete the label/.test(titlesSkill), true);
 
 console.log('\nhard rules');
 check('em dash is caught', checkHard(`a sentence ${EM} with a dash`).ok, false);

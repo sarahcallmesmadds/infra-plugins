@@ -86,6 +86,27 @@ plain english", "i dont understand", "too much text" and the rest.
 
 There is deliberately no hook on this one. It runs when you ask.
 
+**A skill, `slide-titles`, that makes slide titles say something.** A title that
+names a topic ("Pricing", "The margin math") makes the reader open the slide to
+learn what it says. This one makes each title the takeaway of its slide, as a
+sentence, so the titles alone tell the story of the deck.
+
+On a deck you already have, it reads every slide, lists the titles in order,
+marks each one as saying something, naming a topic, repeating the slide before,
+or needing the slide to make sense, and proposes a replacement from what the
+slide's body shows. It returns a table and then the final titles as one
+paragraph, so you can read them top to bottom yourself. On a new deck it starts
+from five to nine plain sentences that make the argument, before any slide
+exists.
+
+It names the two ways titles usually go wrong: the label on a table, where the
+real claim ends up in a banner at the bottom, and the label with the claim in a
+smaller line underneath. It will not write a claim the slide does not support,
+and it does not change the deck unless you ask.
+
+Type `/slide-titles`, or ask for a title pass or a headline pass on a deck. No
+hook on this one either.
+
 ## What it looks for
 
 ### Prose

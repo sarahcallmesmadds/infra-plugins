@@ -3,6 +3,13 @@
 Upgrade notes for past versions, moved out of the README so that file says what
 the plugin is and how to use it. Nothing here is needed to install or run it.
 
+## Upgrading to 0.10.21
+
+**The skill count quoted by the `SKILL.md` check now reads 24.** Nothing to
+change on your side. The repository gained a skill in another plugin, and the
+check's message and this plugin's README quote the repository's own count, so
+both were brought up to date. The check itself behaves exactly as before.
+
 ## Upgrading to 0.10.20
 
 **`/devin-review-response` now checks the GitHub app and Devin CLI separately

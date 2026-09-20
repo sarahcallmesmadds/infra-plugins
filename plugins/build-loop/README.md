@@ -299,7 +299,7 @@ answer, not its conclusion.
 opinion about whether something is any good, and it will not rewrite anything
 you did not complain about.
 
-`type:` is checked rather than required on purpose. 11 of the 23 skills
+`type:` is checked rather than required on purpose. 11 of the 24 skills
 here do not set it, and reporting 11 files that are fine is how a check
 teaches you to ignore it.
 
