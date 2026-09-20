@@ -49,6 +49,10 @@ check('slide-titles reads the whole of an existing deck before judging a title',
   /For an existing deck, read every slide, title and body, before judging any\s+title/.test(titlesSkill), true);
 // The skill also takes an outline or a single slide. A whole-deck rule with no
 // scope on it forbids both, and the skill then refuses work it offers to do.
+// This check only catches that sentence coming back word for word. No text
+// match can catch the same ban in other words, so that case is covered by the
+// fingerprint check further down: any edit to the skill fails the suite until
+// the outline and single-slide trials are rerun, and a reworded ban fails them.
 check('slide-titles does not forbid the outline and single-slide routes it offers',
   /Never write or judge\s+a title from a file name, an outline/.test(titlesSkill), false);
 check('slide-titles says the whole-deck rule does not block the other two routes',
@@ -93,9 +97,16 @@ check('the deck trial covers a build beside a true repeat',
 check('the recorded trials were run against the skill text as it stands now',
   require('crypto').createHash('sha256').update(titlesSkill.replace(/\r\n/g, '\n')).digest('hex'),
   titlesEvals.skill_sha256);
+// Keyed by the mode a trial declares, so a trial for a route this table does
+// not know fails here instead of passing unread.
+const titlesRoutes = {
+  deck: /With a deck in hand/,
+  outline: /With an outline or an idea/,
+  'single-slide': /With a single slide/,
+};
 check('every route a trial names is a route the skill still offers',
-  [/With a deck in hand/, /With an outline or an idea/, /With a single slide/]
-    .every((route) => route.test(titlesSkill)),
+  titlesEvals.cases.every((entry) =>
+    Boolean(titlesRoutes[entry.mode]) && titlesRoutes[entry.mode].test(titlesSkill)),
   true);
 
 console.log('\nhard rules');

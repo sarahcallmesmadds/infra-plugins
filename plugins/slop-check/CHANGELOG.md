@@ -11,8 +11,9 @@ change on your side, and nothing about the other two skills or the hook moves.
 It makes each title the one thing to remember from its slide, written as a
 sentence, so that the titles read top to bottom tell the story of the deck. On
 an existing deck it lists every title, gives each a verdict, and proposes a
-replacement taken from what the slide's body shows, leaving the repeated title
-of a build alone. On that deck it reads every slide before judging any title.
+replacement taken from what the slide's body shows for each title that needs
+one. A title that already says something is left alone, and so is the repeated
+title of a build. On that deck it reads every slide before judging any title.
 An outline or a single slide works without a whole deck. It never invents a
 claim the slide does not support, and it does not edit the deck unless asked.
 

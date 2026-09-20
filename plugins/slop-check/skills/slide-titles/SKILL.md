@@ -51,6 +51,10 @@ slide bodies yet, so start from the story sentences below.
 2. Read the list as a paragraph and mark each title with one verdict:
    **says something**, **names a topic**, **repeats the slide before**,
    **needs the slide to make sense**, or **holds for a build**.
+   "Names a topic" is a label with no claim in it ("Pricing"). "Needs the slide
+   to make sense" is a sentence that points at something the reader cannot see
+   ("This is why it matters", "What we found"). When both fit, use "names a
+   topic".
 3. Tell a build from a repeat by the bodies. When consecutive slides show one
    visual filling in step by step, the matching titles are a build: mark the
    later steps "holds for a build" and leave them alone. "Repeats the slide

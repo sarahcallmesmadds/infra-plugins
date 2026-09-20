@@ -26,7 +26,8 @@
     "category": "Productivity",
     "capabilities": [
       "Interactive",
-      "Read"
+      "Read",
+      "Write"
     ],
     "defaultPrompt": [
       "Slop-check this before I post it.",
