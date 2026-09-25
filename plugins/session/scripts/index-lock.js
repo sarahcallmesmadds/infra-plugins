@@ -219,6 +219,13 @@ function release(lock) {
 // A caller that knows it cannot write says so with `readOnly`, and then no lock
 // is taken and nothing waits. That is what stops a preview stalling five
 // seconds behind another session's write.
+//
+// `fn` is handed `{ locked, reason }` for the region it runs in, including an
+// inherited one. That is what lets a caller refuse to write rather than accept
+// the trade-off above: the handoff index lets a write through unprotected, and
+// a handoff document must not, because a thread's one document has no second
+// copy to fall back on. Deciding inside `fn` rather than here keeps the lock
+// ignorant of which callers are which.
 function exists(dir) {
   try { return fs.existsSync(dir); } catch (_) { return false; }
 }
@@ -230,7 +237,7 @@ function unlockedRegion(lock, fn, reason) {
   const region = { count: 1, locked: false, reason, refreshedAt: 0 };
   regions.set(lock, region);
   try {
-    return { value: fn(), locked: false, reason };
+    return { value: fn({ locked: false, reason }), locked: false, reason };
   } finally {
     region.count -= 1;
     if (region.count === 0) regions.delete(lock);
@@ -250,7 +257,7 @@ function withIndexLock(lock, fn, { readOnly = false, mayCreate = false } = {}) {
   if (outer) {
     outer.count += 1;
     try {
-      return { value: fn(), locked: outer.locked, reason: 'reentrant' };
+      return { value: fn({ locked: outer.locked, reason: 'reentrant' }), locked: outer.locked, reason: 'reentrant' };
     } finally {
       outer.count -= 1;
     }
@@ -305,7 +312,7 @@ function withIndexLock(lock, fn, { readOnly = false, mayCreate = false } = {}) {
   const region = { count: 1, locked, reason, refreshedAt: Date.now() };
   regions.set(lock, region);
   try {
-    return { value: fn(), locked, reason };
+    return { value: fn({ locked, reason }), locked, reason };
   } finally {
     region.count -= 1;
     // Deleted rather than left at zero, so a later independent call starts from

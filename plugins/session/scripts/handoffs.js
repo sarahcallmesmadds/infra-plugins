@@ -19,7 +19,8 @@ const os = require('os');
 const path = require('path');
 
 const config = require('./config');
-const { withIndexLock, warnUnprotectedWrite, refreshLock, lockLost } = require('./index-lock');
+const registryMod = require('./registry');
+const { withIndexLock, refreshLock, lockLost } = require('./index-lock');
 
 const DEFAULT_STALE_DAYS = 30;
 
@@ -146,14 +147,25 @@ function readIndex(home = os.homedir()) {
 // first. See `index-lock.js` for why the atomic rename in `writeIndex` did not
 // already cover this.
 function recordHandoff({ slug, target, kind, home = os.homedir(), now = Date.now() }) {
-  if (!slug || !target) return null;
+  if (!slug || !target) return { recorded: false, reason: 'no slug or path' };
   // The one caller that always writes, so it is the one allowed to create the
   // handoffs folder. Recording a handoff on a machine that has never had one is
   // the whole job, not a side effect of looking.
   return mutateIndex(home, (handoffs, save) => {
     handoffs[slugify(slug)] = { path: target, kind: kind || 'project', recorded_at: new Date(now).toISOString() };
-    return save(handoffs) ? handoffs : null;
-  }, { mayCreate: true });
+    return save(handoffs)
+      ? { recorded: true }
+      : { recorded: false, reason: 'the index could not be written' };
+  }, { mayCreate: true, refused: (reason) => ({ recorded: false, reason: lockReason(reason) }) });
+}
+
+// The sentence a person reads for a refused lock. `busy` and `unavailable` are
+// different situations: one is another session writing right now and resolves
+// by waiting, the other is a folder nothing can write into and does not.
+function lockReason(reason) {
+  if (reason === 'busy') return 'another session is writing the handoff index';
+  if (reason === 'unavailable') return 'the handoffs folder cannot be written to';
+  return `the handoff index lock was not held (${reason})`;
 }
 
 // Write the index the only way it is ever written: to a temporary file, then
@@ -205,12 +217,6 @@ function writeIndexUnlocked(handoffs, home = os.homedir()) {
 // `writeIndexUnlocked` swallows its errors and reporting a change that never
 // landed is the other thing this plugin keeps catching in itself.
 //
-// `save` is also where an unprotected write announces itself, because it is the
-// only place that knows a write happened at all. The warning used to be printed
-// by the lock, up front, from the lock answer alone, and so it fired on every
-// path through this gate including the ones that only read. A dry run said "an
-// entry may have been lost" having changed nothing.
-//
 // `readOnly` is for a caller that knows in advance it cannot write. It skips
 // the lock, so a preview does not wait behind another session's write. Do not
 // pass it on a path that might call `save`: the point of this gate is that the
@@ -220,11 +226,25 @@ function writeIndexUnlocked(handoffs, home = os.homedir()) {
 // afterwards is the point rather than a side effect. Only `recordHandoff` sets
 // it. Everything else leaves a machine with no handoffs folder exactly as it
 // found it, which is what it did before this gate existed.
-function mutateIndex(home, change, { readOnly = false, mayCreate = false } = {}) {
+function mutateIndex(home, change, { readOnly = false, mayCreate = false, refused = () => null } = {}) {
   const lock = indexLockPath(home);
-  return withIndexLock(lock, () => {
+  return withIndexLock(lock, (region) => {
+    // Refuse rather than write beside another session. This used to be the
+    // other way round: after a five second wait the change went ahead unlocked
+    // with a warning, on the grounds that losing an index entry is cheaper than
+    // failing a wrap. That trade stopped holding once a thread's one document is
+    // saved through here too, because a document overwritten beside another
+    // session has no second copy. So the caller hears why, and decides what to
+    // tell the person, and nothing is written.
+    //
+    // `no-index` is not a refusal: the handoffs folder does not exist and this
+    // caller may not create it, so there is nothing on disk to protect. `save`
+    // below still declines to write in that case.
+    if (!readOnly && !region.locked && region.reason !== 'no-index') {
+      return refused(region.reason === 'reentrant' ? 'busy' : region.reason);
+    }
     const save = (handoffs) => {
-      warnUnprotectedWrite(lock);
+      if (readOnly || !region.locked) return false;
       // Asked before the write, not after, so the clock is fresh for it and so
       // a lock lost during a long region is caught at the one place every write
       // passes through rather than at each caller.
@@ -232,13 +252,13 @@ function mutateIndex(home, change, { readOnly = false, mayCreate = false } = {})
       if (lockLost(lock)) {
         process.stderr.write(
           `session: the handoff index lock at ${lock} was taken over while this run was still `
-          + 'working, so this write went ahead beside another session and an entry may have been '
-          + 'lost.\n',
+          + 'working, so this write was abandoned rather than made beside another session.\n',
         );
+        return false;
       }
       return writeIndexUnlocked(handoffs, home) !== null;
     };
-    return change(readIndex(home), save);
+    return change(readIndex(home), save, region);
   }, { readOnly, mayCreate }).value;
 }
 
@@ -273,7 +293,7 @@ function forgetHandoff(slug, home = os.homedir()) {
       return { slug: key, removed: false, reason: 'the index could not be written', entry };
     }
     return { slug: key, removed: true, entry, fileStillThere };
-  });
+  }, { refused: (reason) => ({ slug: key, removed: false, reason: lockReason(reason) }) });
 }
 
 // Drop every entry whose file is not there any more.
@@ -414,7 +434,12 @@ function pruneIndex({ home = os.homedir(), dryRun = false } = {}) {
     if (dropped.length && !dryRun) written = save(kept);
 
     return { dropped, unreachable, pending, written };
-  }, { readOnly: dryRun });
+  }, {
+    readOnly: dryRun,
+    refused: (reason) => ({
+      dropped: [], unreachable: [], pending: [], written: false, skipped: lockReason(reason),
+    }),
+  });
 }
 
 function slugify(text) {
@@ -526,10 +551,39 @@ function archiveStale({ days = DEFAULT_STALE_DAYS, home = os.homedir(), now = Da
     // be a side effect nobody asked for.
     return {
       moved, root, skipped: true, repointed: [], pruned: [], unreachable: [], pending: [], indexWritten: true,
+      protectedSkipped: [], collisions: [], lockSkipped: null,
     };
   }
 
   const cutoff = now - days * 86400000;
+
+  // Two kinds of document the sweep never moves. A protected one, named in the
+  // user's own config, because "never touched" includes renaming. A declared
+  // thread, because it is saved in place at the path its declaration records,
+  // and moving it would leave that declaration pointing at nothing.
+  //
+  // Protection that cannot be read stops the whole sweep. The fallback for an
+  // unreadable config is an empty list, and an empty list is exactly the sweep
+  // that moves the files the config was written to protect.
+  const protection = config.loadProtection(home);
+  if (!protection.ok) {
+    return {
+      moved, root, skipped: false, repointed: [], pruned: [], unreachable: [], pending: [],
+      indexWritten: true, protectedSkipped: [], collisions: [],
+      refused: `protected handoffs could not be read: ${protection.errors.join('; ')}`,
+    };
+  }
+  const reg = registryMod.readRegistry(home);
+  if (reg.state === 'invalid') {
+    return {
+      moved, root, skipped: false, repointed: [], pruned: [], unreachable: [], pending: [],
+      indexWritten: true, protectedSkipped: [], collisions: [],
+      refused: `the thread list at ${registryMod.registryPath(home)} is invalid: ${reg.errors.join('; ')}`,
+    };
+  }
+  const threadPaths = registryMod.declaredPaths(reg.registry);
+  const protectedSkipped = [];
+  const collisions = [];
 
   // Follow the files that just moved, before pruning.
   //
@@ -573,7 +627,7 @@ function archiveStale({ days = DEFAULT_STALE_DAYS, home = os.homedir(), now = Da
   // deleted it. The sweep then repointed an entry that was no longer there.
   // Moving, repointing and pruning are one change to one thing, so they are one
   // region.
-  const { dropped, unreachable, pending, written } = mutateIndex(home, (handoffs, save) => {
+  const { dropped, unreachable, pending, written, lockSkipped } = mutateIndex(home, (handoffs, save) => {
     for (const name of entries) {
       if (!name.startsWith('HANDOFF-') || !name.endsWith('.md')) continue;
       const from = path.join(root, name);
@@ -586,7 +640,16 @@ function archiveStale({ days = DEFAULT_STALE_DAYS, home = os.homedir(), now = Da
       try {
         const stat = fs.statSync(from);
         if (!stat.isFile() || stat.mtimeMs >= cutoff) continue;
+        if (config.isProtected(protection, from, home)) { protectedSkipped.push(name); continue; }
+        if (threadPaths.has(from) || threadPaths.has(resolvePath(from))) continue;
+        // Never rename over a document already in the archive. Two handoffs
+        // with one name is a question for a person, and a rename answers it by
+        // deleting the older one.
+        if (fs.existsSync(to)) { collisions.push(name); continue; }
         if (!dryRun) {
+          // A lock taken over mid-sweep means another session is in here now.
+          // Stop moving documents rather than move them beside it.
+          if (lockLost(indexLockPath(home))) break;
           fs.mkdirSync(dest, { recursive: true });
           fs.renameSync(from, to);
         }
@@ -612,7 +675,13 @@ function archiveStale({ days = DEFAULT_STALE_DAYS, home = os.homedir(), now = Da
     // Re-enters the gate on this process, which reads the index again so the
     // prune sees the repoint above rather than the map from before it.
     return pruneIndex({ home, dryRun });
-  }, { readOnly: dryRun });
+  }, {
+    readOnly: dryRun,
+    // Refused before anything moved, because the moves are inside the region.
+    refused: (reason) => ({
+      dropped: [], unreachable: [], pending: [], written: true, lockSkipped: lockReason(reason),
+    }),
+  });
 
   return {
     moved,
@@ -628,6 +697,10 @@ function archiveStale({ days = DEFAULT_STALE_DAYS, home = os.homedir(), now = Da
     // False when the index could not be written, so the printed summary can
     // say the change did not land instead of reporting it as done.
     indexWritten: repointWritten && written,
+    protectedSkipped,
+    collisions,
+    // Set when another session held the lock, in which case nothing moved.
+    lockSkipped: lockSkipped || null,
   };
 }
 
@@ -862,8 +935,11 @@ function applyReconcile({ home = os.homedir(), now = Date.now() } = {}) {
     // as written because there was nothing to write, not as a failed write.
     if (!recorded.length) return true;
     return save(handoffs);
-  });
+  }, { refused: (reason) => ({ refusedReason: lockReason(reason) }) });
 
+  if (written && written.refusedReason) {
+    return { ...found, recorded: [], written: false, refused: written.refusedReason };
+  }
   return { ...found, recorded, written: written === true };
 }
 
@@ -1222,36 +1298,53 @@ function nearDuplicateConstraints(constraints = []) {
 // Archived handoffs are read. A constraint does not stop applying because the
 // document carrying it went quiet for 30 days, and archiving is driven by mtime
 // rather than by anything retiring it.
-function carriedConstraints({ cwd = process.cwd(), home = os.homedir(), limit = CONSTRAINT_SCAN_CAP } = {}) {
+function carriedConstraints({
+  cwd = process.cwd(), home = os.homedir(), limit = CONSTRAINT_SCAN_CAP, includeThreads = false,
+} = {}) {
   const want = scopeKey(cwd);
-  // One more than the cap, so "exactly at the ceiling" and "more than the
-  // ceiling" can be told apart. recentHandoffs slices to whatever it is given,
-  // so asking for the cap made both cases return an array of that length, and
-  // a scan that had in fact read everything announced itself as incomplete.
-  // Wrap then tells the model to stop and resolve a truncation that never
-  // happened.
-  const peeked = recentHandoffs({ home, limit: limit + 1 });
-  const truncated = peeked.length > limit;
-  const rows = peeked.slice(0, limit);
+  // Every document is looked at, and the ceiling applies to the ones that
+  // belong to this scope. It used to apply first, across every project, so a
+  // busy folder elsewhere could push this project's oldest carrier out of the
+  // window and drop its rule with nothing said. Reading a few hundred small
+  // files is cheap; losing a rule to somebody else's volume of work is not.
+  const rows = recentHandoffs({ home, limit: Infinity });
   const scanned = [];
   const docs = [];
+  let matchedCount = 0;
+
+  // Declared threads are never part of a pool. Each is the only authority for
+  // its own rules, and it is rewritten in place, so letting it into a pool
+  // would make every save reorder that pool by modification time: a retirement
+  // carried into a rewrite would suppress a rule restated elsewhere since, and
+  // the reverse. Excluded here, once, rather than at each caller.
+  const reg = registryMod.readRegistry(home);
+  const threadPaths = includeThreads ? new Set() : registryMod.declaredPaths(reg.registry);
 
   // Read everything first. Whether a retirement matched anything cannot be
   // decided while scanning, because the constraint it names lives in an older
   // document that has not been read yet. Deciding it inline reported every
   // legitimate retirement as unmatched.
   for (const r of rows) {
+    if (threadPaths.has(r.path) || threadPaths.has(resolvePath(r.path))) continue;
     let text;
     try { text = fs.readFileSync(r.path, 'utf8'); } catch (_) { continue; }
     const dir = handoffDir(text);
     const key = dir ? scopeKey(dir) : null;
     const { live, retired } = bulletsIn(text);
+    const matched = key === want;
     scanned.push({
-      slug: r.slug, path: r.path, dir, matched: key === want, found: live.length,
+      slug: r.slug, path: r.path, dir, matched, found: live.length, mtime: r.mtime,
     });
-    if (key !== want) continue;
+    if (!matched) continue;
+    matchedCount += 1;
+    // One more than the cap is still counted, so "exactly at the ceiling" and
+    // "more than the ceiling" can be told apart. Asking for the cap alone made
+    // both the same length, and a scan that had read everything announced
+    // itself as incomplete.
+    if (docs.length >= limit) continue;
     docs.push({ row: r, live, retired });
   }
+  const truncated = matchedCount > limit;
 
   const everLive = new Set();
   for (const d of docs) for (const c of d.live) everLive.add(normalizeConstraint(c));
@@ -1297,6 +1390,9 @@ function carriedConstraints({ cwd = process.cwd(), home = os.homedir(), limit = 
     // warning about it would punish the person who did the tidying.
     nearDuplicates: nearDuplicateConstraints(out),
     truncated,
+    // `invalid` means the thread list could not be read, so declared threads
+    // may have been counted into this pool. Reported rather than guessed.
+    registry: reg.state,
     // Without git, scoping falls back to comparing real paths, which still
     // groups a directory with itself but cannot tell a worktree from an
     // unrelated folder. That is the whole mechanism quietly not working, and
@@ -1316,6 +1412,9 @@ module.exports = {
   retiredIn,
   carriedConstraints,
   nearDuplicateConstraints,
+  normalizeConstraint,
+  resolvePath,
+  lockReason,
   handoffRoot,
   archiveRoot,
   indexLockPath,

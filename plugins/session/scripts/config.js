@@ -179,4 +179,62 @@ function load(home = os.homedir()) {
   return merged;
 }
 
-module.exports = { DEFAULTS, configPath, load };
+// Handoffs that nothing in this plugin may move or rewrite.
+//
+// Read on its own rather than through `load`, and the difference is the point.
+// `load` falls back to defaults on a config it cannot read, which is right for a
+// status line and wrong here: the default is an empty list, so a config damaged
+// by a stray comma would quietly withdraw every protection it held and the next
+// sweep would move the files it was written to keep still. So this answers
+// three ways. No config file is fine and protects nothing. A config that exists
+// and cannot be trusted is `ok: false`, and every caller that moves or writes a
+// handoff refuses rather than guessing. Everything else, the health segment and
+// the memory check included, keeps using `load` and is unaffected.
+//
+// Exact paths only. `~/` is expanded, and a path that exists is compared by its
+// real path so a symlinked home still matches.
+function loadProtection(home = os.homedir()) {
+  let text;
+  try {
+    text = fs.readFileSync(configPath(home), 'utf8');
+  } catch (e) {
+    if (e && e.code === 'ENOENT') return { ok: true, paths: [], errors: [] };
+    return { ok: false, paths: [], errors: [`${configPath(home)} could not be read: ${e.message}`] };
+  }
+  let raw;
+  try { raw = JSON.parse(text); } catch (e) {
+    return { ok: false, paths: [], errors: [`${configPath(home)} is not valid JSON: ${e.message}`] };
+  }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return { ok: false, paths: [], errors: [`${configPath(home)} does not hold a JSON object`] };
+  }
+  const list = raw.protectedHandoffs;
+  if (list === undefined) return { ok: true, paths: [], errors: [] };
+  if (!Array.isArray(list)) {
+    return { ok: false, paths: [], errors: ['protectedHandoffs must be a list of file paths'] };
+  }
+  const errors = [];
+  const paths = [];
+  list.forEach((entry, i) => {
+    if (typeof entry !== 'string' || !entry.trim()) {
+      errors.push(`protectedHandoffs entry ${i + 1} is not a file path`);
+      return;
+    }
+    paths.push(resolveProtected(entry.trim(), home));
+  });
+  return { ok: errors.length === 0, paths, errors };
+}
+
+function resolveProtected(p, home = os.homedir()) {
+  const expanded = p === '~' ? home : (p.startsWith('~/') ? path.join(home, p.slice(2)) : p);
+  const absolute = path.resolve(expanded);
+  try { return fs.realpathSync(absolute); } catch (_) { return absolute; }
+}
+
+function isProtected(protection, target, home = os.homedir()) {
+  if (!target) return false;
+  const resolved = resolveProtected(target, home);
+  return protection.paths.includes(resolved);
+}
+
+module.exports = { DEFAULTS, configPath, load, loadProtection, isProtected };

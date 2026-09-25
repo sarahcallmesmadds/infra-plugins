@@ -10,7 +10,23 @@ Load the context from a previous session so work can restart in minute one
 rather than minute ten. Your past self briefing your future self.
 
 The argument is the **slug**. `/wrap` prints it as the last line of every wrap,
-so most pickups are a paste.
+so most pickups are a paste. In Codex there is no slash command: the same slug
+is passed to this skill by asking for it, for example "pick up site-thread".
+
+---
+
+## Step 0: Check the scripts match this skill
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js capabilities --json
+```
+
+It has to print `{"threads": 1}`. Anything else, including a list of commands
+or an error, means the scripts installed in this host are older than this skill.
+Stop and say so: "The installed session scripts are older than this skill;
+update the session plugin in this host and start a new session." Do not carry
+on with the older scripts. They accept the commands below and answer a
+different question, so the result would look right and be wrong.
 
 ---
 
@@ -49,6 +65,21 @@ If the match is an archived handoff, open the summary with:
 
 > This handoff was archived as finished or stale. Loading it anyway.
 
+### Thread or history
+
+The same JSON says which kind of handoff this is.
+
+- **`thread` is set.** This is a declared thread: one handoff per subject,
+  rewritten in place at every wrap. Keep `thread.slug`, `thread.path`,
+  `thread.rev` and `thread.generation`; Step 3 prints them and wrap needs them.
+  If `thread.conflicts` is not empty, two documents answer to this slug: show
+  both paths and ask which is meant before going on.
+- **`match.history` is true.** Threads are set up here, and this document is not
+  one of them. It is kept as history and binds nothing. Say so, then run
+  `cli.js threads` and offer the thread that covers this subject.
+- **Neither.** Threads are not set up here yet (`mode: "pre-migration"`), or this
+  is a project handoff kept beside its work. Carry on as below.
+
 ---
 
 ## Step 2: Read it
@@ -59,36 +90,40 @@ else, take the structure as it comes and do not force it into the template.
 ### Then ask what still binds
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js constraints --cwd "<the project directory>"
+node "${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js constraints --thread "<slug>" --json
 ```
 
-**Pass `--cwd` explicitly. Do not rely on where the session started.** Scope is
-worked out from the working directory, and Step 4 is what moves to the project,
-two steps after this. Run without the flag and it answers for wherever the
-session opened, usually the home directory, which resolves to a different
-project and reports no constraints. A confident "none" is the worst answer this
-command can give, because it is indistinguishable from a project that genuinely
-has none.
+Always the slug you were given, never the directory this session started in.
+What comes back depends on how the handoff is kept, and the command decides,
+not this skill:
 
-The project directory is the `**Working directory:**` line inside the handoff
-you just read. Use that, not `dirname` of the handoff's own path: a central
-handoff lives in the handoffs folder, which is nobody's project.
+- **A declared thread** (`binding: true`): the rules written in that thread's
+  own file, and nothing else. That is the whole answer. Rules that apply to
+  every thread live in the user's standing instructions and memory, not in
+  other handoffs, so there is no second list to go and find.
+- **Threads not set up yet**: the older pooled answer, every rule recorded by
+  any handoff written from the same working directory as this one, exactly as
+  before. In that mode a constraint set on one thread still governs the next,
+  and the list can be long; print it anyway.
+- **History** (`binding: false`): nothing binds. Say the document is history.
 
-**Run it even when the handoff has a `## Constraints still in force` section.**
-That section holds what the last session carried. This asks the project, across
-every handoff written for it, including ones for other threads of work. A
-constraint set on one thread governs the next one, and the thread that set it is
-not the thread that breaks it.
+Two refusals stop the pickup rather than print a list:
 
-If the two disagree, show both and say which came from where. Do not silently
-prefer either: a constraint in the project but not in this handoff is the exact
-shape of something that was dropped, and it is worth the user seeing that.
+- `refused: "migration-unfinished"`: a migration is part way through. Show the
+  rules in `pending` that are still to be written into this thread, say that no
+  thread's rules are given until it finishes, and name `cli.js migrate finish`.
+- `refused: "registry-invalid"` or `"declared-missing"`: the thread list cannot
+  be read, or names a file that is not there. Say which and stop.
 
----
+If the handoff's own `## Constraints still in force` section and the command
+disagree, show both and say which came from where. For a declared thread they
+should be identical, because they are the same file, so a difference means the
+file changed since it was read.
 
 ## Step 3: Surface it
 
 ```
+Thread: {slug} · {path} · rev {first 12 of rev} · generation {generation}
 Resuming from: {path}
 
 **Still binding:**
@@ -106,6 +141,11 @@ Resuming from: {path}
 **Files of interest:**
 {paths only, at most eight}
 ```
+
+Print the `Thread:` line only for a declared thread, and keep it word for word
+in any summary this conversation is later compressed into. Wrap reads it to know
+which thread to save and which revision this session started from, and a lost
+line means wrap has to work the thread out again.
 
 Omit any section the handoff does not have. Do not fill a gap with a guess: a
 fabricated "where we left off" is worse than an absent one, because it reads

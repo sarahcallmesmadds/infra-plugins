@@ -349,7 +349,7 @@ check('an unprotected write says so on stderr rather than passing quietly', () =
     'one write is one warning, however many times the writer asks');
 });
 
-check('a sweep that lost the lock does not wait or warn a second time', () => {
+check('a contended sweep waits once, then moves nothing', () => {
   // Devin round 1 on PR #109. The region was recorded only when the lock was
   // acquired, so a nested call inside a region that had already given up went
   // back through `acquire`: another full deadline, and a second warning about
@@ -395,22 +395,25 @@ check('a sweep that lost the lock does not wait or warn a second time', () => {
     const out = h.archiveStale({ home, days: 30 });
     process.stdout.write(JSON.stringify({
       ms: Date.now() - started, moved: out.moved.length, repointed: out.repointed.length, pruned: out.pruned.length,
+      lockSkipped: out.lockSkipped, stillThere: fs.existsSync(stale),
     }));
   `], { encoding: 'utf8' });
 
   const summary = JSON.parse(child.stdout);
-  assert.strictEqual(summary.moved, 1, 'setup: the stale document moved');
-  assert.strictEqual(summary.repointed, 1, 'setup: its index entry was repointed, so the region wrote');
-  assert.strictEqual(summary.pruned, 1, 'setup: the entry with no document was pruned, so the region wrote twice');
+  // It used to go ahead unlocked after the wait, with one warning. It now
+  // refuses: a declared thread is written through the same gate, and a
+  // document written beside another session has no second copy.
+  assert.strictEqual(summary.moved, 0, 'a sweep that could not take the lock moved a document anyway');
+  assert.strictEqual(summary.repointed, 0);
+  assert.strictEqual(summary.pruned, 0);
+  assert.ok(summary.stillThere, 'the stale document must still be where it was');
+  assert.match(String(summary.lockSkipped), /another session/, 'it says why nothing happened');
 
   const elapsed = summary.ms;
-  const warnings = (child.stderr.match(/without the lock/g) || []).length;
-
   assert.ok(elapsed < WAIT_MS * 2,
     `one contended sweep waits one deadline, not one per nested call. Took ${elapsed}ms `
     + `against a ${WAIT_MS}ms deadline, so it waited more than once.`);
-  assert.strictEqual(warnings, 1,
-    `one write gets one warning, not one per nested call. Printed ${warnings}.`);
+  assert.doesNotMatch(child.stderr, /without the lock/, 'nothing was written, so nothing warns about an unprotected write');
 });
 
 check('a nested call never lands on the other side of the lock from its caller', () => {
@@ -505,18 +508,34 @@ check('a sweep with nothing to do does not claim it wrote', () => {
     `nothing was moved and nothing was pruned, so nothing could have been lost. stderr was: ${r.err}`);
 });
 
-check('a real unprotected write still warns, exactly once', () => {
-  // The other half. Removing the false warnings must not remove the true one,
-  // which is the whole reason it exists.
+check('a contended target is not recorded, and says so instead of writing unlocked', () => {
+  // This used to write the entry unprotected and warn once. Refusing is the
+  // change: nothing is written beside another session, and the caller is told
+  // the entry was not recorded, so the wrap can say so before promising that
+  // /pickup will find it.
   const home = tmpHome();
   const repo = path.join(home, 'code', 'thing');
   fs.mkdirSync(path.join(repo, '.git'), { recursive: true });
 
-  const r = JSON.parse(sweepUnderContention(home, ['target', 'topic', '--cwd', repo, '--json']).stdout);
+  const lock = handoffs.indexLockPath(home);
+  const child = spawnSync(process.execPath, ['-e', `
+    const fs = require('fs'), path = require('path');
+    const { spawnSync } = require('child_process');
+    const lock = ${JSON.stringify(lock)};
+    fs.mkdirSync(path.dirname(lock), { recursive: true });
+    fs.mkdirSync(lock);
+    fs.writeFileSync(path.join(lock, 'owner'), 'another-session');
+    const r = spawnSync(process.execPath, [${JSON.stringify(CLI)}, 'target', 'topic', '--cwd', ${JSON.stringify(repo)},
+      '--json', '--home', ${JSON.stringify(home)}], { encoding: 'utf8' });
+    process.stdout.write(JSON.stringify({ out: r.stdout, err: r.stderr }));
+  `], { encoding: 'utf8' });
+  const r = JSON.parse(child.stdout);
+  const out = JSON.parse(r.out);
 
-  const warnings = (r.err.match(/may have been lost/g) || []).length;
-  assert.strictEqual(warnings, 1,
-    `a write that went ahead without the lock says so once. stderr was: ${r.err}`);
+  assert.strictEqual(out.recorded, false, 'an entry was recorded without the lock');
+  assert.match(String(out.recordReason), /another session/);
+  assert.doesNotMatch(r.err, /may have been lost/, 'nothing was written, so nothing may have been lost');
+  assert.ok(!handoffs.readIndex(home).thing, 'the entry is not in the index');
 });
 
 // Devin round 3 on PR #109. The lock lives inside the handoffs folder, so taking

@@ -12,16 +12,41 @@ starting from scratch.
 
 The output is one handoff document. Write it for a reader who was not here.
 
+**Two ways handoffs are kept, and this skill does both.** Where threads are set
+up, a handoff written from the home directory belongs to a thread: one document
+per subject, rewritten in place every wrap, and the only place that thread's
+rules live. Everywhere else, and anywhere threads are not set up yet, each wrap
+writes as it always has. Step 1 says which applies.
+
 ---
 
-## Step 0: Sweep old handoffs out of the way
+## Step 0: Check the scripts, then sweep
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js capabilities --json
+```
+
+It has to print `{"threads": 1}`. Anything else means the scripts installed in
+this host are older than this skill. Stop and say: "The installed session
+scripts are older than this skill; update the session plugin in this host and
+start a new session." Wrapping against older scripts writes a new document per
+session, which is the behaviour this skill was changed to end.
+
+Then sweep:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js archive
 ```
 
 This moves handoffs untouched for 30 days into an `archived/` folder. It moves,
-never deletes, and `/pickup` still finds archived documents by name.
+never deletes, and `/pickup` still finds archived documents by name. It never
+moves a declared thread or a handoff listed as protected in the user's config,
+and it never renames over a document already in the archive.
+
+If it says the sweep was skipped because another session holds the lock, that
+is fine: the next wrap sweeps. If it says the sweep was refused, the protected
+list or the thread list cannot be read; say so in the summary, because until
+that is fixed nothing that writes a handoff will run.
 
 If it reports moving anything, mention it in the Step 4 summary under "Filed
 away". If it reports nothing, say nothing about it.
@@ -61,6 +86,37 @@ If it reports that the index and the folder agree, say nothing about it.
 
 ## Step 1: Review the session
 
+### First, which thread this is
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js threads --json
+```
+
+- **`mode: "pre-migration"`**, or this session's work sits in a project
+  directory with its own `HANDOFF.md`: threads do not apply. Skip to the review
+  below and write as Step 2 describes for that case.
+- **`mode: "invalid"`**, or `pending` is not zero: stop. Say the thread list
+  cannot be read, or that a migration is part way through and needs
+  `cli.js migrate finish`, and write nothing.
+- **`mode: "threads"`**: this wrap saves exactly one thread. Decide which, in
+  this order, and never start a new one just because the first answer was
+  missing:
+  1. The user named one.
+  2. A `Thread:` line printed by a pickup in this conversation, or kept in its
+     summary. Check its subject still matches what this session did. If there
+     is more than one such line, or the work moved on to something else after
+     the pickup, ask which thread this wrap belongs to.
+  3. The list above: pick the thread whose subject covers this session.
+  4. None fits: propose a name for the subject, never for the last thing
+     shipped, and ask the user to confirm it in one line. That becomes a new
+     thread in Step 2.
+
+  Then read the chosen thread's whole document, and note its `rev` and the
+  list's `generation` from `cli.js find "<slug>" --json` (`thread.rev`,
+  `thread.generation`). Step 2 saves against exactly that revision.
+
+### Then review
+
 Read back over the whole conversation and pull out:
 
 1. **What was worked on.** The actual subject, not the list of tools used.
@@ -72,7 +128,18 @@ Read back over the whole conversation and pull out:
    never answered.
 5. **Next actions.** Concrete enough to start on without rereading anything.
 
-Then collect what is still binding from before this session:
+Then collect what is still binding from before this session. For a thread:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js constraints --thread "<slug>"
+```
+
+That is the thread's own rules, and it is the whole list. Carry them into the
+rewrite, add what this session decided, and remove what it retired. Nothing from
+any other handoff binds a thread, so nothing from any other handoff is carried
+into it.
+
+Anywhere threads do not apply:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js constraints
@@ -230,9 +297,13 @@ why is indistinguishable from one that was forgotten, which is how an
 approved design system was lost between one handoff and the one that
 superseded it three days later.
 
-**Never edit an old handoff to backfill this.** Handoffs are owned by this skill
-and are a record of what was true when they were written. The new document is
-the carrier.
+**Never edit a handoff that is not this wrap's own.** That means every other
+thread, every history document, and anything protected. Those are a record of
+what was true when they were written. Outside threads, the new document is the
+carrier. Inside a thread, the thread's one document is, and a retirement there
+is the bullet deleted plus one `Retired this session:` line for this session
+only. That line is not carried into later rewrites, because nothing outside the
+thread reads it.
 
 **Prefer what was verified over what was intended.** A version number, a
 manifest and a passing manifest entry all report intent. Only running something
@@ -243,6 +314,43 @@ it is the first thing lost when the session is summarized casually.
 ---
 
 ## Step 2: Write the handoff
+
+### For a thread
+
+A thread's document is the current state of the whole subject, not a log of
+this session. Rewrite it from the version read in Step 1:
+
+- keep every open loop until it is resolved or superseded, and every decision
+  while it still governs work;
+- replace "Verified vs assumed" with what is true now;
+- set `**Last session:**` to today's date and one line on what changed;
+- carry the constraints as Step 1 describes.
+
+A small session must not erase the rest of the subject.
+
+Write the whole document to a draft file in this session's scratch space, then
+save it. Never write the thread's file directly:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js save --thread "<slug>" --from "<draft path>" --base "<rev from Step 1>" --generation <N> --json
+```
+
+For a new thread, add `--create` and pass `--base none`.
+
+Read what comes back:
+
+- `saved: true` (and `declared: true` for a new thread): done. Go to Step 3.
+- `reason: "conflict"`: another session saved this thread after this one read
+  it. Read it again, merge this session's changes into what is there now, and
+  save once more against the new `rev`. If that conflicts too, stop and tell the
+  user; do not overwrite.
+- Any other refusal: nothing was written. Report the reason and the kept draft
+  path (`draft`), and stop.
+
+The save refuses to write anything it cannot verify, so there is no separate
+existence check to run afterwards: its answer is the check.
+
+### Anywhere threads do not apply
 
 Ask where it goes:
 
@@ -262,6 +370,7 @@ not:
 # Session Handoff
 **Date:** [today's date, from the session start note]
 **Working directory:** [path]
+**Last session:** [for a thread: today's date and one line on what changed. Drop this line outside threads.]
 
 ## What was worked on
 [Two or three sentences. The subject, not the activity.]
@@ -425,7 +534,21 @@ them was simply mislabelled.
 How that ends depends on the check at the end of Step 2, and there is no
 version of it that does not.
 
-**Where the check returned a match**, close with:
+**For a thread**, the ending follows what `save` reported:
+
+- saved, and declared if it was new: `Handoff saved to [path].` then the pickup
+  line below.
+- saved, but `indexUpdated: false`: the same, plus one line that the index was
+  not updated. A thread is still found by name.
+- saved as a new thread but `declared: false`: `Handoff saved to [path], but it
+  is not a thread yet. Run cli.js declare [slug].` and no pickup line.
+- not saved, and the refusal came before anything was written, or
+  `previousUnchanged: true`: `Update NOT saved; the previous handoff at [path] is
+  unchanged. The draft is at [draft].` and no pickup line.
+- not saved otherwise: `Update NOT saved, and the state of [path] is uncertain.
+  Check it before the next wrap. The draft is at [draft].` and no pickup line.
+
+**Anywhere threads do not apply, where the check returned a match**, close with:
 
 ```
 Handoff saved to [path].
@@ -453,7 +576,9 @@ correct sentence below one that can.
 
 Where the handoff was saved, the `/pickup [slug]` line goes last, always, on
 its own. It gets copied straight into the next session, so anything printed
-after it has to be scrolled past.
+after it has to be scrolled past. In Codex the same slug is passed to the pickup
+skill by asking for it; say that in one line above the `/pickup` line, never
+below it.
 
 ---
 

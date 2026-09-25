@@ -129,12 +129,10 @@ check('status-bar does not promise Claude-only fields in Codex', () => {
 check('wrap checks the handoff exists after writing it', () => {
   const text = skill('wrap');
   const writeAt = text.indexOf('## Step 2');
-  const findAt = text.indexOf('cli.js find');
-  assert.ok(findAt !== -1, 'wrap no longer runs `cli.js find`, so nothing verifies the write landed');
-  assert.ok(
-    findAt > writeAt,
-    'wrap runs `cli.js find` before the write step, which checks for a file that is not there yet'
-  );
+  // Searched from Step 2 on. Step 1 also runs `cli.js find`, to read a
+  // thread's revision before anything is written, which is a different job.
+  const findAt = text.indexOf('cli.js find', writeAt);
+  assert.ok(findAt !== -1, 'wrap no longer runs `cli.js find` after writing, so nothing verifies the write landed');
 });
 
 // Added 2026-08-09. A design system was approved, named in that day's handoff
@@ -263,13 +261,19 @@ check('wrap requires a dropped constraint to say it was dropped', () => {
   );
 });
 
-check('wrap forbids backfilling constraints into old handoffs', () => {
+check('wrap forbids editing any handoff but its own', () => {
+  // Narrowed rather than dropped. A thread's one document is rewritten in place
+  // on purpose, so "never edit an old handoff" stopped being literally true.
+  // Every other document still is a record and must not be touched: other
+  // threads, history, and anything protected.
   const text = skill('wrap');
   assert.match(
     text,
-    /never edit an old handoff/i,
-    'wrap no longer forbids editing earlier handoffs, which rewrites the record of what was true when they were written'
+    /never edit a handoff that is not this wrap's own/i,
+    'wrap no longer forbids editing other handoffs, which rewrites the record of what was true when they were written'
   );
+  assert.match(text, /every other\s+thread, every history document, and anything protected/i,
+    'the rule no longer names what it protects, so a thread rewrite can wander into history');
 });
 
 check('wrap says the index is not evidence the file exists', () => {
@@ -474,30 +478,85 @@ check('pickup asks the project what still binds', () => {
     'pickup no longer asks for constraints, so one recorded on another thread of work stays invisible');
 });
 
-check('pickup pins the scope instead of inheriting the session cwd', () => {
+check('pickup names the thread instead of inheriting the session cwd', () => {
+  // It used to pass --cwd, the working directory recorded in the handoff. It
+  // now passes the slug and the command works out the rest, including the older
+  // pooled answer before threads are set up. Either way the directory the
+  // session happened to open in must not decide the answer.
   const text = skill('pickup');
   const cmd = text.slice(text.indexOf('cli.js constraints'));
-  assert.match(cmd.slice(0, 120), /--cwd/,
-    'the documented command omits --cwd, so it answers for wherever the session opened rather than for the project');
-  // The step that moves to the project runs later, so the flag is the only
-  // thing making this deterministic.
+  assert.match(cmd.slice(0, 120), /--thread/,
+    'the documented command omits --thread, so it answers for wherever the session opened rather than for this handoff');
   assert.ok(
     text.indexOf('cli.js constraints') < text.indexOf('Move to the right directory'),
     'this check assumes the scan still precedes the directory change; if that changed, the reasoning here needs revisiting'
   );
-  assert.match(text, /not `?dirname`? of the handoff/i,
-    'pickup no longer warns that a central handoff lives in the handoffs folder, which is nobody project directory');
+  assert.match(text, /never the directory this session started in/i,
+    'pickup no longer says the starting directory does not decide the answer');
 });
 
-check('pickup asks even when the handoff already lists constraints', () => {
+check('pickup reports a disagreement between the handoff and the command', () => {
   const text = skill('pickup');
   // Without this the command reads as a fallback, and the case it exists for is
   // the one where the handoff looks complete and is missing something.
   assert.match(
     text,
-    /run it even when the handoff has/i,
+    /disagree, show both and say which came from where/i,
     'pickup treats the handoff section as sufficient, so a constraint dropped by the last wrap is never noticed'
   );
+});
+
+// ------------------------------------------------------------- threads ----
+
+check('both skills refuse to run against older scripts', () => {
+  // The skill text and the scripts are one plugin per host, and can still
+  // disagree: a host not updated yet, or a session that loaded an older copy.
+  // Older scripts accept these commands and answer a different question.
+  for (const name of ['wrap', 'pickup']) {
+    const text = skill(name);
+    assert.match(text, /cli\.js capabilities --json/, `${name} no longer checks the scripts before using them`);
+    assert.match(text, /older than this skill/i, `${name} does not say what to do when they are older`);
+    assert.ok(text.indexOf('capabilities --json') < text.indexOf('## Step 1'), `${name} checks too late`);
+  }
+});
+
+check('wrap saves a thread through the guarded save, never by writing the file', () => {
+  const text = skill('wrap');
+  assert.match(text, /cli\.js save --thread/, 'wrap no longer saves threads through save');
+  assert.match(text, /--base "<rev from Step 1>"/, 'wrap no longer saves against the revision it read');
+  assert.match(text, /Never write the thread's file directly/i);
+  assert.match(text, /If that conflicts too, stop/i, 'a second conflict must stop, not overwrite');
+});
+
+check('wrap never starts a new thread just because it could not find one at once', () => {
+  const text = skill('wrap');
+  assert.match(text, /never start a new one just because the first answer was\s+missing/i);
+  assert.match(text, /ask the user to confirm it in one line/i, 'a new thread name is not confirmed');
+  assert.match(text, /never for the last thing\s+shipped/i, 'the naming defect from the first bug report can come back');
+});
+
+check('a thread rewrite keeps the whole subject, not just this session', () => {
+  const text = skill('wrap');
+  assert.match(text, /keep every open loop until it is resolved or superseded/i);
+  assert.match(text, /A small session must not erase the rest of the subject/i);
+});
+
+check('pickup prints a Thread line and keeps it through compression', () => {
+  const text = skill('pickup');
+  const template = fences(text).find((f) => f.body.includes('Resuming from:'));
+  assert.ok(template.body.startsWith('Thread:'), 'the Thread line is not first in the pickup output');
+  assert.match(text, /keep it word for word\s+in any summary/i, 'nothing says to keep the Thread line when context is compressed');
+});
+
+check('both skills say how Codex passes the slug', () => {
+  assert.match(skill('pickup'), /In Codex there is no slash command/);
+  assert.match(skill('wrap'), /In Codex the same slug is passed to the pickup\s+skill/);
+});
+
+check('pickup refuses a half-finished migration instead of printing a list', () => {
+  const text = skill('pickup');
+  assert.match(text, /migration-unfinished/);
+  assert.match(text, /cli\.js migrate finish/);
 });
 
 check('constraints are surfaced first and are not optional', () => {
