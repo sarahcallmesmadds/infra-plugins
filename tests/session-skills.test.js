@@ -483,10 +483,17 @@ check('pickup names the thread instead of inheriting the session cwd', () => {
   // now passes the slug and the command works out the rest, including the older
   // pooled answer before threads are set up. Either way the directory the
   // session happened to open in must not decide the answer.
+  // A handoff picked up by its path names its own Working directory line
+  // instead, which is equally never the session's; every documented command
+  // has to be one of the two.
   const text = skill('pickup');
-  const cmd = text.slice(text.indexOf('cli.js constraints'));
-  assert.match(cmd.slice(0, 120), /--thread/,
-    'the documented command omits --thread, so it answers for wherever the session opened rather than for this handoff');
+  const cmds = text.split('cli.js constraints').slice(1).map((c) => c.slice(0, 120));
+  assert.ok(cmds.length, 'pickup no longer documents a constraints command');
+  assert.ok(cmds.some((c) => /--thread/.test(c)), 'the documented command omits --thread');
+  for (const c of cmds) {
+    assert.match(c, /--thread|--cwd "<its Working directory>"/,
+      'a documented command omits --thread, so it answers for wherever the session opened rather than for this handoff');
+  }
   assert.ok(
     text.indexOf('cli.js constraints') < text.indexOf('Move to the right directory'),
     'this check assumes the scan still precedes the directory change; if that changed, the reasoning here needs revisiting'

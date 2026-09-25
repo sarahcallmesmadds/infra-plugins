@@ -79,7 +79,10 @@ function parseArgs(argv) {
     if (a.startsWith('--')) {
       if (VALUE_FLAGS.has(a)) {
         const v = argv[i + 1];
-        if (v === undefined || v.startsWith('--')) { out.error = `${a} needs a value`; continue; }
+        // An empty value is refused too: `--thread ""` would otherwise vanish
+        // and answer for the directory the command ran in, the silent wrong
+        // answer the flag exists to prevent.
+        if (v === undefined || v === '' || v.startsWith('--')) { out.error = `${a} needs a value`; continue; }
         i += 1;
         if (a === '--days') out.days = parseInt(v, 10);
         else if (a === '--generation') out.generation = /^\d+$/.test(v) ? parseInt(v, 10) : NaN;
@@ -506,7 +509,7 @@ const COMMANDS = {
     // A broken thread list only makes the answer uncertain for something that
     // could be a thread: a project handoff never is.
     const listUncertain = resolved.mode === 'invalid'
-      && (!match || threadsMod.couldBeThread(match.path, match.kind, opts.home)
+      && (!match || threadsMod.couldBeThread(match.path, opts.home)
         || threadsMod.slugCouldBeThread(slug, opts.home));
     if ((resolved.kind === 'thread' && (!resolved.exists || resolved.unreadable)) || listUncertain) process.exitCode = 1;
     if (opts.json) {
@@ -624,6 +627,15 @@ const COMMANDS = {
       opts.cwd = dir;
     }
     const r = handoffs.carriedConstraints({ cwd: opts.cwd, home: opts.home });
+    // With the thread list unreadable, a pool sharing home's scope may hold
+    // every thread's rules, and which of them bind cannot be told. Refused
+    // rather than listed: a warning above a confident list is carried anyway.
+    // Other scopes never held a thread and are answered as usual.
+    if (r.registry === 'invalid' && r.homeScope) {
+      process.exitCode = 1;
+      const why = `the thread list ${registryMod.registryPath(opts.home)} cannot be read, so which rules bind this folder cannot be told; fix it first`;
+      return emit(opts, { error: why, refused: 'registry-invalid', constraints: [] }, [`Cannot say what binds ${opts.cwd}: ${why}.`]);
+    }
     // After migration the home pool is history. Every home thread binds only
     // its own file, so this list is shown for reference and says so first.
     const reg = registryMod.readRegistry(opts.home);
@@ -750,7 +762,7 @@ const COMMANDS = {
     const fsMod = require('fs');
     const central = t.kind === 'central';
     const homeCwd = central && threadsMod.isHomeDir(opts.cwd, opts.home);
-    const existingMaybeThread = central && fsMod.existsSync(t.path) && threadsMod.couldBeThread(t.path, t.kind, opts.home);
+    const existingMaybeThread = central && fsMod.existsSync(t.path) && threadsMod.couldBeThread(t.path, opts.home);
     let refusal = null;
     if (!protection.ok) refusal = `protected handoffs could not be read: ${protection.errors.join('; ')}`;
     else if (configMod.isProtected(protection, t.path, opts.home)) refusal = `${t.path} is protected`;
@@ -784,19 +796,26 @@ const COMMANDS = {
     } else if (!opts.noRecord) {
       record = handoffs.recordHandoff({ slug: t.slug, target: t.path, kind: t.kind, home: opts.home });
     }
+    // recordHandoff checks again under the lock, so a thread of this name
+    // declared by another session meanwhile is caught there as well.
+    const shadowed = shadowsThread || Boolean(record && record.shadowed);
     // `pickupSlug` is null when the slug would open something else: a project
     // named like a declared thread is picked up by its path, never its name.
     if (opts.json) {
       return emit(opts, {
         ...t, recorded: record ? record.recorded : false, recordReason: record && record.reason,
-        pickupSlug: shadowsThread ? null : t.slug,
+        pickupSlug: shadowed ? null : t.slug,
       }, []);
     }
-    const lines = [t.path, `  kind: ${t.kind}, pickup slug: ${t.slug}`];
+    // The plain answer says what the JSON says: no pickup slug for a project
+    // named like a thread, with or without --no-record.
+    const lines = [t.path, shadowed
+      ? `  kind: ${t.kind}, pickup slug: none, because "${t.slug}" is a declared thread's name; pick this up by its path: /pickup ${t.path}`
+      : `  kind: ${t.kind}, pickup slug: ${t.slug}`];
     // Said, because a project handoff whose entry was not recorded may not be
     // found by name later, and the wrap is the moment that can still be fixed.
     if (record && !record.recorded) {
-      lines.push(shadowsThread
+      lines.push(shadowed
         ? `  Not recorded in the index: ${record.reason}.`
         : `  Not recorded in the index (${record.reason}). Run this again before relying on /pickup ${t.slug}.`);
     }

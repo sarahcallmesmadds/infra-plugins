@@ -100,7 +100,9 @@ says. A thread's `save` refuses a draft whose `**Working directory:**` is not
 the home directory, so routing anything else to it writes nothing.
 
 - **`mode: "pre-migration"`**: threads do not apply. Skip to the review below.
-- **`mode: "invalid"`**, or `pending` is not zero: stop. Say the thread list
+- **`mode: "invalid"`**, or `pending` is not zero, in a session whose working
+  directory is home: stop. (Anywhere else, carry on as the paragraph above
+  says.) Say the thread list
   cannot be read, or that a migration is part way through and needs
   `cli.js migrate finish`, and write nothing.
 - **`mode: "threads"`**: this wrap saves exactly one thread. Decide which, in
@@ -194,6 +196,9 @@ worktree inherits from its main checkout.
   design or standard, a path that must be read first, a deploy restriction,
   something declared off limits. Not a completed decision, which belongs under
   "Decisions made".
+- **It says it cannot say what binds this folder**, because the thread list
+  cannot be read. Stop and report it. Carry nothing, since the pool it would
+  have listed may be every thread's rules.
 - **It warns that the scan was truncated, or that a retirement matched
   nothing.** Both mean the list is not trustworthy as given. Resolve it before
   writing rather than carrying a list you have been told is wrong.
@@ -399,8 +404,9 @@ belongs in a thread, and nothing may be written there this way. It also says whe
 was not recorded in the index (`recorded: false`); say that in the summary,
 because a project handoff kept outside the configured roots may then not be
 found by name. If `pickupSlug` is null, the project's name is taken by a
-declared thread: end with the handoff's path instead of a `/pickup` line,
-because `/pickup` of that name opens the thread.
+declared thread, so `/pickup` of that name opens the thread and never this
+handoff. Keep the returned `path`: the check at the end of this step and the
+ending in Step 4 both use it instead of the name.
 
 A directory
 with its own work scope gets `HANDOFF.md` alongside the work. Anywhere else,
@@ -452,6 +458,11 @@ padded one is noise that costs tokens at every future pickup.
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js find "<slug>" --json
 ```
+
+**If `target` returned `pickupSlug: null`, do not run that.** The name finds
+the thread, so a match would say nothing about this handoff. Open the returned
+`path` with the Read tool instead: it is there if the read succeeds, and missing
+if it fails.
 
 Writing the file and recording where it went are two different things, and
 `cli.js target` does the second before the first. It notes the intended path so
@@ -603,7 +614,16 @@ Handoff saved to [path].
 /pickup [slug]
 ```
 
-**Where it returned nothing**, close with this instead and stop:
+**Where `pickupSlug` was null and the read of the path succeeded**, close with
+the path in place of the name, because `/pickup [slug]` would open the thread:
+
+```
+Handoff saved to [path]. Its name belongs to a thread, so pick it up by path.
+
+/pickup [path]
+```
+
+**Where it returned nothing, or the read of the path failed**, close with this instead and stop:
 
 ```
 Handoff was NOT written to [path]. Nothing to pick up.

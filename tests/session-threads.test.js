@@ -1140,5 +1140,150 @@ check('a symlinked home inside a checkout is caught', () => {
   }
 });
 
+// ------------------------- persona, Codex round 9 and the Devin app on 019480a ----
+
+check('with a broken list, a project whose document names home is refused, not pooled with home', () => {
+  const home = migrated();
+  const repo = path.join(home, 'code', 'app');
+  fs.mkdirSync(path.join(repo, '.git'), { recursive: true });
+  fs.writeFileSync(path.join(repo, 'HANDOFF.md'), handoff(home, ['App rule.']));
+  setIndex(home, 'app', { path: path.join(repo, 'HANDOFF.md'), kind: 'project', recorded_at: '2026-01-01T00:00:00.000Z' });
+  fs.writeFileSync(path.join(dirOf(home), 'threads.json'), '{ not json');
+  const r = json(home, ['constraints', '--thread', 'app']);
+  assert.strictEqual(r.status, 1);
+  assert.strictEqual(r.body.refused, 'registry-invalid');
+  assert.ok(!(r.body.constraints || []).length);
+});
+
+check('with a broken list, a project written from its own repository still gets its own pool', () => {
+  const home = migrated();
+  const repo = path.join(home, 'code', 'app');
+  fs.mkdirSync(path.join(repo, '.git'), { recursive: true });
+  fs.writeFileSync(path.join(repo, 'HANDOFF.md'), handoff(repo, ['App rule.']));
+  setIndex(home, 'app', { path: path.join(repo, 'HANDOFF.md'), kind: 'project', recorded_at: '2026-01-01T00:00:00.000Z' });
+  fs.writeFileSync(path.join(dirOf(home), 'threads.json'), '{ not json');
+  const r = json(home, ['constraints', '--thread', 'app']);
+  assert.strictEqual(r.status, 0, JSON.stringify(r.body));
+  assert.deepStrictEqual(r.body.constraints.map((c) => c.text), ['App rule.']);
+});
+
+check('an index entry claiming project for a central file does not make it safe while the list is broken', () => {
+  const home = migrated();
+  setIndex(home, 'alias', { path: docPath(home, 'brand-thread'), kind: 'project', recorded_at: '2026-01-01T00:00:00.000Z' });
+  fs.writeFileSync(path.join(dirOf(home), 'threads.json'), '{ not json');
+  const r = json(home, ['find', 'alias']);
+  assert.strictEqual(r.body.listUncertain, true);
+  assert.strictEqual(r.status, 1);
+});
+
+check('a folder sharing home\'s scope is refused while the list cannot be read', () => {
+  const home = migrated();
+  spawnSync('git', ['init', '-q'], { cwd: home });
+  const webby = path.join(home, 'code', 'webby');
+  fs.mkdirSync(webby, { recursive: true });
+  const r = json(home, ['constraints', '--cwd', webby]);
+  assert.strictEqual(r.status, 1);
+  assert.strictEqual(r.body.refused, 'registry-invalid');
+  assert.ok(!r.body.constraints.length);
+});
+
+check('git finding a repository for home some other way refuses both the plan and the list', () => {
+  const home = migrated();
+  const outer = tmpHome();
+  spawnSync('git', ['init', '-q'], { cwd: outer });
+  const env = { ...process.env, GIT_DIR: path.join(outer, '.git'), GIT_WORK_TREE: home };
+  const threads = spawnSync(process.execPath, [CLI, 'threads', '--json', '--home', home], { encoding: 'utf8', env });
+  assert.strictEqual(JSON.parse(threads.stdout).mode, 'invalid');
+  const fresh = setUp();
+  const plan = spawnSync(process.execPath, [CLI, 'migrate', 'plan', '--threads', 'site-thread', '--json', '--home', fresh], {
+    encoding: 'utf8', env: { ...env, GIT_WORK_TREE: fresh },
+  });
+  assert.strictEqual(JSON.parse(plan.stdout).reason, 'home-is-a-checkout');
+});
+
+check('plain target output gives a project named like a thread no pickup slug, and its path', () => {
+  const home = migrated();
+  const repo = path.join(home, 'code', 'brand-thread');
+  fs.mkdirSync(path.join(repo, '.git'), { recursive: true });
+  for (const extra of [[], ['--no-record']]) {
+    const out = run(home, ['target', 'x', '--cwd', repo, ...extra]).stdout;
+    assert.doesNotMatch(out, /pickup slug: brand-thread/);
+    assert.ok(out.includes(`/pickup ${path.join(repo, 'HANDOFF.md')}`), out);
+  }
+});
+
+check('wrap checks a null-pickupSlug handoff by its path and ends with the path; pickup accepts one', () => {
+  const wrap = fs.readFileSync(path.join(ROOT, 'skills', 'wrap', 'SKILL.md'), 'utf8');
+  const pickup = fs.readFileSync(path.join(ROOT, 'skills', 'pickup', 'SKILL.md'), 'utf8');
+  assert.match(wrap, /If `target` returned `pickupSlug: null`, do not run that/);
+  assert.match(wrap, /\/pickup \[path\]/);
+  assert.match(pickup, /If the argument is a path to a file rather than a name/);
+  assert.match(pickup, /constraints --cwd "<its Working directory>"/);
+});
+
+// ------------------------------------------------- Devin CLI round 7 on 5f6ed96 ----
+
+check('the plan refuses a slug the index still maps to an unreachable file', () => {
+  const home = setUp();
+  setIndex(home, 'site-thread', { path: '/Volumes/not-mounted-here/HANDOFF-x.md', kind: 'project', recorded_at: '2026-01-01T00:00:00.000Z' });
+  const r = json(home, ['migrate', 'plan', '--threads', 'site-thread']);
+  assert.strictEqual(r.status, 1);
+  assert.match(JSON.stringify(r.body), /not reachable now/);
+});
+
+check('an index entry whose path is not a string does not crash find', () => {
+  const home = migrated();
+  setIndex(home, 'site-thread', { path: 42, kind: 'central' });
+  const r = run(home, ['find', 'site-thread', '--json']);
+  assert.doesNotMatch(r.stderr, /TypeError/);
+  assert.ok(JSON.parse(r.stdout).thread.conflicts.length, 'a malformed entry is reported, not ignored');
+});
+
+check('an empty --thread is refused rather than answering for the current directory', () => {
+  const home = migrated();
+  const r = run(home, ['constraints', '--thread', '']);
+  assert.notStrictEqual(r.status, 0);
+  assert.match(r.stdout + r.stderr, /--thread needs a value/);
+});
+
+check('a plan whose rule text was edited, even only in spacing, is refused', () => {
+  const home = setUp();
+  const { planFile, manifest } = migrate(home, ['site-thread', 'brand-thread']);
+  assert.ok(manifest.lost.length, 'the fixture needs a lost row');
+  manifest.lost[0].text = manifest.lost[0].text.replace(' ', '\n');
+  fs.writeFileSync(planFile, JSON.stringify(manifest, null, 2));
+  const r = apply(home, planFile);
+  assert.strictEqual(r.body.committed, false);
+  assert.ok(!fs.existsSync(path.join(dirOf(home), 'threads.json')));
+});
+
+check('a thread path spelled with a trailing slash makes the list invalid', () => {
+  const home = migrated();
+  const f = path.join(dirOf(home), 'threads.json');
+  const reg = JSON.parse(fs.readFileSync(f, 'utf8'));
+  reg.threads[0].path += '/';
+  fs.writeFileSync(f, JSON.stringify(reg));
+  assert.strictEqual(json(home, ['threads']).body.mode, 'invalid');
+});
+
+check('a relative protectedHandoffs entry is refused', () => {
+  const home = setUp();
+  fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+  fs.writeFileSync(path.join(home, '.claude', 'session.config.json'), JSON.stringify({ protectedHandoffs: ['important.md'] }));
+  const r = json(home, ['migrate', 'plan', '--threads', 'site-thread']);
+  assert.strictEqual(r.body.reason, 'config-invalid');
+  assert.match(r.body.detail, /absolute path/);
+});
+
+check('recording a project checks the thread list again under the lock', () => {
+  const home = migrated();
+  const repo = path.join(home, 'code', 'brand-thread');
+  fs.mkdirSync(repo, { recursive: true });
+  const r = handoffs.recordHandoff({ slug: 'brand-thread', target: path.join(repo, 'HANDOFF.md'), kind: 'project', home });
+  assert.strictEqual(r.recorded, false);
+  assert.strictEqual(r.shadowed, true);
+  assert.strictEqual(json(home, ['find', 'brand-thread']).body.thread.conflicts.length, 0);
+});
+
 process.stdout.write(`\n${failures === 0 ? 'all passed' : `${failures} failed`}\n`);
 process.exit(failures === 0 ? 0 : 1);

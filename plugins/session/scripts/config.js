@@ -225,7 +225,15 @@ function loadProtection(home = os.homedir()) {
       errors.push(`protectedHandoffs entry ${i + 1} is not a file path`);
       return;
     }
-    paths.push(resolveProtected(entry.trim(), home));
+    // A relative entry would be resolved against whichever directory the
+    // command ran in, so one config would protect different files from
+    // different places. Refused, which fails closed.
+    const e = entry.trim();
+    if (!(e === '~' || e.startsWith('~/') || path.isAbsolute(e))) {
+      errors.push(`protectedHandoffs entry ${i + 1} (${e}) must be an absolute path or start with ~/`);
+      return;
+    }
+    paths.push(resolveProtected(e, home));
   });
   return { ok: errors.length === 0, paths, errors };
 }

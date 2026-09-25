@@ -532,7 +532,8 @@ Handoffs nothing here may move or rewrite, named in `~/.claude/session.config.js
 }
 ```
 
-Exact paths. The sweep leaves them where they are, `save` refuses them, and
+Exact paths, each absolute or starting with `~/`; a relative entry is refused,
+because it would protect a different file from each directory. The sweep leaves them where they are, `save` refuses them, and
 `target` will not hand one out. If that file exists and cannot be read, or this
 entry is not a list of paths, every command that moves or writes a handoff
 refuses rather than falling back to an empty list, because the empty list is

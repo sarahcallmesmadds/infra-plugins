@@ -64,10 +64,21 @@ function inHomeScope(text, home) {
 //
 // One rule, used by target, find and constraints alike. Handling each case
 // where it came up is how the three drifted apart.
-function couldBeThread(file, kind, home) {
-  // Kept beside its work, archived, or a pause note: none of these can ever be
-  // the file a thread is declared at.
-  if (kind === 'project' || kind === 'archived' || kind === 'pause') return false;
+//
+// Judged by where the file really is, never by the kind an index entry claims:
+// a declared thread is always `HANDOFF-<slug>.md` directly in the handoffs
+// folder (registry.js refuses any other path), so a file anywhere else, a
+// project, an archived copy or a pause note, can never be one. Both sides are
+// real paths, so a home reached through a symlink cannot make a central file
+// look like a project.
+function threadShaped(file, home) {
+  const real = handoffs.resolvePath(file);
+  return path.dirname(real) === handoffs.resolvePath(handoffs.handoffRoot(home))
+    && /^HANDOFF-.+\.md$/.test(path.basename(real));
+}
+
+function couldBeThread(file, home) {
+  if (!threadShaped(file, home)) return false;
   let text;
   try { text = fs.readFileSync(file, 'utf8'); } catch (_) { return true; }
   if (!handoffs.handoffDir(text)) return true;
@@ -82,7 +93,7 @@ function slugCouldBeThread(slug, home) {
   const key = handoffs.slugify(slug);
   if (!key) return false;
   const central = path.join(handoffs.handoffRoot(home), `HANDOFF-${key}.md`);
-  return fs.existsSync(central) && couldBeThread(central, 'central', home);
+  return fs.existsSync(central) && couldBeThread(central, home);
 }
 
 // The first sentence under "What was worked on", for the list a wrap picks a
@@ -197,7 +208,12 @@ function samePath(a, b) {
 // that must not be overwritten, because it is the only record of where that
 // handoff went. Only an entry the index itself would prune counts as free.
 function liveOtherEntry(entry, target) {
-  if (!entry || !entry.path || samePath(entry.path, target)) return false;
+  if (!entry) return false;
+  // A hand-edited entry whose path is not a string would throw inside the
+  // path comparison and take find, save and declare down with it. Counted as
+  // live, which is the side that refuses.
+  if (typeof entry.path !== 'string') return true;
+  if (!entry.path || samePath(entry.path, target)) return false;
   return handoffs.entryState(entry) !== 'gone';
 }
 
@@ -249,17 +265,18 @@ function threadConstraints({ slug, home = os.homedir() }) {
     const found = handoffs.findHandoff(slug, home);
     let foundText = null;
     try { foundText = found ? fs.readFileSync(found.path, 'utf8') : null; } catch (_) { /* unknown: refused below */ }
-    // A project is judged by where it lives, not by the kind an index entry
-    // claims. And "outside home" has to hold for the pool too: a folder that
-    // shares home's scope would be pooled with every thread's rules.
+    // The pool is built from the document's own Working directory, so that is
+    // the folder judged, and the same one handed back for the scan. Where the
+    // file sits proves nothing: a project's HANDOFF.md whose header names home
+    // would otherwise pass on its location and then be pooled with home, which
+    // with the list unreadable counts every thread's rules as binding. A
+    // folder sharing home's scope is refused for the same reason. Unreadable,
+    // or no Working directory line, is refused too, because it cannot be told.
     const foundDir = foundText !== null ? handoffs.handoffDir(foundText) : null;
-    const root = handoffs.handoffRoot(home);
-    const isProject = Boolean(found) && !found.path.startsWith(`${root}${path.sep}`);
-    const provablyOutside = found && (isProject || (foundDir && !inHomeScope(foundText, home)))
-      && handoffs.scopeKey(isProject ? path.dirname(found.path) : foundDir) !== handoffs.scopeKey(home);
+    const provablyOutside = Boolean(found && foundDir)
+      && handoffs.scopeKey(foundDir) !== handoffs.scopeKey(home);
     if (provablyOutside && !slugCouldBeThread(slug, home)) {
-      const r = resolve(slug, home);
-      return { mode: 'pooled', kind: found.kind, path: found.path, dir: r.dir, unreadable: r.unreadable };
+      return { mode: 'pooled', kind: found.kind, path: found.path, dir: foundDir, unreadable: null };
     }
     return { mode: 'invalid', refused: 'registry-invalid', errors: reg.errors, path: registryMod.registryPath(home) };
   }
@@ -551,10 +568,8 @@ function migratePlan({ slugs, home = os.homedir(), now = Date.now() }) {
   // pool, so "the rules of the home directory" and "the rules of that
   // checkout" cannot be told apart, and a thread boundary drawn there keeps
   // cutting pools in half. Refused rather than half supported.
-  // Both tests, so the plan can never pass where readRegistry would then
-  // refuse the list it writes: the path walk catches a stray or broken .git
-  // that git itself ignores, and git catches a repository found some other way.
-  if (registryMod.homeIsCheckout(home) || handoffs.repoRoot(home)) {
+  // The same decision readRegistry makes, so the two cannot disagree.
+  if (registryMod.homeIsCheckout(home)) {
     return { ok: false, reason: 'home-is-a-checkout', detail: 'the home directory is itself a git checkout, which threads do not support' };
   }
   const reg = registryMod.readRegistry(home);
@@ -584,6 +599,15 @@ function migratePlan({ slugs, home = os.homedir(), now = Date.now() }) {
     // the index maps to some other file cannot become a thread under that name.
     if (!samePath(found.path, path.join(root, `HANDOFF-${key}.md`))) {
       problems.push(`${s}: the index maps it to ${found.path}, not HANDOFF-${key}.md; run cli.js reconcile`);
+      continue;
+    }
+    // findHandoff skips an entry whose file is not there right now, such as
+    // one on a volume that is not mounted, and falls through to the central
+    // file. resolve still counts that entry as live, so without this the
+    // thread would be reported as a conflict at every find after migration.
+    const indexed = handoffs.readIndex(home)[key];
+    if (liveOtherEntry(indexed, path.join(root, `HANDOFF-${key}.md`))) {
+      problems.push(`${s}: the index still maps it to ${typeof indexed.path === 'string' ? indexed.path : 'a malformed entry'}, which is not reachable now; run cli.js reconcile`);
       continue;
     }
     if (config.isProtected(protection, found.path, home)) { problems.push(`${s}: ${found.path} is protected`); continue; }
@@ -686,7 +710,9 @@ function checkDispositions(manifest) {
 }
 
 function sameRows(a, b, field) {
-  const key = (r) => `${handoffs.normalizeConstraint(r.text)}\u0000${[].concat(r[field]).join(',')}`;
+  // Raw text, not normalized: a plan edited from `a - b` to `a\n- b` is the
+  // same rule to the normalizer and two bullets once it is written.
+  const key = (r) => `${r.text}\u0000${[].concat(r[field]).join(',')}`;
   const x = a.map(key).sort();
   const y = b.map(key).sort();
   return x.length === y.length && x.every((v, i) => v === y[i]);

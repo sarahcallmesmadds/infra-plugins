@@ -48,12 +48,24 @@ function canonicalPath(p) {
   try { return fs.realpathSync(absolute); } catch (_) { return absolute; }
 }
 
-// Walked from the path as written and from its real path, because a
-// symlinked home can sit inside a checkout that only the real path reaches.
+// The one checkout decision, used by readRegistry and migratePlan alike, so
+// the plan can never write a list that reading it then refuses, and a list
+// can never read as valid where the plan would refuse. Two tests: the path
+// walk, from the path as written and from its real path, catches a stray or
+// broken .git that git ignores and a symlinked home inside a checkout; git
+// itself catches a repository found some other way, such as GIT_DIR.
+// Remembered per home for the life of the process, because readRegistry runs
+// many times a command and each git probe is a spawn.
+const checkoutCache = new Map();
 function homeIsCheckout(home) {
+  if (checkoutCache.has(home)) return checkoutCache.get(home);
   let real = home;
   try { real = fs.realpathSync(home); } catch (_) { /* the written path is all there is */ }
-  return walkForGit(home) || (real !== home && walkForGit(real));
+  // Required here rather than at the top: handoffs.js requires this file.
+  const answer = walkForGit(home) || (real !== home && walkForGit(real))
+    || Boolean(require('./handoffs').repoRoot(home));
+  checkoutCache.set(home, answer);
+  return answer;
 }
 
 function walkForGit(start) {
@@ -87,7 +99,9 @@ function validate(raw, home = null) {
     if (typeof t.path !== 'string' || !path.isAbsolute(t.path)) { errors.push(`thread ${i + 1} path must be absolute`); return; }
     // A thread is always the central document named for its slug. Anything
     // else is a hand edit pointing a save somewhere it was never meant to go.
-    if (home && path.resolve(t.path) !== path.join(home, '.planning', 'handoffs', `HANDOFF-${t.slug}.md`)) {
+    // Compared as written, not normalized: a trailing slash or a `..` passes
+    // path.resolve and then names a file that existsSync cannot find.
+    if (home && t.path !== path.join(home, '.planning', 'handoffs', `HANDOFF-${t.slug}.md`)) {
       errors.push(`thread ${t.slug} must be ~/.planning/handoffs/HANDOFF-${t.slug}.md, not ${t.path}`);
     }
     const canonical = canonicalPath(t.path);

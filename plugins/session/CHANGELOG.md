@@ -13,12 +13,14 @@ One handoff per thread, for handoffs written from the home directory.
 - `protectedHandoffs` in `~/.claude/session.config.json` names handoffs nothing may
   move or rewrite. An unreadable entry stops every handoff write instead of
   protecting nothing.
+  Each entry must be absolute or start with `~/`; a relative one is refused.
 - Behaviour change: when another session holds the handoff index lock, commands
   now refuse after the five second wait instead of writing without it. `target`
   says the entry was not recorded; the sweep moves nothing.
 - The archive sweep never moves declared threads or protected handoffs and never
   renames over a document already in the archive.
-- `cli.js` rejects unknown flags and flags missing their value, and gains
+- `cli.js` rejects unknown flags and flags missing their value (an empty value
+  counts as missing), and gains
   `capabilities`, which both skills check before running.
 - The constraints scan applies its 500-handoff ceiling after filtering by scope.
 - `target` recognises the home directory however it is spelled (a trailing
@@ -26,6 +28,12 @@ One handoff per thread, for handoffs written from the home directory.
 - Threads are not supported where the home directory is itself a git checkout;
   `migrate plan` refuses there, and a thread list found in one is treated as
   invalid.
+- While `threads.json` cannot be read, `constraints` refuses for any folder
+  sharing the home directory's scope instead of listing a pool that may hold
+  every thread's rules.
+- A project whose folder name is a declared thread's gets its `HANDOFF.md` but
+  no index entry, and `/wrap` ends with `/pickup <path>`, which `/pickup` now
+  accepts.
 
 After updating, restart sessions in every host before running `migrate apply`.
 

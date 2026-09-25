@@ -162,6 +162,14 @@ function recordHandoff({ slug, target, kind, home = os.homedir(), now = Date.now
   // handoffs folder. Recording a handoff on a machine that has never had one is
   // the whole job, not a side effect of looking.
   return mutateIndex(home, (handoffs, save) => {
+    // Checked again under the lock. A caller reads the thread list before it
+    // gets here, and a thread of this name declared by another session in
+    // between would otherwise be shadowed by an entry pointing elsewhere.
+    const reg = registryMod.readRegistry(home);
+    const declared = reg.state === 'ok' ? registryMod.declaredBySlug(reg.registry, slug) : null;
+    if (declared && resolvePath(declared.path) !== resolvePath(target)) {
+      return { recorded: false, shadowed: true, reason: `"${slugify(slug)}" is a declared thread's name, so /pickup ${slugify(slug)} opens the thread; rename the folder to pick this project up by name` };
+    }
     handoffs[slugify(slug)] = { path: target, kind: kind || 'project', recorded_at: new Date(now).toISOString() };
     return save(handoffs)
       ? { recorded: true }
@@ -1434,6 +1442,9 @@ function carriedConstraints({
     // True when this pool is the home directory's own, which after migration
     // is history rather than binding.
     home: isHomeDir(cwd, home),
+    // True when this pool shares the home directory's scope, which is the one
+    // pool declared threads could have been counted into.
+    homeScope: want === scopeKey(home),
     // `invalid` means the thread list could not be read, so declared threads
     // may have been counted into this pool. Reported rather than guessed.
     registry: reg.state,

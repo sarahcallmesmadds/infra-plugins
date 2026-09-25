@@ -33,6 +33,24 @@ different question, so the result would look right and be wrong.
 
 ## Step 1: Find the handoff
 
+**If the argument is a path to a file rather than a name**, which is how `/wrap`
+ends for a project whose name belongs to a declared thread, skip `find`: the
+name would open the thread. Open the path with the Read tool. If the read fails,
+say nothing is there and stop. Otherwise it is a project handoff; carry on at
+Step 2, and in its constraints step use the path's own **Working directory:**
+line:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js constraints --cwd "<its Working directory>" --json
+```
+
+That is the older pooled answer for the project's own scope, which is what binds
+a project. If it answers with `refused`, say what it says and stop. If the file
+has no Working directory line, say so and stop rather than answering for the
+directory this session happens to be in.
+
+Otherwise the argument is a slug:
+
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js find "<slug>" --json
 ```
@@ -83,8 +101,10 @@ The same JSON says which kind of handoff this is.
   this subject. If the user takes it, start this pickup again with that slug.
 - **`listUncertain` is true.** The thread list cannot be read, and this
   handoff could be a thread, so which rules bind it cannot be told. Say so and
-  stop; the list needs fixing first. A repository's own `HANDOFF.md` is never
-  affected by this and carries on as below.
+  stop; the list needs fixing first. That includes a repository's own
+  `HANDOFF.md` whose name is also a central handoff's, because the name may
+  belong to a thread. A repository handoff with a name of its own is never
+  affected and carries on as below.
 - **Neither.** Threads are not set up here yet (`mode: "pre-migration"`), or this
   is a project handoff kept beside its work. Carry on as below.
 
