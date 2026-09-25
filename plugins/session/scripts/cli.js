@@ -503,7 +503,11 @@ const COMMANDS = {
       match = { ...match, history: true };
     }
     const stale = match || resolved.kind === 'thread' ? null : handoffs.staleRecord(slug, opts.home);
-    if ((resolved.kind === 'thread' && (!resolved.exists || resolved.unreadable)) || resolved.mode === 'invalid') process.exitCode = 1;
+    // A broken thread list only makes the answer uncertain for something that
+    // could be a thread: a project handoff never is.
+    const listUncertain = resolved.mode === 'invalid'
+      && (!match || threadsMod.couldBeThread(match.path, match.kind, opts.home));
+    if ((resolved.kind === 'thread' && (!resolved.exists || resolved.unreadable)) || listUncertain) process.exitCode = 1;
     if (opts.json) {
       return emit(opts, {
         slug,
@@ -511,6 +515,8 @@ const COMMANDS = {
         stale,
         tried: handoffs.searchPaths(slug, opts.home),
         mode: resolved.mode,
+        listUncertain,
+        unreadable: resolved.kind !== 'thread' && resolved.unreadable ? resolved.unreadable : null,
         thread: resolved.kind === 'thread'
           ? {
             slug: resolved.slug, path: resolved.path, exists: resolved.exists, unreadable: resolved.unreadable,
@@ -529,8 +535,12 @@ const COMMANDS = {
         `  kind: ${match.kind}, last touched ${age} day${age === 1 ? '' : 's'} ago`,
       ];
       if (match.history) lines.push('  Kept as history: threads are set up, and this handoff is not one, so it binds nothing.');
-      if (resolved.unreadable) lines.push('  This thread\'s file is there and cannot be read, so it cannot be picked up or saved.');
-      if (resolved.mode === 'invalid') lines.push('  The thread list cannot be read, so whether this is a declared thread is unknown.');
+      if (resolved.kind === 'thread' && resolved.unreadable) {
+        lines.push('  This thread\'s file is there and cannot be read, so it cannot be picked up or saved.');
+      } else if (resolved.unreadable) {
+        lines.push(`  This handoff is there and cannot be read: ${resolved.unreadable}`);
+      }
+      if (listUncertain) lines.push('  The thread list cannot be read, so whether this is a declared thread is unknown.');
       for (const c of resolved.conflicts || []) lines.push(`  Conflict: the index also gives this slug to ${c.indexed}.`);
       return emit(opts, {}, lines);
     }
@@ -538,6 +548,7 @@ const COMMANDS = {
     // project read as a handoff that never existed. The recorded path is the one
     // fact worth having here, because it says where to look.
     const lines = [`No handoff found for "${slug}".`];
+    if (listUncertain) lines.push('The thread list cannot be read, so a declared thread by this name cannot be ruled out.');
     if (stale) {
       // `unreachable` cannot tell a moved project from an unmounted volume, so
       // it names both rather than implying the one that happens to be rarer.
@@ -725,37 +736,28 @@ const COMMANDS = {
     // which is only ever written through `save`.
     const protection = configMod.loadProtection(opts.home);
     const reg = registryMod.readRegistry(opts.home);
-    // What is at the path now matters as much as where the session is. A
-    // session outside home can be handed the central path of an existing home
-    // handoff, and writing there would overwrite history that is never meant
-    // to be rewritten. A file that cannot be read is treated as home, which is
-    // the side that refuses.
+    // Project handoffs are never threads and are handed out as before. A
+    // central path is refused whenever it could involve a thread: while the
+    // thread list is broken (which paths are declared cannot be read), when
+    // the session is in the home directory (home handoffs are saved as
+    // threads), and when a file is already there that could be a thread or
+    // home history (see couldBeThread; what cannot be told counts as home).
     const fsMod = require('fs');
-    const homeCwd = t.kind === 'central' && handoffs.scopeKey(opts.cwd) === handoffs.scopeKey(opts.home);
-    let homeFile = false;
-    if (t.kind === 'central' && fsMod.existsSync(t.path)) {
-      try { homeFile = threadsMod.inHomeScope(fsMod.readFileSync(t.path, 'utf8'), opts.home); } catch (_) { homeFile = true; }
-    }
-    const homeWrite = homeCwd || homeFile;
+    const central = t.kind === 'central';
+    const homeCwd = central && threadsMod.isHomeDir(opts.cwd, opts.home);
+    const existingMaybeThread = central && fsMod.existsSync(t.path) && threadsMod.couldBeThread(t.path, t.kind, opts.home);
     let refusal = null;
     if (!protection.ok) refusal = `protected handoffs could not be read: ${protection.errors.join('; ')}`;
     else if (configMod.isProtected(protection, t.path, opts.home)) refusal = `${t.path} is protected`;
-    // A broken thread list only matters where threads could be involved. A
-    // project handoff, or a central one written and kept outside home, is
-    // handed out as before.
-    else if (reg.state === 'invalid' && homeWrite) refusal = `the thread list is invalid: ${reg.errors.join('; ')}`;
-    else if (reg.state === 'ok' && registryMod.declaredPaths(reg.registry).has(t.path)) {
+    else if (central && reg.state === 'invalid') {
+      refusal = `the thread list is invalid, so whether ${t.path} is a thread cannot be told: ${reg.errors.join('; ')}`;
+    } else if (central && reg.state === 'ok' && registryMod.declaredPaths(reg.registry).has(t.path)) {
       refusal = `${t.path} is a declared thread; write it with cli.js save --thread ${t.slug}`;
-    } else if (reg.state === 'ok' && homeWrite) {
-      // Once threads exist, a handoff written from the home directory is a
-      // thread or it is nothing, and an existing home handoff that is not a
-      // thread is history. Handing out either path produces a document that
-      // binds nothing, or overwrites one that must not change: exactly what a
-      // session still running the older skill would do without noticing.
-      refusal = homeFile && !homeCwd
-        ? `${t.path} is a home handoff kept as history and is never rewritten; choose another topic`
-        : 'threads are set up, so a handoff written from the home directory is saved as a thread: '
-          + 'cli.js save --thread <slug> (add --create for a new one)';
+    } else if (central && reg.state === 'ok' && (homeCwd || existingMaybeThread)) {
+      refusal = homeCwd
+        ? 'threads are set up, so a handoff written from the home directory is saved as a thread: '
+          + 'cli.js save --thread <slug> (add --create for a new one)'
+        : `${t.path} already exists and may be home history, which is never rewritten; choose another topic`;
     }
     if (refusal) {
       process.exitCode = 1;
@@ -818,7 +820,11 @@ const COMMANDS = {
       return emit(opts, {}, lines);
     }
     const lines = [`Saved ${result.path}`, `  rev ${result.rev.slice(0, 12)}`];
-    if (!result.indexUpdated) lines.push('  The index was not updated. The thread is still found by name.');
+    if (!result.indexUpdated) {
+      lines.push(result.indexConflict
+        ? `  The index was not updated: it records this slug for ${result.indexConflict}. cli.js find will report the conflict.`
+        : '  The index was not updated. The thread is still found by name.');
+    }
     if (opts.create && !result.declared) lines.push(`  Not yet declared as a thread: run cli.js declare ${result.slug}`);
     emit(opts, {}, lines);
   },

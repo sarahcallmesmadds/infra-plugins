@@ -81,6 +81,10 @@ The same JSON says which kind of handoff this is.
   older home handoff that is not one of them. It is kept as history and binds
   nothing. Say so, then run `cli.js threads` and offer the thread that covers
   this subject. If the user takes it, start this pickup again with that slug.
+- **`listUncertain` is true.** The thread list cannot be read, and this
+  handoff could be a thread, so which rules bind it cannot be told. Say so and
+  stop; the list needs fixing first. A repository's own `HANDOFF.md` is never
+  affected by this and carries on as below.
 - **Neither.** Threads are not set up here yet (`mode: "pre-migration"`), or this
   is a project handoff kept beside its work. Carry on as below.
 

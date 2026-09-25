@@ -869,7 +869,7 @@ check('a session outside home is not handed an existing home history handoff', (
   const before = snapshot(docPath(home, 'old-session'));
   const r = json(home, ['target', 'old session', '--cwd', notes]);
   assert.strictEqual(r.status, 1);
-  assert.match(r.body.refused, /kept as history/);
+  assert.match(r.body.refused, /may be home history/);
   assert.strictEqual(r.body.path, undefined);
   assert.deepStrictEqual(snapshot(docPath(home, 'old-session')), before);
 });
@@ -924,6 +924,140 @@ check('find says when the thread list cannot be read', () => {
   const r = run(home, ['find', 'old-session']);
   assert.strictEqual(r.status, 1);
   assert.match(r.stdout, /thread list cannot be read/);
+});
+
+// ------------------------------------------- persona review of 8abdb9e ----
+
+check('target treats an existing file with no Working directory line as home', () => {
+  const home = migrated();
+  const notes = path.join(home, 'notes');
+  fs.mkdirSync(notes);
+  fs.writeFileSync(docPath(home, 'old-notes'), '# Session Handoff\n\n## Constraints still in force\n- x\n');
+  const r = json(home, ['target', 'old notes', '--cwd', notes]);
+  assert.strictEqual(r.status, 1);
+  assert.strictEqual(r.body.path, undefined);
+});
+
+check('target treats an unreadable existing file as home', () => {
+  const home = migrated();
+  const notes = path.join(home, 'notes');
+  fs.mkdirSync(notes);
+  fs.chmodSync(docPath(home, 'old-session'), 0o000);
+  try {
+    const r = json(home, ['target', 'old session', '--cwd', notes]);
+    assert.strictEqual(r.status, 1);
+    assert.strictEqual(r.body.path, undefined);
+  } finally {
+    fs.chmodSync(docPath(home, 'old-session'), 0o644);
+  }
+});
+
+check('a broken thread list stops central target writes even outside home', () => {
+  const home = migrated();
+  const notes = path.join(home, 'notes');
+  fs.mkdirSync(notes);
+  fs.writeFileSync(path.join(dirOf(home), 'threads.json'), '{ not json');
+  const r = json(home, ['target', 'brand thread', '--cwd', notes]);
+  assert.strictEqual(r.status, 1, 'a declared thread path could be handed out while the list is unreadable');
+  assert.strictEqual(r.body.path, undefined);
+});
+
+check('find does not fail a project handoff because the thread list is broken', () => {
+  const home = migrated();
+  const repo = path.join(home, 'Projects', 'app4');
+  fs.mkdirSync(path.join(repo, '.git'), { recursive: true });
+  json(home, ['target', 'x', '--cwd', repo]);
+  fs.writeFileSync(path.join(repo, 'HANDOFF.md'), handoff(repo, ['R.']));
+  fs.writeFileSync(path.join(dirOf(home), 'threads.json'), '{ not json');
+  const r = json(home, ['find', 'app4']);
+  assert.strictEqual(r.status, 0, JSON.stringify(r.body));
+  assert.strictEqual(r.body.listUncertain, false);
+  assert.strictEqual(json(home, ['find', 'brand-thread']).body.listUncertain, true);
+});
+
+check('find does not call an unreadable non-thread a thread', () => {
+  const home = setUp();
+  fs.chmodSync(docPath(home, 'old-session'), 0o000);
+  try {
+    const r = json(home, ['find', 'old-session']);
+    assert.ok(r.body.unreadable, 'the JSON does not say it cannot be read');
+    assert.doesNotMatch(run(home, ['find', 'old-session']).stdout, /thread's file/);
+  } finally {
+    fs.chmodSync(docPath(home, 'old-session'), 0o644);
+  }
+});
+
+// The sweep checks protection and the thread list twice: once before taking
+// the lock and again inside it. Every other test trips the first check. These
+// make the second answer differ from the first, which is what happens when a
+// file changes while the sweep waits for another session's lock.
+function sweepWithSecondAnswer(home, stub) {
+  const out = spawnSync(process.execPath, ['-e', `
+    const cfg = require(${JSON.stringify(path.join(ROOT, 'scripts', 'config.js'))});
+    const reg = require(${JSON.stringify(path.join(ROOT, 'scripts', 'registry.js'))});
+    let calls = 0;
+    ${stub}
+    const h = require(${JSON.stringify(path.join(ROOT, 'scripts', 'handoffs.js'))});
+    process.stdout.write(JSON.stringify(h.archiveStale({ home: ${JSON.stringify(home)}, days: 30 })));
+  `], { encoding: 'utf8' });
+  return JSON.parse(out.stdout);
+}
+
+check('protection that breaks while the sweep waits for the lock stops it', () => {
+  const home = setUp();
+  const old = Date.now() - 90 * 86400000;
+  fs.utimesSync(docPath(home, 'old-session'), new Date(old), new Date(old));
+  const r = sweepWithSecondAnswer(home, `
+    const real = cfg.loadProtection;
+    cfg.loadProtection = (h) => (++calls === 1 ? real(h) : { ok: false, paths: [], errors: ['changed while waiting'] });`);
+  assert.match(String(r.refused), /changed while waiting/);
+  assert.deepStrictEqual(r.moved, []);
+  assert.ok(fs.existsSync(docPath(home, 'old-session')));
+});
+
+check('a thread list that breaks while the sweep waits for the lock stops it', () => {
+  const home = setUp();
+  const old = Date.now() - 90 * 86400000;
+  fs.utimesSync(docPath(home, 'old-session'), new Date(old), new Date(old));
+  const r = sweepWithSecondAnswer(home, `
+    const real = reg.readRegistry;
+    reg.readRegistry = (h) => (++calls === 1 ? real(h) : { state: 'invalid', registry: null, errors: ['changed while waiting'] });`);
+  assert.match(String(r.refused), /changed while waiting/);
+  assert.deepStrictEqual(r.moved, []);
+});
+
+// ------------------------------------------ Devin CLI round 4 and the app ----
+
+check('when home is a git checkout, a handoff from a folder inside it is not home', () => {
+  const home = tmpHome();
+  spawnSync('git', ['init', '-q'], { cwd: home });
+  const notes = path.join(home, 'notes');
+  fs.mkdirSync(notes);
+  write(home, [['brand-thread', handoff(home, ['B.'])]]);
+  const { planFile } = migrate(home, ['brand-thread']);
+  assert.strictEqual(apply(home, planFile).body.committed, true);
+  const draft = draftFor(home, handoff(notes, ['From notes.']));
+  const r = json(home, ['save', '--thread', 'notes-thread', '--from', draft, '--base', 'none', '--generation', String(registry(home).generation), '--create']);
+  assert.strictEqual(r.body.reason, 'out-of-scope', 'a draft from ~/notes was accepted as a home thread');
+  assert.strictEqual(json(home, ['target', 'notes work', '--cwd', notes]).status, 0, 'a notes wrap was refused as home');
+});
+
+check('declare re-checks the file under the lock', () => {
+  const t = require(path.join(ROOT, 'scripts', 'threads.js'));
+  const home = migrated();
+  // Removed between the first check and the lock: simulated by removing it
+  // inside the locked region, which is where the second check runs.
+  const h = require(path.join(ROOT, 'scripts', 'handoffs.js'));
+  const real = h.mutateIndex;
+  h.mutateIndex = (hm, fn, o) => real(hm, (...a) => { fs.rmSync(docPath(home, 'old-session')); return fn(...a); }, o);
+  try {
+    const r = t.declareThread({ slug: 'old-session', home });
+    assert.strictEqual(r.declared, false);
+    assert.strictEqual(r.reason, 'missing');
+  } finally {
+    h.mutateIndex = real;
+  }
+  assert.ok(!registry(home).threads.some((x) => x.slug === 'old-session'));
 });
 
 process.stdout.write(`\n${failures === 0 ? 'all passed' : `${failures} failed`}\n`);

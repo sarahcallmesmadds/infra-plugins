@@ -196,25 +196,11 @@ function release(lock) {
 // Returns `{ value, locked, reason }`. `reason` is 'acquired', 'reentrant',
 // 'busy' or 'unavailable'.
 //
-// Running `fn` even when the lock was not taken is deliberate, and it is the
-// one place this trades correctness for availability. The rule it serves is
-// written at `writeIndex`: losing the index degrades pickup to guessed paths,
-// and it must never take the wrap down, because the handoff itself is the
-// point. Refusing to write after a five second wait would fail the wrap to
-// protect an index that is a convenience.
-//
-// An unprotected write must not be silent about it, but the warning belongs to
-// the write and not to the region. It used to be printed here, up front, from
-// the lock answer alone. Every path through the gate reaches this line,
-// including the ones that only read: a dry run, or a sweep with nothing to move
-// and nothing to prune. Those printed "an entry may have been lost" after
-// changing nothing, which is not a warning, it is a false statement, and it is
-// the same contract the surrounding code enforces on `indexWritten`. Devin
-// round 2 on PR #109.
-//
-// So `warnUnprotectedWrite` is exported and called at the moment a write
-// actually happens without the lock. Once per region, because one write is one
-// warning however many nested calls made it.
+// `fn` runs whether or not the lock was taken, and is told which. The lock
+// does not decide what a caller does without it: every caller that writes
+// refuses in that case, and says so, because a handoff written beside another
+// session has no second copy. Keeping the decision with the caller is what
+// lets a read-only caller carry on while a writer stops.
 //
 // A caller that knows it cannot write says so with `readOnly`, and then no lock
 // is taken and nothing waits. That is what stops a preview stalling five
@@ -404,31 +390,8 @@ function lockLost(lock) {
   }
 }
 
-// Say that a write went ahead without the lock, at the moment it does.
-//
-// Called by the writer rather than by the region, because only the writer knows
-// a write happened. Once per region: one write is one warning, however many
-// nested calls contributed to it.
-//
-// Silent when the region holds the lock, obviously, and silent for
-// 'unavailable' too. That one means no lock could be created at all, usually a
-// directory that is not writable, in which case the index write is about to
-// fail and `indexWritten: false` reports it properly. Two messages for one
-// failure, one of them speculative, is worse than one.
-function warnUnprotectedWrite(lock) {
-  const region = regions.get(lock);
-  if (!region || region.reason !== 'busy' || region.warned) return false;
-  region.warned = true;
-  process.stderr.write(
-    `session: wrote the handoff index without the lock at ${lock}, after waiting ${WAIT_MS}ms. `
-    + 'Another session was writing at the same time, so an entry may have been lost.\n',
-  );
-  return true;
-}
-
 module.exports = {
   withIndexLock,
-  warnUnprotectedWrite,
   refreshLock,
   lockLost,
   REFRESH_MS,

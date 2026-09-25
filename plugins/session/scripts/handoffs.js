@@ -1345,6 +1345,11 @@ function carriedConstraints({
   // document that has not been read yet. Deciding it inline reported every
   // legitimate retirement as unmatched.
   for (const r of rows) {
+    // Keeps a held lock alive when this scan runs inside one, as migrate apply
+    // does. A scan of a large or networked folder can outlast the staleness
+    // threshold, and another session would then take the lock mid-apply.
+    // Costs nothing when no lock is held.
+    refreshLock(indexLockPath(home));
     if (threadPaths.has(r.path) || threadPaths.has(resolvePath(r.path))) continue;
     let text;
     // Listed but unreadable is not the same as absent, and a caller that has

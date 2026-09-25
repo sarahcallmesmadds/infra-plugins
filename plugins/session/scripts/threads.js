@@ -42,9 +42,40 @@ function homeScope(home) {
   return handoffs.scopeKey(home);
 }
 
+// Whether a handoff was written from the home directory itself. Compared as
+// real paths, not by `scopeKey`, which groups a repository's directories
+// together: where the home directory is itself a git checkout, that grouping
+// made a handoff from `~/notes` count as home, so it could be saved as a
+// thread and bind as one. Repository grouping stays where it is meant to be,
+// in the pooled rules of everything that is not a thread.
+function canonical(p) {
+  try { return fs.realpathSync(p); } catch (_) { return path.resolve(p); }
+}
+
+function isHomeDir(dir, home) {
+  return Boolean(dir) && canonical(dir) === canonical(home);
+}
+
 function inHomeScope(text, home) {
-  const dir = handoffs.handoffDir(text);
-  return Boolean(dir) && handoffs.scopeKey(dir) === homeScope(home);
+  return isHomeDir(handoffs.handoffDir(text), home);
+}
+
+// Whether a handoff could be a thread, which is the question every broken or
+// uncertain case comes down to. A project handoff kept beside its work never
+// is. A central one is ruled out only when its own document can be read and
+// names a working directory outside home. Anything that cannot be told, an
+// unreadable file or one with no Working directory line, counts as possibly a
+// thread, which is the side that refuses to write and refuses to call it
+// merely pooled.
+//
+// One rule, used by target, find and constraints alike. Handling each case
+// where it came up is how the three drifted apart.
+function couldBeThread(file, kind, home) {
+  if (kind === 'project') return false;
+  let text;
+  try { text = fs.readFileSync(file, 'utf8'); } catch (_) { return true; }
+  if (!handoffs.handoffDir(text)) return true;
+  return inHomeScope(text, home);
 }
 
 // The first sentence under "What was worked on", for the list a wrap picks a
@@ -205,14 +236,9 @@ function threadConstraints({ slug, home = os.homedir() }) {
     // The same goes for a central handoff whose own document says it was
     // written outside home: a thread never is.
     const found = handoffs.findHandoff(slug, home);
-    if (found) {
-      let text = null;
-      try { text = fs.readFileSync(found.path, 'utf8'); } catch (_) { /* cannot tell; refused below */ }
-      const outside = text !== null && handoffs.handoffDir(text) && !inHomeScope(text, home);
-      if (found.kind === 'project' || outside) {
-        const r = resolve(slug, home);
-        return { mode: 'pooled', kind: found.kind, path: found.path, dir: r.dir, unreadable: r.unreadable };
-      }
+    if (found && !couldBeThread(found.path, found.kind, home)) {
+      const r = resolve(slug, home);
+      return { mode: 'pooled', kind: found.kind, path: found.path, dir: r.dir, unreadable: r.unreadable };
     }
     return { mode: 'invalid', refused: 'registry-invalid', errors: reg.errors, path: registryMod.registryPath(home) };
   }
@@ -404,7 +430,8 @@ function saveThread({
     // Left alone when it names some other document that still exists: that
     // entry may be the only way to find it, and `resolve` reports the clash.
     let indexUpdated = false;
-    if (saved && !liveOtherEntry(indexed, target)) {
+    const indexConflict = liveOtherEntry(indexed, target) ? indexed.path : null;
+    if (saved && !indexConflict) {
       index[key] = { path: target, kind: 'central', recorded_at: new Date(now).toISOString() };
       indexUpdated = saveIndex(index);
     }
@@ -418,6 +445,10 @@ function saveThread({
       rev: written,
       previousRev: exists ? current : null,
       generation,
+      // Why the index was not updated, when that is the reason: the slug is
+      // recorded against another handoff, which `find` will report as a
+      // conflict. Said here, at the one moment it can still be dealt with.
+      indexConflict,
       ...(saved ? {} : { reason: 'verify-failed', detail: 'what is on disk is not the draft', draft: from }),
       ...(create && saved && !declaredOk
         ? { reason: 'not-declared-yet', detail: `saved, but not added to the thread list; run cli.js declare ${key}` }
@@ -445,6 +476,18 @@ function declareThread({ slug, home = os.homedir() }) {
   if (!inHomeScope(text, home)) return { declared: false, reason: 'out-of-scope', detail: target };
 
   return handoffs.mutateIndex(home, () => {
+    // The file is checked again under the lock: it may have been removed or
+    // rewritten while this waited, and declaring it anyway leaves a thread
+    // every later pickup refuses.
+    let now;
+    try { now = fs.readFileSync(target, 'utf8'); } catch (_) {
+      return { declared: false, reason: 'missing', detail: `${target} is not there` };
+    }
+    if (!inHomeScope(now, home)) return { declared: false, reason: 'out-of-scope', detail: target };
+    const protectionNow = config.loadProtection(home);
+    if (!protectionNow.ok || config.isProtected(protectionNow, target, home)) {
+      return { declared: false, reason: 'protected', detail: target };
+    }
     const reg = registryMod.readRegistry(home);
     if (reg.state !== 'ok') return { declared: false, reason: reg.state === 'absent' ? 'pre-migration' : 'registry-invalid', detail: reg.errors.join('; ') };
     if (registryMod.declaredBySlug(reg.registry, key)) return { declared: true, slug: key, path: target, already: true };
@@ -789,6 +832,8 @@ function migrateFinish({ home = os.homedir() } = {}) {
 module.exports = {
   rev,
   inHomeScope,
+  isHomeDir,
+  couldBeThread,
   resolve,
   listThreads,
   threadConstraints,

@@ -298,57 +298,6 @@ check('a directory that cannot hold a lock reports unavailable', () => {
   }
 });
 
-check('an unprotected write says so on stderr rather than passing quietly', () => {
-  const home = tmpHome();
-  const lock = handoffs.indexLockPath(home);
-
-  // Held by a live-looking owner in a child process, so the parent genuinely
-  // cannot take it and falls through to the unprotected path.
-  const child = spawnSync(process.execPath, ['-e', `
-    const fs = require('fs'), path = require('path');
-    const { withIndexLock, warnUnprotectedWrite } =
-      require(${JSON.stringify(path.join(ROOT, 'scripts', 'index-lock.js'))});
-    const lock = ${JSON.stringify(lock)};
-    fs.mkdirSync(path.dirname(lock), { recursive: true });
-    fs.mkdirSync(lock);
-    fs.writeFileSync(path.join(lock, 'owner'), 'somebody-else');
-    let warned = '', warnedTwice = false;
-    const r = withIndexLock(lock, () => {
-      // Nothing has written yet, so nothing should have been said yet.
-      const before = process.stderr.write;
-      process.stderr.write = (s) => { warned += s; return true; };
-      warnUnprotectedWrite(lock);                 // a write happens here
-      warnedTwice = warnUnprotectedWrite(lock);   // and the writer asks again
-      process.stderr.write = before;
-      return 'ran anyway';
-    });
-    process.stdout.write(JSON.stringify({
-      value: r.value, locked: r.locked, reason: r.reason, warned, warnedTwice,
-    }));
-  `], { encoding: 'utf8' });
-
-  const r = JSON.parse(child.stdout);
-  assert.strictEqual(r.value, 'ran anyway',
-    'the handoff itself is the point, so the write is not abandoned');
-  assert.strictEqual(r.locked, false, 'it does not claim a lock it never took');
-  assert.strictEqual(r.reason, 'busy');
-
-  // Silent until something writes. The warning belongs to the write, not to the
-  // region: every path through the gate reaches the region, including the ones
-  // that only read, and this body never wrote.
-  assert.ok(!/may have been lost/.test(child.stderr),
-    `a region that read and did not write has nothing to warn about. stderr was: ${child.stderr}`);
-
-  // And once a write does happen, it says so, once. The bytes a person actually
-  // sees, not the source that produces them.
-  assert.match(r.warned, /without the lock/,
-    'an unprotected write must not be silent, or a skip reads exactly like a pass');
-  assert.match(r.warned, /may have been lost/,
-    'and it names the consequence, not just the fact that something was skipped');
-  assert.strictEqual(r.warnedTwice, false,
-    'one write is one warning, however many times the writer asks');
-});
-
 check('a contended sweep waits once, then moves nothing', () => {
   // Devin round 1 on PR #109. The region was recorded only when the lock was
   // acquired, so a nested call inside a region that had already given up went
