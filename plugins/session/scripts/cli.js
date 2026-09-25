@@ -444,7 +444,7 @@ const COMMANDS = {
         lines.push(`Recorded ${r} ${plural(r, 'entry', 'entries')} for ${plural(r, 'a document', 'documents')} that had none:`);
         for (const d of result.recorded) lines.push(`  ${d.slug}`);
         const skipped = n - r;
-        if (skipped > 0) {
+        if (skipped > 0 && !result.refused) {
           lines.push(`  ${skipped} ${plural(skipped, 'was', 'were')} recorded by something else while this ran, and left alone.`);
         }
         lines.push('');
@@ -506,7 +506,8 @@ const COMMANDS = {
     // A broken thread list only makes the answer uncertain for something that
     // could be a thread: a project handoff never is.
     const listUncertain = resolved.mode === 'invalid'
-      && (!match || threadsMod.couldBeThread(match.path, match.kind, opts.home));
+      && (!match || threadsMod.couldBeThread(match.path, match.kind, opts.home)
+        || threadsMod.slugCouldBeThread(slug, opts.home));
     if ((resolved.kind === 'thread' && (!resolved.exists || resolved.unreadable)) || listUncertain) process.exitCode = 1;
     if (opts.json) {
       return emit(opts, {
@@ -515,6 +516,7 @@ const COMMANDS = {
         stale,
         tried: handoffs.searchPaths(slug, opts.home),
         mode: resolved.mode,
+        registryErrors: resolved.mode === 'invalid' ? resolved.errors : [],
         listUncertain,
         unreadable: resolved.kind !== 'thread' && resolved.unreadable ? resolved.unreadable : null,
         thread: resolved.kind === 'thread'
@@ -526,7 +528,10 @@ const COMMANDS = {
       }, []);
     }
     if (resolved.kind === 'thread' && !resolved.exists) {
-      return emit(opts, {}, [`${resolved.slug} is a declared thread, and its file ${resolved.path} is not there.`]);
+      return emit(opts, {}, [
+        `${resolved.slug} is a declared thread, and its file ${resolved.path} is not there.`,
+        ...(resolved.conflicts || []).map((c) => `The index also gives this slug to ${c.indexed}.`),
+      ]);
     }
     if (match) {
       const age = Math.round((Date.now() - match.mtime) / 86400000);
@@ -622,7 +627,7 @@ const COMMANDS = {
     // After migration the home pool is history. Every home thread binds only
     // its own file, so this list is shown for reference and says so first.
     const reg = registryMod.readRegistry(opts.home);
-    r.binding = !(reg.state === 'ok' && r.scope === handoffs.scopeKey(opts.home));
+    r.binding = !(reg.state === 'ok' && r.home);
     if (opts.json) return emit(opts, r, []);
     if (!r.binding) {
       process.stdout.write('History, not binding: home threads each bind only their own file. '
@@ -753,6 +758,11 @@ const COMMANDS = {
       refusal = `the thread list is invalid, so whether ${t.path} is a thread cannot be told: ${reg.errors.join('; ')}`;
     } else if (central && reg.state === 'ok' && registryMod.declaredPaths(reg.registry).has(t.path)) {
       refusal = `${t.path} is a declared thread; write it with cli.js save --thread ${t.slug}`;
+    } else if (!central && reg.state === 'ok' && registryMod.declaredBySlug(reg.registry, t.slug)) {
+      // A project named like a declared thread would be recorded under the
+      // thread's slug, and /pickup of that slug would then open the thread,
+      // not the project. Two things cannot answer to one name.
+      refusal = `this project's pickup slug "${t.slug}" is already a declared thread's; rename the folder, or pick the project up by its path`;
     } else if (central && reg.state === 'ok' && (homeCwd || existingMaybeThread)) {
       refusal = homeCwd
         ? 'threads are set up, so a handoff written from the home directory is saved as a thread: '

@@ -1060,5 +1060,62 @@ check('declare re-checks the file under the lock', () => {
   assert.ok(!registry(home).threads.some((x) => x.slug === 'old-session'));
 });
 
+// --------------------------------------- persona and Codex on 35ce31a ----
+
+function gitHomeMigrated() {
+  const home = tmpHome();
+  spawnSync('git', ['init', '-q'], { cwd: home });
+  const notes = path.join(home, 'notes');
+  fs.mkdirSync(notes);
+  write(home, [
+    ['home-history', handoff(home, ['Home history rule.'])],
+    ['notes-work', handoff(notes, ['Notes rule.'])],
+    ['brand-thread', handoff(home, ['B.'])],
+  ]);
+  const { planFile, manifest } = migrate(home, ['brand-thread']);
+  assert.strictEqual(apply(home, planFile).body.committed, true);
+  return { home, notes, manifest };
+}
+
+check('when home is a checkout, a notes handoff stays binding and takes no home history', () => {
+  const { home } = gitHomeMigrated();
+  const r = json(home, ['constraints', '--thread', 'notes-work']).body;
+  assert.notStrictEqual(r.binding, false, 'a notes pool was labelled history');
+  assert.deepStrictEqual(r.constraints.map((c) => c.text), ['Notes rule.']);
+});
+
+check('when home is a checkout, the plan does not count notes rules as lost', () => {
+  const { manifest } = gitHomeMigrated();
+  assert.deepStrictEqual(manifest.lost.map((l) => l.text), ['Home history rule.']);
+});
+
+check('a broken list does not let a project stand in for a thread of the same name', () => {
+  const home = migrated();
+  const repo = path.join(home, 'code', 'brand-thread');
+  fs.mkdirSync(path.join(repo, '.git'), { recursive: true });
+  setIndex(home, 'brand-thread', { path: path.join(repo, 'HANDOFF.md'), kind: 'project', recorded_at: '2026-01-01T00:00:00.000Z' });
+  fs.writeFileSync(path.join(repo, 'HANDOFF.md'), handoff(repo, ['Repo rule.']));
+  fs.writeFileSync(path.join(dirOf(home), 'threads.json'), '{ not json');
+  assert.strictEqual(json(home, ['find', 'brand-thread']).body.listUncertain, true);
+  assert.strictEqual(json(home, ['constraints', '--thread', 'brand-thread']).body.refused, 'registry-invalid');
+});
+
+check('target treats home spelled with a trailing slash as home', () => {
+  const home = migrated();
+  const r = json(home, ['target', 'x', '--cwd', `${home}/`]);
+  assert.strictEqual(r.status, 1);
+  assert.strictEqual(r.body.path, undefined);
+});
+
+check('a project named like a declared thread is not recorded under the thread slug', () => {
+  const home = migrated();
+  const repo = path.join(home, 'code', 'brand-thread');
+  fs.mkdirSync(path.join(repo, '.git'), { recursive: true });
+  const r = json(home, ['target', 'x', '--cwd', repo]);
+  assert.strictEqual(r.status, 1);
+  assert.match(r.body.refused, /already a declared thread/);
+  assert.strictEqual(json(home, ['find', 'brand-thread']).body.match.kind, 'thread');
+});
+
 process.stdout.write(`\n${failures === 0 ? 'all passed' : `${failures} failed`}\n`);
 process.exit(failures === 0 ? 0 : 1);

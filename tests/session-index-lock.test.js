@@ -362,7 +362,6 @@ check('a contended sweep waits once, then moves nothing', () => {
   assert.ok(elapsed < WAIT_MS * 2,
     `one contended sweep waits one deadline, not one per nested call. Took ${elapsed}ms `
     + `against a ${WAIT_MS}ms deadline, so it waited more than once.`);
-  assert.doesNotMatch(child.stderr, /without the lock/, 'nothing was written, so nothing warns about an unprotected write');
 });
 
 check('a nested call never lands on the other side of the lock from its caller', () => {

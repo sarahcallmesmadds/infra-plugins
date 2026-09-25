@@ -71,9 +71,19 @@ function memoryDir(cwd, home = os.homedir()) {
 // sessions do not scatter HANDOFF.md files across the home directory or,
 // worse, overwrite one another. That second failure is why the central path
 // is keyed by topic rather than being a single file.
+// Whether `dir` is the home directory itself, compared as real paths so a
+// trailing slash or a symlinked home is still home. Deliberately not `scopeKey`,
+// which groups every folder of a git checkout together: where home is itself a
+// checkout, that made `~/notes` count as home.
+function isHomeDir(dir, home = os.homedir()) {
+  if (!dir) return false;
+  const real = (p) => { try { return fs.realpathSync(p); } catch (_) { return path.resolve(p); } };
+  return real(dir) === real(home);
+}
+
 function writeTarget(cwd, topicSlug, home = os.homedir()) {
   const isProjectRoot = cwd
-    && cwd !== home
+    && !isHomeDir(cwd, home)
     && ['.git', 'package.json', '.planning', 'pyproject.toml', 'Cargo.toml', 'go.mod']
       .some((marker) => {
         try { return fs.existsSync(path.join(cwd, marker)); } catch (_) { return false; }
@@ -1318,9 +1328,20 @@ function nearDuplicateConstraints(constraints = []) {
 // document carrying it went quiet for 30 days, and archiving is driven by mtime
 // rather than by anything retiring it.
 function carriedConstraints({
-  cwd = process.cwd(), home = os.homedir(), limit = CONSTRAINT_SCAN_CAP, includeThreads = false,
+  cwd = process.cwd(), home = os.homedir(), limit = CONSTRAINT_SCAN_CAP, includeThreads = false, splitHome = null,
 } = {}) {
-  const want = scopeKey(cwd);
+  // Once threads exist the home directory is its own scope, separate from any
+  // git checkout it happens to be. Without that, where home is a checkout, a
+  // pool for `~/notes` took in home history (which binds nothing) and the home
+  // pool took in `~/notes` handoffs (which never became threads). Before
+  // migration the older grouping is kept exactly, so an upgrade alone changes
+  // nothing. The migration plan asks for the split explicitly, because it is
+  // describing the state after migration.
+  const reg = registryMod.readRegistry(home);
+  const split = splitHome === null ? reg.state === 'ok' : splitHome;
+  const HOME_KEY = `home:${home}`;
+  const keyFor = (dir) => (split && isHomeDir(dir, home) ? HOME_KEY : scopeKey(dir));
+  const want = keyFor(cwd);
   // Every document is looked at, and the ceiling applies to the ones that
   // belong to this scope. It used to apply first, across every project, so a
   // busy folder elsewhere could push this project's oldest carrier out of the
@@ -1337,7 +1358,6 @@ function carriedConstraints({
   // would make every save reorder that pool by modification time: a retirement
   // carried into a rewrite would suppress a rule restated elsewhere since, and
   // the reverse. Excluded here, once, rather than at each caller.
-  const reg = registryMod.readRegistry(home);
   const threadPaths = includeThreads ? new Set() : registryMod.declaredPaths(reg.registry);
 
   // Read everything first. Whether a retirement matched anything cannot be
@@ -1356,7 +1376,7 @@ function carriedConstraints({
     // to know it saw everything (the migration) needs the list.
     try { text = fs.readFileSync(r.path, 'utf8'); } catch (_) { unreadable.push(r.path); continue; }
     const dir = handoffDir(text);
-    const key = dir ? scopeKey(dir) : null;
+    const key = dir ? keyFor(dir) : null;
     const { live, retired } = bulletsIn(text);
     const matched = key === want;
     scanned.push({
@@ -1418,6 +1438,10 @@ function carriedConstraints({
     nearDuplicates: nearDuplicateConstraints(out),
     truncated,
     unreadable,
+    // True when this pool is the home directory's own, which after migration
+    // is history rather than binding. Decided by the split above, not by
+    // comparing scope keys, so a subfolder of a home checkout is never it.
+    home: split && want === HOME_KEY,
     // `invalid` means the thread list could not be read, so declared threads
     // may have been counted into this pool. Reported rather than guessed.
     registry: reg.state,
@@ -1442,6 +1466,7 @@ module.exports = {
   nearDuplicateConstraints,
   normalizeConstraint,
   resolvePath,
+  isHomeDir,
   lockReason,
   handoffRoot,
   archiveRoot,

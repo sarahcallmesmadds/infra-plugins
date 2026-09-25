@@ -86,18 +86,14 @@ function sameLock(a, b) {
 
 // Returns 'acquired', 'busy', or 'unavailable'.
 //
-// Three answers rather than two, because the two failures need different
-// handling and one boolean cannot tell them apart. 'busy' means somebody else
-// is writing right now and this write is going ahead beside theirs, which is
-// the dangerous case and gets said out loud. 'unavailable' means no lock could
-// be created at all, usually a directory that is not writable, in which case
-// the index write is about to fail too and `indexWritten: false` already
-// reports it. Warning about a lost race that nobody was in would be noise on
-// exactly the path that is already reporting a real failure.
+// Three answers rather than two, because the two failures mean different
+// things to the person told about them. 'busy' means somebody else is writing
+// right now, and waiting a moment will do. 'unavailable' means no lock could
+// be created at all, usually a directory that is not writable, and waiting will
+// not help. Either way the caller writes nothing.
 //
-// Never throws on contention. The caller's contract is that losing the index
-// must not take the wrap down, so a refusal here has to be something the
-// caller can carry on past rather than an exception through the middle of it.
+// Never throws on contention, so a caller can refuse in words rather than
+// crash part way through.
 function acquire(lock, now = Date.now) {
   const deadline = now() + WAIT_MS;
 
@@ -207,11 +203,7 @@ function release(lock) {
 // seconds behind another session's write.
 //
 // `fn` is handed `{ locked, reason }` for the region it runs in, including an
-// inherited one. That is what lets a caller refuse to write rather than accept
-// the trade-off above: the handoff index lets a write through unprotected, and
-// a handoff document must not, because a thread's one document has no second
-// copy to fall back on. Deciding inside `fn` rather than here keeps the lock
-// ignorant of which callers are which.
+// inherited one, which is how a caller knows to refuse.
 function exists(dir) {
   try { return fs.existsSync(dir); } catch (_) { return false; }
 }

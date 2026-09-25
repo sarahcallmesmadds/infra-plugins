@@ -28,7 +28,7 @@ const path = require('path');
 const handoffs = require('./handoffs');
 const registryMod = require('./registry');
 const config = require('./config');
-const { lockLost } = require('./index-lock');
+const { lockLost, refreshLock } = require('./index-lock');
 
 function rev(text) {
   return crypto.createHash('sha256').update(text).digest('hex');
@@ -48,13 +48,7 @@ function homeScope(home) {
 // made a handoff from `~/notes` count as home, so it could be saved as a
 // thread and bind as one. Repository grouping stays where it is meant to be,
 // in the pooled rules of everything that is not a thread.
-function canonical(p) {
-  try { return fs.realpathSync(p); } catch (_) { return path.resolve(p); }
-}
-
-function isHomeDir(dir, home) {
-  return Boolean(dir) && canonical(dir) === canonical(home);
-}
+const { isHomeDir } = handoffs;
 
 function inHomeScope(text, home) {
   return isHomeDir(handoffs.handoffDir(text), home);
@@ -71,11 +65,24 @@ function inHomeScope(text, home) {
 // One rule, used by target, find and constraints alike. Handling each case
 // where it came up is how the three drifted apart.
 function couldBeThread(file, kind, home) {
-  if (kind === 'project') return false;
+  // Kept beside its work, archived, or a pause note: none of these can ever be
+  // the file a thread is declared at.
+  if (kind === 'project' || kind === 'archived' || kind === 'pause') return false;
   let text;
   try { text = fs.readFileSync(file, 'utf8'); } catch (_) { return true; }
   if (!handoffs.handoffDir(text)) return true;
   return inHomeScope(text, home);
+}
+
+// The question asked of the name rather than of whatever file it resolves to.
+// A declared thread always lives at the central file named for its slug, and
+// the index can point that same slug at a project elsewhere. While the thread
+// list is broken, the project answer would otherwise stand in for the thread.
+function slugCouldBeThread(slug, home) {
+  const key = handoffs.slugify(slug);
+  if (!key) return false;
+  const central = path.join(handoffs.handoffRoot(home), `HANDOFF-${key}.md`);
+  return fs.existsSync(central) && couldBeThread(central, 'central', home);
 }
 
 // The first sentence under "What was worked on", for the list a wrap picks a
@@ -236,7 +243,7 @@ function threadConstraints({ slug, home = os.homedir() }) {
     // The same goes for a central handoff whose own document says it was
     // written outside home: a thread never is.
     const found = handoffs.findHandoff(slug, home);
-    if (found && !couldBeThread(found.path, found.kind, home)) {
+    if (found && !couldBeThread(found.path, found.kind, home) && !slugCouldBeThread(slug, home)) {
       const r = resolve(slug, home);
       return { mode: 'pooled', kind: found.kind, path: found.path, dir: r.dir, unreadable: r.unreadable };
     }
@@ -360,7 +367,14 @@ function saveThread({
     // Everything checked again under the lock, because every answer above was
     // given without it and another session may have changed any of them since.
     const reg = registryMod.readRegistry(home);
+    if (reg.state === 'absent') {
+      return refuse('pre-migration', 'the thread list was removed while this waited, so threads are not set up', { draft: from });
+    }
     if (reg.state !== 'ok') return refuse('registry-invalid', reg.errors.join('; '), { draft: from });
+    // Protection too: an entry added while this waited is honoured now.
+    const protectionNow = config.loadProtection(home);
+    if (!protectionNow.ok) return refuse('config-invalid', protectionNow.errors.join('; '), { draft: from });
+    if (config.isProtected(protectionNow, target, home)) return refuse('protected', `${target} is protected`, { draft: from });
     if (reg.registry.pending.length) {
       return refuse('migration-unfinished', 'a migration is part way through; run cli.js migrate finish first', { draft: from });
     }
@@ -485,9 +499,8 @@ function declareThread({ slug, home = os.homedir() }) {
     }
     if (!inHomeScope(now, home)) return { declared: false, reason: 'out-of-scope', detail: target };
     const protectionNow = config.loadProtection(home);
-    if (!protectionNow.ok || config.isProtected(protectionNow, target, home)) {
-      return { declared: false, reason: 'protected', detail: target };
-    }
+    if (!protectionNow.ok) return { declared: false, reason: 'config-invalid', detail: protectionNow.errors.join('; ') };
+    if (config.isProtected(protectionNow, target, home)) return { declared: false, reason: 'protected', detail: target };
     const reg = registryMod.readRegistry(home);
     if (reg.state !== 'ok') return { declared: false, reason: reg.state === 'absent' ? 'pre-migration' : 'registry-invalid', detail: reg.errors.join('; ') };
     if (registryMod.declaredBySlug(reg.registry, key)) return { declared: true, slug: key, path: target, already: true };
@@ -562,7 +575,7 @@ function migratePlan({ slugs, home = os.homedir(), now = Date.now() }) {
   }
   if (problems.length) return { ok: false, reason: 'bad-threads', detail: problems.join('\n') };
 
-  const before = handoffs.carriedConstraints({ cwd: home, home, includeThreads: true });
+  const before = handoffs.carriedConstraints({ cwd: home, home, includeThreads: true, splitHome: true });
   // A handoff that is listed and cannot be read is missing from both the rule
   // comparison and the fingerprint, so the plan would be approved against less
   // than is there. Refused rather than planned around.
@@ -783,6 +796,9 @@ function finishPendingLocked(home) {
   const failures = [];
   const protection = config.loadProtection(home);
   for (;;) {
+    // Each item is a read and two writes, and a long list can outlast the
+    // lock's staleness threshold without this.
+    refreshLock(handoffs.indexLockPath(home));
     const reg = registryMod.readRegistry(home);
     if (reg.state !== 'ok') {
       failures.push({ error: `the thread list cannot be read: ${reg.errors.join('; ')}` });
@@ -834,6 +850,7 @@ module.exports = {
   inHomeScope,
   isHomeDir,
   couldBeThread,
+  slugCouldBeThread,
   resolve,
   listThreads,
   threadConstraints,
