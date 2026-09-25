@@ -317,6 +317,23 @@ const COMMANDS = {
   // `target` adds entries and, until this existed, nothing removed one. An
   // entry whose project has since been deleted or moved stayed for good, and
   // clearing a single one meant hand-editing JSON.
+  // Moves a project's index entry off a name a thread has taken. migrate plan
+  // names this when a 0.8 index maps a thread's name to a project.
+  rekey(opts) {
+    const slug = opts.rest[0];
+    if (!slug) {
+      process.exitCode = 1;
+      if (opts.json) return emit(opts, { rekeyed: false, reason: 'no slug given' }, []);
+      return emit(opts, {}, ['Which one? Usage: cli.js rekey <slug>']);
+    }
+    const r = threadsMod.rekeyProject(slug, opts.home);
+    if (!r.rekeyed) process.exitCode = 1;
+    if (opts.json) return emit(opts, r, []);
+    return emit(opts, {}, [r.rekeyed
+      ? `Moved "${r.from}" to "${r.to}" for ${r.path}. Pick it up with /pickup ${r.to}.`
+      : `Not moved: ${r.reason}.`]);
+  },
+
   forget(opts) {
     const slug = opts.rest[0];
     if (!slug) {
@@ -836,7 +853,9 @@ const COMMANDS = {
       // A wrap writes to the path it is handed, and a central file that is a
       // symlink writes through to whatever it points at, a project's own
       // handoff included, whatever that document says it is.
-      refusal = `${t.path} is a symbolic link, and a wrap would write through it to another document; choose another topic`;
+      refusal = linkedCentral
+        ? `${t.path} is a symbolic link, and a wrap would write through it to another document; choose another topic`
+        : `${t.path} is a symbolic link into the handoffs folder, and a wrap would write over the handoff it points at; replace the link with a real file`;
     }
     else if (configMod.isProtected(protection, t.path, opts.home)) refusal = `${t.path} is protected`;
     else if (central && reg.state === 'invalid') {
@@ -864,13 +883,13 @@ const COMMANDS = {
     // its rules for every other folder in its repository (a worktree, a
     // subfolder, the main checkout), each patch for that opening the next.
     // Only if the alternative is taken as well does it fall back to a path.
-    const nameTaken = (s) => threadsMod.projectNameShadowed(s, opts.home)
-      || require('fs').existsSync(path.join(handoffs.handoffRoot(opts.home), `HANDOFF-${s}.md`));
     let key = t.slug;
-    if (!central && threadsMod.projectNameShadowed(t.slug, opts.home)) key = handoffs.slugify(`${t.slug}-project`);
-    const noKey = key !== t.slug && nameTaken(key);
+    if (!central && threadsMod.projectNameShadowed(t.slug, opts.home)) key = threadsMod.projectKey(t.slug, t.path, opts.home);
+    else if (!central && threadsMod.assignedElsewhere(t.slug, t.path, opts.home)) key = threadsMod.freeNumbered(t.slug, t.path, opts.home);
+    const noKey = key === null;
+    if (noKey) key = t.slug;
     if (noKey && !opts.noRecord) {
-      record = { recorded: false, shadowed: true, reason: `"${t.slug}" is a thread's name and "${key}" is taken too, so this project is picked up by its path` };
+      record = { recorded: false, shadowed: true, reason: `every name for "${t.slug}" is taken, so this project is picked up by its path` };
     } else if (!opts.noRecord) {
       record = handoffs.recordHandoff({ slug: key, target: t.path, kind: t.kind, home: opts.home });
     }

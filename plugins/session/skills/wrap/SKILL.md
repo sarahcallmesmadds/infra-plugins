@@ -647,7 +647,7 @@ outcome plainly, and the qualification arrives afterwards, where it is easy to
 skim past. A template that cannot be copied without deciding is better than a
 correct sentence below one that can.
 
-Where the handoff was saved, the `/pickup [slug]` line goes last, always, on
+Where the handoff was saved, the `/pickup` line goes last, always, on
 its own. It gets copied straight into the next session, so anything printed
 after it has to be scrolled past. In Codex the same slug is passed to the pickup
 skill by asking for it; say that in one line above the `/pickup` line, never

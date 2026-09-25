@@ -522,6 +522,21 @@ Before the migration, nothing changes. `constraints --thread` gives the older
 pooled answer for the handoff's own working directory, and `/wrap` writes the
 way it always has.
 
+### A project named like a thread
+
+`/pickup <name>` opens the thread, so a project whose folder has a thread's name
+is recorded in the index as `<name>-project` instead (or `-project-2` and on,
+if that is taken), and `/wrap` ends with that name. It stays in the index, which
+is how its worktrees and subfolders find its rules. A plain project whose
+folder name is already given to such a project gets a numbered name rather
+than taking it over.
+
+If an index from before threads maps a thread's name to a project, `migrate
+plan` refuses that name and says to run `cli.js rekey <name>`, which moves the
+entry to the project's own name. Forgetting the entry instead would leave the
+project out of every pool until its next wrap, and that wrap reads the pool
+before it records anything.
+
 ## Protected handoffs
 
 Handoffs nothing here may move or rewrite, named in `~/.claude/session.config.json`:

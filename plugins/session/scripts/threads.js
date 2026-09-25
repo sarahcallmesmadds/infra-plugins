@@ -109,6 +109,79 @@ function projectNameShadowed(slug, home) {
   return false;
 }
 
+// The index name for a project whose folder name is taken by a thread: the
+// first free one of `<name>-project`, `<name>-project-2`, ... A name is free
+// when no thread could be it, no central handoff has it, and the index does
+// not already point it at another live document. A folder really named
+// `<name>-project` took the name otherwise, and the two projects overwrote
+// each other's entry at every wrap, each losing its rules in turn. An entry
+// this project already holds is kept, so the name is stable across wraps.
+// The stem is cut before the suffix goes on: slugify's 60-character limit
+// cut the suffix off instead, which gave back the thread's own name.
+function projectKey(name, target, home = os.homedir(), index = handoffs.readIndex(home)) {
+  const base = handoffs.slugify(name);
+  const stem = base.slice(0, 60 - '-project-99'.length).replace(/-+$/, '');
+  const mine = new RegExp(`^${stem.replace(/[^a-z0-9]/g, '\\$&')}-project(-\\d+)?$`);
+  for (const [k, e] of Object.entries(index)) {
+    if (mine.test(k) && e && typeof e.path === 'string' && samePath(e.path, target)) return k;
+  }
+  const root = handoffs.handoffRoot(home);
+  for (let n = 1; n < 100; n += 1) {
+    const k = n === 1 ? `${stem}-project` : `${stem}-project-${n}`;
+    if (projectNameShadowed(k, home) || fs.existsSync(path.join(root, `HANDOFF-${k}.md`))) continue;
+    if (liveOtherEntry(index[k], target)) continue;
+    return k;
+  }
+  return null;
+}
+
+// Whether the index gives this name to a different project that holds it by
+// assignment rather than by its own folder name, which is what projectKey
+// hands out. A plain project named like that must not take it over, or the
+// assigned one drops out of every pool at the next wrap; it gets a numbered
+// name instead. Two folders that simply share a name still replace each
+// other's entry, exactly as in 0.8.
+function assignedElsewhere(key, target, home = os.homedir(), index = handoffs.readIndex(home)) {
+  const e = index[key];
+  if (!liveOtherEntry(e, target) || typeof e.path !== 'string') return false;
+  return handoffs.slugify(path.basename(path.dirname(e.path))) !== key;
+}
+
+function freeNumbered(key, target, home = os.homedir(), index = handoffs.readIndex(home)) {
+  const stem = key.slice(0, 60 - '-99'.length).replace(/-+$/, '');
+  for (let n = 2; n < 100; n += 1) {
+    const k = `${stem}-${n}`;
+    const e = index[k];
+    if (e && typeof e.path === 'string' && samePath(e.path, target)) return k;
+    if (liveOtherEntry(e, target) || projectNameShadowed(k, home)) continue;
+    if (fs.existsSync(path.join(handoffs.handoffRoot(home), `HANDOFF-${k}.md`))) continue;
+    return k;
+  }
+  return null;
+}
+
+// Moves a project's index entry off a name a thread has taken, onto its
+// `-project` name. The upgrade case: a 0.8 index already maps the name to the
+// project, migrate plan refuses the name while it does, and forgetting the
+// entry instead left the project in no pool until its next wrap, which reads
+// the pool before it records anything and so dropped every rule.
+function rekeyProject(slug, home = os.homedir()) {
+  const key = handoffs.slugify(slug);
+  return handoffs.mutateIndex(home, (index, saveIndex) => {
+    const entry = index[key];
+    if (!entry || typeof entry.path !== 'string') return { rekeyed: false, reason: `nothing is recorded for "${key}"` };
+    if (threadShaped(entry.path, home) || entry.path.startsWith(`${handoffs.handoffRoot(home)}${path.sep}`)) {
+      return { rekeyed: false, reason: `"${key}" is recorded for ${entry.path}, which is not a project handoff` };
+    }
+    const to = projectKey(key, entry.path, home, Object.fromEntries(Object.entries(index).filter(([k]) => k !== key)));
+    if (!to) return { rekeyed: false, reason: `no free name for ${entry.path}` };
+    const next = { ...index, [to]: entry };
+    delete next[key];
+    if (!saveIndex(next)) return { rekeyed: false, reason: 'the index could not be written' };
+    return { rekeyed: true, from: key, to, path: entry.path };
+  }, { refused: (reason) => ({ rekeyed: false, reason: handoffs.lockReason(reason) }) });
+}
+
 // The first sentence under "What was worked on", for the list a wrap picks a
 // thread from. Short on purpose: it is a label, not a summary.
 function subjectOf(text) {
@@ -622,7 +695,13 @@ function migratePlan({ slugs, home = os.homedir(), now = Date.now() }) {
     const key = handoffs.slugify(s);
     if (!found) { problems.push(`${s}: no handoff found`); continue; }
     if (path.dirname(found.path) !== root || found.kind !== 'central') {
-      problems.push(`${s}: ${found.path} is not an open central handoff (archived and project handoffs cannot be threads)`);
+      // A project the index knows by this name, from before threads existed:
+      // moving its entry keeps it in its pool, where forgetting it did not.
+      const indexedHere = handoffs.readIndex(home)[key];
+      const project = indexedHere && samePath(indexedHere.path, found.path) && !String(found.path).startsWith(`${root}${path.sep}`);
+      problems.push(project
+        ? `${s}: the index maps it to the project handoff ${found.path}; run cli.js rekey ${key} to move that entry to its own name, then plan again`
+        : `${s}: ${found.path} is not an open central handoff (archived and project handoffs cannot be threads)`);
       continue;
     }
     // The thread list only ever names the central file for a slug, so a slug
@@ -940,6 +1019,10 @@ module.exports = {
   couldBeThread,
   threadShaped,
   projectNameShadowed,
+  projectKey,
+  assignedElsewhere,
+  freeNumbered,
+  rekeyProject,
   slugCouldBeThread,
   resolve,
   listThreads,

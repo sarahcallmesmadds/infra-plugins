@@ -31,9 +31,10 @@ One handoff per thread, for handoffs written from the home directory.
 - While `threads.json` cannot be read, `constraints` refuses for any folder
   sharing the home directory's scope instead of listing a pool that may hold
   every thread's rules.
-- A project whose folder name is a thread's is indexed as `<name>-project`, and
-  `/wrap` ends with `/pickup <name>-project`. Only if that is taken too does it
-  end with `/pickup <path>`, which `/pickup` now accepts.
+- A project whose folder name is a thread's is indexed under the first free
+  `<name>-project` name, and `/wrap` ends with `/pickup` of that name. Only if
+  every such name is taken does it end with `/pickup <path>`, which `/pickup`
+  now accepts. `cli.js rekey <name>` moves a 0.8 entry off a thread's name.
 - `find` exits non-zero for any handoff it finds and cannot read, and for a
   missing slug; `forget` exits non-zero when the index could not be written.
 - `target` refuses a central path that is a symbolic link, and a project

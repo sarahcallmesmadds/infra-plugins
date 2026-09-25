@@ -1128,15 +1128,6 @@ check('a project named like a thread is given name-project as its pickup slug', 
   assert.strictEqual(json(home, ['target', 'x', '--cwd', repo]).body.pickupSlug, 'brand-thread-project');
 });
 
-check('with name-project taken as well, the project is picked up by its path', () => {
-  const home = migrated();
-  write(home, [['brand-thread-project', handoff(home, ['Taken.'])]]);
-  const repo = path.join(home, 'code', 'brand-thread');
-  fs.mkdirSync(path.join(repo, '.git'), { recursive: true });
-  const r = json(home, ['target', 'x', '--cwd', repo]).body;
-  assert.strictEqual(r.pickupSlug, null);
-  assert.strictEqual(r.recorded, false);
-});
 
 check('a symlinked home inside a checkout is caught', () => {
   const outer = tmpHome();
@@ -1604,6 +1595,68 @@ check('save on a declared thread whose file is a dangling link says unreadable, 
 check('forget with no slug is a usage error', () => {
   const home = migrated();
   assert.strictEqual(run(home, ['forget']).status, 1);
+});
+
+// -------------------------------------------- persona review of cbef693 ----
+
+check('a folder really named name-project does not take a thread-named project\'s entry', () => {
+  const home = migrated();
+  const a = path.join(home, 'code', 'brand-thread');
+  const b = path.join(home, 'Projects', 'brand-thread-project');
+  for (const d of [a, b]) fs.mkdirSync(path.join(d, '.git'), { recursive: true });
+  const ta = json(home, ['target', 'x', '--cwd', a]).body;
+  fs.writeFileSync(ta.path, handoff(a, ['Rule A.']));
+  const tb = json(home, ['target', 'x', '--cwd', b]).body;
+  fs.writeFileSync(tb.path, handoff(b, ['Rule B.']));
+  assert.notStrictEqual(ta.pickupSlug, tb.pickupSlug);
+  const again = json(home, ['target', 'x', '--cwd', a]).body;
+  assert.strictEqual(again.pickupSlug, ta.pickupSlug, 'the name is stable across wraps');
+  const texts = (cwd) => json(home, ['constraints', '--cwd', cwd]).body.constraints.map((c) => c.text);
+  assert.deepStrictEqual(texts(a), ['Rule A.']);
+  assert.deepStrictEqual(texts(b), ['Rule B.']);
+});
+
+check('with name-project taken by a central file, the next free name is used, not a path pickup', () => {
+  const home = migrated();
+  write(home, [['brand-thread-project', handoff(home, ['Taken.'])]]);
+  const repo = path.join(home, 'code', 'brand-thread');
+  fs.mkdirSync(path.join(repo, '.git'), { recursive: true });
+  const r = json(home, ['target', 'x', '--cwd', repo]).body;
+  assert.strictEqual(r.pickupSlug, 'brand-thread-project-2');
+  fs.writeFileSync(r.path, handoff(repo, ['Rule A.']));
+  assert.deepStrictEqual(json(home, ['constraints', '--cwd', repo]).body.constraints.map((c) => c.text), ['Rule A.']);
+});
+
+check('a sixty-character thread name still gets a project name of its own', () => {
+  const t = require(path.join(ROOT, 'scripts', 'threads.js'));
+  const home = migrated();
+  const long = 'a'.repeat(60);
+  write(home, [[long, handoff(home, ['L.'])]]);
+  const f = path.join(dirOf(home), 'threads.json');
+  const reg = JSON.parse(fs.readFileSync(f, 'utf8'));
+  reg.threads.push({ slug: long, path: docPath(home, long) });
+  fs.writeFileSync(f, JSON.stringify(reg));
+  const k = t.projectKey(long, path.join(home, 'code', long, 'HANDOFF.md'), home);
+  assert.ok(k && k !== long && k.length <= 60 && /-project$/.test(k), k);
+});
+
+check('rekey moves a 0.8 entry for a thread name onto the project name, and the plan then passes', () => {
+  const home = setUp();
+  const repo = path.join(home, 'code', 'brand-thread');
+  fs.mkdirSync(path.join(repo, '.git'), { recursive: true });
+  fs.writeFileSync(path.join(repo, 'HANDOFF.md'), handoff(repo, ['Rule A.']));
+  setIndex(home, 'brand-thread', { path: path.join(repo, 'HANDOFF.md'), kind: 'project', recorded_at: '2026-01-01T00:00:00.000Z' });
+  const refused = json(home, ['migrate', 'plan', '--threads', 'site-thread,brand-thread']);
+  assert.match(refused.body.detail, /cli\.js rekey brand-thread/);
+  // Before migration the name is not a thread yet, so rekey waits for a declared name.
+  const { planFile } = (() => {
+    const r = json(home, ['rekey', 'brand-thread']);
+    assert.strictEqual(r.body.rekeyed, true, JSON.stringify(r.body));
+    assert.strictEqual(r.body.to, 'brand-thread-project');
+    return migrate(home, ['site-thread', 'brand-thread']);
+  })();
+  assert.strictEqual(apply(home, planFile).body.committed, true);
+  assert.deepStrictEqual(json(home, ['constraints', '--cwd', repo]).body.constraints.map((c) => c.text), ['Rule A.']);
 });
 
 process.stdout.write(`\n${failures === 0 ? 'all passed' : `${failures} failed`}\n`);
