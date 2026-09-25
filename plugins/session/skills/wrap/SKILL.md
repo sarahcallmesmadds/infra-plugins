@@ -394,8 +394,8 @@ node "${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js target "<short topic>" --json
 ```
 
 It returns the path, the kind, and the slug `/pickup` will need. If it returns
-`refused` instead, stop and report it: the path is protected, or is a declared
-thread, and nothing may be written there this way. It also says when the entry
+`refused` instead, stop and report it: the path is protected, or the work
+belongs in a thread, and nothing may be written there this way. It also says when the entry
 was not recorded in the index (`recorded: false`); say that in the summary,
 because a project handoff kept outside the configured roots may then not be
 found by name. A directory

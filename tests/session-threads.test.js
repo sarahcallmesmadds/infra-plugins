@@ -725,7 +725,7 @@ check('after migration target will not hand out an existing history handoff', ()
   const home = migrated();
   const r = json(home, ['target', 'old session', '--cwd', home]);
   assert.strictEqual(r.status, 1);
-  assert.match(r.body.refused, /history/);
+  assert.match(r.body.refused, /saved as a thread/);
   assert.strictEqual(r.body.path, undefined);
 });
 
@@ -765,6 +765,98 @@ check('the constraints list says when a handoff could not be read', () => {
   } finally {
     fs.chmodSync(docPath(home, 'old-session'), 0o644);
   }
+});
+
+// ------------------------------------------------ Devin CLI round two ----
+
+check('after migration target refuses a brand-new home topic too', () => {
+  // A session still running the older skill calls target and writes whatever
+  // it is given. A new home path would be history the moment it was written.
+  const home = migrated();
+  const r = json(home, ['target', 'something new', '--cwd', home]);
+  assert.strictEqual(r.status, 1);
+  assert.strictEqual(r.body.path, undefined);
+});
+
+check('after migration target still hands out a central path for another directory', () => {
+  const home = migrated();
+  const elsewhere = path.join(home, 'notes');
+  fs.mkdirSync(elsewhere);
+  write(home, [['notes-work', handoff(elsewhere, ['x'])]]);
+  const r = json(home, ['target', 'notes work', '--cwd', elsewhere]);
+  assert.strictEqual(r.status, 0, JSON.stringify(r.body));
+  assert.strictEqual(r.body.path, docPath(home, 'notes-work'));
+});
+
+check('a broken thread list does not block a central handoff from another directory', () => {
+  const home = migrated();
+  const elsewhere = path.join(home, 'notes');
+  fs.mkdirSync(elsewhere);
+  write(home, [['notes-work', handoff(elsewhere, ['Notes rule.'])]]);
+  fs.writeFileSync(path.join(dirOf(home), 'threads.json'), '{ not json');
+  assert.deepStrictEqual(json(home, ['constraints', '--thread', 'notes-work']).body.constraints.map((c) => c.text), ['Notes rule.']);
+});
+
+check('an unreadable declared thread is called unreadable, not missing, and save refuses it plainly', () => {
+  const home = migrated();
+  const args = saveArgs(home, 'brand-thread', handoff(home, ['x']));
+  fs.chmodSync(docPath(home, 'brand-thread'), 0o000);
+  try {
+    assert.strictEqual(json(home, ['constraints', '--thread', 'brand-thread']).body.refused, 'declared-unreadable');
+    assert.match(run(home, ['threads']).stdout, /CANNOT BE READ/);
+    assert.strictEqual(json(home, args).body.reason, 'unreadable');
+  } finally {
+    fs.chmodSync(docPath(home, 'brand-thread'), 0o644);
+  }
+});
+
+check('a hand-edited plan with the wrong shape is refused, not crashed on', () => {
+  const home = setUp();
+  const planFile = path.join(home, 'plan.json');
+  fs.writeFileSync(planFile, JSON.stringify({ kind: 'session-threads-migration', version: 1, threads: [], lost: 'nope', gained: [] }));
+  const r = json(home, ['migrate', 'apply', planFile, '--accept-narrowing', '--confirm-sessions-restarted']);
+  assert.strictEqual(r.status, 1);
+  assert.strictEqual(r.body.reason, 'manifest');
+  assert.doesNotMatch(r.err, /TypeError/);
+});
+
+check('a new thread does not take a path another wrap has just recorded for itself', () => {
+  const home = migrated();
+  setIndex(home, 'samepath', { path: docPath(home, 'samepath'), kind: 'central', recorded_at: new Date().toISOString() });
+  const r = json(home, saveArgs(home, 'samepath', handoff(home, ['x']), { create: true, base: 'none' }));
+  assert.strictEqual(r.body.reason, 'name-taken');
+  assert.ok(!fs.existsSync(docPath(home, 'samepath')));
+});
+
+check('find says in plain text when a match is history', () => {
+  const home = migrated();
+  assert.match(run(home, ['find', 'old-session']).stdout, /Kept as history/);
+});
+
+// ----------------------------------------------------- Devin app round ----
+
+check('a dangling thread list symlink is invalid, not absent', () => {
+  const home = migrated();
+  const f = path.join(dirOf(home), 'threads.json');
+  fs.rmSync(f);
+  fs.symlinkSync(path.join(home, 'nowhere.json'), f);
+  assert.strictEqual(json(home, ['threads']).body.mode, 'invalid');
+  assert.strictEqual(run(home, ['archive']).status, 1, 'the sweep ran as if no threads were declared');
+});
+
+check('a dangling config symlink fails closed', () => {
+  const home = setUp();
+  fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+  fs.symlinkSync(path.join(home, 'nowhere.json'), path.join(home, '.claude', 'session.config.json'));
+  const old = Date.now() - 90 * 86400000;
+  fs.utimesSync(docPath(home, 'old-session'), new Date(old), new Date(old));
+  assert.strictEqual(run(home, ['archive']).status, 1);
+  assert.ok(fs.existsSync(docPath(home, 'old-session')));
+});
+
+check('the plain migration plan lists the rules, not only the counts', () => {
+  const home = setUp();
+  assert.match(run(home, ['migrate', 'plan', '--threads', 'site-thread,brand-thread']).stdout, /- Only in history\.\s+\(from old-session\)/);
 });
 
 process.stdout.write(`\n${failures === 0 ? 'all passed' : `${failures} failed`}\n`);

@@ -122,10 +122,10 @@ Two refusals stop the pickup rather than print a list:
 - `refused: "migration-unfinished"`: a migration is part way through. Show the
   rules in `pending` that are still to be written into this thread, say that no
   thread's rules are given until it finishes, and name `cli.js migrate finish`.
-- `refused: "registry-invalid"`, `"declared-missing"` or
-  `"declared-out-of-scope"`: the thread list cannot be read, names a file that
-  is not there, or names a file written outside the home directory. Say which
-  and stop.
+- `refused: "registry-invalid"`, `"declared-missing"`, `"declared-unreadable"`
+  or `"declared-out-of-scope"`: the thread list cannot be read, or names a file
+  that is not there, cannot be read, or was written outside the home directory.
+  Say which and stop.
 
 If the handoff's own `## Constraints still in force` section and the command
 disagree, show both and say which came from where. For a declared thread they

@@ -319,10 +319,8 @@ A lock abandoned by a session that died is taken over after 30 seconds, and says
 so on stderr, because it means somebody's write was interrupted.
 
 If the lock cannot be taken within five seconds, nothing is written, and the
-command says why. Until 0.9 the write went ahead without the lock and warned,
-on the grounds that losing an index entry is cheaper than failing a wrap. That
-stopped holding once a thread's one document is saved through the same gate: a
-document written beside another session has no second copy. So `target` reports
+command says why: a thread's one document is saved through the same gate, and a
+document written beside another session has no second copy. `target` reports
 that the entry was not recorded, the sweep reports it was skipped and moves
 nothing, and `save` refuses and keeps the draft.
 

@@ -128,6 +128,9 @@ function printThreadConstraints(opts, t) {
   if (t.refused === 'declared-out-of-scope') {
     return emit(opts, {}, [`${t.slug} is declared as a thread, but ${t.path} says it was written outside the home directory. Its rules are not read as binding; fix the thread list.`]);
   }
+  if (t.refused === 'declared-unreadable') {
+    return emit(opts, {}, [`${t.slug} is declared at ${t.path}, and that file could not be read: ${t.detail}`]);
+  }
   if (t.refused === 'declared-missing') {
     return emit(opts, {}, [`${t.slug} is declared at ${t.path}, and that file is not there.`]);
   }
@@ -515,10 +518,13 @@ const COMMANDS = {
     }
     if (match) {
       const age = Math.round((Date.now() - match.mtime) / 86400000);
-      return emit(opts, {}, [
+      const lines = [
         `${match.path}`,
         `  kind: ${match.kind}, last touched ${age} day${age === 1 ? '' : 's'} ago`,
-      ]);
+      ];
+      if (match.history) lines.push('  Kept as history: threads are set up, and this handoff is not one, so it binds nothing.');
+      for (const c of resolved.conflicts || []) lines.push(`  Conflict: the index also gives this slug to ${c.indexed}.`);
+      return emit(opts, {}, lines);
     }
     // A stale entry and no entry at all produced the same message, so a moved
     // project read as a handoff that never existed. The recorded path is the one
@@ -716,10 +722,14 @@ const COMMANDS = {
     else if (reg.state === 'invalid') refusal = `the thread list is invalid: ${reg.errors.join('; ')}`;
     else if (reg.state === 'ok' && registryMod.declaredPaths(reg.registry).has(t.path)) {
       refusal = `${t.path} is a declared thread; write it with cli.js save --thread ${t.slug}`;
-    } else if (reg.state === 'ok' && t.kind === 'central' && require('fs').existsSync(t.path)) {
-      // Once threads exist, an existing central handoff that is not declared is
-      // history, and history is never rewritten.
-      refusal = `${t.path} is an existing handoff kept as history; choose another topic, or write a thread with cli.js save`;
+    } else if (reg.state === 'ok' && t.kind === 'central' && handoffs.scopeKey(opts.cwd) === handoffs.scopeKey(opts.home)) {
+      // Once threads exist, a handoff written from the home directory is a
+      // thread or it is nothing. Handing out a plain path here, new or existing,
+      // produces a document that binds nothing: exactly what a session still
+      // running the older skill would do without noticing. Central handoffs
+      // from other directories keep the older behaviour.
+      refusal = 'threads are set up, so a handoff written from the home directory is saved as a thread: '
+        + 'cli.js save --thread <slug> (add --create for a new one)';
     }
     if (refusal) {
       process.exitCode = 1;
@@ -757,7 +767,7 @@ const COMMANDS = {
     }
     const lines = [`${r.threads.length} thread${r.threads.length === 1 ? '' : 's'}, generation ${r.generation}:`];
     for (const t of r.threads) {
-      lines.push(`  ${t.slug}${t.exists ? '' : '  (FILE MISSING)'}`);
+      lines.push(`  ${t.slug}${t.exists ? (t.unreadable ? '  (CANNOT BE READ)' : '') : '  (FILE MISSING)'}`);
       if (t.subject) lines.push(`      ${t.subject}`);
     }
     if (r.pending) lines.push('', `A migration is part way through: run cli.js migrate finish.`);
@@ -805,7 +815,14 @@ const COMMANDS = {
       }
       // The only file this ever writes, and only where it is told to. The plan
       // is the document a person fills in, so it has to be somewhere they chose.
-      if (opts.out) fs.writeFileSync(opts.out, `${JSON.stringify(r.manifest, null, 2)}\n`);
+      if (opts.out) {
+        try {
+          fs.writeFileSync(opts.out, `${JSON.stringify(r.manifest, null, 2)}\n`);
+        } catch (e) {
+          process.exitCode = 1;
+          return emit(opts, { ok: false, reason: 'out', detail: e.message }, [`Could not write the plan to ${opts.out}: ${e.message}`]);
+        }
+      }
       if (opts.json) return emit(opts, r.manifest, []);
       const m = r.manifest;
       const lines = [
@@ -815,7 +832,11 @@ const COMMANDS = {
         ...m.perThread.map((p) => `  ${p.slug}: ${p.bindingToday} -> ${p.bindingAfter}`),
         '',
         `${m.lost.length} rule${m.lost.length === 1 ? '' : 's'} bind today and are in no thread. Each needs retire, shared:done, or thread:<slug>.`,
+        ...m.lost.map((r) => `  - ${r.text}  (from ${r.from})`),
+        '',
         `${m.gained.length} rule${m.gained.length === 1 ? '' : 's'} would start binding. Each needs keep or drop.`,
+        ...m.gained.map((r) => `  + ${r.text}  (in ${r.threads.join(', ')})`),
+        '',
       ];
       lines.push(opts.out ? `Plan written to ${opts.out}. Fill in each disposition, then run migrate apply.`
         : 'Nothing written. Rerun with --out <file> to save the plan for review.');
@@ -829,7 +850,10 @@ const COMMANDS = {
       if (opts.json) return emit(opts, r, []);
       if (!r.committed) return emit(opts, {}, [`Not applied (${r.reason}):`, ...String(r.detail).split('\n').map((l) => `  ${l}`)]);
       const lines = [`Threads declared, generation ${r.generation}. ${r.applied.length} rule change${r.applied.length === 1 ? '' : 's'} written into threads.`];
-      if (r.failures.length) lines.push(`Stopped with ${r.remaining} still pending: ${r.failures[0].error}`, 'Run cli.js migrate finish once that is fixed.');
+      if (r.failures.length) {
+        lines.push(`Stopped with ${r.remaining === null ? 'an unknown number' : r.remaining} still pending: ${r.failures[0].error}`,
+          'Run cli.js migrate finish once that is fixed.');
+      }
       return emit(opts, {}, lines);
     }
     if (sub === 'finish') {

@@ -581,7 +581,6 @@ function archiveStale({ days = DEFAULT_STALE_DAYS, home = os.homedir(), now = Da
       refused: `the thread list at ${registryMod.registryPath(home)} is invalid: ${reg.errors.join('; ')}`,
     };
   }
-  const threadPaths = registryMod.declaredPaths(reg.registry);
   const protectedSkipped = [];
   const collisions = [];
 
@@ -628,6 +627,14 @@ function archiveStale({ days = DEFAULT_STALE_DAYS, home = os.homedir(), now = Da
   // Moving, repointing and pruning are one change to one thing, so they are one
   // region.
   const { dropped, unreachable, pending, written, lockSkipped } = mutateIndex(home, (handoffs, save) => {
+    // The thread list is read again inside the lock. Read before it, a sweep
+    // that waited behind a migration saw the list from before that migration
+    // and could archive a thread it had just declared.
+    const regNow = registryMod.readRegistry(home);
+    if (regNow.state === 'invalid') {
+      return { dropped: [], unreachable: [], pending: [], written: true, lockSkipped: `the thread list became invalid: ${regNow.errors.join('; ')}` };
+    }
+    const threadPaths = registryMod.declaredPaths(regNow.registry);
     for (const name of entries) {
       if (!name.startsWith('HANDOFF-') || !name.endsWith('.md')) continue;
       const from = path.join(root, name);

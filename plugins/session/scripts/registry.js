@@ -48,6 +48,10 @@ function canonicalPath(p) {
   try { return fs.realpathSync(absolute); } catch (_) { return absolute; }
 }
 
+function existsAsLink(p) {
+  try { fs.lstatSync(p); return true; } catch (_) { return false; }
+}
+
 function validate(raw, home = null) {
   const errors = [];
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return ['not a JSON object'];
@@ -90,7 +94,10 @@ function readRegistry(home = os.homedir()) {
   try {
     text = fs.readFileSync(registryPath(home), 'utf8');
   } catch (e) {
-    if (e && e.code === 'ENOENT') return { state: 'absent', registry: null, errors: [] };
+    // ENOENT alone is not "no thread list". A symlink whose target is gone
+    // reads the same way, and treating it as absent would quietly switch every
+    // thread protection off, so only a path with nothing at it counts.
+    if (e && e.code === 'ENOENT' && !existsAsLink(registryPath(home))) return { state: 'absent', registry: null, errors: [] };
     return { state: 'invalid', registry: null, errors: [`could not be read: ${e.message}`] };
   }
   let raw;

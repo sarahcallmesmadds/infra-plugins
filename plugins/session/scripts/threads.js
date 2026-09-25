@@ -165,11 +165,15 @@ function listThreads(home = os.homedir()) {
   const threads = reg.registry.threads.map((t) => {
     let text = null;
     let mtime = null;
-    try { text = fs.readFileSync(t.path, 'utf8'); mtime = fs.statSync(t.path).mtimeMs; } catch (_) { /* missing */ }
+    let unreadable = null;
+    try { text = fs.readFileSync(t.path, 'utf8'); mtime = fs.statSync(t.path).mtimeMs; } catch (e) {
+      if (!(e && e.code === 'ENOENT')) unreadable = e.message;
+    }
     return {
       slug: t.slug,
       path: t.path,
-      exists: text !== null,
+      exists: text !== null || unreadable !== null,
+      unreadable,
       rev: text === null ? null : rev(text),
       mtime,
       subject: text === null ? null : subjectOf(text),
@@ -194,10 +198,17 @@ function threadConstraints({ slug, home = os.homedir() }) {
     // A project handoff kept beside its work can never be a thread, so a
     // broken thread list is no reason to withhold its answer. Anything that
     // might be a thread is refused, because which it is cannot be read.
+    // The same goes for a central handoff whose own document says it was
+    // written outside home: a thread never is.
     const found = handoffs.findHandoff(slug, home);
-    if (found && found.kind === 'project') {
-      const r = resolve(slug, home);
-      return { mode: 'pooled', kind: 'project', path: found.path, dir: r.dir, unreadable: r.unreadable };
+    if (found) {
+      let text = null;
+      try { text = fs.readFileSync(found.path, 'utf8'); } catch (_) { /* cannot tell; refused below */ }
+      const outside = text !== null && handoffs.handoffDir(text) && !inHomeScope(text, home);
+      if (found.kind === 'project' || outside) {
+        const r = resolve(slug, home);
+        return { mode: 'pooled', kind: found.kind, path: found.path, dir: r.dir, unreadable: r.unreadable };
+      }
     }
     return { mode: 'invalid', refused: 'registry-invalid', errors: reg.errors, path: registryMod.registryPath(home) };
   }
@@ -227,8 +238,14 @@ function threadConstraints({ slug, home = os.homedir() }) {
     return { mode: 'pooled', kind: r.kind, path: r.path, dir: r.dir, unreadable: r.unreadable };
   }
   let text;
-  try { text = fs.readFileSync(declared.path, 'utf8'); } catch (_) {
-    return { mode: 'threads', refused: 'declared-missing', path: declared.path, slug: declared.slug };
+  try { text = fs.readFileSync(declared.path, 'utf8'); } catch (e) {
+    return {
+      mode: 'threads',
+      refused: e && e.code === 'ENOENT' ? 'declared-missing' : 'declared-unreadable',
+      path: declared.path,
+      slug: declared.slug,
+      detail: e.message,
+    };
   }
   // A declared thread whose document says it was written somewhere other than
   // home is a hand edit that makes a project's rules look like a thread's.
@@ -288,7 +305,9 @@ function saveThread({
   if (!draft.trim()) return refuse('draft-missing', `the draft at ${from} is empty`);
   if (!inHomeScope(draft, home)) {
     return refuse('out-of-scope',
-      'threads are for handoffs written from the home directory; the draft\'s **Working directory:** line names somewhere else',
+      handoffs.handoffDir(draft)
+        ? 'threads are for handoffs written from the home directory; the draft\'s **Working directory:** line names somewhere else'
+        : 'the draft has no **Working directory:** line, and a thread\'s must name the home directory',
       { draft: from });
   }
 
@@ -331,10 +350,17 @@ function saveThread({
     // The index is the only record of where a project handoff kept outside the
     // configured roots went. A new thread must not take its slug and cut it off.
     const indexed = index[key];
-    if (create && liveOtherEntry(indexed, target)) {
+    // For a new thread any live entry is a claim, including one for this very
+    // path: a wrap that recorded it moments ago and has not written yet would
+    // otherwise write over the thread as soon as it finished.
+    const claimed = indexed && indexed.path && handoffs.entryState(indexed) !== 'gone';
+    if (create && claimed) {
       return refuse('name-taken', `${key} already names ${indexed.path}; choose another name`, { draft: from });
     }
     const current = exists ? fileRev(target) : 'none';
+    // Present and unreadable is its own answer. Reported as a conflict it told
+    // the wrap to re-read and merge a file nobody can read.
+    if (current === null) return refuse('unreadable', `${target} is there and could not be read`, { draft: from });
     if (current !== base) {
       return refuse('conflict',
         'the thread changed since this session read it; re-read it, merge this session into it, and save again',
@@ -538,6 +564,26 @@ function migratePlan({ slugs, home = os.homedir(), now = Date.now() }) {
 const LOST_OK = /^(retire|shared:done|thread:[a-z0-9-]+)$/;
 const GAINED_OK = /^(keep|drop)$/;
 
+function checkShape(manifest) {
+  const problems = [];
+  for (const k of ['threads', 'lost', 'gained']) {
+    if (!Array.isArray(manifest[k])) problems.push(`${k} must be a list`);
+  }
+  if (problems.length) return problems;
+  manifest.threads.forEach((t, i) => {
+    if (!t || typeof t.slug !== 'string' || typeof t.path !== 'string') problems.push(`thread ${i + 1} needs a slug and a path`);
+  });
+  manifest.lost.forEach((r, i) => {
+    if (!r || typeof r.text !== 'string') problems.push(`lost ${i + 1} has no text`);
+  });
+  manifest.gained.forEach((r, i) => {
+    if (!r || typeof r.text !== 'string') problems.push(`gained ${i + 1} has no text`);
+    else if (!Array.isArray(r.threads) || !r.threads.every((x) => typeof x === 'string')) problems.push(`gained ${i + 1} has no list of threads`);
+  });
+  if (typeof manifest.fingerprint !== 'string') problems.push('fingerprint is missing');
+  return problems;
+}
+
 function checkDispositions(manifest) {
   const problems = [];
   const slugs = new Set(manifest.threads.map((t) => t.slug));
@@ -581,6 +627,10 @@ function migrateApply({
   if (!manifest || manifest.kind !== MANIFEST_KIND || manifest.version !== 1) {
     return { committed: false, reason: 'manifest', detail: `${manifestPath} is not a migration plan` };
   }
+  // Shape first, so a hand-edited plan is refused in words rather than
+  // crashing inside the locked region.
+  const shape = checkShape(manifest);
+  if (shape.length) return { committed: false, reason: 'manifest', detail: shape.join('\n') };
   const problems = checkDispositions(manifest);
   if (problems.length) return { committed: false, reason: 'dispositions', detail: problems.join('\n') };
 

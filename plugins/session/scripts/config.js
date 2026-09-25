@@ -198,7 +198,12 @@ function loadProtection(home = os.homedir()) {
   try {
     text = fs.readFileSync(configPath(home), 'utf8');
   } catch (e) {
-    if (e && e.code === 'ENOENT') return { ok: true, paths: [], errors: [] };
+    // A dangling symlink also reports ENOENT, and reading it as "no config"
+    // would withdraw every protection it names. Only a path with nothing at it
+    // is absent.
+    let link = false;
+    try { fs.lstatSync(configPath(home)); link = true; } catch (_) { /* nothing there */ }
+    if (e && e.code === 'ENOENT' && !link) return { ok: true, paths: [], errors: [] };
     return { ok: false, paths: [], errors: [`${configPath(home)} could not be read: ${e.message}`] };
   }
   let raw;
