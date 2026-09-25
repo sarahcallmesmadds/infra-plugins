@@ -1328,19 +1328,13 @@ function nearDuplicateConstraints(constraints = []) {
 // document carrying it went quiet for 30 days, and archiving is driven by mtime
 // rather than by anything retiring it.
 function carriedConstraints({
-  cwd = process.cwd(), home = os.homedir(), limit = CONSTRAINT_SCAN_CAP, includeThreads = false, splitHome = null,
+  cwd = process.cwd(), home = os.homedir(), limit = CONSTRAINT_SCAN_CAP, includeThreads = false,
 } = {}) {
-  // Once threads exist the home directory is its own scope, separate from any
-  // git checkout it happens to be. Without that, where home is a checkout, a
-  // pool for `~/notes` took in home history (which binds nothing) and the home
-  // pool took in `~/notes` handoffs (which never became threads). Before
-  // migration the older grouping is kept exactly, so an upgrade alone changes
-  // nothing. The migration plan asks for the split explicitly, because it is
-  // describing the state after migration.
+  // Grouping is by `scopeKey` throughout. Threads are not supported where the
+  // home directory is itself a git checkout (see registry.js), so the home
+  // scope and the home directory are the same thing wherever threads exist.
   const reg = registryMod.readRegistry(home);
-  const split = splitHome === null ? reg.state === 'ok' : splitHome;
-  const HOME_KEY = `home:${home}`;
-  const keyFor = (dir) => (split && isHomeDir(dir, home) ? HOME_KEY : scopeKey(dir));
+  const keyFor = (dir) => scopeKey(dir);
   const want = keyFor(cwd);
   // Every document is looked at, and the ceiling applies to the ones that
   // belong to this scope. It used to apply first, across every project, so a
@@ -1439,9 +1433,8 @@ function carriedConstraints({
     truncated,
     unreadable,
     // True when this pool is the home directory's own, which after migration
-    // is history rather than binding. Decided by the split above, not by
-    // comparing scope keys, so a subfolder of a home checkout is never it.
-    home: split && want === HOME_KEY,
+    // is history rather than binding.
+    home: isHomeDir(cwd, home),
     // `invalid` means the thread list could not be read, so declared threads
     // may have been counted into this pool. Reported rather than guessed.
     registry: reg.state,

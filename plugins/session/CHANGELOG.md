@@ -21,6 +21,11 @@ One handoff per thread, for handoffs written from the home directory.
 - `cli.js` rejects unknown flags and flags missing their value, and gains
   `capabilities`, which both skills check before running.
 - The constraints scan applies its 500-handoff ceiling after filtering by scope.
+- `target` recognises the home directory however it is spelled (a trailing
+  slash, a symlinked home), so it no longer writes a `HANDOFF.md` into home.
+- Threads are not supported where the home directory is itself a git checkout;
+  `migrate plan` refuses there, and a thread list found in one is treated as
+  invalid.
 
 After updating, restart sessions in every host before running `migrate apply`.
 

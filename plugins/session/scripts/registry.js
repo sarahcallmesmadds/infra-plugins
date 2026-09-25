@@ -48,6 +48,16 @@ function canonicalPath(p) {
   try { return fs.realpathSync(absolute); } catch (_) { return absolute; }
 }
 
+function homeIsCheckout(home) {
+  let dir = home;
+  for (;;) {
+    try { if (fs.existsSync(path.join(dir, '.git'))) return true; } catch (_) { /* keep looking */ }
+    const up = path.dirname(dir);
+    if (up === dir) return false;
+    dir = up;
+  }
+}
+
 function existsAsLink(p) {
   try { fs.lstatSync(p); return true; } catch (_) { return false; }
 }
@@ -105,6 +115,10 @@ function readRegistry(home = os.homedir()) {
     return { state: 'invalid', registry: null, errors: [`is not valid JSON: ${e.message}`] };
   }
   const errors = validate(raw, home);
+  // A thread list in a home directory that has since become a git checkout is
+  // not trusted: see threads.js migratePlan. Treated as invalid, so every
+  // write refuses and nothing guesses.
+  if (!errors.length && homeIsCheckout(home)) errors.push('the home directory is a git checkout, which threads do not support');
   if (errors.length) return { state: 'invalid', registry: null, errors };
   return { state: 'ok', registry: { ...raw, pending: raw.pending || [] }, errors: [] };
 }

@@ -758,11 +758,6 @@ const COMMANDS = {
       refusal = `the thread list is invalid, so whether ${t.path} is a thread cannot be told: ${reg.errors.join('; ')}`;
     } else if (central && reg.state === 'ok' && registryMod.declaredPaths(reg.registry).has(t.path)) {
       refusal = `${t.path} is a declared thread; write it with cli.js save --thread ${t.slug}`;
-    } else if (!central && reg.state === 'ok' && registryMod.declaredBySlug(reg.registry, t.slug)) {
-      // A project named like a declared thread would be recorded under the
-      // thread's slug, and /pickup of that slug would then open the thread,
-      // not the project. Two things cannot answer to one name.
-      refusal = `this project's pickup slug "${t.slug}" is already a declared thread's; rename the folder, or pick the project up by its path`;
     } else if (central && reg.state === 'ok' && (homeCwd || existingMaybeThread)) {
       refusal = homeCwd
         ? 'threads are set up, so a handoff written from the home directory is saved as a thread: '
@@ -777,7 +772,13 @@ const COMMANDS = {
       return emit(opts, {}, [`Not handed out: ${refusal}`]);
     }
     let record = null;
-    if (!opts.noRecord) {
+    // A project named like a declared thread still gets its handoff; only the
+    // index entry is skipped, because /pickup of that name opens the thread
+    // and an entry pointing elsewhere would be reported as a conflict forever.
+    const shadowsThread = !central && reg.state === 'ok' && registryMod.declaredBySlug(reg.registry, t.slug);
+    if (shadowsThread) {
+      record = { recorded: false, reason: `"${t.slug}" is a declared thread's name, so /pickup ${t.slug} opens the thread; rename the folder to pick this project up by name` };
+    } else if (!opts.noRecord) {
       record = handoffs.recordHandoff({ slug: t.slug, target: t.path, kind: t.kind, home: opts.home });
     }
     if (opts.json) return emit(opts, { ...t, recorded: record ? record.recorded : false, recordReason: record && record.reason }, []);

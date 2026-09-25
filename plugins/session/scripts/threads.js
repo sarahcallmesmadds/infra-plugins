@@ -242,8 +242,16 @@ function threadConstraints({ slug, home = os.homedir() }) {
     // might be a thread is refused, because which it is cannot be read.
     // The same goes for a central handoff whose own document says it was
     // written outside home: a thread never is.
+    // Only something provably outside home gets the pooled answer here. A
+    // home handoff of any kind, archived included, is history or a thread once
+    // threads exist, and with the list unreadable the pool would count every
+    // thread's rules as binding.
     const found = handoffs.findHandoff(slug, home);
-    if (found && !couldBeThread(found.path, found.kind, home) && !slugCouldBeThread(slug, home)) {
+    let foundText = null;
+    try { foundText = found ? fs.readFileSync(found.path, 'utf8') : null; } catch (_) { /* unknown: refused below */ }
+    const provablyOutside = found && (found.kind === 'project'
+      || (foundText !== null && handoffs.handoffDir(foundText) && !inHomeScope(foundText, home)));
+    if (provablyOutside && !slugCouldBeThread(slug, home)) {
       const r = resolve(slug, home);
       return { mode: 'pooled', kind: found.kind, path: found.path, dir: r.dir, unreadable: r.unreadable };
     }
@@ -533,6 +541,13 @@ const MANIFEST_KIND = 'session-threads-migration';
 // the point of the change and is approved once, explicitly, rather than being
 // read off a total.
 function migratePlan({ slugs, home = os.homedir(), now = Date.now() }) {
+  // Where home is itself a git checkout, every folder inside it shares home's
+  // pool, so "the rules of the home directory" and "the rules of that
+  // checkout" cannot be told apart, and a thread boundary drawn there keeps
+  // cutting pools in half. Refused rather than half supported.
+  if (handoffs.repoRoot(home)) {
+    return { ok: false, reason: 'home-is-a-checkout', detail: 'the home directory is itself a git checkout, which threads do not support' };
+  }
   const reg = registryMod.readRegistry(home);
   if (reg.state === 'ok') {
     return { ok: false, reason: 'already-migrated', detail: `${registryMod.registryPath(home)} already declares threads. New threads are added by save --create or declare.` };
@@ -575,7 +590,7 @@ function migratePlan({ slugs, home = os.homedir(), now = Date.now() }) {
   }
   if (problems.length) return { ok: false, reason: 'bad-threads', detail: problems.join('\n') };
 
-  const before = handoffs.carriedConstraints({ cwd: home, home, includeThreads: true, splitHome: true });
+  const before = handoffs.carriedConstraints({ cwd: home, home, includeThreads: true });
   // A handoff that is listed and cannot be read is missing from both the rule
   // comparison and the fingerprint, so the plan would be approved against less
   // than is there. Refused rather than planned around.
@@ -794,7 +809,6 @@ function dropBullet(text, bullet) {
 function finishPendingLocked(home) {
   const applied = [];
   const failures = [];
-  const protection = config.loadProtection(home);
   for (;;) {
     // Each item is a read and two writes, and a long list can outlast the
     // lock's staleness threshold without this.
@@ -808,6 +822,9 @@ function finishPendingLocked(home) {
     const item = reg.registry.pending[0];
     const t = registryMod.declaredBySlug(reg.registry, item.slug);
     try {
+      // Read again for every item: a protection added while earlier items
+      // were being written has to hold for the later ones.
+      const protection = config.loadProtection(home);
       if (!protection.ok) throw new Error(`protected handoffs could not be read: ${protection.errors.join('; ')}`);
       if (config.isProtected(protection, t.path, home)) throw new Error(`${t.path} is protected`);
       if (lockLost(handoffs.indexLockPath(home))) throw new Error('the handoff lock was taken over');

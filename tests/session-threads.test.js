@@ -1028,18 +1028,20 @@ check('a thread list that breaks while the sweep waits for the lock stops it', (
 
 // ------------------------------------------ Devin CLI round 4 and the app ----
 
-check('when home is a git checkout, a handoff from a folder inside it is not home', () => {
+check('when home is a git checkout, threads are refused rather than half supported', () => {
   const home = tmpHome();
   spawnSync('git', ['init', '-q'], { cwd: home });
-  const notes = path.join(home, 'notes');
-  fs.mkdirSync(notes);
   write(home, [['brand-thread', handoff(home, ['B.'])]]);
-  const { planFile } = migrate(home, ['brand-thread']);
-  assert.strictEqual(apply(home, planFile).body.committed, true);
-  const draft = draftFor(home, handoff(notes, ['From notes.']));
-  const r = json(home, ['save', '--thread', 'notes-thread', '--from', draft, '--base', 'none', '--generation', String(registry(home).generation), '--create']);
-  assert.strictEqual(r.body.reason, 'out-of-scope', 'a draft from ~/notes was accepted as a home thread');
-  assert.strictEqual(json(home, ['target', 'notes work', '--cwd', notes]).status, 0, 'a notes wrap was refused as home');
+  const r = json(home, ['migrate', 'plan', '--threads', 'brand-thread']);
+  assert.strictEqual(r.status, 1);
+  assert.strictEqual(r.body.reason, 'home-is-a-checkout');
+});
+
+check('a thread list in a home that became a checkout is not trusted', () => {
+  const home = migrated();
+  spawnSync('git', ['init', '-q'], { cwd: home });
+  assert.strictEqual(json(home, ['threads']).body.mode, 'invalid');
+  assert.strictEqual(json(home, saveArgs(home, 'brand-thread', handoff(home, ['x']), { base: 'none', generation: 1 })).body.reason, 'registry-invalid');
 });
 
 check('declare re-checks the file under the lock', () => {
@@ -1062,31 +1064,14 @@ check('declare re-checks the file under the lock', () => {
 
 // --------------------------------------- persona and Codex on 35ce31a ----
 
-function gitHomeMigrated() {
-  const home = tmpHome();
-  spawnSync('git', ['init', '-q'], { cwd: home });
-  const notes = path.join(home, 'notes');
-  fs.mkdirSync(notes);
-  write(home, [
-    ['home-history', handoff(home, ['Home history rule.'])],
-    ['notes-work', handoff(notes, ['Notes rule.'])],
-    ['brand-thread', handoff(home, ['B.'])],
-  ]);
-  const { planFile, manifest } = migrate(home, ['brand-thread']);
-  assert.strictEqual(apply(home, planFile).body.committed, true);
-  return { home, notes, manifest };
-}
-
-check('when home is a checkout, a notes handoff stays binding and takes no home history', () => {
-  const { home } = gitHomeMigrated();
-  const r = json(home, ['constraints', '--thread', 'notes-work']).body;
-  assert.notStrictEqual(r.binding, false, 'a notes pool was labelled history');
-  assert.deepStrictEqual(r.constraints.map((c) => c.text), ['Notes rule.']);
-});
-
-check('when home is a checkout, the plan does not count notes rules as lost', () => {
-  const { manifest } = gitHomeMigrated();
-  assert.deepStrictEqual(manifest.lost.map((l) => l.text), ['Home history rule.']);
+check('with a broken list, an archived home handoff does not get the whole pool', () => {
+  const home = migrated();
+  fs.mkdirSync(path.join(dirOf(home), 'archived'), { recursive: true });
+  fs.renameSync(docPath(home, 'old-session'), path.join(dirOf(home), 'archived', 'HANDOFF-old-session.md'));
+  fs.writeFileSync(path.join(dirOf(home), 'threads.json'), '{ not json');
+  const r = json(home, ['constraints', '--thread', 'old-session']);
+  assert.strictEqual(r.body.refused, 'registry-invalid');
+  assert.ok(!(r.body.constraints || []).length);
 });
 
 check('a broken list does not let a project stand in for a thread of the same name', () => {
@@ -1107,13 +1092,15 @@ check('target treats home spelled with a trailing slash as home', () => {
   assert.strictEqual(r.body.path, undefined);
 });
 
-check('a project named like a declared thread is not recorded under the thread slug', () => {
+check('a project named like a declared thread still gets its handoff, but not the thread name', () => {
   const home = migrated();
   const repo = path.join(home, 'code', 'brand-thread');
   fs.mkdirSync(path.join(repo, '.git'), { recursive: true });
   const r = json(home, ['target', 'x', '--cwd', repo]);
-  assert.strictEqual(r.status, 1);
-  assert.match(r.body.refused, /already a declared thread/);
+  assert.strictEqual(r.status, 0, JSON.stringify(r.body));
+  assert.strictEqual(r.body.path, path.join(repo, 'HANDOFF.md'));
+  assert.strictEqual(r.body.recorded, false);
+  assert.match(r.body.recordReason, /declared thread/);
   assert.strictEqual(json(home, ['find', 'brand-thread']).body.match.kind, 'thread');
 });
 
