@@ -156,24 +156,30 @@ function readIndex(home = os.homedir()) {
 // index, both added their own entry, and the second rename discarded the
 // first. See `index-lock.js` for why the atomic rename in `writeIndex` did not
 // already cover this.
-function recordHandoff({ slug, target, kind, home = os.homedir(), now = Date.now() }) {
+// `choose`, when given, picks the index name from the index as it stands
+// inside the lock and returns `{ key, assigned }`; a name picked from an
+// earlier read could be taken by another wrap in between.
+function recordHandoff({ slug, target, kind, home = os.homedir(), now = Date.now(), choose = null }) {
   if (!slug || !target) return { recorded: false, reason: 'no slug or path' };
   // The one caller that always writes, so it is the one allowed to create the
   // handoffs folder. Recording a handoff on a machine that has never had one is
   // the whole job, not a side effect of looking.
   return mutateIndex(home, (handoffs, save) => {
+    const chosen = choose ? choose(handoffs) : { key: slug, assigned: false };
+    if (!chosen.key) return { recorded: false, shadowed: true, key: null, reason: `every name for "${slugify(slug)}" is taken, so this project is picked up by its path` };
+    slug = chosen.key;
     // Checked again under the lock. A caller reads the thread list before it
     // gets here, and a thread of this name declared by another session in
     // between would otherwise be shadowed by an entry pointing elsewhere.
     const reg = registryMod.readRegistry(home);
     const declared = reg.state === 'ok' ? registryMod.declaredBySlug(reg.registry, slug) : null;
     if (declared && resolvePath(declared.path) !== resolvePath(target)) {
-      return { recorded: false, shadowed: true, reason: `"${slugify(slug)}" is a declared thread's name, so /pickup ${slugify(slug)} opens the thread; rename the folder to pick this project up by name` };
+      return { recorded: false, shadowed: true, key: null, reason: `"${slugify(slug)}" is a declared thread's name, so /pickup ${slugify(slug)} opens the thread` };
     }
     handoffs[slugify(slug)] = { path: target, kind: kind || 'project', recorded_at: new Date(now).toISOString() };
     return save(handoffs)
-      ? { recorded: true }
-      : { recorded: false, reason: 'the index could not be written' };
+      ? { recorded: true, key: slugify(slug), assigned: chosen.assigned }
+      : { recorded: false, key: slugify(slug), assigned: chosen.assigned, reason: 'the index could not be written' };
   }, { mayCreate: true, refused: (reason) => ({ recorded: false, reason: lockReason(reason) }) });
 }
 

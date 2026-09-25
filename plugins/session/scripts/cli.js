@@ -843,8 +843,15 @@ const COMMANDS = {
         // A project HANDOFF.md linked to a file elsewhere is a legitimate
         // shared setup; linked into the handoffs folder, the wrap would write
         // over a thread or a history document.
-        const root = handoffs.resolvePath(handoffs.handoffRoot(opts.home));
-        linkedIntoHandoffs = handoffs.resolvePath(t.path).startsWith(`${root}${path.sep}`);
+        // Judged on the link's own target as well as its real path: a link to
+        // a thread file that is not there yet has no real path, and the wrap
+        // would then create the thread's file directly, skipping save.
+        const roots = [handoffs.resolvePath(handoffs.handoffRoot(opts.home)), path.resolve(handoffs.handoffRoot(opts.home))];
+        let pointsAt = null;
+        try { pointsAt = path.resolve(path.dirname(t.path), fsMod.readlinkSync(t.path)); } catch (_) { /* unreadable link */ }
+        const spellings = [handoffs.resolvePath(t.path), pointsAt, pointsAt && handoffs.resolvePath(path.dirname(pointsAt))];
+        linkedIntoHandoffs = pointsAt === null
+          || spellings.some((p) => p && roots.some((r) => p === r || p.startsWith(`${r}${path.sep}`)));
       }
     } catch (_) { /* nothing there */ }
     let refusal = null;
@@ -883,20 +890,28 @@ const COMMANDS = {
     // its rules for every other folder in its repository (a worktree, a
     // subfolder, the main checkout), each patch for that opening the next.
     // Only if the alternative is taken as well does it fall back to a path.
-    let key = t.slug;
-    if (!central && threadsMod.projectNameShadowed(t.slug, opts.home)) key = threadsMod.projectKey(t.slug, t.path, opts.home);
-    else if (!central && threadsMod.assignedElsewhere(t.slug, t.path, opts.home)) key = threadsMod.freeNumbered(t.slug, t.path, opts.home);
-    const noKey = key === null;
-    if (noKey) key = t.slug;
-    if (noKey && !opts.noRecord) {
-      record = { recorded: false, shadowed: true, reason: `every name for "${t.slug}" is taken, so this project is picked up by its path` };
-    } else if (!opts.noRecord) {
-      record = handoffs.recordHandoff({ slug: key, target: t.path, kind: t.kind, home: opts.home });
+    // The name is chosen inside recordHandoff's lock (see chooseProjectKey), so
+    // two wraps at once cannot both take the same free name. A central
+    // handoff keeps its topic name, as before.
+    const choose = central ? null : (index) => threadsMod.chooseProjectKey(t.slug, t.path, opts.home, index);
+    let key;
+    let assigned = false;
+    if (opts.noRecord) {
+      const c = choose ? choose(handoffs.readIndex(opts.home)) : { key: t.slug, assigned: false };
+      key = c.key;
+      assigned = c.assigned;
+    } else {
+      record = handoffs.recordHandoff({ slug: t.slug, target: t.path, kind: t.kind, home: opts.home, choose });
+      key = record.key === undefined ? t.slug : record.key;
+      assigned = Boolean(record.assigned);
     }
-    // recordHandoff checks again under the lock, so a thread of this name
-    // declared by another session meanwhile leaves it unrecorded, and then the
-    // name is not handed out either.
-    const shadowed = noKey || Boolean(record && record.shadowed);
+    // An assigned name exists only in the index, so one that was not recorded
+    // (--no-record, a refused lock, a failed write) leads nowhere and is not
+    // handed out; the project is then picked up by its path. A project's own
+    // folder name is still handed out, as in 0.8, with the retry advice below.
+    const shadowed = key === null || Boolean(record && record.shadowed)
+      || (assigned && !(record && record.recorded));
+    if (key === null) key = t.slug;
     const pickupSlug = shadowed ? null : key;
     if (opts.json) {
       return emit(opts, {
@@ -906,8 +921,8 @@ const COMMANDS = {
     }
     // The plain answer says what the JSON says, with or without --no-record.
     const lines = [t.path, shadowed
-      ? `  kind: ${t.kind}, pickup slug: none, because ${record && record.reason ? record.reason : `"${t.slug}" and "${key}" are both taken`}; pick this up by its path: /pickup ${t.path}`
-      : `  kind: ${t.kind}, pickup slug: ${key}${key !== t.slug ? ` ("${t.slug}" is a thread's name)` : ''}`];
+      ? `  kind: ${t.kind}, pickup slug: none, because ${record && record.reason ? record.reason : `"${key}" is not recorded in the index`}; pick this up by its path: /pickup ${t.path}`
+      : `  kind: ${t.kind}, pickup slug: ${key}${key !== t.slug ? ` ("${t.slug}" is taken)` : ''}`];
     // Said, because a project handoff whose entry was not recorded may not be
     // found by name later, and the wrap is the moment that can still be fixed.
     if (record && !record.recorded) {

@@ -35,7 +35,10 @@ different question, so the result would look right and be wrong.
 
 **If the argument is a path directly inside `~/.planning/handoffs/`** named
 `HANDOFF-<name>.md`, it is a central handoff, possibly a thread: use `<name>` as
-the slug and carry on with `find` below.
+the slug and carry on with `find` below. Then check that the match (or
+`thread.path`) is that same file. If the name leads to a different document,
+because the index maps it elsewhere, say so, show both paths, and ask which was
+meant before going on.
 
 **If the argument is any other path to a file rather than a name**, which is
 how `/wrap` ends for a project when both its name and `<name>-project` are

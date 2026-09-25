@@ -1204,15 +1204,21 @@ check('git finding a repository for home some other way refuses both the plan an
   assert.strictEqual(JSON.parse(plan.stdout).reason, 'home-is-a-checkout');
 });
 
-check('plain target output gives a project named like a thread its name-project slug', () => {
+check('plain target output gives a project named like a thread its name-project slug, and none unrecorded', () => {
   const home = migrated();
   const repo = path.join(home, 'code', 'brand-thread');
   fs.mkdirSync(path.join(repo, '.git'), { recursive: true });
-  for (const extra of [[], ['--no-record']]) {
-    const out = run(home, ['target', 'x', '--cwd', repo, ...extra]).stdout;
-    assert.match(out, /pickup slug: brand-thread-project/);
-    assert.doesNotMatch(out, /pickup slug: brand-thread\b(?!-)/);
-  }
+  const out = run(home, ['target', 'x', '--cwd', repo]).stdout;
+  assert.match(out, /pickup slug: brand-thread-project/);
+  // An assigned name exists only in the index, so unrecorded it leads nowhere.
+  const bare = run(home, ['target', 'y', '--cwd', path.join(home, 'code', 'brand-thread'), '--no-record']);
+  const home2 = migrated();
+  const repo2 = path.join(home2, 'code', 'brand-thread');
+  fs.mkdirSync(path.join(repo2, '.git'), { recursive: true });
+  const unrecorded = json(home2, ['target', 'x', '--cwd', repo2, '--no-record']).body;
+  assert.strictEqual(unrecorded.pickupSlug, null);
+  assert.match(run(home2, ['target', 'x', '--cwd', repo2, '--no-record']).stdout, new RegExp(`/pickup ${repo2.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+  assert.strictEqual(bare.status, 0);
 });
 
 check('wrap checks a null-pickupSlug handoff by its path and ends with the path; pickup accepts one', () => {
@@ -1657,6 +1663,68 @@ check('rekey moves a 0.8 entry for a thread name onto the project name, and the 
   })();
   assert.strictEqual(apply(home, planFile).body.committed, true);
   assert.deepStrictEqual(json(home, ['constraints', '--cwd', repo]).body.constraints.map((c) => c.text), ['Rule A.']);
+});
+
+// ------------------ Codex round 14, Devin CLI round 11, persona on c2085dc ----
+
+check('two projects choosing a name at once cannot both get it', () => {
+  const home = migrated();
+  const a = path.join(home, 'code', 'one', 'brand-thread');
+  const b = path.join(home, 'code', 'two', 'brand-thread');
+  for (const d of [a, b]) fs.mkdirSync(path.join(d, '.git'), { recursive: true });
+  const t = require(path.join(ROOT, 'scripts', 'threads.js'));
+  // Both choose from the same stale snapshot; the lock re-chooses for each.
+  const snapshot = handoffs.readIndex(home);
+  const choose = (target) => (index) => t.chooseProjectKey('brand-thread', target, home, index);
+  const ra = handoffs.recordHandoff({ slug: 'brand-thread', target: path.join(a, 'HANDOFF.md'), kind: 'project', home, choose: choose(path.join(a, 'HANDOFF.md')) });
+  const rb = handoffs.recordHandoff({ slug: 'brand-thread', target: path.join(b, 'HANDOFF.md'), kind: 'project', home, choose: choose(path.join(b, 'HANDOFF.md')) });
+  assert.ok(snapshot);
+  assert.notStrictEqual(ra.key, rb.key);
+});
+
+check('the name search has no fixed ceiling', () => {
+  const t = require(path.join(ROOT, 'scripts', 'threads.js'));
+  const home = migrated();
+  const index = {};
+  for (let n = 1; n <= 120; n += 1) {
+    const other = path.join(home, 'elsewhere', String(n), 'HANDOFF.md');
+    fs.mkdirSync(path.dirname(other), { recursive: true });
+    fs.writeFileSync(other, 'x');
+    index[n === 1 ? 'brand-thread-project' : `brand-thread-project-${n}`] = { path: other, kind: 'project', recorded_at: new Date().toISOString() };
+  }
+  assert.strictEqual(t.projectKey('brand-thread', path.join(home, 'code', 'brand-thread', 'HANDOFF.md'), home, index), 'brand-thread-project-121');
+});
+
+check('before migration a project named like an old central topic keeps its own name', () => {
+  const home = setUp();
+  const repo = path.join(home, 'Projects', 'site-thread');
+  fs.mkdirSync(path.join(repo, '.git'), { recursive: true });
+  setIndex(home, 'site-thread', { path: docPath(home, 'site-thread'), kind: 'central', recorded_at: '2026-01-01T00:00:00.000Z' });
+  assert.strictEqual(json(home, ['target', 'x', '--cwd', repo]).body.pickupSlug, 'site-thread');
+});
+
+check('a project HANDOFF.md linked to a thread file that is not there yet is refused', () => {
+  const home = migrated();
+  fs.renameSync(docPath(home, 'site-thread'), path.join(home, 'moved.md'));
+  const repo = path.join(home, 'code', 'site-thread');
+  fs.mkdirSync(path.join(repo, '.git'), { recursive: true });
+  fs.symlinkSync(docPath(home, 'site-thread'), path.join(repo, 'HANDOFF.md'));
+  const r = json(home, ['target', 'x', '--cwd', repo]);
+  assert.strictEqual(r.status, 1);
+  assert.strictEqual(r.body.path, undefined);
+});
+
+check('while the list cannot be read, a dangling central link still counts as a possible thread', () => {
+  const t = require(path.join(ROOT, 'scripts', 'threads.js'));
+  const home = migrated();
+  fs.symlinkSync(path.join(home, 'gone.md'), docPath(home, 'ghost'));
+  fs.writeFileSync(path.join(dirOf(home), 'threads.json'), '{ not json');
+  assert.strictEqual(t.slugCouldBeThread('ghost', home), true);
+});
+
+check('pickup checks that a central path leads back to the same file', () => {
+  const pickup = fs.readFileSync(path.join(ROOT, 'skills', 'pickup', 'SKILL.md'), 'utf8');
+  assert.match(pickup, /check that the match \(or\s+`thread.path`\) is that same file/);
 });
 
 process.stdout.write(`\n${failures === 0 ? 'all passed' : `${failures} failed`}\n`);

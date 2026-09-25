@@ -96,7 +96,10 @@ function slugCouldBeThread(slug, home) {
   const key = handoffs.slugify(slug);
   if (!key) return false;
   const central = path.join(handoffs.handoffRoot(home), `HANDOFF-${key}.md`);
-  return fs.existsSync(central) && couldBeThread(central, home);
+  // lstat, so a dangling link here still counts as a name a thread may hold.
+  let there = false;
+  try { fs.lstatSync(central); there = true; } catch (_) { /* nothing */ }
+  return there && couldBeThread(central, home);
 }
 
 // Whether a project's name is taken by a thread, so `target` records it as
@@ -119,20 +122,7 @@ function projectNameShadowed(slug, home) {
 // The stem is cut before the suffix goes on: slugify's 60-character limit
 // cut the suffix off instead, which gave back the thread's own name.
 function projectKey(name, target, home = os.homedir(), index = handoffs.readIndex(home)) {
-  const base = handoffs.slugify(name);
-  const stem = base.slice(0, 60 - '-project-99'.length).replace(/-+$/, '');
-  const mine = new RegExp(`^${stem.replace(/[^a-z0-9]/g, '\\$&')}-project(-\\d+)?$`);
-  for (const [k, e] of Object.entries(index)) {
-    if (mine.test(k) && e && typeof e.path === 'string' && samePath(e.path, target)) return k;
-  }
-  const root = handoffs.handoffRoot(home);
-  for (let n = 1; n < 100; n += 1) {
-    const k = n === 1 ? `${stem}-project` : `${stem}-project-${n}`;
-    if (projectNameShadowed(k, home) || fs.existsSync(path.join(root, `HANDOFF-${k}.md`))) continue;
-    if (liveOtherEntry(index[k], target)) continue;
-    return k;
-  }
-  return null;
+  return firstFree(handoffs.slugify(name), (n) => (n === 1 ? '-project' : `-project-${n}`), target, home, index);
 }
 
 // Whether the index gives this name to a different project that holds it by
@@ -141,23 +131,64 @@ function projectKey(name, target, home = os.homedir(), index = handoffs.readInde
 // assigned one drops out of every pool at the next wrap; it gets a numbered
 // name instead. Two folders that simply share a name still replace each
 // other's entry, exactly as in 0.8.
+//
+// Only once threads exist, and only against another project's entry: before
+// migration nothing is ever assigned, and a central topic entry lives in a
+// folder called `handoffs`, which never matches, so every project named like
+// an old topic was renamed and 0.8's pickup name changed.
 function assignedElsewhere(key, target, home = os.homedir(), index = handoffs.readIndex(home)) {
+  if (registryMod.readRegistry(home).state === 'absent') return false;
   const e = index[key];
   if (!liveOtherEntry(e, target) || typeof e.path !== 'string') return false;
+  if ((e.kind || 'project') !== 'project') return false;
   return handoffs.slugify(path.basename(path.dirname(e.path))) !== key;
 }
 
 function freeNumbered(key, target, home = os.homedir(), index = handoffs.readIndex(home)) {
-  const stem = key.slice(0, 60 - '-99'.length).replace(/-+$/, '');
-  for (let n = 2; n < 100; n += 1) {
-    const k = `${stem}-${n}`;
-    const e = index[k];
-    if (e && typeof e.path === 'string' && samePath(e.path, target)) return k;
-    if (liveOtherEntry(e, target) || projectNameShadowed(k, home)) continue;
-    if (fs.existsSync(path.join(handoffs.handoffRoot(home), `HANDOFF-${k}.md`))) continue;
-    return k;
+  return firstFree(key, (n) => `-${n + 1}`, target, home, index);
+}
+
+// A central name counts as taken when anything is there, a dangling link
+// included: existsSync reads a dangling link as absent, and the name was then
+// handed to a project while the thread list could still claim it.
+function centralTaken(k, home) {
+  try { fs.lstatSync(path.join(handoffs.handoffRoot(home), `HANDOFF-${k}.md`)); return true; } catch (_) { return false; }
+}
+
+// The first candidate `<stem><suffix(n)>` that is free, or already this
+// project's. No fixed ceiling: the search stopped at 99 and then gave up to a
+// path pickup, which leaves the project in no pool. Taken names are finite
+// (index entries and central files), so one past their count is always free.
+// The stem is cut per candidate so the whole key fits slugify's 60 characters;
+// a longer key would be cut back by the next lookup and name something else.
+function firstFree(base, suffix, target, home, index) {
+  let files = 0;
+  try { files = fs.readdirSync(handoffs.handoffRoot(home)).length; } catch (_) { /* none */ }
+  const ceiling = Object.keys(index).length + files + 2;
+  const candidates = [];
+  for (let n = 1; n <= ceiling; n += 1) {
+    const tail = suffix(n);
+    candidates.push(`${base.slice(0, 60 - tail.length).replace(/-+$/, '')}${tail}`);
   }
-  return null;
+  // A name this project already holds wins over an earlier one that has come
+  // free since, so its name does not change between wraps.
+  const held = candidates.find((k) => {
+    const e = index[k];
+    return e && typeof e.path === 'string' && samePath(e.path, target);
+  });
+  if (held) return held;
+  return candidates.find((k) => !liveOtherEntry(index[k], target)
+    && !projectNameShadowed(k, home) && !centralTaken(k, home)) || null;
+}
+
+// The whole naming decision for a project handoff, made from one index. target
+// runs it inside recordHandoff's lock, so two wraps at once cannot both pick
+// the same free name from the same snapshot and have the later overwrite the
+// earlier, which dropped the earlier project from every pool.
+function chooseProjectKey(slug, target, home = os.homedir(), index = handoffs.readIndex(home)) {
+  if (projectNameShadowed(slug, home)) return { key: projectKey(slug, target, home, index), assigned: true };
+  if (assignedElsewhere(slug, target, home, index)) return { key: freeNumbered(slug, target, home, index), assigned: true };
+  return { key: slug, assigned: false };
 }
 
 // Moves a project's index entry off a name a thread has taken, onto its
@@ -1022,6 +1053,7 @@ module.exports = {
   projectKey,
   assignedElsewhere,
   freeNumbered,
+  chooseProjectKey,
   rekeyProject,
   slugCouldBeThread,
   resolve,

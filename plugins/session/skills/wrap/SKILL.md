@@ -404,10 +404,11 @@ belongs in a thread, and nothing may be written there this way. It also says whe
 was not recorded in the index (`recorded: false`); say that in the summary,
 because a project handoff kept outside the configured roots may then not be
 found by name. **The name to use from here on is `pickupSlug`, not `slug`.**
-They differ when the project's name belongs to a thread: the project is then
-recorded as `<name>-project`, because `/pickup <name>` opens the thread. If
-`pickupSlug` is null, both names are taken; keep the returned `path`, because
-the check at the end of this step and the ending in Step 4 both use it instead.
+They differ when the project's name belongs to a thread (it is then recorded
+as `<name>-project`, or a numbered form of it, because `/pickup <name>` opens
+the thread) or is already held by another project. If `pickupSlug` is null, no
+name could be recorded for it; keep the returned `path`, because the check at
+the end of this step and the ending in Step 4 both use it instead.
 
 A directory
 with its own work scope gets `HANDOFF.md` alongside the work. Anywhere else,
@@ -621,10 +622,10 @@ Handoff saved to [path].
 ```
 
 **Where `pickupSlug` was null and the read of the path succeeded**, close with
-the path in place of a name, because both names are taken:
+the path in place of a name, because no name was recorded for it:
 
 ```
-Handoff saved to [path]. Its names are taken, so pick it up by path.
+Handoff saved to [path]. No name was recorded for it, so pick it up by path.
 
 /pickup [path]
 ```
