@@ -249,8 +249,14 @@ function threadConstraints({ slug, home = os.homedir() }) {
     const found = handoffs.findHandoff(slug, home);
     let foundText = null;
     try { foundText = found ? fs.readFileSync(found.path, 'utf8') : null; } catch (_) { /* unknown: refused below */ }
-    const provablyOutside = found && (found.kind === 'project'
-      || (foundText !== null && handoffs.handoffDir(foundText) && !inHomeScope(foundText, home)));
+    // A project is judged by where it lives, not by the kind an index entry
+    // claims. And "outside home" has to hold for the pool too: a folder that
+    // shares home's scope would be pooled with every thread's rules.
+    const foundDir = foundText !== null ? handoffs.handoffDir(foundText) : null;
+    const root = handoffs.handoffRoot(home);
+    const isProject = Boolean(found) && !found.path.startsWith(`${root}${path.sep}`);
+    const provablyOutside = found && (isProject || (foundDir && !inHomeScope(foundText, home)))
+      && handoffs.scopeKey(isProject ? path.dirname(found.path) : foundDir) !== handoffs.scopeKey(home);
     if (provablyOutside && !slugCouldBeThread(slug, home)) {
       const r = resolve(slug, home);
       return { mode: 'pooled', kind: found.kind, path: found.path, dir: r.dir, unreadable: r.unreadable };
@@ -545,7 +551,10 @@ function migratePlan({ slugs, home = os.homedir(), now = Date.now() }) {
   // pool, so "the rules of the home directory" and "the rules of that
   // checkout" cannot be told apart, and a thread boundary drawn there keeps
   // cutting pools in half. Refused rather than half supported.
-  if (handoffs.repoRoot(home)) {
+  // Both tests, so the plan can never pass where readRegistry would then
+  // refuse the list it writes: the path walk catches a stray or broken .git
+  // that git itself ignores, and git catches a repository found some other way.
+  if (registryMod.homeIsCheckout(home) || handoffs.repoRoot(home)) {
     return { ok: false, reason: 'home-is-a-checkout', detail: 'the home directory is itself a git checkout, which threads do not support' };
   }
   const reg = registryMod.readRegistry(home);

@@ -775,17 +775,31 @@ const COMMANDS = {
     // A project named like a declared thread still gets its handoff; only the
     // index entry is skipped, because /pickup of that name opens the thread
     // and an entry pointing elsewhere would be reported as a conflict forever.
-    const shadowsThread = !central && reg.state === 'ok' && registryMod.declaredBySlug(reg.registry, t.slug);
-    if (shadowsThread) {
+    const shadowsThread = !central && ((reg.state === 'ok' && registryMod.declaredBySlug(reg.registry, t.slug))
+      || (reg.state === 'invalid' && threadsMod.slugCouldBeThread(t.slug, opts.home)));
+    if (shadowsThread && opts.noRecord) {
+      record = null;
+    } else if (shadowsThread) {
       record = { recorded: false, reason: `"${t.slug}" is a declared thread's name, so /pickup ${t.slug} opens the thread; rename the folder to pick this project up by name` };
     } else if (!opts.noRecord) {
       record = handoffs.recordHandoff({ slug: t.slug, target: t.path, kind: t.kind, home: opts.home });
     }
-    if (opts.json) return emit(opts, { ...t, recorded: record ? record.recorded : false, recordReason: record && record.reason }, []);
+    // `pickupSlug` is null when the slug would open something else: a project
+    // named like a declared thread is picked up by its path, never its name.
+    if (opts.json) {
+      return emit(opts, {
+        ...t, recorded: record ? record.recorded : false, recordReason: record && record.reason,
+        pickupSlug: shadowsThread ? null : t.slug,
+      }, []);
+    }
     const lines = [t.path, `  kind: ${t.kind}, pickup slug: ${t.slug}`];
     // Said, because a project handoff whose entry was not recorded may not be
     // found by name later, and the wrap is the moment that can still be fixed.
-    if (record && !record.recorded) lines.push(`  Not recorded in the index (${record.reason}). Run this again before relying on /pickup ${t.slug}.`);
+    if (record && !record.recorded) {
+      lines.push(shadowsThread
+        ? `  Not recorded in the index: ${record.reason}.`
+        : `  Not recorded in the index (${record.reason}). Run this again before relying on /pickup ${t.slug}.`);
+    }
     emit(opts, {}, lines);
   },
 

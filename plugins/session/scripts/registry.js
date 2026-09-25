@@ -48,8 +48,16 @@ function canonicalPath(p) {
   try { return fs.realpathSync(absolute); } catch (_) { return absolute; }
 }
 
+// Walked from the path as written and from its real path, because a
+// symlinked home can sit inside a checkout that only the real path reaches.
 function homeIsCheckout(home) {
-  let dir = home;
+  let real = home;
+  try { real = fs.realpathSync(home); } catch (_) { /* the written path is all there is */ }
+  return walkForGit(home) || (real !== home && walkForGit(real));
+}
+
+function walkForGit(start) {
+  let dir = start;
   for (;;) {
     try { if (fs.existsSync(path.join(dir, '.git'))) return true; } catch (_) { /* keep looking */ }
     const up = path.dirname(dir);
@@ -171,4 +179,5 @@ module.exports = {
   declaredBySlug,
   declaredPaths,
   validate,
+  homeIsCheckout,
 };

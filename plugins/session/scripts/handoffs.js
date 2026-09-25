@@ -1334,8 +1334,7 @@ function carriedConstraints({
   // home directory is itself a git checkout (see registry.js), so the home
   // scope and the home directory are the same thing wherever threads exist.
   const reg = registryMod.readRegistry(home);
-  const keyFor = (dir) => scopeKey(dir);
-  const want = keyFor(cwd);
+  const want = scopeKey(cwd);
   // Every document is looked at, and the ceiling applies to the ones that
   // belong to this scope. It used to apply first, across every project, so a
   // busy folder elsewhere could push this project's oldest carrier out of the
@@ -1370,7 +1369,7 @@ function carriedConstraints({
     // to know it saw everything (the migration) needs the list.
     try { text = fs.readFileSync(r.path, 'utf8'); } catch (_) { unreadable.push(r.path); continue; }
     const dir = handoffDir(text);
-    const key = dir ? keyFor(dir) : null;
+    const key = dir ? scopeKey(dir) : null;
     const { live, retired } = bulletsIn(text);
     const matched = key === want;
     scanned.push({

@@ -398,7 +398,11 @@ It returns the path, the kind, and the slug `/pickup` will need. If it returns
 belongs in a thread, and nothing may be written there this way. It also says when the entry
 was not recorded in the index (`recorded: false`); say that in the summary,
 because a project handoff kept outside the configured roots may then not be
-found by name. A directory
+found by name. If `pickupSlug` is null, the project's name is taken by a
+declared thread: end with the handoff's path instead of a `/pickup` line,
+because `/pickup` of that name opens the thread.
+
+A directory
 with its own work scope gets `HANDOFF.md` alongside the work. Anywhere else,
 including the home directory, gets a topic-named file in the central handoffs
 folder, so that separate threads of work do not overwrite each other.

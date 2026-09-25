@@ -477,10 +477,10 @@ not inferred from names. Anything not declared is history: kept, readable, never
 rewritten, and binding on nothing.
 
 Threads cover the home scope only, meaning central handoffs whose working
-directory is the home directory itself, compared as a real path. Where the home
-directory is a git checkout, handoffs written from folders inside it are not
-threads; they keep the pooled behaviour, grouped with the rest of that checkout
-as before. Project handoffs kept beside their work, and
+directory is the home directory itself, compared as a real path. Threads are
+not supported where the home directory is itself a git checkout, because every
+folder inside it shares home's pool and no clean line can be drawn: `migrate
+plan` refuses there, and a thread list found in one is treated as invalid. Project handoffs kept beside their work, and
 central handoffs written from inside a repository, keep the older behaviour
 described in the rest of this file.
 

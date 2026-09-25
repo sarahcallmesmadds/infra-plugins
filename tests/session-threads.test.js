@@ -1104,5 +1104,41 @@ check('a project named like a declared thread still gets its handoff, but not th
   assert.strictEqual(json(home, ['find', 'brand-thread']).body.match.kind, 'thread');
 });
 
+check('a stray empty .git in home stops the plan, so it can never write a list that is then refused', () => {
+  const home = setUp();
+  fs.mkdirSync(path.join(home, '.git'));
+  const r = json(home, ['migrate', 'plan', '--threads', 'site-thread']);
+  assert.strictEqual(r.body.reason, 'home-is-a-checkout');
+});
+
+check('a project named like a thread with --no-record prints no retry advice', () => {
+  const home = migrated();
+  const repo = path.join(home, 'code', 'brand-thread');
+  fs.mkdirSync(path.join(repo, '.git'), { recursive: true });
+  const out = run(home, ['target', 'x', '--cwd', repo, '--no-record']).stdout;
+  assert.doesNotMatch(out, /Run this again/);
+});
+
+check('a project named like a thread is given no pickup slug', () => {
+  const home = migrated();
+  const repo = path.join(home, 'code', 'brand-thread');
+  fs.mkdirSync(path.join(repo, '.git'), { recursive: true });
+  assert.strictEqual(json(home, ['target', 'x', '--cwd', repo]).body.pickupSlug, null);
+});
+
+check('a symlinked home inside a checkout is caught', () => {
+  const outer = tmpHome();
+  spawnSync('git', ['init', '-q'], { cwd: outer });
+  const realHome = path.join(outer, 'me');
+  fs.mkdirSync(realHome);
+  const link = path.join(fs.realpathSync(os.tmpdir()), `session-link-${process.pid}-${Date.now()}`);
+  fs.symlinkSync(realHome, link);
+  try {
+    assert.strictEqual(require(path.join(ROOT, 'scripts', 'registry.js')).homeIsCheckout(link), true);
+  } finally {
+    fs.rmSync(link, { force: true });
+  }
+});
+
 process.stdout.write(`\n${failures === 0 ? 'all passed' : `${failures} failed`}\n`);
 process.exit(failures === 0 ? 0 : 1);
