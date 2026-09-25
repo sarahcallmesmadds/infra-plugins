@@ -1373,8 +1373,15 @@ function carriedConstraints({
   // declared thread is deliberately left out of the index, so its own rules
   // were never read and the next wrap rewrote its handoff without them, with
   // "expected for the first wrap" as the only message.
+  // The folder's own file only in the case `target` leaves it out of the
+  // index on purpose: threads exist and its name is taken by a central
+  // handoff. Anywhere else an unindexed own file is not read, exactly as 0.8:
+  // a worktree's stale committed HANDOFF.md, sorted newest by its checkout
+  // time, brought back a rule its main checkout had retired.
   const own = writeTarget(cwd, 'x', home);
-  const extra = [...(own.kind === 'project' ? [own.path] : []), ...alsoRead];
+  const ownShadowed = reg.state !== 'absent' && own.kind === 'project'
+    && fs.existsSync(path.join(handoffRoot(home), `HANDOFF-${own.slug}.md`));
+  const extra = [...(ownShadowed ? [own.path] : []), ...alsoRead];
   const listed = new Set(rows.map((r) => resolvePath(r.path)));
   for (const p of extra) {
     if (listed.has(resolvePath(p))) continue;

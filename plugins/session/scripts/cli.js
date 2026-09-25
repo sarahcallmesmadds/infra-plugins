@@ -625,9 +625,11 @@ const COMMANDS = {
       // only when that name leads back to this same file. The index can map
       // the name to another document, and a symlink's own name can be another
       // thread's; answering by name then answered for a file nobody named.
-      // Both spellings are tried, the link's and its target's, slugified.
+      // Both spellings are tried, the target's first so a link inside the
+      // folder with a name of its own still answers as the thread it points
+      // at, then the link's, slugified.
       const byName = threadsMod.threadShaped(file, opts.home)
-        && [file, handoffs.resolvePath(file)]
+        && [handoffs.resolvePath(file), file]
           .map((p) => handoffs.slugify(path.basename(p).replace(/^HANDOFF-/, '').replace(/\.md$/, '')))
           .find((name) => {
             const r = threadsMod.resolve(name, opts.home);
@@ -639,7 +641,15 @@ const COMMANDS = {
         const dir = handoffs.handoffDir(text);
         if (!dir) return fail('it has no **Working directory:** line');
         opts.cwd = dir;
-        opts.alsoRead = [file];
+        // Added to the pool only when it lives outside the handoffs folder,
+        // which is the project case --file exists for. A pause note or an
+        // archived copy is answered from its Working directory alone, exactly
+        // as 0.8: a pause file's retirement otherwise removed a live home rule
+        // from a binding answer.
+        const inside = [path.resolve(file), handoffs.resolvePath(file)]
+          .some((p) => p.startsWith(`${path.resolve(handoffs.handoffRoot(opts.home))}${path.sep}`)
+            || p.startsWith(`${handoffs.resolvePath(handoffs.handoffRoot(opts.home))}${path.sep}`));
+        opts.alsoRead = inside ? [] : [file];
       }
     }
     if (opts.thread) {

@@ -1451,5 +1451,51 @@ check('reconcile survives an index entry whose path is not a string', () => {
   assert.doesNotMatch(r.stderr, /TypeError|ERR_INVALID_ARG_TYPE/);
 });
 
+// ------------------------------------------------ Codex round 12 on 5e1f5e5 ----
+
+check('before migration an unindexed project handoff binds nothing new, exactly as 0.8', () => {
+  const home = setUp();
+  const repo = path.join(home, 'code', 'loose');
+  fs.mkdirSync(path.join(repo, '.git'), { recursive: true });
+  fs.writeFileSync(path.join(repo, 'HANDOFF.md'), handoff(repo, ['Unindexed rule.']));
+  assert.deepStrictEqual(json(home, ['constraints', '--cwd', repo]).body.constraints, []);
+});
+
+// -------------------------------------------- persona review of 5e1f5e5 ----
+
+check('a worktree\'s unindexed own handoff does not bring back a rule its checkout retired', () => {
+  const home = migrated();
+  const main = path.join(home, 'code', 'repo');
+  fs.mkdirSync(main, { recursive: true });
+  spawnSync('git', ['init', '-q'], { cwd: main });
+  spawnSync('git', ['-c', 'user.email=t@example.com', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', 'x'], { cwd: main });
+  const wt = path.join(home, 'code', 'repo-wt');
+  spawnSync('git', ['worktree', 'add', '-q', wt], { cwd: main });
+  const mainDoc = path.join(main, 'HANDOFF.md');
+  fs.writeFileSync(mainDoc, handoff(main, ['Keep A.', 'Retired this session: Rule X., because done.']));
+  setIndex(home, 'repo', { path: mainDoc, kind: 'project', recorded_at: '2026-01-01T00:00:00.000Z' });
+  fs.writeFileSync(path.join(wt, 'HANDOFF.md'), handoff(wt, ['Rule X.']));
+  const t = new Date(Date.now() + 60000);
+  fs.utimesSync(path.join(wt, 'HANDOFF.md'), t, t);
+  const texts = (cwd) => json(home, ['constraints', '--cwd', cwd]).body.constraints.map((c) => c.text);
+  assert.deepStrictEqual(texts(wt), texts(main));
+  assert.ok(!texts(wt).includes('Rule X.'));
+});
+
+check('--file on a pause note is answered from its Working directory, not pooled', () => {
+  const home = setUp();
+  const pause = path.join(dirOf(home), 'x-pause.md');
+  fs.writeFileSync(pause, handoff(home, ['Pause rule.', 'Retired this session: Only in history., because x.']));
+  const texts = (args) => json(home, ['constraints', ...args]).body.constraints.map((c) => c.text).sort();
+  assert.deepStrictEqual(texts(['--file', pause]), texts(['--cwd', home]));
+});
+
+check('--file on a link inside the folder with its own name answers as the thread it points at', () => {
+  const home = migrated();
+  const link = path.join(dirOf(home), 'HANDOFF-alias.md');
+  fs.symlinkSync(docPath(home, 'brand-thread'), link);
+  assert.deepStrictEqual(json(home, ['constraints', '--file', link]).body.constraints.map((c) => c.text), ['Brand rule.']);
+});
+
 process.stdout.write(`\n${failures === 0 ? 'all passed' : `${failures} failed`}\n`);
 process.exit(failures === 0 ? 0 : 1);
