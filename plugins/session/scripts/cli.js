@@ -620,14 +620,26 @@ const COMMANDS = {
       const file = opts.file === '~' || opts.file.startsWith('~/') ? path.join(opts.home, opts.file.slice(2)) : opts.file;
       let text;
       try { text = fsMod.readFileSync(file, 'utf8'); } catch (e) { return fail(`it could not be read: ${e.message}`); }
-      // A central handoff, which may be a thread, is answered by its name so
-      // a thread gets its own rules rather than the home pool as history.
-      if (threadsMod.threadShaped(file, opts.home)) {
-        opts.thread = path.basename(file).replace(/^HANDOFF-/, '').replace(/\.md$/, '');
+      // A central handoff, which may be a thread, is answered by its name so a
+      // thread gets its own rules rather than the home pool as history, but
+      // only when that name leads back to this same file. The index can map
+      // the name to another document, and a symlink's own name can be another
+      // thread's; answering by name then answered for a file nobody named.
+      // Both spellings are tried, the link's and its target's, slugified.
+      const byName = threadsMod.threadShaped(file, opts.home)
+        && [file, handoffs.resolvePath(file)]
+          .map((p) => handoffs.slugify(path.basename(p).replace(/^HANDOFF-/, '').replace(/\.md$/, '')))
+          .find((name) => {
+            const r = threadsMod.resolve(name, opts.home);
+            return r.path && handoffs.resolvePath(r.path) === handoffs.resolvePath(file);
+          });
+      if (byName) {
+        opts.thread = byName;
       } else {
         const dir = handoffs.handoffDir(text);
         if (!dir) return fail('it has no **Working directory:** line');
         opts.cwd = dir;
+        opts.alsoRead = [file];
       }
     }
     if (opts.thread) {
@@ -654,7 +666,7 @@ const COMMANDS = {
       }
       opts.cwd = dir;
     }
-    const r = handoffs.carriedConstraints({ cwd: opts.cwd, home: opts.home });
+    const r = handoffs.carriedConstraints({ cwd: opts.cwd, home: opts.home, alsoRead: opts.alsoRead || [] });
     // With the thread list unreadable, a pool sharing home's scope may hold
     // every thread's rules, and which of them bind cannot be told. Refused
     // rather than listed: a warning above a confident list is carried anyway.

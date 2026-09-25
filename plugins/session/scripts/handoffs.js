@@ -241,9 +241,10 @@ function writeIndexUnlocked(handoffs, home = os.homedir()) {
 // read and the write are one region, and a write from an unlocked read is that
 // guarantee gone.
 // `mayCreate` says this caller always writes, so the handoffs folder existing
-// afterwards is the point rather than a side effect. Only `recordHandoff` sets
-// it. Everything else leaves a machine with no handoffs folder exactly as it
-// found it, which is what it did before this gate existed.
+// afterwards is the point rather than a side effect. Set only by callers that
+// always write: `recordHandoff`, and in threads.js the thread save, declare
+// and the migration. Everything else leaves a machine with no handoffs folder
+// exactly as it found it, which is what it did before this gate existed.
 function mutateIndex(home, change, { readOnly = false, mayCreate = false, refused = () => null } = {}) {
   const lock = indexLockPath(home);
   return withIndexLock(lock, (region) => {
@@ -827,11 +828,17 @@ function resolvePath(p) {
   // `realpathSync` throws on a path that is not there, and a recorded path that
   // is not there is the ordinary case here rather than an error. Falling back to
   // `resolve` keeps a comparable string for it.
+  // Not a path at all (a hand-edited index entry holding a number): a value
+  // that equals no real path, rather than the TypeError path.resolve throws,
+  // which took reconcile down at the start of every wrap.
+  if (!isPathString(p)) return `\u0000not-a-path:${String(p)}`;
   try { return fs.realpathSync(p); } catch (_) { return path.resolve(p); }
 }
 
 function samePath(a, b) {
-  if (!a || !b) return false;
+  // A hand-edited index entry can hold a number, which path.resolve throws on,
+  // and reconcile runs at the start of every wrap.
+  if (!isPathString(a) || !isPathString(b) || !a || !b) return false;
   return resolvePath(a) === resolvePath(b);
 }
 
@@ -1347,7 +1354,7 @@ function nearDuplicateConstraints(constraints = []) {
 // document carrying it went quiet for 30 days, and archiving is driven by mtime
 // rather than by anything retiring it.
 function carriedConstraints({
-  cwd = process.cwd(), home = os.homedir(), limit = CONSTRAINT_SCAN_CAP, includeThreads = false,
+  cwd = process.cwd(), home = os.homedir(), limit = CONSTRAINT_SCAN_CAP, includeThreads = false, alsoRead = [],
 } = {}) {
   // Grouping is by `scopeKey` throughout. Threads are not supported where the
   // home directory is itself a git checkout (see registry.js), so the home
@@ -1360,6 +1367,23 @@ function carriedConstraints({
   // window and drop its rule with nothing said. Reading a few hundred small
   // files is cheap; losing a rule to somebody else's volume of work is not.
   const rows = recentHandoffs({ home, limit: Infinity });
+  // A folder's own HANDOFF.md always belongs to its pool, whether or not the
+  // index knows it, and so does a file the caller named. The pool used to come
+  // only from central files and index entries, and a project named like a
+  // declared thread is deliberately left out of the index, so its own rules
+  // were never read and the next wrap rewrote its handoff without them, with
+  // "expected for the first wrap" as the only message.
+  const own = writeTarget(cwd, 'x', home);
+  const extra = [...(own.kind === 'project' ? [own.path] : []), ...alsoRead];
+  const listed = new Set(rows.map((r) => resolvePath(r.path)));
+  for (const p of extra) {
+    if (listed.has(resolvePath(p))) continue;
+    let mtime;
+    try { mtime = fs.statSync(p).mtimeMs; } catch (_) { continue; }
+    listed.add(resolvePath(p));
+    rows.push({ slug: slugify(path.basename(path.dirname(p))), path: p, mtime, archived: false });
+  }
+  rows.sort((a, b) => b.mtime - a.mtime);
   const scanned = [];
   const docs = [];
   const unreadable = [];

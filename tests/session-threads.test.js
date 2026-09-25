@@ -1407,5 +1407,49 @@ check('an index entry whose path is not a string is skipped by findHandoff', () 
   assert.doesNotMatch(r.stderr, /DeprecationWarning|TypeError/);
 });
 
+// ----------------------------- persona and Codex round 11 on 2e03125 ----
+
+check('a project named like a thread keeps its own rules across wrap and pickup', () => {
+  const home = migrated();
+  const repo = path.join(home, 'code', 'site-thread');
+  fs.mkdirSync(path.join(repo, '.git'), { recursive: true });
+  // Wrap: target hands out the path and leaves the index alone.
+  const t = json(home, ['target', 'x', '--cwd', repo]).body;
+  assert.strictEqual(t.pickupSlug, null);
+  fs.writeFileSync(t.path, handoff(repo, ['Repo2 rule.']));
+  // The next wrap from the project, and the pickup by path, both carry it.
+  assert.deepStrictEqual(json(home, ['constraints', '--cwd', repo]).body.constraints.map((c) => c.text), ['Repo2 rule.']);
+  assert.deepStrictEqual(json(home, ['constraints', '--file', t.path]).body.constraints.map((c) => c.text), ['Repo2 rule.']);
+});
+
+check('--file on a central file answers for that file, not whatever the index maps its name to', () => {
+  const home = setUp();
+  const repo = path.join(home, 'code', 'proj');
+  fs.mkdirSync(path.join(repo, '.git'), { recursive: true });
+  fs.writeFileSync(path.join(repo, 'HANDOFF.md'), handoff(repo, ['Proj rule.']));
+  setIndex(home, 'proj', { path: path.join(repo, 'HANDOFF.md'), kind: 'project', recorded_at: '2026-01-01T00:00:00.000Z' });
+  write(home, [['proj', handoff(home, ['Home proj rule.'])]]);
+  const byFile = json(home, ['constraints', '--file', docPath(home, 'proj')]).body.constraints.map((c) => c.text).sort();
+  const byDir = json(home, ['constraints', '--cwd', home]).body.constraints.map((c) => c.text).sort();
+  assert.deepStrictEqual(byFile, byDir);
+  assert.ok(!byFile.includes('Proj rule.'));
+});
+
+check('--file through a symlink to a thread answers with that thread', () => {
+  const home = migrated();
+  const link = path.join(home, 'link.md');
+  fs.symlinkSync(docPath(home, 'brand-thread'), link);
+  const r = json(home, ['constraints', '--file', link]);
+  assert.strictEqual(r.status, 0, JSON.stringify(r.body));
+  assert.deepStrictEqual(r.body.constraints.map((c) => c.text), ['Brand rule.']);
+});
+
+check('reconcile survives an index entry whose path is not a string', () => {
+  const home = migrated();
+  setIndex(home, 'site-thread', { path: 42, kind: 'central' });
+  const r = run(home, ['reconcile', '--json']);
+  assert.doesNotMatch(r.stderr, /TypeError|ERR_INVALID_ARG_TYPE/);
+});
+
 process.stdout.write(`\n${failures === 0 ? 'all passed' : `${failures} failed`}\n`);
 process.exit(failures === 0 ? 0 : 1);

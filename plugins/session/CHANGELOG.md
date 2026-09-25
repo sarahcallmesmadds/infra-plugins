@@ -38,6 +38,8 @@ One handoff per thread, for handoffs written from the home directory.
 - `find` exits non-zero for any handoff it finds and cannot read.
 - `constraints --file <path>` answers for a handoff named by its file, reading
   its Working directory the same way every other command does.
+- A folder's own `HANDOFF.md` is always part of its constraints pool, even when
+  the index does not list it.
 
 After updating, restart sessions in every host before running `migrate apply`.
 
