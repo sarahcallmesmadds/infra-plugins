@@ -775,6 +775,7 @@ check('after migration target refuses a brand-new home topic too', () => {
   const home = migrated();
   const r = json(home, ['target', 'something new', '--cwd', home]);
   assert.strictEqual(r.status, 1);
+  assert.match(r.body.refused, /saved as a thread/, 'refused, but for some other reason');
   assert.strictEqual(r.body.path, undefined);
 });
 
@@ -857,6 +858,72 @@ check('a dangling config symlink fails closed', () => {
 check('the plain migration plan lists the rules, not only the counts', () => {
   const home = setUp();
   assert.match(run(home, ['migrate', 'plan', '--threads', 'site-thread,brand-thread']).stdout, /- Only in history\.\s+\(from old-session\)/);
+});
+
+// ------------------------------------------- persona review of 7e3bcf7 ----
+
+check('a session outside home is not handed an existing home history handoff', () => {
+  const home = migrated();
+  const notes = path.join(home, 'notes');
+  fs.mkdirSync(notes);
+  const before = snapshot(docPath(home, 'old-session'));
+  const r = json(home, ['target', 'old session', '--cwd', notes]);
+  assert.strictEqual(r.status, 1);
+  assert.match(r.body.refused, /kept as history/);
+  assert.strictEqual(r.body.path, undefined);
+  assert.deepStrictEqual(snapshot(docPath(home, 'old-session')), before);
+});
+
+check('a broken thread list does not stop target for a project', () => {
+  const home = migrated();
+  const repo = path.join(home, 'Projects', 'app3');
+  fs.mkdirSync(path.join(repo, '.git'), { recursive: true });
+  fs.writeFileSync(path.join(dirOf(home), 'threads.json'), '{ not json');
+  const r = json(home, ['target', 'x', '--cwd', repo]);
+  assert.strictEqual(r.status, 0, JSON.stringify(r.body));
+  assert.strictEqual(r.body.path, path.join(repo, 'HANDOFF.md'));
+  assert.strictEqual(json(home, ['target', 'x', '--cwd', home]).status, 1, 'a home write went ahead on a broken list');
+});
+
+check('find says a declared thread cannot be read', () => {
+  const home = migrated();
+  fs.chmodSync(docPath(home, 'brand-thread'), 0o000);
+  try {
+    const f = json(home, ['find', 'brand-thread']);
+    assert.strictEqual(f.status, 1);
+    assert.strictEqual(f.body.thread.unreadable, true);
+    assert.match(run(home, ['find', 'brand-thread']).stdout, /cannot be read/);
+  } finally {
+    fs.chmodSync(docPath(home, 'brand-thread'), 0o644);
+  }
+});
+
+// ------------------------------------------------ Devin CLI round three ----
+
+check('before migration, an unreadable handoff is called unreadable', () => {
+  const home = setUp();
+  fs.chmodSync(docPath(home, 'old-session'), 0o000);
+  try {
+    const r = json(home, ['constraints', '--thread', 'old-session']);
+    assert.strictEqual(r.status, 1);
+    assert.match(r.body.error, /could not be read/);
+  } finally {
+    fs.chmodSync(docPath(home, 'old-session'), 0o644);
+  }
+});
+
+check('a declared thread with no Working directory line is not called out of scope', () => {
+  const home = migrated();
+  fs.writeFileSync(docPath(home, 'brand-thread'), '# Session Handoff\n\n## Constraints still in force\n- x\n');
+  assert.strictEqual(json(home, ['constraints', '--thread', 'brand-thread']).body.refused, 'declared-no-directory');
+});
+
+check('find says when the thread list cannot be read', () => {
+  const home = migrated();
+  fs.writeFileSync(path.join(dirOf(home), 'threads.json'), '{ not json');
+  const r = run(home, ['find', 'old-session']);
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stdout, /thread list cannot be read/);
 });
 
 process.stdout.write(`\n${failures === 0 ? 'all passed' : `${failures} failed`}\n`);

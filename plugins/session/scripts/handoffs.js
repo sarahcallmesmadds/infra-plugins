@@ -240,7 +240,7 @@ function mutateIndex(home, change, { readOnly = false, mayCreate = false, refuse
     // `no-index` is not a refusal: the handoffs folder does not exist and this
     // caller may not create it, so there is nothing on disk to protect. `save`
     // below still declines to write in that case.
-    if (!readOnly && !region.locked && region.reason !== 'no-index') {
+    if (!readOnly && !region.locked && region.reason !== 'no-index' && region.outerReason !== 'no-index') {
       return refused(region.reason === 'reentrant' ? 'busy' : region.reason);
     }
     const save = (handoffs) => {
@@ -626,13 +626,21 @@ function archiveStale({ days = DEFAULT_STALE_DAYS, home = os.homedir(), now = Da
   // deleted it. The sweep then repointed an entry that was no longer there.
   // Moving, repointing and pruning are one change to one thing, so they are one
   // region.
-  const { dropped, unreachable, pending, written, lockSkipped } = mutateIndex(home, (handoffs, save) => {
+  const {
+    dropped, unreachable, pending, written, lockSkipped, refused: refusedInLock,
+  } = mutateIndex(home, (handoffs, save) => {
     // The thread list is read again inside the lock. Read before it, a sweep
     // that waited behind a migration saw the list from before that migration
     // and could archive a thread it had just declared.
+    // Protection too, for the same reason: an entry added while this waited
+    // for the lock is honoured on this run rather than the next.
+    const protectionNow = config.loadProtection(home);
+    if (!protectionNow.ok) {
+      return { dropped: [], unreachable: [], pending: [], written: true, refused: `protected handoffs could not be read: ${protectionNow.errors.join('; ')}` };
+    }
     const regNow = registryMod.readRegistry(home);
     if (regNow.state === 'invalid') {
-      return { dropped: [], unreachable: [], pending: [], written: true, lockSkipped: `the thread list became invalid: ${regNow.errors.join('; ')}` };
+      return { dropped: [], unreachable: [], pending: [], written: true, refused: `the thread list became invalid: ${regNow.errors.join('; ')}` };
     }
     const threadPaths = registryMod.declaredPaths(regNow.registry);
     for (const name of entries) {
@@ -647,7 +655,7 @@ function archiveStale({ days = DEFAULT_STALE_DAYS, home = os.homedir(), now = Da
       try {
         const stat = fs.statSync(from);
         if (!stat.isFile() || stat.mtimeMs >= cutoff) continue;
-        if (config.isProtected(protection, from, home)) { protectedSkipped.push(name); continue; }
+        if (config.isProtected(protectionNow, from, home)) { protectedSkipped.push(name); continue; }
         if (threadPaths.has(from) || threadPaths.has(resolvePath(from))) continue;
         // Never rename over a document already in the archive. Two handoffs
         // with one name is a question for a person, and a rename answers it by
@@ -708,6 +716,10 @@ function archiveStale({ days = DEFAULT_STALE_DAYS, home = os.homedir(), now = Da
     collisions,
     // Set when another session held the lock, in which case nothing moved.
     lockSkipped: lockSkipped || null,
+    // Set when the thread list turned invalid while this waited for the lock.
+    // Nothing moved, and unlike a busy lock the next sweep will not fare
+    // better, so it is a refusal rather than a skip.
+    ...(refusedInLock ? { refused: refusedInLock } : {}),
   };
 }
 

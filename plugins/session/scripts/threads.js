@@ -103,13 +103,17 @@ function resolve(slug, home = os.homedir()) {
 
   if (declared) {
     const exists = fs.existsSync(declared.path);
+    const threadRev = exists ? fileRev(declared.path) : null;
     const result = {
       ...out,
       slug: declared.slug,
       kind: 'thread',
       path: declared.path,
       exists,
-      rev: exists ? fileRev(declared.path) : null,
+      rev: threadRev,
+      // There and unreadable: said here, so `find` does not hand a wrap a
+      // null revision for it to fail on one step later.
+      unreadable: exists && threadRev === null,
       generation: reg.registry.generation,
       conflicts: [],
     };
@@ -250,6 +254,9 @@ function threadConstraints({ slug, home = os.homedir() }) {
   // A declared thread whose document says it was written somewhere other than
   // home is a hand edit that makes a project's rules look like a thread's.
   // Refused, never read as binding.
+  if (!handoffs.handoffDir(text)) {
+    return { mode: 'threads', refused: 'declared-no-directory', path: declared.path, slug: declared.slug };
+  }
   if (!inHomeScope(text, home)) {
     return { mode: 'threads', refused: 'declared-out-of-scope', path: declared.path, slug: declared.slug };
   }
@@ -781,6 +788,7 @@ function migrateFinish({ home = os.homedir() } = {}) {
 
 module.exports = {
   rev,
+  inHomeScope,
   resolve,
   listThreads,
   threadConstraints,

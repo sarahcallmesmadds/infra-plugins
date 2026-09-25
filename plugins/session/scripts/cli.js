@@ -125,6 +125,9 @@ function printThreadConstraints(opts, t) {
     }
     return emit(opts, {}, lines);
   }
+  if (t.refused === 'declared-no-directory') {
+    return emit(opts, {}, [`${t.slug} is declared as a thread, and ${t.path} has no **Working directory:** line, so which scope it belongs to cannot be told. Restore that line.`]);
+  }
   if (t.refused === 'declared-out-of-scope') {
     return emit(opts, {}, [`${t.slug} is declared as a thread, but ${t.path} says it was written outside the home directory. Its rules are not read as binding; fix the thread list.`]);
   }
@@ -500,7 +503,7 @@ const COMMANDS = {
       match = { ...match, history: true };
     }
     const stale = match || resolved.kind === 'thread' ? null : handoffs.staleRecord(slug, opts.home);
-    if (resolved.kind === 'thread' && !resolved.exists) process.exitCode = 1;
+    if ((resolved.kind === 'thread' && (!resolved.exists || resolved.unreadable)) || resolved.mode === 'invalid') process.exitCode = 1;
     if (opts.json) {
       return emit(opts, {
         slug,
@@ -509,7 +512,10 @@ const COMMANDS = {
         tried: handoffs.searchPaths(slug, opts.home),
         mode: resolved.mode,
         thread: resolved.kind === 'thread'
-          ? { slug: resolved.slug, path: resolved.path, exists: resolved.exists, rev: resolved.rev, generation: resolved.generation, conflicts: resolved.conflicts }
+          ? {
+            slug: resolved.slug, path: resolved.path, exists: resolved.exists, unreadable: resolved.unreadable,
+            rev: resolved.rev, generation: resolved.generation, conflicts: resolved.conflicts,
+          }
           : null,
       }, []);
     }
@@ -523,6 +529,8 @@ const COMMANDS = {
         `  kind: ${match.kind}, last touched ${age} day${age === 1 ? '' : 's'} ago`,
       ];
       if (match.history) lines.push('  Kept as history: threads are set up, and this handoff is not one, so it binds nothing.');
+      if (resolved.unreadable) lines.push('  This thread\'s file is there and cannot be read, so it cannot be picked up or saved.');
+      if (resolved.mode === 'invalid') lines.push('  The thread list cannot be read, so whether this is a declared thread is unknown.');
       for (const c of resolved.conflicts || []) lines.push(`  Conflict: the index also gives this slug to ${c.indexed}.`);
       return emit(opts, {}, lines);
     }
@@ -586,14 +594,15 @@ const COMMANDS = {
       // to prevent, so a handoff that cannot be found, or names no working
       // directory, is said out loud.
       let dir = t.dir || null;
+      let unreadable = t.unreadable || null;
       const found = handoffs.findHandoff(opts.thread, opts.home);
       if (!dir && found) {
-        try { dir = handoffs.handoffDir(require('fs').readFileSync(found.path, 'utf8')); } catch (_) { /* reported below */ }
+        try { dir = handoffs.handoffDir(require('fs').readFileSync(found.path, 'utf8')); } catch (e) { unreadable = e.message; }
       }
       if (!found || !dir) {
         process.exitCode = 1;
         let why = !found ? `no handoff found for "${opts.thread}"` : `${found.path} has no **Working directory:** line`;
-        if (found && t.unreadable) why = `${found.path} could not be read: ${t.unreadable}`;
+        if (found && unreadable) why = `${found.path} could not be read: ${unreadable}`;
         return emit(opts, { error: why, constraints: [] }, [`Cannot say what binds ${opts.thread}: ${why}.`]);
       }
       opts.cwd = dir;
@@ -716,20 +725,37 @@ const COMMANDS = {
     // which is only ever written through `save`.
     const protection = configMod.loadProtection(opts.home);
     const reg = registryMod.readRegistry(opts.home);
+    // What is at the path now matters as much as where the session is. A
+    // session outside home can be handed the central path of an existing home
+    // handoff, and writing there would overwrite history that is never meant
+    // to be rewritten. A file that cannot be read is treated as home, which is
+    // the side that refuses.
+    const fsMod = require('fs');
+    const homeCwd = t.kind === 'central' && handoffs.scopeKey(opts.cwd) === handoffs.scopeKey(opts.home);
+    let homeFile = false;
+    if (t.kind === 'central' && fsMod.existsSync(t.path)) {
+      try { homeFile = threadsMod.inHomeScope(fsMod.readFileSync(t.path, 'utf8'), opts.home); } catch (_) { homeFile = true; }
+    }
+    const homeWrite = homeCwd || homeFile;
     let refusal = null;
     if (!protection.ok) refusal = `protected handoffs could not be read: ${protection.errors.join('; ')}`;
     else if (configMod.isProtected(protection, t.path, opts.home)) refusal = `${t.path} is protected`;
-    else if (reg.state === 'invalid') refusal = `the thread list is invalid: ${reg.errors.join('; ')}`;
+    // A broken thread list only matters where threads could be involved. A
+    // project handoff, or a central one written and kept outside home, is
+    // handed out as before.
+    else if (reg.state === 'invalid' && homeWrite) refusal = `the thread list is invalid: ${reg.errors.join('; ')}`;
     else if (reg.state === 'ok' && registryMod.declaredPaths(reg.registry).has(t.path)) {
       refusal = `${t.path} is a declared thread; write it with cli.js save --thread ${t.slug}`;
-    } else if (reg.state === 'ok' && t.kind === 'central' && handoffs.scopeKey(opts.cwd) === handoffs.scopeKey(opts.home)) {
+    } else if (reg.state === 'ok' && homeWrite) {
       // Once threads exist, a handoff written from the home directory is a
-      // thread or it is nothing. Handing out a plain path here, new or existing,
-      // produces a document that binds nothing: exactly what a session still
-      // running the older skill would do without noticing. Central handoffs
-      // from other directories keep the older behaviour.
-      refusal = 'threads are set up, so a handoff written from the home directory is saved as a thread: '
-        + 'cli.js save --thread <slug> (add --create for a new one)';
+      // thread or it is nothing, and an existing home handoff that is not a
+      // thread is history. Handing out either path produces a document that
+      // binds nothing, or overwrites one that must not change: exactly what a
+      // session still running the older skill would do without noticing.
+      refusal = homeFile && !homeCwd
+        ? `${t.path} is a home handoff kept as history and is never rewritten; choose another topic`
+        : 'threads are set up, so a handoff written from the home directory is saved as a thread: '
+          + 'cli.js save --thread <slug> (add --create for a new one)';
     }
     if (refusal) {
       process.exitCode = 1;

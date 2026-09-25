@@ -257,7 +257,13 @@ function withIndexLock(lock, fn, { readOnly = false, mayCreate = false } = {}) {
   if (outer) {
     outer.count += 1;
     try {
-      return { value: fn({ locked: outer.locked, reason: 'reentrant' }), locked: outer.locked, reason: 'reentrant' };
+      // The outer answer travels with it, so a nested caller can tell "inside a
+      // region that holds the lock" from "inside one that never needed it".
+      return {
+        value: fn({ locked: outer.locked, reason: 'reentrant', outerReason: outer.reason }),
+        locked: outer.locked,
+        reason: 'reentrant',
+      };
     } finally {
       outer.count -= 1;
     }

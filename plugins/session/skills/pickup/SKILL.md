@@ -71,8 +71,9 @@ If the match is an archived handoff, open the summary with:
 The same JSON says which kind of handoff this is.
 
 - **`thread` is set.** This is a declared thread: one handoff per subject,
-  rewritten in place at every wrap. If `thread.exists` is false, its file is
-  missing: say so and stop. Otherwise keep `thread.slug`, `thread.path`,
+  rewritten in place at every wrap. If `thread.exists` is false its file is
+  missing, and if `thread.unreadable` is true it cannot be read: say which and
+  stop. Otherwise keep `thread.slug`, `thread.path`,
   `thread.rev` and `thread.generation`; Step 3 prints them. If
   `thread.conflicts` is not empty, two documents answer to this slug: show
   both paths and ask which is meant before going on.
@@ -122,10 +123,11 @@ Two refusals stop the pickup rather than print a list:
 - `refused: "migration-unfinished"`: a migration is part way through. Show the
   rules in `pending` that are still to be written into this thread, say that no
   thread's rules are given until it finishes, and name `cli.js migrate finish`.
-- `refused: "registry-invalid"`, `"declared-missing"`, `"declared-unreadable"`
-  or `"declared-out-of-scope"`: the thread list cannot be read, or names a file
-  that is not there, cannot be read, or was written outside the home directory.
-  Say which and stop.
+- `refused: "registry-invalid"`, `"declared-missing"`, `"declared-unreadable"`,
+  `"declared-no-directory"` or `"declared-out-of-scope"`: the thread list cannot
+  be read, or names a file that is not there, cannot be read, has no
+  `**Working directory:**` line, or was written outside the home directory. Say
+  which and stop.
 
 If the handoff's own `## Constraints still in force` section and the command
 disagree, show both and say which came from where. For a declared thread they
