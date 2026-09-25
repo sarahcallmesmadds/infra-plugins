@@ -847,10 +847,26 @@ const COMMANDS = {
         // a thread file that is not there yet has no real path, and the wrap
         // would then create the thread's file directly, skipping save.
         const roots = [handoffs.resolvePath(handoffs.handoffRoot(opts.home)), path.resolve(handoffs.handoffRoot(opts.home))];
-        let pointsAt = null;
-        try { pointsAt = path.resolve(path.dirname(t.path), fsMod.readlinkSync(t.path)); } catch (_) { /* unreadable link */ }
-        const spellings = [handoffs.resolvePath(t.path), pointsAt, pointsAt && handoffs.resolvePath(path.dirname(pointsAt))];
-        linkedIntoHandoffs = pointsAt === null
+        // Every hop of the chain, since a link to a link to a missing thread
+        // file got through when only the first hop was read.
+        const spellings = [handoffs.resolvePath(t.path)];
+        let hop = t.path;
+        let unresolved = false;
+        for (let i = 0; i < 40; i += 1) {
+          let next;
+          try {
+            if (!fsMod.lstatSync(hop).isSymbolicLink()) break;
+            next = path.resolve(path.dirname(hop), fsMod.readlinkSync(hop));
+          } catch (e) {
+            if (e && e.code === 'ENOENT') break;
+            unresolved = true;
+            break;
+          }
+          spellings.push(next, handoffs.resolvePath(path.dirname(next)));
+          hop = next;
+          if (i === 39) unresolved = true;
+        }
+        linkedIntoHandoffs = unresolved
           || spellings.some((p) => p && roots.some((r) => p === r || p.startsWith(`${r}${path.sep}`)));
       }
     } catch (_) { /* nothing there */ }
@@ -902,8 +918,17 @@ const COMMANDS = {
       assigned = c.assigned;
     } else {
       record = handoffs.recordHandoff({ slug: t.slug, target: t.path, kind: t.kind, home: opts.home, choose });
-      key = record.key === undefined ? t.slug : record.key;
-      assigned = Boolean(record.assigned);
+      if (record.key === undefined) {
+        // Refused before choosing (a busy or unwritable lock): decide from a
+        // fresh read which name it would have been, so a thread-named project
+        // is not handed its bare name, which /pickup would open as the thread.
+        const c = choose ? choose(handoffs.readIndex(opts.home)) : { key: t.slug, assigned: false };
+        key = c.key;
+        assigned = c.assigned;
+      } else {
+        key = record.key;
+        assigned = Boolean(record.assigned);
+      }
     }
     // An assigned name exists only in the index, so one that was not recorded
     // (--no-record, a refused lock, a failed write) leads nowhere and is not
@@ -921,7 +946,7 @@ const COMMANDS = {
     }
     // The plain answer says what the JSON says, with or without --no-record.
     const lines = [t.path, shadowed
-      ? `  kind: ${t.kind}, pickup slug: none, because ${record && record.reason ? record.reason : `"${key}" is not recorded in the index`}; pick this up by its path: /pickup ${t.path}`
+      ? `  kind: ${t.kind}, pickup slug: none, because ${record && record.reason ? record.reason : `"${key}" is not recorded by this run (--no-record)`}; pick this up by its path: /pickup ${t.path}`
       : `  kind: ${t.kind}, pickup slug: ${key}${key !== t.slug ? ` ("${t.slug}" is taken)` : ''}`];
     // Said, because a project handoff whose entry was not recorded may not be
     // found by name later, and the wrap is the moment that can still be fixed.

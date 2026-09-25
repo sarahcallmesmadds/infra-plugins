@@ -1727,5 +1727,45 @@ check('pickup checks that a central path leads back to the same file', () => {
   assert.match(pickup, /check that the match \(or\s+`thread.path`\) is that same file/);
 });
 
+// ------------------------------------------------ Codex round 15 on 19e3f9c ----
+
+check('a refused index lock does not hand a thread-named project the thread\'s name', () => {
+  const home = migrated();
+  const repo = path.join(home, 'code', 'brand-thread');
+  fs.mkdirSync(path.join(repo, '.git'), { recursive: true });
+  const r = spawnSync(process.execPath, ['-e', `
+    const h = require(${JSON.stringify(path.join(ROOT, 'scripts', 'handoffs.js'))});
+    h.recordHandoff = () => ({ recorded: false, reason: 'another session is writing the handoff index' });
+    require(${JSON.stringify(CLI)}).main(['target', 'x', '--cwd', ${JSON.stringify(repo)}, '--json', '--home', ${JSON.stringify(home)}]);
+  `], { encoding: 'utf8' });
+  const body = JSON.parse(r.stdout);
+  assert.notStrictEqual(body.pickupSlug, 'brand-thread', r.stdout);
+  assert.strictEqual(body.pickupSlug, null);
+});
+
+// -------------------------------------------- persona review of 19e3f9c ----
+
+check('a project keeps a high-numbered name it already holds in a small index', () => {
+  const t = require(path.join(ROOT, 'scripts', 'threads.js'));
+  const home = migrated();
+  const target = path.join(home, 'code', 'brand-thread', 'HANDOFF.md');
+  const index = { 'brand-thread-project-9': { path: target, kind: 'project', recorded_at: new Date().toISOString() } };
+  assert.strictEqual(t.projectKey('brand-thread', target, home, index), 'brand-thread-project-9');
+});
+
+check('a two-hop link from a project HANDOFF.md to a missing thread file is refused', () => {
+  const home = migrated();
+  fs.renameSync(docPath(home, 'site-thread'), path.join(home, 'moved.md'));
+  const hop = path.join(home, 'elsewhere', 'hop.md');
+  fs.mkdirSync(path.dirname(hop), { recursive: true });
+  fs.symlinkSync(docPath(home, 'site-thread'), hop);
+  const repo = path.join(home, 'code', 'two');
+  fs.mkdirSync(path.join(repo, '.git'), { recursive: true });
+  fs.symlinkSync(hop, path.join(repo, 'HANDOFF.md'));
+  const r = json(home, ['target', 'x', '--cwd', repo]);
+  assert.strictEqual(r.status, 1);
+  assert.strictEqual(r.body.path, undefined);
+});
+
 process.stdout.write(`\n${failures === 0 ? 'all passed' : `${failures} failed`}\n`);
 process.exit(failures === 0 ? 0 : 1);

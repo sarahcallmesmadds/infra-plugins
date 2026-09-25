@@ -122,7 +122,7 @@ function projectNameShadowed(slug, home) {
 // The stem is cut before the suffix goes on: slugify's 60-character limit
 // cut the suffix off instead, which gave back the thread's own name.
 function projectKey(name, target, home = os.homedir(), index = handoffs.readIndex(home)) {
-  return firstFree(handoffs.slugify(name), (n) => (n === 1 ? '-project' : `-project-${n}`), target, home, index);
+  return firstFree(handoffs.slugify(name), (n) => (n === 1 ? '-project' : `-project-${n}`), target, home, index, /-project(-\d+)?$/);
 }
 
 // Whether the index gives this name to a different project that holds it by
@@ -145,7 +145,7 @@ function assignedElsewhere(key, target, home = os.homedir(), index = handoffs.re
 }
 
 function freeNumbered(key, target, home = os.homedir(), index = handoffs.readIndex(home)) {
-  return firstFree(key, (n) => `-${n + 1}`, target, home, index);
+  return firstFree(key, (n) => `-${n + 1}`, target, home, index, /-\d+$/);
 }
 
 // A central name counts as taken when anything is there, a dangling link
@@ -161,7 +161,16 @@ function centralTaken(k, home) {
 // (index entries and central files), so one past their count is always free.
 // The stem is cut per candidate so the whole key fits slugify's 60 characters;
 // a longer key would be cut back by the next lookup and name something else.
-function firstFree(base, suffix, target, home, index) {
+function firstFree(base, suffix, target, home, index, shape) {
+  // A name this project already holds is found in the whole index, not only
+  // among the candidates below: the search limit follows the index's size,
+  // and a project holding `-project-9` in a small index was moved off it.
+  const heldAnywhere = Object.keys(index).find((k) => {
+    const e = index[k];
+    if (!e || typeof e.path !== 'string' || !samePath(e.path, target) || !shape.test(k)) return false;
+    return base.startsWith(k.replace(shape, '').replace(/-+$/, ''));
+  });
+  if (heldAnywhere) return heldAnywhere;
   let files = 0;
   try { files = fs.readdirSync(handoffs.handoffRoot(home)).length; } catch (_) { /* none */ }
   const ceiling = Object.keys(index).length + files + 2;
