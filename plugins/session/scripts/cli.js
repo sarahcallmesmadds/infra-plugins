@@ -320,6 +320,7 @@ const COMMANDS = {
   forget(opts) {
     const slug = opts.rest[0];
     if (!slug) {
+      process.exitCode = 1;
       if (opts.json) return emit(opts, { removed: false, reason: 'no slug given' }, []);
       return emit(opts, {}, ['Which one? Usage: cli.js forget <slug>']);
     }
@@ -647,16 +648,11 @@ const COMMANDS = {
       } else {
         const dir = handoffs.handoffDir(text);
         if (!dir) return fail('it has no **Working directory:** line');
+        // The pool for the file's own Working directory, the same answer
+        // --cwd gives for it. The file itself is not added: it is in the pool
+        // already when the index lists it, and adding one the index does not
+        // list let a stale worktree copy bring back a retired rule.
         opts.cwd = dir;
-        // Added to the pool only when it lives outside the handoffs folder,
-        // which is the project case --file exists for. A pause note or an
-        // archived copy is answered from its Working directory alone, exactly
-        // as 0.8: a pause file's retirement otherwise removed a live home rule
-        // from a binding answer.
-        const inside = [path.resolve(file), handoffs.resolvePath(file)]
-          .some((p) => p.startsWith(`${path.resolve(handoffs.handoffRoot(opts.home))}${path.sep}`)
-            || p.startsWith(`${handoffs.resolvePath(handoffs.handoffRoot(opts.home))}${path.sep}`));
-        opts.alsoRead = inside ? [] : [file];
       }
     }
     if (opts.thread) {
@@ -683,7 +679,7 @@ const COMMANDS = {
       }
       opts.cwd = dir;
     }
-    const r = handoffs.carriedConstraints({ cwd: opts.cwd, home: opts.home, alsoRead: opts.alsoRead || [] });
+    const r = handoffs.carriedConstraints({ cwd: opts.cwd, home: opts.home });
     // With the thread list unreadable, a pool sharing home's scope may hold
     // every thread's rules, and which of them bind cannot be told. Refused
     // rather than listed: a warning above a confident list is carried anyway.
@@ -823,10 +819,20 @@ const COMMANDS = {
     const homeCwd = central && threadsMod.isHomeDir(opts.cwd, opts.home);
     const existingMaybeThread = central && fsMod.existsSync(t.path) && threadsMod.couldBeThread(t.path, opts.home);
     let linkedCentral = false;
-    try { linkedCentral = central && fsMod.lstatSync(t.path).isSymbolicLink(); } catch (_) { /* nothing there */ }
+    let linkedIntoHandoffs = false;
+    try {
+      if (fsMod.lstatSync(t.path).isSymbolicLink()) {
+        linkedCentral = central;
+        // A project HANDOFF.md linked to a file elsewhere is a legitimate
+        // shared setup; linked into the handoffs folder, the wrap would write
+        // over a thread or a history document.
+        const root = handoffs.resolvePath(handoffs.handoffRoot(opts.home));
+        linkedIntoHandoffs = handoffs.resolvePath(t.path).startsWith(`${root}${path.sep}`);
+      }
+    } catch (_) { /* nothing there */ }
     let refusal = null;
     if (!protection.ok) refusal = `protected handoffs could not be read: ${protection.errors.join('; ')}`;
-    else if (linkedCentral) {
+    else if (linkedCentral || linkedIntoHandoffs) {
       // A wrap writes to the path it is handed, and a central file that is a
       // symlink writes through to whatever it points at, a project's own
       // handoff included, whatever that document says it is.
@@ -851,42 +857,44 @@ const COMMANDS = {
       return emit(opts, {}, [`Not handed out: ${refusal}`]);
     }
     let record = null;
-    // A project named like a declared thread still gets its handoff; only the
-    // index entry is skipped, because /pickup of that name opens the thread
-    // and an entry pointing elsewhere would be reported as a conflict forever.
-    const shadowsThread = !central && threadsMod.projectNameShadowed(t.slug, opts.home);
-    if (shadowsThread && opts.noRecord) {
-      record = null;
-    } else if (shadowsThread) {
-      record = { recorded: false, reason: `"${t.slug}" is a declared thread's name, so /pickup ${t.slug} opens the thread; rename the folder to pick this project up by name` };
+    // A project whose name is taken by a thread is indexed under
+    // `<name>-project` instead, so /pickup has a name that opens it and, as
+    // importantly, the index still lists it: the index is how every pool finds
+    // project handoffs. Leaving it out of the index was tried first and lost
+    // its rules for every other folder in its repository (a worktree, a
+    // subfolder, the main checkout), each patch for that opening the next.
+    // Only if the alternative is taken as well does it fall back to a path.
+    const nameTaken = (s) => threadsMod.projectNameShadowed(s, opts.home)
+      || require('fs').existsSync(path.join(handoffs.handoffRoot(opts.home), `HANDOFF-${s}.md`));
+    let key = t.slug;
+    if (!central && threadsMod.projectNameShadowed(t.slug, opts.home)) key = handoffs.slugify(`${t.slug}-project`);
+    const noKey = key !== t.slug && nameTaken(key);
+    if (noKey && !opts.noRecord) {
+      record = { recorded: false, shadowed: true, reason: `"${t.slug}" is a thread's name and "${key}" is taken too, so this project is picked up by its path` };
     } else if (!opts.noRecord) {
-      record = handoffs.recordHandoff({ slug: t.slug, target: t.path, kind: t.kind, home: opts.home });
+      record = handoffs.recordHandoff({ slug: key, target: t.path, kind: t.kind, home: opts.home });
     }
     // recordHandoff checks again under the lock, so a thread of this name
-    // declared by another session meanwhile is caught there as well.
-    // And while the list cannot be read, no project name is known to be free
-    // of a thread: repairing the list could turn it into one, and a project
-    // left out of the index would then be opened as that thread.
-    const shadowed = shadowsThread || Boolean(record && record.shadowed) || (!central && reg.state === 'invalid');
-    // `pickupSlug` is null when the slug would open something else: a project
-    // named like a declared thread is picked up by its path, never its name.
+    // declared by another session meanwhile leaves it unrecorded, and then the
+    // name is not handed out either.
+    const shadowed = noKey || Boolean(record && record.shadowed);
+    const pickupSlug = shadowed ? null : key;
     if (opts.json) {
       return emit(opts, {
         ...t, recorded: record ? record.recorded : false, recordReason: record && record.reason,
-        pickupSlug: shadowed ? null : t.slug,
+        pickupSlug,
       }, []);
     }
-    // The plain answer says what the JSON says: no pickup slug for a project
-    // named like a thread, with or without --no-record.
+    // The plain answer says what the JSON says, with or without --no-record.
     const lines = [t.path, shadowed
-      ? `  kind: ${t.kind}, pickup slug: none, because ${shadowsThread || (record && record.shadowed) ? `"${t.slug}" is a declared thread's name` : 'the thread list cannot be read, so the name may belong to a thread'}; pick this up by its path: /pickup ${t.path}`
-      : `  kind: ${t.kind}, pickup slug: ${t.slug}`];
+      ? `  kind: ${t.kind}, pickup slug: none, because ${record && record.reason ? record.reason : `"${t.slug}" and "${key}" are both taken`}; pick this up by its path: /pickup ${t.path}`
+      : `  kind: ${t.kind}, pickup slug: ${key}${key !== t.slug ? ` ("${t.slug}" is a thread's name)` : ''}`];
     // Said, because a project handoff whose entry was not recorded may not be
     // found by name later, and the wrap is the moment that can still be fixed.
     if (record && !record.recorded) {
       lines.push(shadowed
         ? `  Not recorded in the index: ${record.reason}.`
-        : `  Not recorded in the index (${record.reason}). Run this again before relying on /pickup ${t.slug}.`);
+        : `  Not recorded in the index (${record.reason}). Run this again before relying on /pickup ${key}.`);
     }
     emit(opts, {}, lines);
   },

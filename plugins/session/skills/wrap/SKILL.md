@@ -403,10 +403,11 @@ It returns the path, the kind, and the slug `/pickup` will need. If it returns
 belongs in a thread, and nothing may be written there this way. It also says when the entry
 was not recorded in the index (`recorded: false`); say that in the summary,
 because a project handoff kept outside the configured roots may then not be
-found by name. If `pickupSlug` is null, the project's name is taken by a
-declared thread, so `/pickup` of that name opens the thread and never this
-handoff. Keep the returned `path`: the check at the end of this step and the
-ending in Step 4 both use it instead of the name.
+found by name. **The name to use from here on is `pickupSlug`, not `slug`.**
+They differ when the project's name belongs to a thread: the project is then
+recorded as `<name>-project`, because `/pickup <name>` opens the thread. If
+`pickupSlug` is null, both names are taken; keep the returned `path`, because
+the check at the end of this step and the ending in Step 4 both use it instead.
 
 A directory
 with its own work scope gets `HANDOFF.md` alongside the work. Anywhere else,
@@ -456,11 +457,11 @@ padded one is noise that costs tokens at every future pickup.
 ### Then confirm it is actually there (outside threads)
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js find "<slug>" --json
+node "${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js find "<pickupSlug>" --json
 ```
 
-**If `target` returned `pickupSlug: null`, do not run that.** The name finds
-the thread, so a match would say nothing about this handoff. Open the returned
+The match has to be the `path` target returned; a match elsewhere says nothing
+about this handoff. **If `target` returned `pickupSlug: null`, do not run that.** Open the returned
 `path` with the Read tool instead: it is there if the read succeeds, and missing
 if it fails.
 
@@ -610,19 +611,20 @@ version of it that does not.
   pickup line. These results carry no path, and there may be no previous
   handoff at all, so name neither.
 
-**Anywhere threads do not apply, where the check returned a match**, close with:
+**Anywhere threads do not apply, where the check returned a match at that
+path**, close with the name as `target` returned it in `pickupSlug`:
 
 ```
 Handoff saved to [path].
 
-/pickup [slug]
+/pickup [pickupSlug]
 ```
 
 **Where `pickupSlug` was null and the read of the path succeeded**, close with
-the path in place of the name, because `/pickup [slug]` would open the thread:
+the path in place of a name, because both names are taken:
 
 ```
-Handoff saved to [path]. Its name belongs to a thread, so pick it up by path.
+Handoff saved to [path]. Its names are taken, so pick it up by path.
 
 /pickup [path]
 ```

@@ -38,8 +38,8 @@ different question, so the result would look right and be wrong.
 the slug and carry on with `find` below.
 
 **If the argument is any other path to a file rather than a name**, which is
-how `/wrap` ends for a project whose name belongs to a declared thread, skip
-`find`: the name would open the thread. Open the path with the Read tool. If the read fails,
+how `/wrap` ends for a project when both its name and `<name>-project` are
+taken, skip `find`: the name would open something else. Open the path with the Read tool. If the read fails,
 say nothing is there and stop. Otherwise it is a project handoff; carry on at
 Step 2, and in its constraints step pass the file itself, exactly as given:
 

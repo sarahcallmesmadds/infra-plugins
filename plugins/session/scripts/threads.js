@@ -99,11 +99,9 @@ function slugCouldBeThread(slug, home) {
   return fs.existsSync(central) && couldBeThread(central, home);
 }
 
-// Whether a project's name is taken by a thread, so `target` leaves it out of
-// the index and its own HANDOFF.md has to be read into its pool directly. One
-// decision for both: the pool used a looser test (any central file of that
-// name, history included) and read unindexed files target had indexed or
-// never meant to shadow.
+// Whether a project's name is taken by a thread, so `target` records it as
+// `<name>-project` instead. While the thread list cannot be read, a name with
+// a central file that could be a thread counts as taken.
 function projectNameShadowed(slug, home) {
   const reg = registryMod.readRegistry(home);
   if (reg.state === 'ok') return Boolean(registryMod.declaredBySlug(reg.registry, slug));
@@ -444,7 +442,11 @@ function saveThread({
       return refuse('not-declared', `${key} is no longer declared at ${target}`, { draft: from });
     }
 
-    const exists = fs.existsSync(target);
+    // A link whose target is gone counts as there, as resolve counts it, so
+    // it falls through to the unreadable refusal instead of "not there".
+    let linked = false;
+    try { linked = fs.lstatSync(target).isSymbolicLink(); } catch (_) { /* nothing there */ }
+    const exists = fs.existsSync(target) || linked;
     if (!create && !exists) return refuse('declared-missing', `the declared thread file ${target} is not there`, { draft: from });
     if (create && exists) {
       return refuse('name-taken', `${target} already exists as a handoff that is not a thread; choose another name, or adopt it with cli.js declare ${key}`, { draft: from });

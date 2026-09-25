@@ -1354,7 +1354,7 @@ function nearDuplicateConstraints(constraints = []) {
 // document carrying it went quiet for 30 days, and archiving is driven by mtime
 // rather than by anything retiring it.
 function carriedConstraints({
-  cwd = process.cwd(), home = os.homedir(), limit = CONSTRAINT_SCAN_CAP, includeThreads = false, alsoRead = [],
+  cwd = process.cwd(), home = os.homedir(), limit = CONSTRAINT_SCAN_CAP, includeThreads = false,
 } = {}) {
   // Grouping is by `scopeKey` throughout. Threads are not supported where the
   // home directory is itself a git checkout (see registry.js), so the home
@@ -1367,31 +1367,6 @@ function carriedConstraints({
   // window and drop its rule with nothing said. Reading a few hundred small
   // files is cheap; losing a rule to somebody else's volume of work is not.
   const rows = recentHandoffs({ home, limit: Infinity });
-  // A folder's own HANDOFF.md always belongs to its pool, whether or not the
-  // index knows it, and so does a file the caller named. The pool used to come
-  // only from central files and index entries, and a project named like a
-  // declared thread is deliberately left out of the index, so its own rules
-  // were never read and the next wrap rewrote its handoff without them, with
-  // "expected for the first wrap" as the only message.
-  // The folder's own file only in the case `target` leaves it out of the
-  // index on purpose, decided by the same function target uses. Anywhere else
-  // an unindexed own file is not read, exactly as 0.8: a worktree's stale
-  // committed HANDOFF.md, sorted newest by its checkout time, brought back a
-  // rule its main checkout had retired. Only this folder's own file is read,
-  // so a worktree is affected only if its own folder is named like a thread.
-  const own = writeTarget(cwd, 'x', home);
-  // Required here rather than at the top: threads.js requires this file.
-  const ownShadowed = own.kind === 'project' && require('./threads').projectNameShadowed(own.slug, home);
-  const extra = [...(ownShadowed ? [own.path] : []), ...alsoRead];
-  const listed = new Set(rows.map((r) => resolvePath(r.path)));
-  for (const p of extra) {
-    if (listed.has(resolvePath(p))) continue;
-    let mtime;
-    try { mtime = fs.statSync(p).mtimeMs; } catch (_) { continue; }
-    listed.add(resolvePath(p));
-    rows.push({ slug: slugify(path.basename(path.dirname(p))), path: p, mtime, archived: false });
-  }
-  rows.sort((a, b) => b.mtime - a.mtime);
   const scanned = [];
   const docs = [];
   const unreadable = [];

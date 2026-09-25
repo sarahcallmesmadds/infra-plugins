@@ -1092,16 +1092,18 @@ check('target treats home spelled with a trailing slash as home', () => {
   assert.strictEqual(r.body.path, undefined);
 });
 
-check('a project named like a declared thread still gets its handoff, but not the thread name', () => {
+check('a project named like a declared thread gets its handoff, indexed as name-project', () => {
   const home = migrated();
   const repo = path.join(home, 'code', 'brand-thread');
   fs.mkdirSync(path.join(repo, '.git'), { recursive: true });
   const r = json(home, ['target', 'x', '--cwd', repo]);
   assert.strictEqual(r.status, 0, JSON.stringify(r.body));
   assert.strictEqual(r.body.path, path.join(repo, 'HANDOFF.md'));
-  assert.strictEqual(r.body.recorded, false);
-  assert.match(r.body.recordReason, /declared thread/);
+  assert.strictEqual(r.body.recorded, true);
+  assert.strictEqual(r.body.pickupSlug, 'brand-thread-project');
+  fs.writeFileSync(r.body.path, handoff(repo, ['Repo rule.']));
   assert.strictEqual(json(home, ['find', 'brand-thread']).body.match.kind, 'thread');
+  assert.strictEqual(json(home, ['find', 'brand-thread-project']).body.match.path, r.body.path);
 });
 
 check('a stray empty .git in home stops the plan, so it can never write a list that is then refused', () => {
@@ -1119,11 +1121,21 @@ check('a project named like a thread with --no-record prints no retry advice', (
   assert.doesNotMatch(out, /Run this again/);
 });
 
-check('a project named like a thread is given no pickup slug', () => {
+check('a project named like a thread is given name-project as its pickup slug', () => {
   const home = migrated();
   const repo = path.join(home, 'code', 'brand-thread');
   fs.mkdirSync(path.join(repo, '.git'), { recursive: true });
-  assert.strictEqual(json(home, ['target', 'x', '--cwd', repo]).body.pickupSlug, null);
+  assert.strictEqual(json(home, ['target', 'x', '--cwd', repo]).body.pickupSlug, 'brand-thread-project');
+});
+
+check('with name-project taken as well, the project is picked up by its path', () => {
+  const home = migrated();
+  write(home, [['brand-thread-project', handoff(home, ['Taken.'])]]);
+  const repo = path.join(home, 'code', 'brand-thread');
+  fs.mkdirSync(path.join(repo, '.git'), { recursive: true });
+  const r = json(home, ['target', 'x', '--cwd', repo]).body;
+  assert.strictEqual(r.pickupSlug, null);
+  assert.strictEqual(r.recorded, false);
 });
 
 check('a symlinked home inside a checkout is caught', () => {
@@ -1201,14 +1213,14 @@ check('git finding a repository for home some other way refuses both the plan an
   assert.strictEqual(JSON.parse(plan.stdout).reason, 'home-is-a-checkout');
 });
 
-check('plain target output gives a project named like a thread no pickup slug, and its path', () => {
+check('plain target output gives a project named like a thread its name-project slug', () => {
   const home = migrated();
   const repo = path.join(home, 'code', 'brand-thread');
   fs.mkdirSync(path.join(repo, '.git'), { recursive: true });
   for (const extra of [[], ['--no-record']]) {
     const out = run(home, ['target', 'x', '--cwd', repo, ...extra]).stdout;
-    assert.doesNotMatch(out, /pickup slug: brand-thread/);
-    assert.ok(out.includes(`/pickup ${path.join(repo, 'HANDOFF.md')}`), out);
+    assert.match(out, /pickup slug: brand-thread-project/);
+    assert.doesNotMatch(out, /pickup slug: brand-thread\b(?!-)/);
   }
 });
 
@@ -1287,15 +1299,14 @@ check('recording a project checks the thread list again under the lock', () => {
 
 // ------------------------------------------------ Codex round 10 on 5452290 ----
 
-check('while the list cannot be read, a project gets no pickup slug', () => {
+check('while the list cannot be read, a project whose name may be a thread gets name-project', () => {
   const home = migrated();
-  const repo = path.join(home, 'code', 'newname');
+  const repo = path.join(home, 'code', 'brand-thread');
   fs.mkdirSync(path.join(repo, '.git'), { recursive: true });
   fs.writeFileSync(path.join(dirOf(home), 'threads.json'), '{ not json');
   const r = json(home, ['target', 'x', '--cwd', repo]);
   assert.strictEqual(r.body.path, path.join(repo, 'HANDOFF.md'));
-  assert.strictEqual(r.body.pickupSlug, null);
-  assert.match(run(home, ['target', 'x', '--cwd', repo, '--no-record']).stdout, /thread list cannot be read/);
+  assert.strictEqual(r.body.pickupSlug, 'brand-thread-project');
 });
 
 check('pickup sends a central handoff path through the name lookup', () => {
@@ -1409,17 +1420,23 @@ check('an index entry whose path is not a string is skipped by findHandoff', () 
 
 // ----------------------------- persona and Codex round 11 on 2e03125 ----
 
-check('a project named like a thread keeps its own rules across wrap and pickup', () => {
+check('a project named like a thread keeps its rules across wrap and pickup, in its worktree and subfolders too', () => {
   const home = migrated();
   const repo = path.join(home, 'code', 'site-thread');
-  fs.mkdirSync(path.join(repo, '.git'), { recursive: true });
-  // Wrap: target hands out the path and leaves the index alone.
+  fs.mkdirSync(repo, { recursive: true });
+  spawnSync('git', ['init', '-q'], { cwd: repo });
+  spawnSync('git', ['-c', 'user.email=t@example.com', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', 'x'], { cwd: repo });
   const t = json(home, ['target', 'x', '--cwd', repo]).body;
-  assert.strictEqual(t.pickupSlug, null);
+  assert.strictEqual(t.pickupSlug, 'site-thread-project');
   fs.writeFileSync(t.path, handoff(repo, ['Repo2 rule.']));
-  // The next wrap from the project, and the pickup by path, both carry it.
-  assert.deepStrictEqual(json(home, ['constraints', '--cwd', repo]).body.constraints.map((c) => c.text), ['Repo2 rule.']);
-  assert.deepStrictEqual(json(home, ['constraints', '--file', t.path]).body.constraints.map((c) => c.text), ['Repo2 rule.']);
+  const wt = path.join(home, 'code', 'site-wt');
+  spawnSync('git', ['worktree', 'add', '-q', wt], { cwd: repo });
+  const sub = path.join(repo, 'sub');
+  fs.mkdirSync(sub);
+  const texts = (args) => json(home, ['constraints', ...args]).body.constraints.map((c) => c.text);
+  for (const args of [['--cwd', repo], ['--cwd', wt], ['--cwd', sub], ['--file', t.path]]) {
+    assert.deepStrictEqual(texts(args), ['Repo2 rule.'], args.join(' '));
+  }
 });
 
 check('--file on a central file answers for that file, not whatever the index maps its name to', () => {
@@ -1557,6 +1574,36 @@ check('migrate finish before migration says why', () => {
   const home = setUp();
   const out = run(home, ['migrate', 'finish']).stdout;
   assert.match(out, /threads are not set up/);
+});
+
+// -------------------------------------------- Devin CLI round 10 on 6d37a85 ----
+
+check('a project HANDOFF.md linked into the handoffs folder is not handed out', () => {
+  const home = migrated();
+  const repo = path.join(home, 'code', 'site-thread');
+  fs.mkdirSync(path.join(repo, '.git'), { recursive: true });
+  fs.symlinkSync(docPath(home, 'site-thread'), path.join(repo, 'HANDOFF.md'));
+  const before = fs.readFileSync(docPath(home, 'site-thread'), 'utf8');
+  const r = json(home, ['target', 'x', '--cwd', repo]);
+  assert.strictEqual(r.status, 1);
+  assert.strictEqual(r.body.path, undefined);
+  assert.strictEqual(fs.readFileSync(docPath(home, 'site-thread'), 'utf8'), before);
+});
+
+check('save on a declared thread whose file is a dangling link says unreadable, not missing', () => {
+  const home = migrated();
+  const rev = json(home, ['find', 'brand-thread']).body.thread.rev;
+  fs.renameSync(docPath(home, 'brand-thread'), path.join(home, 'moved.md'));
+  fs.symlinkSync(path.join(home, 'gone.md'), docPath(home, 'brand-thread'));
+  const r = json(home, ['save', '--thread', 'brand-thread', '--from', draftFor(home, handoff(home, ['x'])),
+    '--base', rev, '--generation', String(registry(home).generation)]);
+  assert.strictEqual(r.body.saved, false);
+  assert.notStrictEqual(r.body.reason, 'declared-missing');
+});
+
+check('forget with no slug is a usage error', () => {
+  const home = migrated();
+  assert.strictEqual(run(home, ['forget']).status, 1);
 });
 
 process.stdout.write(`\n${failures === 0 ? 'all passed' : `${failures} failed`}\n`);

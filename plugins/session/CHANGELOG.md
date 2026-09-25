@@ -31,19 +31,16 @@ One handoff per thread, for handoffs written from the home directory.
 - While `threads.json` cannot be read, `constraints` refuses for any folder
   sharing the home directory's scope instead of listing a pool that may hold
   every thread's rules.
-- A project whose folder name is a declared thread's gets its `HANDOFF.md` but
-  no index entry, and `/wrap` ends with `/pickup <path>`, which `/pickup` now
-  accepts. While `threads.json` cannot be read, every project is picked up by
-  its path, because no name is known to be free of a thread.
+- A project whose folder name is a thread's is indexed as `<name>-project`, and
+  `/wrap` ends with `/pickup <name>-project`. Only if that is taken too does it
+  end with `/pickup <path>`, which `/pickup` now accepts.
 - `find` exits non-zero for any handoff it finds and cannot read, and for a
   missing slug; `forget` exits non-zero when the index could not be written.
-- `target` refuses a central path that is a symbolic link, because a wrap
-  would write through it to another document.
+- `target` refuses a central path that is a symbolic link, and a project
+  `HANDOFF.md` linked into the handoffs folder, because a wrap would write
+  through it to another document.
 - `constraints --file <path>` answers for a handoff named by its file, reading
   its Working directory the same way every other command does.
-- Once threads are set up, a project whose name is taken by a central handoff
-  has its own `HANDOFF.md` read into its constraints pool, because `target`
-  leaves it out of the index on purpose. Every other pool is unchanged.
 
 After updating, restart sessions in every host before running `migrate apply`.
 
