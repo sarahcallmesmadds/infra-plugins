@@ -1497,5 +1497,67 @@ check('--file on a link inside the folder with its own name answers as the threa
   assert.deepStrictEqual(json(home, ['constraints', '--file', link]).body.constraints.map((c) => c.text), ['Brand rule.']);
 });
 
+// ------------------------------------------------ Codex round 13 on 1112d16 ----
+
+check('a project named like a history handoff does not have its unindexed file read in', () => {
+  const home = migrated();
+  const repo = path.join(home, 'code', 'old-session');
+  fs.mkdirSync(path.join(repo, '.git'), { recursive: true });
+  fs.writeFileSync(path.join(repo, 'HANDOFF.md'), handoff(repo, ['Stale local rule.']));
+  assert.deepStrictEqual(json(home, ['constraints', '--cwd', repo]).body.constraints, []);
+});
+
+// --------------------------------------------- Devin CLI round 9 on 2e03125 ----
+
+check('target refuses a central path that is a symbolic link, wherever it points', () => {
+  const home = migrated();
+  const repo = path.join(home, 'code', 'elsewhere');
+  fs.mkdirSync(repo, { recursive: true });
+  fs.writeFileSync(path.join(repo, 'HANDOFF.md'), handoff(repo, ['Project rule.']));
+  fs.symlinkSync(path.join(repo, 'HANDOFF.md'), docPath(home, 'linked'));
+  const notes = path.join(home, 'notes');
+  fs.mkdirSync(notes);
+  const r = json(home, ['target', 'linked', '--cwd', notes]);
+  assert.strictEqual(r.status, 1);
+  assert.strictEqual(r.body.path, undefined);
+  assert.match(r.body.refused, /symbolic link/);
+});
+
+check('a declared thread whose file is a dangling link is reported broken, not missing', () => {
+  const home = migrated();
+  fs.renameSync(docPath(home, 'brand-thread'), path.join(home, 'moved.md'));
+  fs.symlinkSync(path.join(home, 'gone.md'), docPath(home, 'brand-thread'));
+  const f = json(home, ['find', 'brand-thread']).body;
+  assert.strictEqual(f.thread.exists, true);
+  assert.strictEqual(f.thread.unreadable, true);
+  const t = json(home, ['threads']).body.threads.find((x) => x.slug === 'brand-thread');
+  assert.strictEqual(t.exists, true);
+  assert.match(t.unreadable, /symbolic link/);
+});
+
+check('find with no slug is a usage error', () => {
+  const home = migrated();
+  const r = run(home, ['find']);
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stdout, /Usage: cli.js find/);
+});
+
+check('a plan naming a thread it does not contain is refused as a bad plan, not a failed write', () => {
+  const home = setUp();
+  const { planFile, manifest } = migrate(home, ['site-thread', 'brand-thread']);
+  manifest.gained.push({ text: 'Invented.', threads: ['typo-thread'], disposition: 'drop' });
+  fs.writeFileSync(planFile, JSON.stringify(manifest, null, 2));
+  const r = apply(home, planFile);
+  assert.strictEqual(r.body.committed, false);
+  assert.notStrictEqual(r.body.reason, 'write-failed');
+  assert.match(JSON.stringify(r.body), /not in this plan/);
+});
+
+check('migrate finish before migration says why', () => {
+  const home = setUp();
+  const out = run(home, ['migrate', 'finish']).stdout;
+  assert.match(out, /threads are not set up/);
+});
+
 process.stdout.write(`\n${failures === 0 ? 'all passed' : `${failures} failed`}\n`);
 process.exit(failures === 0 ? 0 : 1);

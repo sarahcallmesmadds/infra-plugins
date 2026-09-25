@@ -35,7 +35,10 @@ One handoff per thread, for handoffs written from the home directory.
   no index entry, and `/wrap` ends with `/pickup <path>`, which `/pickup` now
   accepts. While `threads.json` cannot be read, every project is picked up by
   its path, because no name is known to be free of a thread.
-- `find` exits non-zero for any handoff it finds and cannot read.
+- `find` exits non-zero for any handoff it finds and cannot read, and for a
+  missing slug; `forget` exits non-zero when the index could not be written.
+- `target` refuses a central path that is a symbolic link, because a wrap
+  would write through it to another document.
 - `constraints --file <path>` answers for a handoff named by its file, reading
   its Working directory the same way every other command does.
 - Once threads are set up, a project whose name is taken by a central handoff

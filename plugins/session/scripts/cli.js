@@ -327,7 +327,8 @@ const COMMANDS = {
     const result = handoffs.forgetHandoff(slug, opts.home);
     // A refusal is not the same answer as "not in the index", so it exits
     // nonzero where "not in the index" does not.
-    if (result.refused) process.exitCode = 1;
+    // So does a write that failed: it is not "not in the index" either.
+    if (result.refused || result.reason === 'the index could not be written') process.exitCode = 1;
     if (opts.json) return emit(opts, result, []);
 
     if (!result.removed) {
@@ -494,13 +495,19 @@ const COMMANDS = {
 
   find(opts) {
     const slug = opts.rest[0];
+    if (!slug) {
+      process.exitCode = 1;
+      if (opts.json) return emit(opts, { error: 'no slug given', match: null }, []);
+      return emit(opts, {}, ['Which one? Usage: cli.js find <slug>']);
+    }
     // A declared thread is answered from the thread list, which is the
     // authority for it; the index and the search order only ever guessed.
     const resolved = threadsMod.resolve(slug, opts.home);
     let match = handoffs.findHandoff(slug, opts.home);
     if (resolved.kind === 'thread') {
       let mtime = null;
-      try { mtime = require('fs').statSync(resolved.path).mtimeMs; } catch (_) { resolved.exists = false; }
+      // lstat, so a link whose target is gone stays "there and unreadable".
+      try { mtime = require('fs').lstatSync(resolved.path).mtimeMs; } catch (_) { resolved.exists = false; }
       match = resolved.exists ? { path: resolved.path, kind: 'thread', mtime } : null;
     } else if (match && resolved.kind === 'history') {
       match = { ...match, history: true };
@@ -815,8 +822,16 @@ const COMMANDS = {
     const central = t.kind === 'central';
     const homeCwd = central && threadsMod.isHomeDir(opts.cwd, opts.home);
     const existingMaybeThread = central && fsMod.existsSync(t.path) && threadsMod.couldBeThread(t.path, opts.home);
+    let linkedCentral = false;
+    try { linkedCentral = central && fsMod.lstatSync(t.path).isSymbolicLink(); } catch (_) { /* nothing there */ }
     let refusal = null;
     if (!protection.ok) refusal = `protected handoffs could not be read: ${protection.errors.join('; ')}`;
+    else if (linkedCentral) {
+      // A wrap writes to the path it is handed, and a central file that is a
+      // symlink writes through to whatever it points at, a project's own
+      // handoff included, whatever that document says it is.
+      refusal = `${t.path} is a symbolic link, and a wrap would write through it to another document; choose another topic`;
+    }
     else if (configMod.isProtected(protection, t.path, opts.home)) refusal = `${t.path} is protected`;
     else if (central && reg.state === 'invalid') {
       refusal = `the thread list is invalid, so whether ${t.path} is a thread cannot be told: ${reg.errors.join('; ')}`;
@@ -839,8 +854,7 @@ const COMMANDS = {
     // A project named like a declared thread still gets its handoff; only the
     // index entry is skipped, because /pickup of that name opens the thread
     // and an entry pointing elsewhere would be reported as a conflict forever.
-    const shadowsThread = !central && ((reg.state === 'ok' && registryMod.declaredBySlug(reg.registry, t.slug))
-      || (reg.state === 'invalid' && threadsMod.slugCouldBeThread(t.slug, opts.home)));
+    const shadowsThread = !central && threadsMod.projectNameShadowed(t.slug, opts.home);
     if (shadowsThread && opts.noRecord) {
       record = null;
     } else if (shadowsThread) {

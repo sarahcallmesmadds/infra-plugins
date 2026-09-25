@@ -99,6 +99,18 @@ function slugCouldBeThread(slug, home) {
   return fs.existsSync(central) && couldBeThread(central, home);
 }
 
+// Whether a project's name is taken by a thread, so `target` leaves it out of
+// the index and its own HANDOFF.md has to be read into its pool directly. One
+// decision for both: the pool used a looser test (any central file of that
+// name, history included) and read unindexed files target had indexed or
+// never meant to shadow.
+function projectNameShadowed(slug, home) {
+  const reg = registryMod.readRegistry(home);
+  if (reg.state === 'ok') return Boolean(registryMod.declaredBySlug(reg.registry, slug));
+  if (reg.state === 'invalid') return slugCouldBeThread(slug, home);
+  return false;
+}
+
 // The first sentence under "What was worked on", for the list a wrap picks a
 // thread from. Short on purpose: it is a label, not a summary.
 function subjectOf(text) {
@@ -154,7 +166,12 @@ function resolve(slug, home = os.homedir()) {
   const declared = reg.state === 'ok' ? registryMod.declaredBySlug(reg.registry, slug) : null;
 
   if (declared) {
-    const exists = fs.existsSync(declared.path);
+    // A link whose target is gone reads as absent to existsSync, which would
+    // send someone to recreate the file rather than fix the link. Counted as
+    // there and unreadable instead.
+    let linked = false;
+    try { linked = fs.lstatSync(declared.path).isSymbolicLink(); } catch (_) { /* nothing there */ }
+    const exists = fs.existsSync(declared.path) || linked;
     const threadRev = exists ? fileRev(declared.path) : null;
     const result = {
       ...out,
@@ -229,6 +246,10 @@ function listThreads(home = os.homedir()) {
     let unreadable = null;
     try { text = fs.readFileSync(t.path, 'utf8'); mtime = fs.statSync(t.path).mtimeMs; } catch (e) {
       if (!(e && e.code === 'ENOENT')) unreadable = e.message;
+      // A link whose target is gone is there and broken, not missing.
+      else {
+        try { if (fs.lstatSync(t.path).isSymbolicLink()) unreadable = 'it is a symbolic link whose target is gone'; } catch (_) { /* missing */ }
+      }
     }
     return {
       slug: t.slug,
@@ -699,6 +720,10 @@ function checkShape(manifest) {
   manifest.gained.forEach((r, i) => {
     if (!r || typeof r.text !== 'string') problems.push(`gained ${i + 1} has no text`);
     else if (!Array.isArray(r.threads) || !r.threads.every((x) => typeof x === 'string')) problems.push(`gained ${i + 1} has no list of threads`);
+    // Checked here, as the lost side is: a thread name not in the plan was
+    // otherwise caught only when the list was written, and reported as a
+    // failed write, which reads as a disk problem rather than a bad plan.
+    else if (!r.threads.every((x) => manifest.threads.some((t) => t && t.slug === x))) problems.push(`gained ${i + 1} names a thread that is not in this plan`);
   });
   if (typeof manifest.fingerprint !== 'string') problems.push('fingerprint is missing');
   return problems;
@@ -896,7 +921,7 @@ function finishPendingLocked(home) {
 
 function migrateFinish({ home = os.homedir() } = {}) {
   const reg = registryMod.readRegistry(home);
-  if (reg.state !== 'ok') return { finished: false, reason: reg.state === 'absent' ? 'pre-migration' : 'registry-invalid', detail: reg.errors.join('; ') };
+  if (reg.state !== 'ok') return { finished: false, reason: reg.state === 'absent' ? 'pre-migration' : 'registry-invalid', detail: reg.state === 'absent' ? 'threads are not set up, so there is nothing to finish' : reg.errors.join('; ') };
   return handoffs.mutateIndex(home, () => {
     const r = finishPendingLocked(home);
     return { finished: r.failures.length === 0 && r.remaining === 0, ...r };
@@ -912,6 +937,7 @@ module.exports = {
   isHomeDir,
   couldBeThread,
   threadShaped,
+  projectNameShadowed,
   slugCouldBeThread,
   resolve,
   listThreads,

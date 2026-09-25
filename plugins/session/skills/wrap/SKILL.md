@@ -606,8 +606,9 @@ version of it that does not.
   uncertain. Check it before the next wrap. The draft is at [draft].` and no
   pickup line.
 - not saved for any other reason, which all refuse before writing: `Update NOT
-  saved; the previous handoff at [path] is unchanged. The draft is at [draft].`
-  and no pickup line.
+  saved ([reason]); nothing was written. The draft is at [draft].` and no
+  pickup line. These results carry no path, and there may be no previous
+  handoff at all, so name neither.
 
 **Anywhere threads do not apply, where the check returned a match**, close with:
 
