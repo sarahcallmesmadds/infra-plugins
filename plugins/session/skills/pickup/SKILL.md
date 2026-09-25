@@ -21,8 +21,9 @@ is passed to this skill by asking for it, for example "pick up site-thread".
 node "${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js capabilities --json
 ```
 
-It has to print `{"threads": 1}`. Anything else, including a list of commands
-or an error, means the scripts installed in this host are older than this skill.
+It has to print a JSON object whose `threads` is 1 or higher. Anything else,
+including a list of commands or an error, means the scripts installed in this
+host are older than this skill.
 Stop and say so: "The installed session scripts are older than this skill;
 update the session plugin in this host and start a new session." Do not carry
 on with the older scripts. They accept the commands below and answer a
@@ -70,13 +71,15 @@ If the match is an archived handoff, open the summary with:
 The same JSON says which kind of handoff this is.
 
 - **`thread` is set.** This is a declared thread: one handoff per subject,
-  rewritten in place at every wrap. Keep `thread.slug`, `thread.path`,
-  `thread.rev` and `thread.generation`; Step 3 prints them and wrap needs them.
-  If `thread.conflicts` is not empty, two documents answer to this slug: show
+  rewritten in place at every wrap. If `thread.exists` is false, its file is
+  missing: say so and stop. Otherwise keep `thread.slug`, `thread.path`,
+  `thread.rev` and `thread.generation`; Step 3 prints them. If
+  `thread.conflicts` is not empty, two documents answer to this slug: show
   both paths and ask which is meant before going on.
-- **`match.history` is true.** Threads are set up here, and this document is not
-  one of them. It is kept as history and binds nothing. Say so, then run
-  `cli.js threads` and offer the thread that covers this subject.
+- **`match.history` is true.** Threads are set up here, and this document is an
+  older home handoff that is not one of them. It is kept as history and binds
+  nothing. Say so, then run `cli.js threads` and offer the thread that covers
+  this subject. If the user takes it, start this pickup again with that slug.
 - **Neither.** Threads are not set up here yet (`mode: "pre-migration"`), or this
   is a project handoff kept beside its work. Carry on as below.
 
@@ -97,14 +100,21 @@ Always the slug you were given, never the directory this session started in.
 What comes back depends on how the handoff is kept, and the command decides,
 not this skill:
 
-- **A declared thread** (`binding: true`): the rules written in that thread's
-  own file, and nothing else. That is the whole answer. Rules that apply to
+- **A declared thread** (`binding: true` and `kind: "thread"`): the rules
+  written in that thread's own file, and nothing else. That is the whole answer. Rules that apply to
   every thread live in the user's standing instructions and memory, not in
   other handoffs, so there is no second list to go and find.
-- **Threads not set up yet**: the older pooled answer, every rule recorded by
-  any handoff written from the same working directory as this one, exactly as
-  before. In that mode a constraint set on one thread still governs the next,
-  and the list can be long; print it anyway.
+- **Threads not set up yet, or a handoff outside the home directory** (a
+  repository's `HANDOFF.md`, or one written from anywhere but home): the older
+  pooled answer, every rule recorded by any handoff written from the same
+  working directory as this one, exactly as before. A constraint set on one
+  piece of work still governs the next there, and the list can be long; print
+  it anyway. Show any `truncated`, `unmatchedRetirements`, `nearDuplicates` or
+  `gitDegraded` in the answer above the list, the way the command's plain
+  output does: each means the list may be incomplete or doubled.
+- **An `error`** (the handoff has no `**Working directory:**` line, or was not
+  found): say that what binds could not be worked out, and why. Never answer
+  for the directory this session happens to be in instead.
 - **History** (`binding: false`): nothing binds. Say the document is history.
 
 Two refusals stop the pickup rather than print a list:
@@ -117,8 +127,9 @@ Two refusals stop the pickup rather than print a list:
 
 If the handoff's own `## Constraints still in force` section and the command
 disagree, show both and say which came from where. For a declared thread they
-should be identical, because they are the same file, so a difference means the
-file changed since it was read.
+should be identical apart from `Retired this session:` lines, which the command
+leaves out, because they are the same file; any other difference means the file
+changed since it was read.
 
 ## Step 3: Surface it
 
@@ -144,8 +155,11 @@ Resuming from: {path}
 
 Print the `Thread:` line only for a declared thread, and keep it word for word
 in any summary this conversation is later compressed into. Wrap reads it to know
-which thread to save and which revision this session started from, and a lost
-line means wrap has to work the thread out again.
+which thread to save, and to notice whether another session saved it since this
+pickup. A lost line means wrap has to work the thread out again.
+
+When more than one opening note applies, the order is: the `Thread:` line, then
+`Resuming from:`, then the archived note, then the age note.
 
 Omit any section the handoff does not have. Do not fill a gap with a guess: a
 fabricated "where we left off" is worse than an absent one, because it reads
@@ -215,7 +229,9 @@ entirely.
 
 ## Edge cases
 
-**No slug given.** Show a menu rather than guessing:
+**No slug given.** If threads are set up (`cli.js threads` lists them), show
+that list first, since those are what a pickup should resume; offer the menu
+below only for older history. Otherwise show a menu rather than guessing:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js recent

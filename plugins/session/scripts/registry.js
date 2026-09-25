@@ -43,7 +43,12 @@ function slugify(text) {
     .slice(0, 60);
 }
 
-function validate(raw) {
+function canonicalPath(p) {
+  const absolute = path.resolve(p);
+  try { return fs.realpathSync(absolute); } catch (_) { return absolute; }
+}
+
+function validate(raw, home = null) {
   const errors = [];
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return ['not a JSON object'];
   if (raw.version !== 1) errors.push(`version is ${JSON.stringify(raw.version)}, expected 1`);
@@ -57,11 +62,17 @@ function validate(raw) {
   raw.threads.forEach((t, i) => {
     if (!t || typeof t !== 'object') { errors.push(`thread ${i + 1} is not an object`); return; }
     if (typeof t.slug !== 'string' || !t.slug || slugify(t.slug) !== t.slug) errors.push(`thread ${i + 1} has an unusable slug`);
-    if (typeof t.path !== 'string' || !path.isAbsolute(t.path)) errors.push(`thread ${i + 1} path must be absolute`);
+    if (typeof t.path !== 'string' || !path.isAbsolute(t.path)) { errors.push(`thread ${i + 1} path must be absolute`); return; }
+    // A thread is always the central document named for its slug. Anything
+    // else is a hand edit pointing a save somewhere it was never meant to go.
+    if (home && path.resolve(t.path) !== path.join(home, '.planning', 'handoffs', `HANDOFF-${t.slug}.md`)) {
+      errors.push(`thread ${t.slug} must be ~/.planning/handoffs/HANDOFF-${t.slug}.md, not ${t.path}`);
+    }
+    const canonical = canonicalPath(t.path);
     if (slugs.has(t.slug)) errors.push(`slug ${t.slug} is declared twice`);
-    if (paths.has(t.path)) errors.push(`path ${t.path} is declared twice`);
+    if (paths.has(canonical)) errors.push(`path ${t.path} is declared twice`);
     slugs.add(t.slug);
-    paths.add(t.path);
+    paths.add(canonical);
   });
   (raw.pending || []).forEach((p, i) => {
     if (!p || (p.kind !== 'add' && p.kind !== 'drop') || typeof p.text !== 'string' || !p.text.trim()) {
@@ -86,21 +97,34 @@ function readRegistry(home = os.homedir()) {
   try { raw = JSON.parse(text); } catch (e) {
     return { state: 'invalid', registry: null, errors: [`is not valid JSON: ${e.message}`] };
   }
-  const errors = validate(raw);
+  const errors = validate(raw, home);
   if (errors.length) return { state: 'invalid', registry: null, errors };
   return { state: 'ok', registry: { ...raw, pending: raw.pending || [] }, errors: [] };
 }
 
 // Temp file and rename, so a reader sees the old list or the new one and never
 // half of one. Only ever called from inside a locked region.
-function writeRegistryUnlocked(registry, home = os.homedir()) {
-  const errors = validate(registry);
+//
+// `guard` runs just before the rename, to refuse if the lock was lost while the
+// temporary file was being written. The list is read back afterwards and a
+// write that does not read back as written throws, because the thread list is
+// the commit point of a migration and "written" has to mean on disk.
+function writeRegistryUnlocked(registry, home = os.homedir(), guard = () => {}) {
+  const errors = validate(registry, home);
   if (errors.length) throw new Error(`refusing to write an invalid thread list: ${errors.join('; ')}`);
   const file = registryPath(home);
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const tmp = `${file}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, `${JSON.stringify(registry, null, 2)}\n`);
-  fs.renameSync(tmp, file);
+  const body = `${JSON.stringify(registry, null, 2)}\n`;
+  try {
+    fs.writeFileSync(tmp, body);
+    guard();
+    fs.renameSync(tmp, file);
+  } catch (e) {
+    try { fs.rmSync(tmp, { force: true }); } catch (_) { /* nothing else to try */ }
+    throw e;
+  }
+  if (fs.readFileSync(file, 'utf8') !== body) throw new Error(`${file} did not read back as written`);
 }
 
 function declaredBySlug(registry, slug) {

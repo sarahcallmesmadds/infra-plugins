@@ -525,13 +525,13 @@ check('wrap saves a thread through the guarded save, never by writing the file',
   assert.match(text, /cli\.js save --thread/, 'wrap no longer saves threads through save');
   assert.match(text, /--base "<rev from Step 1>"/, 'wrap no longer saves against the revision it read');
   assert.match(text, /Never write the thread's file directly/i);
-  assert.match(text, /If that conflicts too, stop/i, 'a second conflict must stop, not overwrite');
+  assert.match(text, /If that\s+conflicts too, stop/i, 'a second conflict must stop, not overwrite');
 });
 
 check('wrap never starts a new thread just because it could not find one at once', () => {
   const text = skill('wrap');
   assert.match(text, /never start a new one just because the first answer was\s+missing/i);
-  assert.match(text, /ask the user to confirm it in one line/i, 'a new thread name is not confirmed');
+  assert.match(text, /ask the user to confirm the name in one line/i, 'a new thread name is not confirmed');
   assert.match(text, /never for the last thing\s+shipped/i, 'the naming defect from the first bug report can come back');
 });
 

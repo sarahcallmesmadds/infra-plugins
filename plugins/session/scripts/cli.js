@@ -224,6 +224,8 @@ const COMMANDS = {
     const result = handoffs.archiveStale({
       days: opts.days, home: opts.home, dryRun: opts.dryRun,
     });
+    // Set before either output, so --json and text agree on success.
+    if (result.refused) process.exitCode = 1;
     if (opts.json) return emit(opts, result, []);
 
     if (result.skipped) {
@@ -232,7 +234,6 @@ const COMMANDS = {
     // Nothing moved in either case, and both say why rather than printing a
     // summary of a sweep that did not happen.
     if (result.refused) {
-      process.exitCode = 1;
       return emit(opts, result, [`Sweep refused: ${result.refused}. Nothing moved.`]);
     }
     if (result.lockSkipped) {
@@ -490,6 +491,7 @@ const COMMANDS = {
       match = { ...match, history: true };
     }
     const stale = match || resolved.kind === 'thread' ? null : handoffs.staleRecord(slug, opts.home);
+    if (resolved.kind === 'thread' && !resolved.exists) process.exitCode = 1;
     if (opts.json) {
       return emit(opts, {
         slug,
@@ -503,7 +505,6 @@ const COMMANDS = {
       }, []);
     }
     if (resolved.kind === 'thread' && !resolved.exists) {
-      process.exitCode = 1;
       return emit(opts, {}, [`${resolved.slug} is a declared thread, and its file ${resolved.path} is not there.`]);
     }
     if (match) {
@@ -564,16 +565,25 @@ const COMMANDS = {
   constraints(opts) {
     if (opts.thread) {
       const t = threadsMod.threadConstraints({ slug: opts.thread, home: opts.home });
-      // Before migration the answer is the older pool for the thread's own
-      // working directory, exactly as 0.8, so an upgrade alone changes nothing.
-      if (t.mode !== 'pre-migration') return printThreadConstraints(opts, t);
+      // Before migration, and for any handoff outside the home scope after it,
+      // the answer is the older pool for the handoff's own working directory,
+      // exactly as 0.8. Anything else is a thread, history, or a refusal.
+      if (t.mode !== 'pre-migration' && t.mode !== 'pooled') return printThreadConstraints(opts, t);
+      // Never the directory this command happens to run in. Answering for that
+      // instead of the named handoff is the silent wrong answer --thread exists
+      // to prevent, so a handoff that cannot be found, or names no working
+      // directory, is said out loud.
+      let dir = t.dir || null;
       const found = handoffs.findHandoff(opts.thread, opts.home);
-      if (found) {
-        try {
-          const dir = handoffs.handoffDir(require('fs').readFileSync(found.path, 'utf8'));
-          if (dir) opts.cwd = dir;
-        } catch (_) { /* fall back to --cwd */ }
+      if (!dir && found) {
+        try { dir = handoffs.handoffDir(require('fs').readFileSync(found.path, 'utf8')); } catch (_) { /* reported below */ }
       }
+      if (!found || !dir) {
+        process.exitCode = 1;
+        const why = !found ? `no handoff found for "${opts.thread}"` : `${found.path} has no **Working directory:** line`;
+        return emit(opts, { error: why, constraints: [] }, [`Cannot say what binds ${opts.thread}: ${why}.`]);
+      }
+      opts.cwd = dir;
     }
     const r = handoffs.carriedConstraints({ cwd: opts.cwd, home: opts.home });
     // After migration the home pool is history. Every home thread binds only
@@ -584,6 +594,10 @@ const COMMANDS = {
     if (!r.binding) {
       process.stdout.write('History, not binding: home threads each bind only their own file. '
         + 'Use constraints --thread <slug> for a thread\'s rules.\n\n');
+    }
+    if (r.registry === 'invalid') {
+      process.stdout.write('The thread list cannot be read, so declared threads may be counted in this list. '
+        + 'Fix ~/.planning/handoffs/threads.json before relying on it.\n\n');
     }
 
     // Anything that makes the answer less than complete is said before the
@@ -689,7 +703,9 @@ const COMMANDS = {
     }
     if (refusal) {
       process.exitCode = 1;
-      if (opts.json) return emit(opts, { ...t, refused: refusal }, []);
+      // The path is left out on purpose: a caller that skims past `refused`
+      // must not find a writable path in the answer.
+      if (opts.json) return emit(opts, { kind: t.kind, slug: t.slug, refused: refusal }, []);
       return emit(opts, {}, [`Not handed out: ${refusal}`]);
     }
     let record = null;
@@ -710,13 +726,13 @@ const COMMANDS = {
 
   threads(opts) {
     const r = threadsMod.listThreads(opts.home);
+    if (r.mode === 'invalid') process.exitCode = 1;
     if (opts.json) return emit(opts, r, []);
     if (r.mode === 'pre-migration') {
       return emit(opts, {}, ['Threads are not set up here yet. Central handoffs are still written one per session.',
         'To set them up: cli.js migrate plan --threads <slug,slug,...>']);
     }
     if (r.mode === 'invalid') {
-      process.exitCode = 1;
       return emit(opts, {}, ['The thread list cannot be read:', ...r.errors.map((e) => `  ${e}`)]);
     }
     const lines = [`${r.threads.length} thread${r.threads.length === 1 ? '' : 's'}, generation ${r.generation}:`];
@@ -798,10 +814,11 @@ const COMMANDS = {
     }
     if (sub === 'finish') {
       const r = threadsMod.migrateFinish({ home: opts.home });
-      if (!r.finished || r.remaining) process.exitCode = 1;
+      if (!r.finished) process.exitCode = 1;
       if (opts.json) return emit(opts, r, []);
-      if (!r.finished) return emit(opts, {}, [`Not finished (${r.reason}): ${r.detail}`]);
-      return emit(opts, {}, [r.remaining ? `${r.remaining} still pending: ${r.failures[0].error}` : `Done. ${r.applied.length} written.`]);
+      if (r.reason) return emit(opts, {}, [`Not finished (${r.reason}): ${r.detail}`]);
+      if (!r.finished) return emit(opts, {}, [`Stopped with ${r.remaining === null ? 'an unknown number' : r.remaining} still pending: ${r.failures[0].error}`]);
+      return emit(opts, {}, [`Done. ${r.applied.length} written.`]);
     }
     process.exitCode = 1;
     emit(opts, { error: 'migrate needs plan, apply or finish' }, ['Usage: cli.js migrate plan|apply|finish']);

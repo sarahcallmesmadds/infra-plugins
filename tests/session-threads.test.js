@@ -369,7 +369,10 @@ check('save --create refuses to overwrite an existing undeclared file', () => {
   const home = migrated();
   const before = snapshot(docPath(home, 'old-session'));
   const r = json(home, saveArgs(home, 'old-session', handoff(home, ['x']), { create: true, base: 'none' }));
-  assert.strictEqual(r.body.reason, 'conflict');
+  // Its own reason, not `conflict`: a conflict tells the wrap to merge into
+  // what is there, and merging an unrelated old handoff into a new thread is
+  // exactly wrong.
+  assert.strictEqual(r.body.reason, 'name-taken');
   assert.deepStrictEqual(snapshot(docPath(home, 'old-session')), before);
 });
 
@@ -455,11 +458,157 @@ check('a bad protection entry does not break the unrelated commands', () => {
   assert.strictEqual(run(home, ['memory-check']).status, 0);
 });
 
-check('target will not hand out a declared thread or a protected path', () => {
+check('target will not hand out a declared thread', () => {
   const home = migrated();
   const r = json(home, ['target', 'site thread', '--cwd', home]);
   assert.strictEqual(r.status, 1);
   assert.match(r.body.refused, /declared thread/);
+  assert.strictEqual(r.body.path, undefined, 'a refusal still carried a writable path');
+});
+
+check('target will not hand out a protected path, and carries no path when it refuses', () => {
+  const home = setUp();
+  const repo = path.join(home, 'code', 'guarded');
+  fs.mkdirSync(path.join(repo, '.git'), { recursive: true });
+  fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+  fs.writeFileSync(path.join(home, '.claude', 'session.config.json'), JSON.stringify({ protectedHandoffs: [path.join(repo, 'HANDOFF.md')] }));
+  const r = json(home, ['target', 'x', '--cwd', repo]);
+  assert.strictEqual(r.status, 1);
+  assert.match(r.body.refused, /protected/);
+  assert.strictEqual(r.body.path, undefined);
+});
+
+// ------------------------------------ outside the home scope, after migration
+
+check('after migration, a project handoff still gets its pooled rules', () => {
+  const home = migrated();
+  const repo = path.join(home, 'Projects', 'app');
+  fs.mkdirSync(path.join(repo, '.git'), { recursive: true });
+  // Recorded the way a real wrap records it, through target. The pool reads
+  // the handoffs the index knows about, before migration and after.
+  assert.strictEqual(json(home, ['target', 'x', '--cwd', repo]).body.recorded, true);
+  fs.writeFileSync(path.join(repo, 'HANDOFF.md'), handoff(repo, ['Repo rule.']));
+  const r = json(home, ['constraints', '--thread', 'app']);
+  assert.strictEqual(r.status, 0, JSON.stringify(r.body));
+  assert.deepStrictEqual(r.body.constraints.map((c) => c.text), ['Repo rule.'],
+    'migrating the home scope took the rules away from a project it never touched');
+});
+
+check('after migration, a central handoff from another directory is not history', () => {
+  const home = migrated();
+  const elsewhere = path.join(home, 'elsewhere');
+  fs.mkdirSync(elsewhere);
+  write(home, [['away-work', handoff(elsewhere, ['Away rule.'])]]);
+  const f = json(home, ['find', 'away-work']).body;
+  assert.ok(!f.match.history, 'a handoff outside the home scope was called history');
+  assert.deepStrictEqual(json(home, ['constraints', '--thread', 'away-work']).body.constraints.map((c) => c.text), ['Away rule.']);
+});
+
+check('before migration, --thread for an unknown slug is an error, not the local pool', () => {
+  const home = setUp();
+  const r = json(home, ['constraints', '--thread', 'no-such-thing', '--cwd', home]);
+  assert.strictEqual(r.status, 1);
+  assert.deepStrictEqual(r.body.constraints, []);
+  assert.match(r.body.error, /no handoff found/);
+});
+
+// ------------------------------------------------------ more migration ----
+
+check('a gained rule marked drop leaves every thread that holds it', () => {
+  const home = tmpHome();
+  write(home, [
+    ['a-thread', handoff(home, ['Old rule.', 'A.'])],
+    ['b-thread', handoff(home, ['Old rule.', 'B.'])],
+    ['history', handoff(home, ['Retired this session: Old rule, because gone.'])],
+  ]);
+  const { planFile, manifest } = migrate(home, ['a-thread', 'b-thread'], { gained: () => 'drop' });
+  assert.deepStrictEqual(manifest.gained.map((g) => g.threads), [['a-thread', 'b-thread']]);
+  apply(home, planFile);
+  assert.deepStrictEqual(json(home, ['constraints', '--thread', 'a-thread']).body.constraints.map((c) => c.text), ['A.']);
+  assert.deepStrictEqual(json(home, ['constraints', '--thread', 'b-thread']).body.constraints.map((c) => c.text), ['B.'],
+    'dropped from the first thread and left binding in the second');
+});
+
+check('the plan refuses when a home handoff cannot be read', () => {
+  const home = setUp();
+  const p = docPath(home, 'old-session');
+  fs.chmodSync(p, 0o000);
+  try {
+    const r = json(home, ['migrate', 'plan', '--threads', 'site-thread']);
+    assert.strictEqual(r.status, 1);
+    assert.strictEqual(r.body.reason, 'unreadable');
+  } finally {
+    fs.chmodSync(p, 0o644);
+  }
+});
+
+check('migrate finish will not write into a protected thread', () => {
+  const home = migrated();
+  const reg = registry(home);
+  reg.pending = [{ kind: 'add', slug: 'brand-thread', text: 'Pending rule.' }];
+  fs.writeFileSync(path.join(dirOf(home), 'threads.json'), JSON.stringify(reg));
+  fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+  fs.writeFileSync(path.join(home, '.claude', 'session.config.json'), JSON.stringify({ protectedHandoffs: [docPath(home, 'brand-thread')] }));
+  const before = snapshot(docPath(home, 'brand-thread'));
+  const f = json(home, ['migrate', 'finish']);
+  assert.strictEqual(f.status, 1);
+  assert.strictEqual(f.body.finished, false);
+  assert.match(f.body.failures[0].error, /protected/);
+  assert.deepStrictEqual(snapshot(docPath(home, 'brand-thread')), before);
+});
+
+check('a new thread cannot take a slug the index gives to another document', () => {
+  const home = migrated();
+  const repo = path.join(home, 'far', 'foo');
+  fs.mkdirSync(repo, { recursive: true });
+  fs.writeFileSync(path.join(repo, 'HANDOFF.md'), '# theirs');
+  const idxFile = path.join(dirOf(home), 'index.json');
+  const idx = fs.existsSync(idxFile) ? JSON.parse(fs.readFileSync(idxFile, 'utf8')) : { version: 1, handoffs: {} };
+  idx.handoffs.foo = { path: path.join(repo, 'HANDOFF.md'), kind: 'project', recorded_at: new Date().toISOString() };
+  fs.writeFileSync(path.join(dirOf(home), 'index.json'), JSON.stringify(idx));
+  const r = json(home, saveArgs(home, 'foo', handoff(home, ['x']), { create: true, base: 'none' }));
+  assert.strictEqual(r.body.reason, 'name-taken');
+  assert.ok(!fs.existsSync(docPath(home, 'foo')));
+  assert.strictEqual(JSON.parse(fs.readFileSync(path.join(dirOf(home), 'index.json'), 'utf8')).handoffs.foo.path, path.join(repo, 'HANDOFF.md'));
+});
+
+check('a thread list naming a non-central path is invalid', () => {
+  const home = migrated();
+  const reg = registry(home);
+  reg.threads[0].path = '/tmp/elsewhere/HANDOFF.md';
+  fs.writeFileSync(path.join(dirOf(home), 'threads.json'), JSON.stringify(reg));
+  assert.strictEqual(json(home, ['threads']).status, 1);
+  assert.strictEqual(json(home, ['threads']).body.mode, 'invalid');
+});
+
+check('a refusal exits nonzero in JSON as well as text', () => {
+  const home = migrated();
+  fs.writeFileSync(path.join(dirOf(home), 'threads.json'), '{ not json');
+  assert.strictEqual(json(home, ['archive']).status, 1);
+  assert.strictEqual(json(home, ['threads']).status, 1);
+});
+
+check('a busy lock refuses the save with reason busy and changes nothing', () => {
+  const home = migrated();
+  const args = saveArgs(home, 'brand-thread', handoff(home, ['x']));
+  const before = snapshot(docPath(home, 'brand-thread'));
+  const lock = handoffs.indexLockPath(home);
+  fs.mkdirSync(lock);
+  fs.writeFileSync(path.join(lock, 'owner'), 'another-session');
+  try {
+    const r = json(home, args);
+    assert.strictEqual(r.body.reason, 'busy');
+    assert.deepStrictEqual(snapshot(docPath(home, 'brand-thread')), before);
+  } finally {
+    fs.rmSync(lock, { recursive: true, force: true });
+  }
+});
+
+check('inserting into a CRLF handoff keeps CRLF', () => {
+  const t = require(path.join(ROOT, 'scripts', 'threads.js'));
+  const out = t.insertBullet('# H\r\n\r\n## Constraints still in force\r\n- a\r\n\r\n## Next\r\n', 'b');
+  assert.ok(!/[^\r]\n/.test(out), JSON.stringify(out));
+  assert.deepStrictEqual(handoffs.constraintsIn(out.replace(/\r/g, '')), ['a', 'b']);
 });
 
 // ------------------------------------------------------------ the CLI ----

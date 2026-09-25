@@ -61,16 +61,34 @@ function subjectOf(text) {
 // Writes beside the target and renames over it, so a reader sees the old
 // document or the new one and never half of one. Returns the rev of what is on
 // disk afterwards, read back rather than assumed.
-function atomicWrite(target, content) {
+//
+// `guard` runs immediately before the rename, after the possibly slow write of
+// the temporary file. The lock is checked there rather than earlier because a
+// lock taken over during that write belongs to another session by the time the
+// rename happens, and renaming then overwrites that session's work.
+function atomicWrite(target, content, guard = () => {}) {
   const tmp = `${target}.${process.pid}.${Date.now()}.tmp`;
-  fs.writeFileSync(tmp, content);
   try {
+    fs.writeFileSync(tmp, content);
+    guard();
     fs.renameSync(tmp, target);
   } catch (e) {
     try { fs.rmSync(tmp, { force: true }); } catch (_) { /* nothing else to try */ }
     throw e;
   }
   return fileRev(target);
+}
+
+// Throws if this process no longer holds the handoff lock. Passed as the guard
+// to every rename made under it.
+function holdingLock(home) {
+  return () => {
+    if (lockLost(handoffs.indexLockPath(home))) throw new Error('the handoff lock was taken over by another session');
+  };
+}
+
+function lockRefusalReason(reason) {
+  return reason === 'reentrant' ? 'busy' : reason;
 }
 
 // ------------------------------------------------------------ resolution ----
@@ -106,15 +124,21 @@ function resolve(slug, home = os.homedir()) {
 
   const found = handoffs.findHandoff(slug, home);
   if (!found) return { ...out, kind: null, path: null, exists: false, conflicts: [] };
-  // After migration a central document that is not declared is history: it is
-  // readable and it binds nothing. Project handoffs keep their own kind.
+  // After migration a central document written from the home directory that is
+  // not declared is history: readable, binding nothing. Everything else keeps
+  // the older behaviour whatever mode this is, because threads are a home-scope
+  // change and nothing outside that scope was migrated.
+  let text = '';
+  try { text = fs.readFileSync(found.path, 'utf8'); } catch (_) { /* treated as not home */ }
   const central = found.kind === 'central' || found.kind === 'archived' || found.kind === 'pause';
+  const history = mode === 'threads' && central && inHomeScope(text, home);
   return {
     ...out,
-    kind: mode === 'threads' && central ? 'history' : found.kind,
+    kind: history ? 'history' : found.kind,
     path: found.path,
     exists: true,
     rev: fileRev(found.path),
+    dir: handoffs.handoffDir(text),
     conflicts: [],
   };
 }
@@ -158,8 +182,11 @@ function threadConstraints({ slug, home = os.homedir() }) {
     return { mode: 'invalid', refused: 'registry-invalid', errors: reg.errors, path: registryMod.registryPath(home) };
   }
   // Half a migration is neither the old answer nor the new one, so it is not
-  // offered as either. The pending rules are named so nobody mistakes the
-  // refusal for an empty list.
+  // offered as either for anything in the home scope. The pending rules are
+  // named so nobody mistakes the refusal for an empty list. Handoffs outside
+  // the home scope were never part of the migration and are answered as usual.
+  const early = registryMod.declaredBySlug(reg.registry, slug) ? null : resolve(slug, home);
+  if (early && early.kind !== 'history') return { mode: 'pooled', kind: early.kind, path: early.path, dir: early.dir };
   if (reg.registry.pending.length) {
     return {
       mode: 'threads',
@@ -171,7 +198,11 @@ function threadConstraints({ slug, home = os.homedir() }) {
   const declared = registryMod.declaredBySlug(reg.registry, slug);
   if (!declared) {
     const r = resolve(slug, home);
-    return { mode: 'threads', kind: r.kind, path: r.path, binding: false, constraints: [] };
+    // Only an undeclared home handoff is history. A project handoff, or a
+    // central one written from anywhere else, still gets the older pooled
+    // answer for its own working directory, exactly as before migration.
+    if (r.kind === 'history') return { mode: 'threads', kind: 'history', path: r.path, binding: false, constraints: [] };
+    return { mode: 'pooled', kind: r.kind, path: r.path, dir: r.dir };
   }
   let text;
   try { text = fs.readFileSync(declared.path, 'utf8'); } catch (_) {
@@ -266,7 +297,15 @@ function saveThread({
 
     const exists = fs.existsSync(target);
     if (!create && !exists) return refuse('declared-missing', `the declared thread file ${target} is not there`, { draft: from });
-    if (create && exists) return refuse('conflict', `${target} already exists and is not a declared thread`, { draft: from });
+    if (create && exists) {
+      return refuse('name-taken', `${target} already exists as a handoff that is not a thread; choose another name, or adopt it with cli.js declare ${key}`, { draft: from });
+    }
+    // The index is the only record of where a project handoff kept outside the
+    // configured roots went. A new thread must not take its slug and cut it off.
+    const indexed = index[key];
+    if (create && indexed && indexed.path && !samePath(indexed.path, target) && fs.existsSync(indexed.path)) {
+      return refuse('name-taken', `${key} already names ${indexed.path}; choose another name`, { draft: from });
+    }
     const current = exists ? fileRev(target) : 'none';
     if (current !== base) {
       return refuse('conflict',
@@ -277,7 +316,7 @@ function saveThread({
 
     let written;
     try {
-      written = atomicWrite(target, draft);
+      written = atomicWrite(target, draft, holdingLock(home));
     } catch (e) {
       const still = fileRev(target);
       return refuse('write-failed', e.message, {
@@ -294,15 +333,20 @@ function saveThread({
         registryMod.writeRegistryUnlocked({
           ...reg.registry,
           threads: [...reg.registry.threads, { slug: key, path: target }],
-        }, home);
+        }, home, holdingLock(home));
         declaredOk = true;
       } catch (_) {
         declaredOk = false;
       }
     }
 
-    index[key] = { path: target, kind: 'central', recorded_at: new Date(now).toISOString() };
-    const indexUpdated = saved ? saveIndex(index) : false;
+    // Left alone when it names some other document that still exists: that
+    // entry may be the only way to find it, and `resolve` reports the clash.
+    let indexUpdated = false;
+    if (saved && !(indexed && indexed.path && !samePath(indexed.path, target) && fs.existsSync(indexed.path))) {
+      index[key] = { path: target, kind: 'central', recorded_at: new Date(now).toISOString() };
+      indexUpdated = saveIndex(index);
+    }
 
     return {
       saved,
@@ -320,7 +364,7 @@ function saveThread({
     };
   }, {
     mayCreate: true,
-    refused: (reason) => refuse('lock', handoffs.lockReason(reason), { draft: from }),
+    refused: (reason) => refuse(lockRefusalReason(reason), handoffs.lockReason(reason), { draft: from }),
   });
 }
 
@@ -343,9 +387,13 @@ function declareThread({ slug, home = os.homedir() }) {
     const reg = registryMod.readRegistry(home);
     if (reg.state !== 'ok') return { declared: false, reason: reg.state === 'absent' ? 'pre-migration' : 'registry-invalid', detail: reg.errors.join('; ') };
     if (registryMod.declaredBySlug(reg.registry, key)) return { declared: true, slug: key, path: target, already: true };
-    registryMod.writeRegistryUnlocked({ ...reg.registry, threads: [...reg.registry.threads, { slug: key, path: target }] }, home);
+    try {
+      registryMod.writeRegistryUnlocked({ ...reg.registry, threads: [...reg.registry.threads, { slug: key, path: target }] }, home, holdingLock(home));
+    } catch (e) {
+      return { declared: false, reason: 'write-failed', detail: e.message };
+    }
     return { declared: true, slug: key, path: target };
-  }, { mayCreate: true, refused: (reason) => ({ declared: false, reason: 'lock', detail: handoffs.lockReason(reason) }) });
+  }, { mayCreate: true, refused: (reason) => ({ declared: false, reason: lockRefusalReason(reason), detail: handoffs.lockReason(reason) }) });
 }
 
 // ------------------------------------------------------------- migration ----
@@ -395,18 +443,33 @@ function migratePlan({ slugs, home = os.homedir(), now = Date.now() }) {
   if (problems.length) return { ok: false, reason: 'bad-threads', detail: problems.join('\n') };
 
   const before = handoffs.carriedConstraints({ cwd: home, home, includeThreads: true });
+  // A handoff that is listed and cannot be read is missing from both the rule
+  // comparison and the fingerprint, so the plan would be approved against less
+  // than is there. Refused rather than planned around.
+  if (before.unreadable && before.unreadable.length) {
+    return { ok: false, reason: 'unreadable', detail: `these handoffs could not be read: ${before.unreadable.join(', ')}` };
+  }
   if (before.truncated) return { ok: false, reason: 'truncated', detail: 'the home scan hit its ceiling, so today\'s rules are not fully known' };
   if (before.gitDegraded) return { ok: false, reason: 'git-degraded', detail: `git scoping is degraded (${before.gitDegraded})` };
 
   const norm = handoffs.normalizeConstraint;
   const beforeSet = new Map(before.constraints.map((c) => [norm(c.text), c]));
+  // Every thread holding each rule, not the first. A gained rule marked drop
+  // has to leave every thread that carries it, or it keeps binding in the
+  // second one.
   const afterSet = new Map();
-  for (const t of threads) for (const c of t.live) if (!afterSet.has(norm(c))) afterSet.set(norm(c), { text: c, thread: t.slug });
+  for (const t of threads) {
+    for (const c of t.live) {
+      const k = norm(c);
+      if (!afterSet.has(k)) afterSet.set(k, { text: c, threads: [] });
+      if (!afterSet.get(k).threads.includes(t.slug)) afterSet.get(k).threads.push(t.slug);
+    }
+  }
 
   const lost = [...beforeSet.entries()].filter(([k]) => !afterSet.has(k))
     .map(([, c]) => ({ text: c.text, from: c.from, disposition: null }));
   const gained = [...afterSet.entries()].filter(([k]) => !beforeSet.has(k))
-    .map(([, c]) => ({ text: c.text, thread: c.thread, disposition: null }));
+    .map(([, c]) => ({ text: c.text, threads: c.threads, disposition: null }));
 
   const scanned = before.scanned.filter((d) => d.matched);
   const fingerprint = rev(JSON.stringify(scanned.map((d) => [d.path, fileRev(d.path), d.mtime])));
@@ -446,7 +509,7 @@ function checkDispositions(manifest) {
 }
 
 function sameRows(a, b, field) {
-  const key = (r) => `${handoffs.normalizeConstraint(r.text)}\u0000${r[field]}`;
+  const key = (r) => `${handoffs.normalizeConstraint(r.text)}\u0000${[].concat(r[field]).join(',')}`;
   const x = a.map(key).sort();
   const y = b.map(key).sort();
   return x.length === y.length && x.every((v, i) => v === y[i]);
@@ -483,7 +546,7 @@ function migrateApply({
     const m = fresh.manifest;
     if (m.fingerprint !== manifest.fingerprint
       || !sameRows(m.lost, manifest.lost, 'from')
-      || !sameRows(m.gained, manifest.gained, 'thread')
+      || !sameRows(m.gained, manifest.gained, 'threads')
       || JSON.stringify(m.threads) !== JSON.stringify(manifest.threads)) {
       return { committed: false, reason: 'changed-since-plan', detail: 'handoffs changed after the plan was made; run migrate plan again and review the new rows' };
     }
@@ -492,31 +555,41 @@ function migrateApply({
       ...manifest.lost.filter((r) => r.disposition.startsWith('thread:'))
         .map((r) => ({ kind: 'add', slug: r.disposition.slice(7), text: r.text })),
       ...manifest.gained.filter((r) => r.disposition === 'drop')
-        .map((r) => ({ kind: 'drop', slug: r.thread, text: r.text })),
+        .flatMap((r) => r.threads.map((slug) => ({ kind: 'drop', slug, text: r.text }))),
     ];
     // Never reused. A plain counter would restart at 1 if the list were ever
     // deleted and made again, and a draft from the first list would then pass
     // the second list's check.
+    // To redo a migration, delete threads.json, which returns everything to
+    // the older behaviour, and plan again. There is deliberately no in-place
+    // replace: it would need its own review of a thread list against another.
     const generation = Math.max(1, Math.floor(now / 1000));
-    registryMod.writeRegistryUnlocked({
-      version: 1,
-      generation,
-      migratedAt: new Date(now).toISOString(),
-      threads: manifest.threads.map((t) => ({ slug: t.slug, path: t.path })),
-      pending,
-    }, home);
+    try {
+      registryMod.writeRegistryUnlocked({
+        version: 1,
+        generation,
+        migratedAt: new Date(now).toISOString(),
+        threads: manifest.threads.map((t) => ({ slug: t.slug, path: t.path })),
+        pending,
+      }, home, holdingLock(home));
+    } catch (e) {
+      return { committed: false, reason: 'write-failed', detail: `the thread list was not written: ${e.message}` };
+    }
 
     const finished = finishPendingLocked(home);
     return { committed: true, generation, ...finished };
   }, {
     mayCreate: true,
-    refused: (reason) => ({ committed: false, reason: 'lock', detail: handoffs.lockReason(reason) }),
+    refused: (reason) => ({ committed: false, reason: lockRefusalReason(reason), detail: handoffs.lockReason(reason) }),
   });
 }
 
 // Add a bullet at the end of the constraints section, making the section if a
 // thread has none.
 function insertBullet(text, bullet) {
+  // A document written with CRLF keeps CRLF, or the new line is the only one
+  // that differs and every later diff shows it.
+  if (text.includes('\r\n')) return insertBullet(text.replace(/\r\n/g, '\n'), bullet).replace(/\n/g, '\r\n');
   const line = `- ${bullet}`;
   const re = /^#{2,6}\s*Constraints still in force\s*$/mi;
   const m = re.exec(text);
@@ -560,12 +633,19 @@ function dropBullet(text, bullet) {
 function finishPendingLocked(home) {
   const applied = [];
   const failures = [];
+  const protection = config.loadProtection(home);
   for (;;) {
     const reg = registryMod.readRegistry(home);
-    if (reg.state !== 'ok' || !reg.registry.pending.length) break;
+    if (reg.state !== 'ok') {
+      failures.push({ error: `the thread list cannot be read: ${reg.errors.join('; ')}` });
+      break;
+    }
+    if (!reg.registry.pending.length) break;
     const item = reg.registry.pending[0];
     const t = registryMod.declaredBySlug(reg.registry, item.slug);
     try {
+      if (!protection.ok) throw new Error(`protected handoffs could not be read: ${protection.errors.join('; ')}`);
+      if (config.isProtected(protection, t.path, home)) throw new Error(`${t.path} is protected`);
       if (lockLost(handoffs.indexLockPath(home))) throw new Error('the handoff lock was taken over');
       const text = fs.readFileSync(t.path, 'utf8');
       const live = handoffs.bulletsIn(text).live.map(handoffs.normalizeConstraint);
@@ -574,10 +654,10 @@ function finishPendingLocked(home) {
       if (item.kind === 'add' && !has) next = insertBullet(text, item.text);
       if (item.kind === 'drop' && has) next = dropBullet(text, item.text).text;
       if (next !== text) {
-        const written = atomicWrite(t.path, next);
+        const written = atomicWrite(t.path, next, holdingLock(home));
         if (written !== rev(next)) throw new Error(`${t.path} did not read back as written`);
       }
-      registryMod.writeRegistryUnlocked({ ...reg.registry, pending: reg.registry.pending.slice(1) }, home);
+      registryMod.writeRegistryUnlocked({ ...reg.registry, pending: reg.registry.pending.slice(1) }, home, holdingLock(home));
       applied.push(item);
     } catch (e) {
       failures.push({ ...item, error: e.message });
@@ -585,15 +665,19 @@ function finishPendingLocked(home) {
     }
   }
   const after = registryMod.readRegistry(home);
+  if (after.state !== 'ok' && !failures.length) failures.push({ error: 'the thread list cannot be read after writing' });
   return { applied, failures, remaining: after.state === 'ok' ? after.registry.pending.length : null };
 }
 
 function migrateFinish({ home = os.homedir() } = {}) {
   const reg = registryMod.readRegistry(home);
   if (reg.state !== 'ok') return { finished: false, reason: reg.state === 'absent' ? 'pre-migration' : 'registry-invalid', detail: reg.errors.join('; ') };
-  return handoffs.mutateIndex(home, () => ({ finished: true, ...finishPendingLocked(home) }), {
+  return handoffs.mutateIndex(home, () => {
+    const r = finishPendingLocked(home);
+    return { finished: r.failures.length === 0 && r.remaining === 0, ...r };
+  }, {
     mayCreate: true,
-    refused: (reason) => ({ finished: false, reason: 'lock', detail: handoffs.lockReason(reason) }),
+    refused: (reason) => ({ finished: false, reason: lockRefusalReason(reason), detail: handoffs.lockReason(reason) }),
   });
 }
 

@@ -1310,6 +1310,7 @@ function carriedConstraints({
   const rows = recentHandoffs({ home, limit: Infinity });
   const scanned = [];
   const docs = [];
+  const unreadable = [];
   let matchedCount = 0;
 
   // Declared threads are never part of a pool. Each is the only authority for
@@ -1327,7 +1328,9 @@ function carriedConstraints({
   for (const r of rows) {
     if (threadPaths.has(r.path) || threadPaths.has(resolvePath(r.path))) continue;
     let text;
-    try { text = fs.readFileSync(r.path, 'utf8'); } catch (_) { continue; }
+    // Listed but unreadable is not the same as absent, and a caller that has
+    // to know it saw everything (the migration) needs the list.
+    try { text = fs.readFileSync(r.path, 'utf8'); } catch (_) { unreadable.push(r.path); continue; }
     const dir = handoffDir(text);
     const key = dir ? scopeKey(dir) : null;
     const { live, retired } = bulletsIn(text);
@@ -1390,6 +1393,7 @@ function carriedConstraints({
     // warning about it would punish the person who did the tidying.
     nearDuplicates: nearDuplicateConstraints(out),
     truncated,
+    unreadable,
     // `invalid` means the thread list could not be read, so declared threads
     // may have been counted into this pool. Reported rather than guessed.
     registry: reg.state,
