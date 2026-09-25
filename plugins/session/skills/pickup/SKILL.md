@@ -109,8 +109,8 @@ not this skill:
   pooled answer, every rule recorded by any handoff written from the same
   working directory as this one, exactly as before. A constraint set on one
   piece of work still governs the next there, and the list can be long; print
-  it anyway. Show any `truncated`, `unmatchedRetirements`, `nearDuplicates` or
-  `gitDegraded` in the answer above the list, the way the command's plain
+  it anyway. Show any `truncated`, `unreadable`, `unmatchedRetirements`,
+  `nearDuplicates` or `gitDegraded` in the answer above the list, the way the command's plain
   output does: each means the list may be incomplete or doubled.
 - **An `error`** (the handoff has no `**Working directory:**` line, or was not
   found): say that what binds could not be worked out, and why. Never answer
@@ -122,8 +122,10 @@ Two refusals stop the pickup rather than print a list:
 - `refused: "migration-unfinished"`: a migration is part way through. Show the
   rules in `pending` that are still to be written into this thread, say that no
   thread's rules are given until it finishes, and name `cli.js migrate finish`.
-- `refused: "registry-invalid"` or `"declared-missing"`: the thread list cannot
-  be read, or names a file that is not there. Say which and stop.
+- `refused: "registry-invalid"`, `"declared-missing"` or
+  `"declared-out-of-scope"`: the thread list cannot be read, names a file that
+  is not there, or names a file written outside the home directory. Say which
+  and stop.
 
 If the handoff's own `## Constraints still in force` section and the command
 disagree, show both and say which came from where. For a declared thread they

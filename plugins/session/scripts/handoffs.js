@@ -293,7 +293,7 @@ function forgetHandoff(slug, home = os.homedir()) {
       return { slug: key, removed: false, reason: 'the index could not be written', entry };
     }
     return { slug: key, removed: true, entry, fileStillThere };
-  }, { refused: (reason) => ({ slug: key, removed: false, reason: lockReason(reason) }) });
+  }, { refused: (reason) => ({ slug: key, removed: false, refused: true, reason: lockReason(reason) }) });
 }
 
 // Drop every entry whose file is not there any more.

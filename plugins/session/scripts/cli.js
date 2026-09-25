@@ -125,6 +125,9 @@ function printThreadConstraints(opts, t) {
     }
     return emit(opts, {}, lines);
   }
+  if (t.refused === 'declared-out-of-scope') {
+    return emit(opts, {}, [`${t.slug} is declared as a thread, but ${t.path} says it was written outside the home directory. Its rules are not read as binding; fix the thread list.`]);
+  }
   if (t.refused === 'declared-missing') {
     return emit(opts, {}, [`${t.slug} is declared at ${t.path}, and that file is not there.`]);
   }
@@ -313,6 +316,9 @@ const COMMANDS = {
     }
 
     const result = handoffs.forgetHandoff(slug, opts.home);
+    // A refusal is not the same answer as "not in the index", so it exits
+    // nonzero where "not in the index" does not.
+    if (result.refused) process.exitCode = 1;
     if (opts.json) return emit(opts, result, []);
 
     if (!result.removed) {
@@ -484,9 +490,9 @@ const COMMANDS = {
     const resolved = threadsMod.resolve(slug, opts.home);
     let match = handoffs.findHandoff(slug, opts.home);
     if (resolved.kind === 'thread') {
-      match = resolved.exists
-        ? { path: resolved.path, kind: 'thread', mtime: require('fs').statSync(resolved.path).mtimeMs }
-        : null;
+      let mtime = null;
+      try { mtime = require('fs').statSync(resolved.path).mtimeMs; } catch (_) { resolved.exists = false; }
+      match = resolved.exists ? { path: resolved.path, kind: 'thread', mtime } : null;
     } else if (match && resolved.kind === 'history') {
       match = { ...match, history: true };
     }
@@ -580,7 +586,8 @@ const COMMANDS = {
       }
       if (!found || !dir) {
         process.exitCode = 1;
-        const why = !found ? `no handoff found for "${opts.thread}"` : `${found.path} has no **Working directory:** line`;
+        let why = !found ? `no handoff found for "${opts.thread}"` : `${found.path} has no **Working directory:** line`;
+        if (found && t.unreadable) why = `${found.path} could not be read: ${t.unreadable}`;
         return emit(opts, { error: why, constraints: [] }, [`Cannot say what binds ${opts.thread}: ${why}.`]);
       }
       opts.cwd = dir;
@@ -622,6 +629,15 @@ const COMMANDS = {
       warnings.push(
         `Scan hit its ceiling of ${handoffs.CONSTRAINT_SCAN_CAP} handoffs, so an older one may not have been read.`,
         'Treat the list below as incomplete.',
+        '',
+      );
+    }
+    // Listed and unreadable is not the same as holding nothing, and a list
+    // printed without saying so reads as complete.
+    if (r.unreadable && r.unreadable.length) {
+      warnings.push(
+        `${r.unreadable.length} handoff${r.unreadable.length === 1 ? '' : 's'} could not be read, so any rules in ${r.unreadable.length === 1 ? 'it' : 'them'} are missing below:`,
+        ...r.unreadable.map((u) => `  ${u}`),
         '',
       );
     }
@@ -700,6 +716,10 @@ const COMMANDS = {
     else if (reg.state === 'invalid') refusal = `the thread list is invalid: ${reg.errors.join('; ')}`;
     else if (reg.state === 'ok' && registryMod.declaredPaths(reg.registry).has(t.path)) {
       refusal = `${t.path} is a declared thread; write it with cli.js save --thread ${t.slug}`;
+    } else if (reg.state === 'ok' && t.kind === 'central' && require('fs').existsSync(t.path)) {
+      // Once threads exist, an existing central handoff that is not declared is
+      // history, and history is never rewritten.
+      refusal = `${t.path} is an existing handoff kept as history; choose another topic, or write a thread with cli.js save`;
     }
     if (refusal) {
       process.exitCode = 1;

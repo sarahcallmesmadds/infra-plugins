@@ -651,5 +651,121 @@ check('the pool scan applies its ceiling after filtering by scope', () => {
   assert.strictEqual(r.truncated, false);
 });
 
+// ------------------------------------------------ Devin CLI round one ----
+
+function setIndex(home, slug, entry) {
+  const f = path.join(dirOf(home), 'index.json');
+  const idx = fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, 'utf8')) : { version: 1, handoffs: {} };
+  idx.handoffs[slug] = entry;
+  fs.writeFileSync(f, JSON.stringify(idx));
+}
+
+check('a new thread does not take the slug of a wrap still being written', () => {
+  // The in-flight window: target has recorded where a wrap will write, and the
+  // file is not there yet. existsSync says free; it is not.
+  const home = migrated();
+  const repo = path.join(home, 'code', 'inflight');
+  fs.mkdirSync(repo, { recursive: true });
+  setIndex(home, 'inflight', { path: path.join(repo, 'HANDOFF.md'), kind: 'project', recorded_at: new Date().toISOString() });
+  const r = json(home, saveArgs(home, 'inflight', handoff(home, ['x']), { create: true, base: 'none' }));
+  assert.strictEqual(r.body.reason, 'name-taken');
+  assert.strictEqual(handoffs.readIndex(home).inflight.path, path.join(repo, 'HANDOFF.md'));
+});
+
+check('a new thread does not take the slug of a handoff on an unmounted disk', () => {
+  const home = migrated();
+  setIndex(home, 'offline', { path: path.join(home, 'Volumes', 'gone', 'HANDOFF.md'), kind: 'project', recorded_at: '2026-01-01T00:00:00.000Z' });
+  const r = json(home, saveArgs(home, 'offline', handoff(home, ['x']), { create: true, base: 'none' }));
+  assert.strictEqual(r.body.reason, 'name-taken');
+});
+
+check('the plan refuses a thread file it cannot read, without crashing', () => {
+  const home = setUp();
+  fs.chmodSync(docPath(home, 'brand-thread'), 0o000);
+  try {
+    const r = json(home, ['migrate', 'plan', '--threads', 'brand-thread']);
+    assert.strictEqual(r.status, 1);
+    assert.ok(['bad-threads', 'unreadable'].includes(r.body.reason), JSON.stringify(r.body));
+  } finally {
+    fs.chmodSync(docPath(home, 'brand-thread'), 0o644);
+  }
+});
+
+check('the plan refuses a slug the index maps to a differently named file', () => {
+  const home = setUp();
+  setIndex(home, 'site-thread', { path: docPath(home, 'old-session'), kind: 'central', recorded_at: '2026-01-01T00:00:00.000Z' });
+  const r = json(home, ['migrate', 'plan', '--threads', 'site-thread']);
+  assert.strictEqual(r.status, 1);
+  assert.match(r.body.detail, /not HANDOFF-site-thread\.md/);
+});
+
+check('removing a rule from a CRLF handoff keeps CRLF', () => {
+  const t = require(path.join(ROOT, 'scripts', 'threads.js'));
+  const out = t.dropBullet('# H\r\n\r\n## Constraints still in force\r\n- a\r\n- b\r\n\r\n## Next\r\n', 'a');
+  assert.strictEqual(out.removed, true);
+  assert.ok(!/[^\r]\n/.test(out.text), JSON.stringify(out.text));
+});
+
+check('forget exits nonzero when the lock is refused', () => {
+  const home = setUp();
+  setIndex(home, 'x', { path: docPath(home, 'old-session'), kind: 'central', recorded_at: '2026-01-01T00:00:00.000Z' });
+  const lock = handoffs.indexLockPath(home);
+  fs.mkdirSync(lock);
+  fs.writeFileSync(path.join(lock, 'owner'), 'another-session');
+  try {
+    const r = json(home, ['forget', 'x']);
+    assert.strictEqual(r.status, 1);
+    assert.strictEqual(r.body.refused, true);
+  } finally {
+    fs.rmSync(lock, { recursive: true, force: true });
+  }
+});
+
+check('after migration target will not hand out an existing history handoff', () => {
+  const home = migrated();
+  const r = json(home, ['target', 'old session', '--cwd', home]);
+  assert.strictEqual(r.status, 1);
+  assert.match(r.body.refused, /history/);
+  assert.strictEqual(r.body.path, undefined);
+});
+
+check('declare refuses during an unfinished migration', () => {
+  const home = migrated();
+  const reg = registry(home);
+  reg.pending = [{ kind: 'add', slug: 'brand-thread', text: 'P.' }];
+  fs.writeFileSync(path.join(dirOf(home), 'threads.json'), JSON.stringify(reg));
+  assert.strictEqual(json(home, ['declare', 'old-session']).body.reason, 'migration-unfinished');
+});
+
+check('a declared thread written outside home is refused, not read as binding', () => {
+  const home = migrated();
+  fs.writeFileSync(docPath(home, 'brand-thread'), handoff('/some/project', ['Project rule.']));
+  const r = json(home, ['constraints', '--thread', 'brand-thread']);
+  assert.strictEqual(r.status, 1);
+  assert.strictEqual(r.body.refused, 'declared-out-of-scope');
+});
+
+check('a broken thread list does not block a project handoff pickup', () => {
+  const home = migrated();
+  const repo = path.join(home, 'Projects', 'app2');
+  fs.mkdirSync(path.join(repo, '.git'), { recursive: true });
+  json(home, ['target', 'x', '--cwd', repo]);
+  fs.writeFileSync(path.join(repo, 'HANDOFF.md'), handoff(repo, ['Repo rule.']));
+  fs.writeFileSync(path.join(dirOf(home), 'threads.json'), '{ not json');
+  const r = json(home, ['constraints', '--thread', 'app2']);
+  assert.deepStrictEqual(r.body.constraints.map((c) => c.text), ['Repo rule.']);
+  assert.strictEqual(json(home, ['constraints', '--thread', 'brand-thread']).body.refused, 'registry-invalid');
+});
+
+check('the constraints list says when a handoff could not be read', () => {
+  const home = setUp();
+  fs.chmodSync(docPath(home, 'old-session'), 0o000);
+  try {
+    assert.match(run(home, ['constraints', '--cwd', home]).stdout, /could not be read/);
+  } finally {
+    fs.chmodSync(docPath(home, 'old-session'), 0o644);
+  }
+});
+
 process.stdout.write(`\n${failures === 0 ? 'all passed' : `${failures} failed`}\n`);
 process.exit(failures === 0 ? 0 : 1);

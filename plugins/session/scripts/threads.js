@@ -116,7 +116,7 @@ function resolve(slug, home = os.homedir()) {
     // A slug that is a declared thread and also indexed at a different real
     // document is two answers to one question. Reported, never picked between.
     const indexed = handoffs.readIndex(home)[declared.slug];
-    if (indexed && indexed.path && !samePath(indexed.path, declared.path) && fs.existsSync(indexed.path)) {
+    if (liveOtherEntry(indexed, declared.path)) {
       result.conflicts.push({ slug: declared.slug, indexed: indexed.path, declared: declared.path });
     }
     return result;
@@ -129,7 +129,8 @@ function resolve(slug, home = os.homedir()) {
   // the older behaviour whatever mode this is, because threads are a home-scope
   // change and nothing outside that scope was migrated.
   let text = '';
-  try { text = fs.readFileSync(found.path, 'utf8'); } catch (_) { /* treated as not home */ }
+  let unreadable = null;
+  try { text = fs.readFileSync(found.path, 'utf8'); } catch (e) { unreadable = e.message; }
   const central = found.kind === 'central' || found.kind === 'archived' || found.kind === 'pause';
   const history = mode === 'threads' && central && inHomeScope(text, home);
   return {
@@ -139,12 +140,23 @@ function resolve(slug, home = os.homedir()) {
     exists: true,
     rev: fileRev(found.path),
     dir: handoffs.handoffDir(text),
+    unreadable,
     conflicts: [],
   };
 }
 
 function samePath(a, b) {
   return handoffs.resolvePath(a) === handoffs.resolvePath(b);
+}
+
+// Whether an index entry still stands for some other document. Not a bare
+// existence check: an entry recorded moments ago by a wrap still writing, or
+// one whose disk is not mounted, fails `existsSync` and is exactly the entry
+// that must not be overwritten, because it is the only record of where that
+// handoff went. Only an entry the index itself would prune counts as free.
+function liveOtherEntry(entry, target) {
+  if (!entry || !entry.path || samePath(entry.path, target)) return false;
+  return handoffs.entryState(entry) !== 'gone';
 }
 
 function listThreads(home = os.homedir()) {
@@ -179,6 +191,14 @@ function threadConstraints({ slug, home = os.homedir() }) {
   const reg = registryMod.readRegistry(home);
   if (reg.state === 'absent') return { mode: 'pre-migration' };
   if (reg.state === 'invalid') {
+    // A project handoff kept beside its work can never be a thread, so a
+    // broken thread list is no reason to withhold its answer. Anything that
+    // might be a thread is refused, because which it is cannot be read.
+    const found = handoffs.findHandoff(slug, home);
+    if (found && found.kind === 'project') {
+      const r = resolve(slug, home);
+      return { mode: 'pooled', kind: 'project', path: found.path, dir: r.dir, unreadable: r.unreadable };
+    }
     return { mode: 'invalid', refused: 'registry-invalid', errors: reg.errors, path: registryMod.registryPath(home) };
   }
   // Half a migration is neither the old answer nor the new one, so it is not
@@ -186,7 +206,9 @@ function threadConstraints({ slug, home = os.homedir() }) {
   // named so nobody mistakes the refusal for an empty list. Handoffs outside
   // the home scope were never part of the migration and are answered as usual.
   const early = registryMod.declaredBySlug(reg.registry, slug) ? null : resolve(slug, home);
-  if (early && early.kind !== 'history') return { mode: 'pooled', kind: early.kind, path: early.path, dir: early.dir };
+  if (early && early.kind !== 'history') {
+    return { mode: 'pooled', kind: early.kind, path: early.path, dir: early.dir, unreadable: early.unreadable };
+  }
   if (reg.registry.pending.length) {
     return {
       mode: 'threads',
@@ -202,11 +224,17 @@ function threadConstraints({ slug, home = os.homedir() }) {
     // central one written from anywhere else, still gets the older pooled
     // answer for its own working directory, exactly as before migration.
     if (r.kind === 'history') return { mode: 'threads', kind: 'history', path: r.path, binding: false, constraints: [] };
-    return { mode: 'pooled', kind: r.kind, path: r.path, dir: r.dir };
+    return { mode: 'pooled', kind: r.kind, path: r.path, dir: r.dir, unreadable: r.unreadable };
   }
   let text;
   try { text = fs.readFileSync(declared.path, 'utf8'); } catch (_) {
     return { mode: 'threads', refused: 'declared-missing', path: declared.path, slug: declared.slug };
+  }
+  // A declared thread whose document says it was written somewhere other than
+  // home is a hand edit that makes a project's rules look like a thread's.
+  // Refused, never read as binding.
+  if (!inHomeScope(text, home)) {
+    return { mode: 'threads', refused: 'declared-out-of-scope', path: declared.path, slug: declared.slug };
   }
   const { live, retired } = handoffs.bulletsIn(text);
   const constraints = live.map((c) => ({ text: c, from: declared.slug, path: declared.path }));
@@ -303,7 +331,7 @@ function saveThread({
     // The index is the only record of where a project handoff kept outside the
     // configured roots went. A new thread must not take its slug and cut it off.
     const indexed = index[key];
-    if (create && indexed && indexed.path && !samePath(indexed.path, target) && fs.existsSync(indexed.path)) {
+    if (create && liveOtherEntry(indexed, target)) {
       return refuse('name-taken', `${key} already names ${indexed.path}; choose another name`, { draft: from });
     }
     const current = exists ? fileRev(target) : 'none';
@@ -343,7 +371,7 @@ function saveThread({
     // Left alone when it names some other document that still exists: that
     // entry may be the only way to find it, and `resolve` reports the clash.
     let indexUpdated = false;
-    if (saved && !(indexed && indexed.path && !samePath(indexed.path, target) && fs.existsSync(indexed.path))) {
+    if (saved && !liveOtherEntry(indexed, target)) {
       index[key] = { path: target, kind: 'central', recorded_at: new Date(now).toISOString() };
       indexUpdated = saveIndex(index);
     }
@@ -387,6 +415,12 @@ function declareThread({ slug, home = os.homedir() }) {
     const reg = registryMod.readRegistry(home);
     if (reg.state !== 'ok') return { declared: false, reason: reg.state === 'absent' ? 'pre-migration' : 'registry-invalid', detail: reg.errors.join('; ') };
     if (registryMod.declaredBySlug(reg.registry, key)) return { declared: true, slug: key, path: target, already: true };
+    if (reg.registry.pending.length) {
+      return { declared: false, reason: 'migration-unfinished', detail: 'a migration is part way through; run cli.js migrate finish first' };
+    }
+    if (liveOtherEntry(handoffs.readIndex(home)[key], target)) {
+      return { declared: false, reason: 'name-taken', detail: `the index already gives ${key} to another handoff` };
+    }
     try {
       registryMod.writeRegistryUnlocked({ ...reg.registry, threads: [...reg.registry.threads, { slug: key, path: target }] }, home, holdingLock(home));
     } catch (e) {
@@ -433,8 +467,18 @@ function migratePlan({ slugs, home = os.homedir(), now = Date.now() }) {
       problems.push(`${s}: ${found.path} is not an open central handoff (archived and project handoffs cannot be threads)`);
       continue;
     }
+    // The thread list only ever names the central file for a slug, so a slug
+    // the index maps to some other file cannot become a thread under that name.
+    if (!samePath(found.path, path.join(root, `HANDOFF-${key}.md`))) {
+      problems.push(`${s}: the index maps it to ${found.path}, not HANDOFF-${key}.md; run cli.js reconcile`);
+      continue;
+    }
     if (config.isProtected(protection, found.path, home)) { problems.push(`${s}: ${found.path} is protected`); continue; }
-    const text = fs.readFileSync(found.path, 'utf8');
+    let text;
+    try { text = fs.readFileSync(found.path, 'utf8'); } catch (e) {
+      problems.push(`${s}: ${found.path} could not be read: ${e.message}`);
+      continue;
+    }
     if (!inHomeScope(text, home)) { problems.push(`${s}: its working directory is not the home directory`); continue; }
     if (seen.has(found.path) || threads.some((t) => t.slug === key)) { problems.push(`${s}: named twice`); continue; }
     seen.add(found.path);
@@ -614,6 +658,10 @@ function insertBullet(text, bullet) {
 }
 
 function dropBullet(text, bullet) {
+  if (text.includes('\r\n')) {
+    const r = dropBullet(text.replace(/\r\n/g, '\n'), bullet);
+    return { text: r.text.replace(/\n/g, '\r\n'), removed: r.removed };
+  }
   const want = handoffs.normalizeConstraint(bullet);
   const re = /^#{2,6}\s*Constraints still in force\s*$/mi;
   const m = re.exec(text);
