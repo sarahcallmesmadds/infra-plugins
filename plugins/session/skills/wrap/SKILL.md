@@ -598,8 +598,11 @@ version of it that does not.
   not updated. A thread is still found by name.
 - saved as a new thread but `declared: false`: `Handoff saved to [path], but it
   is not a thread yet. Run cli.js declare [slug].` and no pickup line.
+- not saved, with `reason` of `write-failed` and `nothingWritten: true`: `Not
+  saved; nothing was written to [path]. The draft is at [draft].` and no pickup
+  line.
 - not saved, with `reason` of `verify-failed`, or of `write-failed` with
-  `previousUnchanged: false`: `Update NOT saved, and the state of [path] is
+  `previousUnchanged: false` and no `nothingWritten: true`: `Update NOT saved, and the state of [path] is
   uncertain. Check it before the next wrap. The draft is at [draft].` and no
   pickup line.
 - not saved for any other reason, which all refuse before writing: `Update NOT

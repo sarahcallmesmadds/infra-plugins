@@ -54,18 +54,19 @@ function canonicalPath(p) {
 // walk, from the path as written and from its real path, catches a stray or
 // broken .git that git ignores and a symlinked home inside a checkout; git
 // itself catches a repository found some other way, such as GIT_DIR.
-// Remembered per home for the life of the process, because readRegistry runs
-// many times a command and each git probe is a spawn.
-const checkoutCache = new Map();
+// Only git's answer is remembered, per home for the life of the process,
+// because readRegistry runs many times a command and each probe is a spawn.
+// The walk is a few stats and runs every time: a whole remembered answer went
+// stale when home became a checkout part way through a migration, and a
+// `git init` then is exactly what the walk sees.
+const gitAnswer = new Map();
 function homeIsCheckout(home) {
-  if (checkoutCache.has(home)) return checkoutCache.get(home);
   let real = home;
   try { real = fs.realpathSync(home); } catch (_) { /* the written path is all there is */ }
+  if (walkForGit(home) || (real !== home && walkForGit(real))) return true;
   // Required here rather than at the top: handoffs.js requires this file.
-  const answer = walkForGit(home) || (real !== home && walkForGit(real))
-    || Boolean(require('./handoffs').repoRoot(home));
-  checkoutCache.set(home, answer);
-  return answer;
+  if (!gitAnswer.has(home)) gitAnswer.set(home, Boolean(require('./handoffs').repoRoot(home)));
+  return gitAnswer.get(home);
 }
 
 function walkForGit(start) {

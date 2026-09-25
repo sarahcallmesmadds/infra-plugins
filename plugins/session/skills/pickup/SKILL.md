@@ -33,21 +33,27 @@ different question, so the result would look right and be wrong.
 
 ## Step 1: Find the handoff
 
-**If the argument is a path to a file rather than a name**, which is how `/wrap`
-ends for a project whose name belongs to a declared thread, skip `find`: the
-name would open the thread. Open the path with the Read tool. If the read fails,
+**If the argument is a path directly inside `~/.planning/handoffs/`** named
+`HANDOFF-<name>.md`, it is a central handoff, possibly a thread: use `<name>` as
+the slug and carry on with `find` below.
+
+**If the argument is any other path to a file rather than a name**, which is
+how `/wrap` ends for a project whose name belongs to a declared thread, skip
+`find`: the name would open the thread. Open the path with the Read tool. If the read fails,
 say nothing is there and stop. Otherwise it is a project handoff; carry on at
-Step 2, and in its constraints step use the path's own **Working directory:**
-line:
+Step 2, and in its constraints step pass the file itself, exactly as given:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js constraints --cwd "<its Working directory>" --json
+node "${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js constraints --file "<the path>" --json
 ```
 
-That is the older pooled answer for the project's own scope, which is what binds
-a project. If it answers with `refused`, say what it says and stop. If the file
-has no Working directory line, say so and stop rather than answering for the
-directory this session happens to be in.
+Never copy its **Working directory:** line into `--cwd` yourself. The command
+reads that line the way every other command does, expanding `~` and dropping a
+trailing note, and a line pasted as written can name no real folder and come
+back as an empty list that looks like a first wrap. The answer is the older
+pooled one for the project's own scope, which is what binds a project. If it
+answers with `error` or `refused`, say what it says and stop. If it answers
+with `binding: false`, its rules are home history, not binding: say so.
 
 Otherwise the argument is a slug:
 

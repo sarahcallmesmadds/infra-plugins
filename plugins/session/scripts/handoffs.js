@@ -345,9 +345,18 @@ function forgetHandoff(slug, home = os.homedir()) {
 // entry stays. The cost is that a genuinely deleted project keeps its entry,
 // which `forget` exists to clear and which costs nothing until then, because
 // every lookup verifies the file anyway.
+// Kept outside entryState on purpose: a test reads every quoted word in that
+// function as a state pickup has to be taught.
+function isPathString(p) {
+  return typeof p === 'string';
+}
+
 function entryState(entry, now = Date.now()) {
   const target = entry && entry.path;
   if (!target) return 'gone';
+  // Not a path at all, from a hand edit: not knowable, and never handed to
+  // existsSync, which only warns about a number today and may throw later.
+  if (!isPathString(target)) return 'unreachable';
   try {
     if (fs.existsSync(target)) return 'present';
     if (!fs.existsSync(path.dirname(target))) return 'unreachable';
@@ -523,7 +532,9 @@ function findHandoff(slug, home = os.homedir()) {
   // been moved or deleted falls through to the candidates below, which is the
   // same outcome as never having recorded it. The index can only help.
   const recorded = readIndex(home)[slugify(slug)];
-  if (recorded && recorded.path) {
+  // A hand-edited entry whose path is not a string is skipped, not handed to
+  // existsSync, which only warns about a number today and may throw later.
+  if (recorded && typeof recorded.path === 'string' && recorded.path) {
     try {
       if (fs.existsSync(recorded.path)) {
         return {

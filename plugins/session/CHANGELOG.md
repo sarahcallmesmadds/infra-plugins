@@ -33,7 +33,11 @@ One handoff per thread, for handoffs written from the home directory.
   every thread's rules.
 - A project whose folder name is a declared thread's gets its `HANDOFF.md` but
   no index entry, and `/wrap` ends with `/pickup <path>`, which `/pickup` now
-  accepts.
+  accepts. While `threads.json` cannot be read, every project is picked up by
+  its path, because no name is known to be free of a thread.
+- `find` exits non-zero for any handoff it finds and cannot read.
+- `constraints --file <path>` answers for a handoff named by its file, reading
+  its Working directory the same way every other command does.
 
 After updating, restart sessions in every host before running `migrate apply`.
 

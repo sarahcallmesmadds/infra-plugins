@@ -64,14 +64,14 @@ const CAPABILITIES = { threads: 1 };
 // list, so `constraints --thread site-thread` run against a copy that did not
 // know `--thread` quietly answered a different question, the whole pool for the
 // working directory, and printed it as if it were the thread's rules.
-const VALUE_FLAGS = new Set(['--days', '--cwd', '--home', '--self', '--thread', '--from', '--base', '--generation', '--out', '--threads']);
+const VALUE_FLAGS = new Set(['--days', '--cwd', '--home', '--self', '--thread', '--from', '--base', '--generation', '--out', '--threads', '--file']);
 const BOOL_FLAGS = new Set(['--json', '--dry-run', '--no-record', '--fix', '--create', '--accept-narrowing', '--confirm-sessions-restarted']);
 
 function parseArgs(argv) {
   const out = {
     command: null, rest: [], json: false, dryRun: false, self: null, noRecord: false, fix: false,
     days: handoffs.DEFAULT_STALE_DAYS, cwd: process.cwd(), home: os.homedir(),
-    thread: null, from: null, base: null, generation: null, out: null, threads: null,
+    thread: null, file: null, from: null, base: null, generation: null, out: null, threads: null,
     create: false, acceptNarrowing: false, sessionsRestarted: false, error: null,
   };
   for (let i = 0; i < argv.length; i += 1) {
@@ -86,7 +86,7 @@ function parseArgs(argv) {
         i += 1;
         if (a === '--days') out.days = parseInt(v, 10);
         else if (a === '--generation') out.generation = /^\d+$/.test(v) ? parseInt(v, 10) : NaN;
-        else out[{ '--cwd': 'cwd', '--home': 'home', '--self': 'self', '--thread': 'thread', '--from': 'from', '--base': 'base', '--out': 'out', '--threads': 'threads' }[a]] = v;
+        else out[{ '--cwd': 'cwd', '--home': 'home', '--self': 'self', '--thread': 'thread', '--from': 'from', '--base': 'base', '--out': 'out', '--threads': 'threads', '--file': 'file' }[a]] = v;
       } else if (BOOL_FLAGS.has(a)) {
         if (a === '--json') out.json = true;
         else if (a === '--dry-run') out.dryRun = true;
@@ -511,7 +511,10 @@ const COMMANDS = {
     const listUncertain = resolved.mode === 'invalid'
       && (!match || threadsMod.couldBeThread(match.path, opts.home)
         || threadsMod.slugCouldBeThread(slug, opts.home));
-    if ((resolved.kind === 'thread' && (!resolved.exists || resolved.unreadable)) || listUncertain) process.exitCode = 1;
+    // There and unreadable exits non-zero for any kind, as every other
+    // "found but cannot be read" answer here does.
+    if ((resolved.kind === 'thread' && (!resolved.exists || resolved.unreadable)) || listUncertain
+      || (resolved.kind !== 'thread' && match && resolved.unreadable)) process.exitCode = 1;
     if (opts.json) {
       return emit(opts, {
         slug,
@@ -602,6 +605,31 @@ const COMMANDS = {
   // Scope is the repository rather than the directory, so a worktree inherits
   // from its main checkout. That specific mismatch is what hid it.
   constraints(opts) {
+    // A handoff named by its file, which is how /wrap ends for a project whose
+    // name belongs to a thread. The Working directory is parsed here, never
+    // pasted into --cwd by the skill: a pasted `~/...` or a line carrying a
+    // note such as "(git worktree of ...)" names no real folder and answered
+    // with an empty list that read exactly like a first wrap.
+    if (opts.file) {
+      const fsMod = require('fs');
+      const fail = (why) => {
+        process.exitCode = 1;
+        return emit(opts, { error: why, constraints: [] }, [`Cannot say what binds ${opts.file}: ${why}.`]);
+      };
+      if (opts.thread) return fail('give --file or --thread, not both');
+      const file = opts.file === '~' || opts.file.startsWith('~/') ? path.join(opts.home, opts.file.slice(2)) : opts.file;
+      let text;
+      try { text = fsMod.readFileSync(file, 'utf8'); } catch (e) { return fail(`it could not be read: ${e.message}`); }
+      // A central handoff, which may be a thread, is answered by its name so
+      // a thread gets its own rules rather than the home pool as history.
+      if (threadsMod.threadShaped(file, opts.home)) {
+        opts.thread = path.basename(file).replace(/^HANDOFF-/, '').replace(/\.md$/, '');
+      } else {
+        const dir = handoffs.handoffDir(text);
+        if (!dir) return fail('it has no **Working directory:** line');
+        opts.cwd = dir;
+      }
+    }
     if (opts.thread) {
       const t = threadsMod.threadConstraints({ slug: opts.thread, home: opts.home });
       // Before migration, and for any handoff outside the home scope after it,
@@ -646,8 +674,10 @@ const COMMANDS = {
         + 'Use constraints --thread <slug> for a thread\'s rules.\n\n');
     }
     if (r.registry === 'invalid') {
-      process.stdout.write('The thread list cannot be read, so declared threads may be counted in this list. '
-        + 'Fix ~/.planning/handoffs/threads.json before relying on it.\n\n');
+      // Only reached outside home's scope, which the refusal above covers, and
+      // a thread's document always names home, so none is in this list.
+      process.stdout.write('The thread list cannot be read. This folder is outside the home directory\'s scope, '
+        + 'so no thread\'s rules are in this list, but fix ~/.planning/handoffs/threads.json before relying on any thread answer.\n\n');
     }
 
     // Anything that makes the answer less than complete is said before the
@@ -798,7 +828,10 @@ const COMMANDS = {
     }
     // recordHandoff checks again under the lock, so a thread of this name
     // declared by another session meanwhile is caught there as well.
-    const shadowed = shadowsThread || Boolean(record && record.shadowed);
+    // And while the list cannot be read, no project name is known to be free
+    // of a thread: repairing the list could turn it into one, and a project
+    // left out of the index would then be opened as that thread.
+    const shadowed = shadowsThread || Boolean(record && record.shadowed) || (!central && reg.state === 'invalid');
     // `pickupSlug` is null when the slug would open something else: a project
     // named like a declared thread is picked up by its path, never its name.
     if (opts.json) {
@@ -810,7 +843,7 @@ const COMMANDS = {
     // The plain answer says what the JSON says: no pickup slug for a project
     // named like a thread, with or without --no-record.
     const lines = [t.path, shadowed
-      ? `  kind: ${t.kind}, pickup slug: none, because "${t.slug}" is a declared thread's name; pick this up by its path: /pickup ${t.path}`
+      ? `  kind: ${t.kind}, pickup slug: none, because ${shadowsThread || (record && record.shadowed) ? `"${t.slug}" is a declared thread's name` : 'the thread list cannot be read, so the name may belong to a thread'}; pick this up by its path: /pickup ${t.path}`
       : `  kind: ${t.kind}, pickup slug: ${t.slug}`];
     // Said, because a project handoff whose entry was not recorded may not be
     // found by name later, and the wrap is the moment that can still be fixed.
@@ -860,6 +893,7 @@ const COMMANDS = {
     if (!result.saved) {
       const lines = [`Not saved (${result.reason}): ${result.detail}`];
       if (result.previousUnchanged === true) lines.push('The previous handoff is unchanged.');
+      if (result.nothingWritten === true) lines.push(`Nothing was written to ${result.path || 'the thread path'}.`);
       if (result.draft) lines.push(`The draft is kept at ${result.draft}.`);
       return emit(opts, {}, lines);
     }

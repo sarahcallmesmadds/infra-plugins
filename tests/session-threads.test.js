@@ -1217,8 +1217,8 @@ check('wrap checks a null-pickupSlug handoff by its path and ends with the path;
   const pickup = fs.readFileSync(path.join(ROOT, 'skills', 'pickup', 'SKILL.md'), 'utf8');
   assert.match(wrap, /If `target` returned `pickupSlug: null`, do not run that/);
   assert.match(wrap, /\/pickup \[path\]/);
-  assert.match(pickup, /If the argument is a path to a file rather than a name/);
-  assert.match(pickup, /constraints --cwd "<its Working directory>"/);
+  assert.match(pickup, /If the argument is any other path to a file rather than a name/);
+  assert.match(pickup, /constraints --file "<the path>"/);
 });
 
 // ------------------------------------------------- Devin CLI round 7 on 5f6ed96 ----
@@ -1283,6 +1283,128 @@ check('recording a project checks the thread list again under the lock', () => {
   assert.strictEqual(r.recorded, false);
   assert.strictEqual(r.shadowed, true);
   assert.strictEqual(json(home, ['find', 'brand-thread']).body.thread.conflicts.length, 0);
+});
+
+// ------------------------------------------------ Codex round 10 on 5452290 ----
+
+check('while the list cannot be read, a project gets no pickup slug', () => {
+  const home = migrated();
+  const repo = path.join(home, 'code', 'newname');
+  fs.mkdirSync(path.join(repo, '.git'), { recursive: true });
+  fs.writeFileSync(path.join(dirOf(home), 'threads.json'), '{ not json');
+  const r = json(home, ['target', 'x', '--cwd', repo]);
+  assert.strictEqual(r.body.path, path.join(repo, 'HANDOFF.md'));
+  assert.strictEqual(r.body.pickupSlug, null);
+  assert.match(run(home, ['target', 'x', '--cwd', repo, '--no-record']).stdout, /thread list cannot be read/);
+});
+
+check('pickup sends a central handoff path through the name lookup', () => {
+  const pickup = fs.readFileSync(path.join(ROOT, 'skills', 'pickup', 'SKILL.md'), 'utf8');
+  const central = pickup.indexOf('If the argument is a path directly inside `~/.planning/handoffs/`');
+  const other = pickup.indexOf('If the argument is any other path');
+  assert.ok(central > 0 && other > central, 'the central-path rule has to come before the project-path rule');
+});
+
+check('home becoming a checkout part way through a process is seen', () => {
+  const reg = require(path.join(ROOT, 'scripts', 'registry.js'));
+  const home = tmpHome();
+  assert.strictEqual(reg.homeIsCheckout(home), false);
+  fs.mkdirSync(path.join(home, '.git'));
+  assert.strictEqual(reg.homeIsCheckout(home), true);
+});
+
+check('a central handoff that is a symlink to an archived one is not handed out to write through', () => {
+  const home = migrated();
+  const archived = path.join(dirOf(home), 'archived', 'HANDOFF-kept.md');
+  fs.mkdirSync(path.dirname(archived), { recursive: true });
+  fs.writeFileSync(archived, handoff(home, ['Kept.']));
+  fs.symlinkSync(archived, docPath(home, 'kept'));
+  const t = require(path.join(ROOT, 'scripts', 'threads.js'));
+  assert.strictEqual(t.couldBeThread(docPath(home, 'kept'), home), true);
+  const r = json(home, ['target', 'kept', '--cwd', path.join(home, 'Documents')]);
+  assert.strictEqual(r.body.path, undefined, JSON.stringify(r.body));
+});
+
+// --------------------------------------------- Devin CLI round 8 on 5452290 ----
+
+check('a new thread whose write fails says nothing was written, not that a previous one is unchanged', () => {
+  const t = require(path.join(ROOT, 'scripts', 'threads.js'));
+  const home = migrated();
+  const from = draftFor(home, handoff(home, ['New.']));
+  const real = fs.writeFileSync;
+  fs.writeFileSync = (f, ...rest) => {
+    if (String(f).includes('HANDOFF-fresh-thread.md.') && String(f).endsWith('.tmp')) throw new Error('disk full');
+    return real(f, ...rest);
+  };
+  let r;
+  try {
+    r = t.saveThread({ slug: 'fresh-thread', from, base: 'none', generation: registry(home).generation, create: true, home });
+  } finally {
+    fs.writeFileSync = real;
+  }
+  assert.strictEqual(r.reason, 'write-failed', JSON.stringify(r));
+  assert.strictEqual(r.previousUnchanged, false);
+  assert.strictEqual(r.nothingWritten, true);
+  assert.ok(!fs.existsSync(docPath(home, 'fresh-thread')));
+});
+
+check('find exits non-zero for a found handoff it cannot read, whatever its kind', () => {
+  const home = migrated();
+  fs.chmodSync(docPath(home, 'old-session'), 0o000);
+  try {
+    const r = run(home, ['find', 'old-session', '--json']);
+    assert.strictEqual(r.status, 1, r.stdout);
+  } finally {
+    fs.chmodSync(docPath(home, 'old-session'), 0o644);
+  }
+});
+
+check('outside home, the broken-list note no longer says thread rules may be counted', () => {
+  const home = migrated();
+  const repo = path.join(home, 'code', 'app');
+  fs.mkdirSync(path.join(repo, '.git'), { recursive: true });
+  fs.writeFileSync(path.join(dirOf(home), 'threads.json'), '{ not json');
+  const out = run(home, ['constraints', '--cwd', repo]).stdout;
+  assert.doesNotMatch(out, /may be counted/);
+  assert.match(out, /no thread's rules are in this list/);
+});
+
+// ------------------------------------------------ persona review of 5452290 ----
+
+check('constraints --file reads the Working directory itself, notes and all', () => {
+  const home = migrated();
+  const repo = path.join(home, 'code', 'proj');
+  fs.mkdirSync(path.join(repo, '.git'), { recursive: true });
+  const file = path.join(repo, 'HANDOFF.md');
+  fs.writeFileSync(file, handoff(`${repo} (git worktree of something)`, ['Proj rule.']));
+  setIndex(home, 'proj', { path: file, kind: 'project', recorded_at: '2026-01-01T00:00:00.000Z' });
+  const r = json(home, ['constraints', '--file', file]);
+  assert.strictEqual(r.status, 0, JSON.stringify(r.body));
+  assert.deepStrictEqual(r.body.constraints.map((c) => c.text), ['Proj rule.']);
+});
+
+check('constraints --file refuses a file with no Working directory line or none at all', () => {
+  const home = migrated();
+  const file = path.join(home, 'loose.md');
+  fs.writeFileSync(file, '# Session Handoff\n\n## Constraints still in force\n- X.\n');
+  const r = json(home, ['constraints', '--file', file]);
+  assert.strictEqual(r.status, 1);
+  assert.match(r.body.error, /Working directory/);
+  assert.strictEqual(json(home, ['constraints', '--file', path.join(home, 'nope.md')]).status, 1);
+});
+
+check('constraints --file on a thread\'s own file answers with the thread\'s rules', () => {
+  const home = migrated();
+  const r = json(home, ['constraints', '--file', docPath(home, 'brand-thread')]);
+  assert.deepStrictEqual(r.body.constraints.map((c) => c.text), ['Brand rule.']);
+  assert.strictEqual(r.body.binding, true);
+});
+
+check('an index entry whose path is not a string is skipped by findHandoff', () => {
+  const home = migrated();
+  setIndex(home, 'other', { path: 42, kind: 'project' });
+  const r = run(home, ['find', 'other', '--json']);
+  assert.doesNotMatch(r.stderr, /DeprecationWarning|TypeError/);
 });
 
 process.stdout.write(`\n${failures === 0 ? 'all passed' : `${failures} failed`}\n`);

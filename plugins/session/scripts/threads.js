@@ -68,13 +68,16 @@ function inHomeScope(text, home) {
 // Judged by where the file really is, never by the kind an index entry claims:
 // a declared thread is always `HANDOFF-<slug>.md` directly in the handoffs
 // folder (registry.js refuses any other path), so a file anywhere else, a
-// project, an archived copy or a pause note, can never be one. Both sides are
-// real paths, so a home reached through a symlink cannot make a central file
-// look like a project.
+// project, an archived copy or a pause note, can never be one. Checked on the
+// path as written and on its real path, and either is enough: comparing real
+// paths alone let a central HANDOFF-x.md that is a symlink to an archived
+// copy look safe to write through, and comparing written paths alone let a
+// home reached through a symlink make a central file look like a project.
 function threadShaped(file, home) {
-  const real = handoffs.resolvePath(file);
-  return path.dirname(real) === handoffs.resolvePath(handoffs.handoffRoot(home))
-    && /^HANDOFF-.+\.md$/.test(path.basename(real));
+  const root = handoffs.handoffRoot(home);
+  const at = (p, r) => path.dirname(p) === r && /^HANDOFF-.+\.md$/.test(path.basename(p));
+  return at(path.resolve(file), path.resolve(root))
+    || at(handoffs.resolvePath(file), handoffs.resolvePath(root));
 }
 
 function couldBeThread(file, home) {
@@ -451,10 +454,14 @@ function saveThread({
       written = atomicWrite(target, draft, holdingLock(home));
     } catch (e) {
       const still = fileRev(target);
+      // Only claimed when checked: the document is still what it was. For a
+      // new thread there was no previous document, so none is claimed
+      // unchanged; `nothingWritten` says the path is still empty instead.
       return refuse('write-failed', e.message, {
         draft: from,
-        // Only claimed when checked: the document is still what it was.
-        previousUnchanged: still === (exists ? current : null),
+        previousUnchanged: exists ? still === current : false,
+        nothingWritten: !exists && still === null,
+        path: target,
       });
     }
     const saved = written === rev(draft);
@@ -626,7 +633,9 @@ function migratePlan({ slugs, home = os.homedir(), now = Date.now() }) {
   const before = handoffs.carriedConstraints({ cwd: home, home, includeThreads: true });
   // A handoff that is listed and cannot be read is missing from both the rule
   // comparison and the fingerprint, so the plan would be approved against less
-  // than is there. Refused rather than planned around.
+  // than is there. Refused rather than planned around, wherever it belongs:
+  // its Working directory cannot be read either, so whether it is home's is
+  // not known, and ignoring other projects' unreadable files ignores it too.
   if (before.unreadable && before.unreadable.length) {
     return { ok: false, reason: 'unreadable', detail: `these handoffs could not be read: ${before.unreadable.join(', ')}` };
   }
@@ -902,6 +911,7 @@ module.exports = {
   inHomeScope,
   isHomeDir,
   couldBeThread,
+  threadShaped,
   slugCouldBeThread,
   resolve,
   listThreads,
