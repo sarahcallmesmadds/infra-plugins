@@ -67,10 +67,14 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/review-evidence.js" capture-app \
 ```
 
 The collector uses paginated `gh api --method GET` requests for both `reviews`
-and `comments`; the method is explicit so this route cannot authorize a GitHub
-write. It reads both endpoints twice and stops if either payload changed or a
-same-SHA Devin comment has no captured review. It keeps every same-SHA Devin app
-retry. A later clean retry never erases an earlier findings review.
+and `comments`; the method is explicit so those routes cannot authorize a
+GitHub write. If a same-SHA comment points to a review from an earlier commit,
+it also reads the pull request's review-thread state twice with a GraphQL
+`query` operation (never a mutation). It records that comment as prior-review
+context only when GitHub confirms the thread is resolved and the review/comment
+commit linkage agrees. Missing, unresolved, or changing thread state blocks
+capture. Every same-SHA Devin app retry remains included; a later clean retry
+never erases an earlier findings review.
 
 **Read the review body, not the check status.** The collector recognizes only
 the pinned singular, plural, `new`, current and legacy additional-finding,

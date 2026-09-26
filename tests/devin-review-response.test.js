@@ -60,19 +60,32 @@ function comment(id = 11, reviewId = 1, body = 'Synthetic finding', commit = HEA
     user: { id: BOT_ID, login: 'synthetic-reviewer' } };
 }
 
+function reviewThread(commentId, reviewId, reviewSha, commentSha = HEAD, isResolved = true) {
+  return {
+    isResolved,
+    isOutdated: false,
+    comments: { nodes: [{
+      databaseId: commentId,
+      commit: { oid: commentSha },
+      originalCommit: { oid: reviewSha },
+      pullRequestReview: { databaseId: reviewId, commit: { oid: reviewSha } },
+    }] },
+  };
+}
+
 function evidenceModule() {
   delete require.cache[require.resolve(EVIDENCE)];
   return require(EVIDENCE);
 }
 
-function appCapture(reviews = [review()], comments = [comment()], requestedHeadSha = HEAD) {
+function appCapture(reviews = [review()], comments = [comment()], requestedHeadSha = HEAD, threads = []) {
   const { normalizeAppPayload } = evidenceModule();
   const normalized = normalizeAppPayload({
     repository: 'o/r', pr: 12, requestedHeadSha,
-    expectedReviewerId: BOT_ID, reviews, comments,
+    expectedReviewerId: BOT_ID, reviews, comments, threads,
   });
   return {
-    schema_version: 1,
+    schema_version: 2,
     kind: 'github_app_capture',
     repository: 'o/r',
     pr: 12,
@@ -87,6 +100,8 @@ function appCapture(reviews = [review()], comments = [comment()], requestedHeadS
     },
     raw_reviews: reviews,
     raw_comments: comments,
+    raw_threads: threads,
+    reanchored_comments: normalized.reanchored_comments,
     runs: normalized.runs,
   };
 }
@@ -955,6 +970,37 @@ check('pending reviews and orphan same-SHA Devin comments block capture', () => 
   assert.match(orphan.errors.join('\n'), /no captured review/i);
 });
 
+check('resolved comments reanchored from an older Devin review are captured as context', () => {
+  const oldReview = review(4, reviewBody(1), OTHER_HEAD);
+  const newReview = review(5, reviewBody(1));
+  const oldComment = comment(41, oldReview.id, 'Older Devin finding', HEAD);
+  const currentComment = comment(51, newReview.id, 'Current Devin finding', HEAD);
+  const thread = reviewThread(oldComment.id, oldReview.id, OTHER_HEAD);
+  const capture = appCapture([oldReview, newReview], [oldComment, currentComment], HEAD, [thread]);
+  assert.strictEqual(capture.status, 'complete', JSON.stringify(capture.errors));
+  assert.deepStrictEqual(capture.reanchored_comments, [{
+    comment_id: oldComment.id,
+    review_id: oldReview.id,
+    review_commit_id: OTHER_HEAD,
+    comment_commit_id: HEAD,
+    thread_resolved: true,
+    thread_outdated: false,
+  }]);
+  assert.deepStrictEqual(capture.runs.map((run) => run.review_id), [newReview.id]);
+  assert.deepStrictEqual(capture.runs[0].reports.map((report) => report.comment_id), [currentComment.id]);
+
+  const unresolved = appCapture(
+    [oldReview, newReview], [oldComment, currentComment], HEAD,
+    [reviewThread(oldComment.id, oldReview.id, OTHER_HEAD, HEAD, false)],
+  );
+  assert.strictEqual(unresolved.status, 'incomplete');
+  assert.match(unresolved.errors.join('\n'), /prior review.*unresolved/i);
+
+  const missingThread = appCapture([oldReview, newReview], [oldComment, currentComment]);
+  assert.strictEqual(missingThread.status, 'incomplete');
+  assert.match(missingThread.errors.join('\n'), /thread was not captured uniquely/i);
+});
+
 check('human thread replies are not counted as Devin findings', () => {
   const humanReply = {
     ...comment(12, 1, 'Synthetic human reply'),
@@ -982,6 +1028,41 @@ check('capture transport consumes every reviews and comments page', () => {
   assert.strictEqual(capture.pagination.comments.pages, 2);
   assert.strictEqual(capture.raw_reviews.length, 2);
   assert.strictEqual(capture.raw_comments.length, 1);
+});
+
+check('capture transport reads reanchored review-thread state twice', () => {
+  const { collectAppEvidence } = evidenceModule();
+  const oldReview = review(4, reviewBody(1), OTHER_HEAD);
+  const newReview = review(5, reviewBody(1));
+  const oldComment = comment(41, oldReview.id, 'Older Devin finding', HEAD);
+  const currentComment = comment(51, newReview.id, 'Current Devin finding', HEAD);
+  const thread = reviewThread(oldComment.id, oldReview.id, OTHER_HEAD);
+  const requested = [];
+  const getPages = (endpoint) => {
+    requested.push(endpoint);
+    if (endpoint === 'reviews') return [[oldReview, newReview]];
+    if (endpoint === 'comments') return [[oldComment, currentComment]];
+    return [[thread]];
+  };
+  const capture = collectAppEvidence({
+    repository: 'o/r', pr: 12, requestedHeadSha: HEAD, expectedReviewerId: BOT_ID,
+  }, getPages);
+  assert.deepStrictEqual(requested, ['reviews', 'comments', 'reviews', 'comments', 'threads', 'threads']);
+  assert.strictEqual(capture.status, 'complete', JSON.stringify(capture.errors));
+  assert.strictEqual(capture.schema_version, 2);
+  assert.deepStrictEqual(capture.raw_threads, [thread]);
+
+  let threadRead = 0;
+  const unstable = collectAppEvidence({
+    repository: 'o/r', pr: 12, requestedHeadSha: HEAD, expectedReviewerId: BOT_ID,
+  }, (endpoint) => {
+    if (endpoint === 'reviews') return [[oldReview, newReview]];
+    if (endpoint === 'comments') return [[oldComment, currentComment]];
+    threadRead += 1;
+    return [[reviewThread(oldComment.id, oldReview.id, OTHER_HEAD, HEAD, threadRead === 1)]];
+  });
+  assert.strictEqual(unstable.status, 'incomplete');
+  assert.match(unstable.errors.join('\n'), /review threads changed during capture/i);
 });
 
 check('capture transport rejects reviews or comments that change between reads', () => {

@@ -3,6 +3,18 @@
 Upgrade notes for past versions, moved out of the README so that file says what
 the plugin is and how to use it. Nothing here is needed to install or run it.
 
+## Upgrading to 0.10.22
+
+**Resolved Devin comments carried onto a newer commit no longer block review
+capture.** The collector records the older review linkage and reads GitHub's
+review-thread state twice. It excludes that comment from the current finding
+set only when the thread is resolved and the commit linkage matches; missing,
+unresolved, mismatched, or changing thread state still blocks the capture.
+
+App captures now use schema version 2 and retain the raw review-thread context
+alongside the REST review and comment payloads. No action is needed unless an
+older private round capture is being reused; recapture it with this version.
+
 ## Upgrading to 0.10.20
 
 **`/devin-review-response` now checks the GitHub app and Devin CLI separately

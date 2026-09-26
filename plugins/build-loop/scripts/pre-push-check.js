@@ -266,9 +266,23 @@ function sameShaDevinActivity(capture, round) {
     && item.user.id === round.expected_reviewer_id
     && String(item.commit_id || '').toLowerCase() === String(round.review_head_sha).toLowerCase();
   const byId = (left, right) => String(left.id).localeCompare(String(right.id));
+  const currentCommentIds = new Set((Array.isArray(capture.raw_comments) ? capture.raw_comments : [])
+    .filter(matches).map((item) => item.id));
+  const linkedThreads = (Array.isArray(capture.raw_threads) ? capture.raw_threads : []).filter((thread) => {
+    const nodes = object(thread) && object(thread.comments) && Array.isArray(thread.comments.nodes)
+      ? thread.comments.nodes : [];
+    return nodes.some((item) => object(item) && currentCommentIds.has(item.databaseId));
+  });
   return canonicalJson({
     reviews: (Array.isArray(capture.raw_reviews) ? capture.raw_reviews : []).filter(matches).sort(byId),
     comments: (Array.isArray(capture.raw_comments) ? capture.raw_comments : []).filter(matches).sort(byId),
+    threads: linkedThreads.sort((left, right) => {
+      const leftId = object(left) && object(left.comments) && Array.isArray(left.comments.nodes)
+        ? left.comments.nodes.map((item) => item.databaseId).join(',') : '';
+      const rightId = object(right) && object(right.comments) && Array.isArray(right.comments.nodes)
+        ? right.comments.nodes.map((item) => item.databaseId).join(',') : '';
+      return leftId.localeCompare(rightId);
+    }),
   });
 }
 
@@ -305,12 +319,14 @@ function validateAppCapture(round, roundFile, errors) {
   if (!capture || !checkKeys(capture, APP_KEYS, [], 'app capture', errors)) {
     return { capture, runsById: new Map(), reportsByRun: new Map() };
   }
-  if (capture.schema_version !== 1) errors.push('app capture: schema_version must be 1');
+  if (capture.schema_version !== 2) errors.push('app capture: schema_version must be 2');
   if (capture.kind !== 'github_app_capture') errors.push('app capture: kind must be github_app_capture');
   if (!text(capture.captured_at)) errors.push('app capture: captured_at is required');
   if (!Array.isArray(capture.errors) || !capture.errors.every(text)) errors.push('app capture: errors must be a string array');
   if (!Array.isArray(capture.raw_reviews)) errors.push('app capture: raw_reviews must be an array');
   if (!Array.isArray(capture.raw_comments)) errors.push('app capture: raw_comments must be an array');
+  if (!Array.isArray(capture.raw_threads)) errors.push('app capture: raw_threads must be an array');
+  if (!Array.isArray(capture.reanchored_comments)) errors.push('app capture: reanchored_comments must be an array');
   if (!Array.isArray(capture.runs)) errors.push('app capture: runs must be an array');
   if (!object(capture.pagination)
     || !checkKeys(capture.pagination, ['reviews', 'comments'], [], 'app capture pagination', errors)) {
@@ -344,10 +360,14 @@ function validateAppCapture(round, roundFile, errors) {
         expectedReviewerId: capture.expected_reviewer_id,
         reviews: capture.raw_reviews,
         comments: capture.raw_comments,
+        threads: capture.raw_threads,
       });
       if (capture.status !== normalized.status) errors.push('app capture status disagrees with its raw payload');
       if (!sameJson(capture.errors, normalized.errors)) errors.push('app capture errors disagree with its raw payload');
       if (!sameJson(capture.runs, normalized.runs)) errors.push('app capture runs disagree with its raw payload');
+      if (!sameJson(capture.reanchored_comments, normalized.reanchored_comments)) {
+        errors.push('app capture reanchored_comments disagree with its raw payload');
+      }
     } catch (error) {
       errors.push(`app capture cannot be normalized: ${error.message}`);
     }

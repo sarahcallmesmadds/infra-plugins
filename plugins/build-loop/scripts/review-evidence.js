@@ -19,7 +19,7 @@ const CLI_RESERVATION_KEYS = [
 const APP_KEYS = [
   'schema_version', 'kind', 'repository', 'pr', 'requested_head_sha',
   'expected_reviewer_id', 'captured_at', 'status', 'errors', 'pagination',
-  'raw_reviews', 'raw_comments', 'runs',
+  'raw_reviews', 'raw_comments', 'raw_threads', 'reanchored_comments', 'runs',
 ];
 const CLI_KEYS = [
   'schema_version', 'kind', 'repository_root', 'purpose', 'review_head_sha',
@@ -290,6 +290,35 @@ function parseReviewBody(rawBody, linkedComments) {
   };
 }
 
+function sameShaDevinComments(comments, requestedHeadSha, expectedReviewerId) {
+  return comments.filter((item) => isObject(item)
+    && isObject(item.user)
+    && item.user.id === expectedReviewerId
+    && String(item.commit_id || '').toLowerCase() === requestedHeadSha);
+}
+
+function threadComment(thread, commentId) {
+  const nodes = isObject(thread) && isObject(thread.comments) && Array.isArray(thread.comments.nodes)
+    ? thread.comments.nodes : [];
+  return nodes.find((item) => isObject(item) && item.databaseId === commentId) || null;
+}
+
+function threadForComment(threads, commentId) {
+  const matches = threads.filter((thread) => threadComment(thread, commentId));
+  return matches.length === 1 ? { thread: matches[0], comment: threadComment(matches[0], commentId) } : null;
+}
+
+function hasReanchoredComments(reviews, comments, requestedHeadSha, expectedReviewerId) {
+  const reviewById = new Map(reviews.filter(isObject).map((item) => [item.id, item]));
+  return sameShaDevinComments(comments, requestedHeadSha, expectedReviewerId).some((item) => {
+    const parent = reviewById.get(item.pull_request_review_id);
+    return isObject(parent)
+      && isObject(parent.user)
+      && parent.user.id === expectedReviewerId
+      && String(parent.commit_id || '').toLowerCase() !== requestedHeadSha;
+  });
+}
+
 function normalizeAppPayload(options) {
   const repository = canonicalRepository(options.repository);
   const pr = positiveInteger(options.pr, 'pr');
@@ -300,19 +329,62 @@ function normalizeAppPayload(options) {
   }
   const reviews = Array.isArray(options.reviews) ? options.reviews : [];
   const comments = Array.isArray(options.comments) ? options.comments : [];
+  const threads = Array.isArray(options.threads) ? options.threads : [];
   const candidates = reviews.filter((item) => isObject(item)
     && isObject(item.user)
     && item.user.id === expectedReviewerId
     && String(item.commit_id || '').toLowerCase() === requestedHeadSha);
   const errors = [];
   const runs = [];
+  const reanchoredComments = [];
   const candidateIds = new Set(candidates.map((item) => item.id));
-  for (const item of comments) {
-    if (!isObject(item) || !isObject(item.user) || item.user.id !== expectedReviewerId) continue;
-    if (String(item.commit_id || '').toLowerCase() !== requestedHeadSha) continue;
-    if (!candidateIds.has(item.pull_request_review_id)) {
+  const reviewById = new Map(reviews.filter(isObject).map((item) => [item.id, item]));
+  for (const item of sameShaDevinComments(comments, requestedHeadSha, expectedReviewerId)) {
+    if (candidateIds.has(item.pull_request_review_id)) continue;
+    const parent = reviewById.get(item.pull_request_review_id);
+    const parentSha = isObject(parent) ? String(parent.commit_id || '').toLowerCase() : '';
+    if (!isObject(parent) || !isObject(parent.user) || parent.user.id !== expectedReviewerId
+      || !parentSha || parentSha === requestedHeadSha) {
       errors.push(`same-SHA Devin comment ${item.id} has no captured review`);
+      continue;
     }
+
+    const linked = threadForComment(threads, item.id);
+    if (!linked) {
+      errors.push(`same-SHA Devin comment ${item.id} links to prior review ${parent.id}, but its GitHub review thread was not captured uniquely`);
+      continue;
+    }
+    const linkedReview = isObject(linked.comment.pullRequestReview)
+      ? linked.comment.pullRequestReview : null;
+    const linkedReviewSha = linkedReview && isObject(linkedReview.commit)
+      ? String(linkedReview.commit.oid || '').toLowerCase() : '';
+    const linkedCommentSha = isObject(linked.comment.commit)
+      ? String(linked.comment.commit.oid || '').toLowerCase() : '';
+    const linkedOriginalSha = isObject(linked.comment.originalCommit)
+      ? String(linked.comment.originalCommit.oid || '').toLowerCase() : '';
+    if (linkedReview?.databaseId !== item.pull_request_review_id
+      || linkedReviewSha !== parentSha
+      || linkedOriginalSha !== parentSha
+      || linkedCommentSha !== requestedHeadSha) {
+      errors.push(`same-SHA Devin comment ${item.id} disagrees with its GitHub review thread linkage`);
+      continue;
+    }
+    if (typeof linked.thread.isResolved !== 'boolean' || typeof linked.thread.isOutdated !== 'boolean') {
+      errors.push(`same-SHA Devin comment ${item.id} has incomplete state from its GitHub review thread`);
+      continue;
+    }
+    if (!linked.thread.isResolved) {
+      errors.push(`same-SHA Devin comment ${item.id} links to a prior review and its GitHub review thread is unresolved`);
+      continue;
+    }
+    reanchoredComments.push({
+      comment_id: item.id,
+      review_id: item.pull_request_review_id,
+      review_commit_id: parentSha,
+      comment_commit_id: requestedHeadSha,
+      thread_resolved: true,
+      thread_outdated: linked.thread.isOutdated === true,
+    });
   }
 
   for (const item of candidates) {
@@ -375,10 +447,43 @@ function normalizeAppPayload(options) {
     status: errors.length === 0 && runs.every((run) => run.status === 'complete') ? 'complete' : 'incomplete',
     errors,
     runs,
+    reanchored_comments: reanchoredComments,
   };
 }
 
+function githubReviewThreadPages(options) {
+  const [owner, name] = options.repository.split('/');
+  const query = 'query($owner:String!, $name:String!, $number:Int!, $endCursor:String) { repository(owner:$owner,name:$name) { pullRequest(number:$number) { reviewThreads(first:100, after:$endCursor) { nodes { isResolved isOutdated comments(first:100) { nodes { databaseId commit { oid } originalCommit { oid } pullRequestReview { databaseId commit { oid } } } } } pageInfo { hasNextPage endCursor } } } } }';
+  const result = spawnSync('gh', [
+    'api', '--hostname', 'github.com', 'graphql', '--method', 'POST', '--paginate', '--slurp', '-f', `query=${query}`,
+    '-F', `owner=${owner}`, '-F', `name=${name}`, '-F', `number=${options.pr}`,
+  ], {
+    encoding: 'utf8',
+    maxBuffer: 20 * 1024 * 1024,
+  });
+  if (result.status !== 0) {
+    throw new Error(`GitHub review thread capture failed: ${spawnDiagnostic(result)}`);
+  }
+  let parsed;
+  try { parsed = JSON.parse(result.stdout); }
+  catch (error) { throw new Error(`GitHub review thread response is not JSON: ${error.message}`); }
+  if (!Array.isArray(parsed)) throw new Error('GitHub review thread response is not an array');
+  return parsed.map((page) => {
+    if (Array.isArray(page?.errors) && page.errors.length > 0) {
+      throw new Error('GitHub review thread response contains GraphQL errors');
+    }
+    const connection = page?.data?.repository?.pullRequest?.reviewThreads;
+    if (!Array.isArray(connection?.nodes)
+      || typeof connection.pageInfo?.hasNextPage !== 'boolean'
+      || (connection.pageInfo.hasNextPage && typeof connection.pageInfo.endCursor !== 'string')) {
+      throw new Error('GitHub review thread response is missing reviewThreads pagination data');
+    }
+    return connection.nodes;
+  });
+}
+
 function githubPages(options, endpoint) {
+  if (endpoint === 'threads') return githubReviewThreadPages(options);
   const apiPath = `repos/${options.repository}/pulls/${options.pr}/${endpoint}?per_page=100`;
   const result = spawnSync('gh', [
     'api', '--hostname', 'github.com', '--method', 'GET', '--paginate', '--slurp', apiPath,
@@ -411,7 +516,18 @@ function collectAppEvidence(options, getPages = (endpoint) => githubPages(option
   }
   const reviews = reviewPages.flat();
   const comments = commentPages.flat();
-  const normalized = normalizeAppPayload({ ...options, reviews, comments });
+  let initialThreadPages = [];
+  let threadPages = [];
+  if (hasReanchoredComments(reviews, comments, fullSha(options.requestedHeadSha, 'requested head SHA'), DEVIN_REVIEWER_ID)) {
+    initialThreadPages = getPages('threads');
+    threadPages = getPages('threads');
+    if (!Array.isArray(initialThreadPages) || initialThreadPages.some((page) => !Array.isArray(page))
+      || !Array.isArray(threadPages) || threadPages.some((page) => !Array.isArray(page))) {
+      throw new Error('review thread transport must return an array of pages');
+    }
+  }
+  const threads = threadPages.flat();
+  const normalized = normalizeAppPayload({ ...options, reviews, comments, threads });
   if (JSON.stringify(initialReviewPages) !== JSON.stringify(reviewPages)) {
     normalized.errors.push('GitHub reviews changed during capture; rerun for a stable snapshot');
     normalized.status = 'incomplete';
@@ -420,8 +536,12 @@ function collectAppEvidence(options, getPages = (endpoint) => githubPages(option
     normalized.errors.push('GitHub comments changed during capture; rerun for a stable snapshot');
     normalized.status = 'incomplete';
   }
+  if (JSON.stringify(initialThreadPages) !== JSON.stringify(threadPages)) {
+    normalized.errors.push('GitHub review threads changed during capture; rerun for a stable snapshot');
+    normalized.status = 'incomplete';
+  }
   return {
-    schema_version: 1,
+    schema_version: 2,
     kind: 'github_app_capture',
     repository: normalized.repository,
     pr: normalized.pr,
@@ -436,6 +556,8 @@ function collectAppEvidence(options, getPages = (endpoint) => githubPages(option
     },
     raw_reviews: reviews,
     raw_comments: comments,
+    raw_threads: threads,
+    reanchored_comments: normalized.reanchored_comments,
     runs: normalized.runs,
   };
 }
