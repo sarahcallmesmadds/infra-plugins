@@ -1767,13 +1767,13 @@ check('a two-hop link from a project HANDOFF.md to a missing thread file is refu
   assert.strictEqual(r.body.path, undefined);
 });
 
-check('a forty-hop link chain ending outside the handoffs folder is handed out', () => {
+check('a thirty-two-hop link chain ending outside the handoffs folder is handed out', () => {
   const home = migrated();
   const real = path.join(home, 'shared', 'HANDOFF.md');
   fs.mkdirSync(path.dirname(real), { recursive: true });
   fs.writeFileSync(real, 'x');
   let prev = real;
-  for (let i = 0; i < 39; i += 1) {
+  for (let i = 0; i < 31; i += 1) {
     const link = path.join(home, 'shared', `hop-${i}.md`);
     fs.symlinkSync(prev, link);
     prev = link;
@@ -1988,6 +1988,54 @@ check('apply without the narrowing flag shows what each thread will bind once th
   const r = json(home, ['migrate', 'apply', planFile, '--confirm-sessions-restarted']);
   assert.strictEqual(r.body.reason, 'narrowing-not-accepted');
   assert.strictEqual(r.body.finalPerThread.find((p) => p.slug === 'brand-thread').bindingFinal, 2);
+});
+
+check('when the lock is refused, the path checks still run before a path is handed out', () => {
+  const home = setUp();
+  const notes = path.join(home, 'notes');
+  fs.mkdirSync(notes);
+  const r = spawnSync(process.execPath, ['-e', `
+    const h = require(${JSON.stringify(path.join(ROOT, 'scripts', 'handoffs.js'))});
+    h.recordHandoff = () => {
+      require('fs').writeFileSync(${JSON.stringify(path.join(dirOf(home), 'threads.json'))},
+        JSON.stringify({ version: 1, generation: 1, threads: [{ slug: 'brand-thread', path: ${JSON.stringify(docPath(home, 'brand-thread'))} }], pending: [] }));
+      return { recorded: false, reason: 'another session is writing the handoff index' };
+    };
+    require(${JSON.stringify(CLI)}).main(['target', 'brand-thread', '--cwd', ${JSON.stringify(notes)}, '--json', '--home', ${JSON.stringify(home)}]);
+  `], { encoding: 'utf8' });
+  const body = JSON.parse(r.stdout);
+  assert.strictEqual(body.path, undefined, r.stdout);
+});
+
+check('a central path is not handed out when the lock is busy', () => {
+  const home = setUp();
+  const notes = path.join(home, 'notes');
+  fs.mkdirSync(notes);
+  const r = spawnSync(process.execPath, ['-e', `
+    const h = require(${JSON.stringify(path.join(ROOT, 'scripts', 'handoffs.js'))});
+    h.recordHandoff = () => ({ recorded: false, reason: 'another session is writing the handoff index' });
+    require(${JSON.stringify(CLI)}).main(['target', 'fresh-topic', '--cwd', ${JSON.stringify(notes)}, '--json', '--home', ${JSON.stringify(home)}]);
+  `], { encoding: 'utf8' });
+  const body = JSON.parse(r.stdout);
+  assert.strictEqual(body.path, undefined, r.stdout);
+  assert.match(body.refused, /busy/);
+});
+
+check('--no-record still runs the path checks', () => {
+  const home = setUp();
+  fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+  fs.writeFileSync(path.join(home, '.claude', 'session.config.json'), JSON.stringify({ protectedHandoffs: [docPath(home, 'kept-topic')] }));
+  const notes = path.join(home, 'notes');
+  fs.mkdirSync(notes);
+  const r = json(home, ['target', 'kept-topic', '--cwd', notes, '--no-record']);
+  assert.strictEqual(r.status, 1);
+  assert.strictEqual(r.body.path, undefined);
+});
+
+check('the plan refuses when HANDOFF-.md cannot be counted', () => {
+  const home = setUp();
+  fs.symlinkSync(path.join(home, 'gone.md'), path.join(dirOf(home), 'HANDOFF-.md'));
+  assert.strictEqual(json(home, ['migrate', 'plan', '--threads', 'site-thread']).body.reason, 'unreadable');
 });
 
 process.stdout.write(`\n${failures === 0 ? 'all passed' : `${failures} failed`}\n`);

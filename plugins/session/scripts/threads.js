@@ -810,7 +810,8 @@ function migratePlan({ slugs, home = os.homedir(), now = Date.now() }) {
     try { names = fs.readdirSync(dir); } catch (e) {
       if (!(e && e.code === 'ENOENT')) return { ok: false, reason: 'unreadable', detail: `${dir} could not be listed: ${e.message}` };
     }
-    const bad = names.filter((n) => /^HANDOFF-.+\.md$/.test(n)).filter((n) => {
+    // The same pattern recentHandoffs lists by, `HANDOFF-.md` included.
+    const bad = names.filter((n) => n.startsWith('HANDOFF-') && n.endsWith('.md')).filter((n) => {
       try { fs.statSync(path.join(dir, n)); return false; } catch (_) { return true; }
     });
     if (bad.length) return { ok: false, reason: 'unreadable', detail: `these handoffs could not be read: ${bad.map((n) => path.join(dir, n)).join(', ')}` };

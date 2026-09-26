@@ -17,7 +17,8 @@ One handoff per thread, for handoffs written from the home directory.
   A listed file that is there and cannot be read also stops every write.
 - Behaviour change: when another session holds the handoff index lock, commands
   now refuse after the five second wait instead of writing without it. `target`
-  says the entry was not recorded; the sweep moves nothing.
+  hands out no central path then (run the wrap again) and says a project's
+  entry was not recorded; the sweep moves nothing.
 - The archive sweep never moves declared threads or protected handoffs and never
   renames over a document already in the archive.
 - `cli.js` rejects unknown flags and flags missing their value (an empty value

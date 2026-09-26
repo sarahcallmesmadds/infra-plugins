@@ -867,13 +867,14 @@ const COMMANDS = {
         const spellings = [handoffs.resolvePath(t.path)];
         let hop = t.path;
         let unresolved = false;
-        // The system's own limit is 40 resolutions: a chain still a link
-        // after 40 hops cannot be opened, so the wrap's write would fail.
+        // The systems' limits are 40 resolutions on Linux and 32 on macOS: a
+        // chain still a link after 32 hops may not open, so the wrap's write
+        // could fail. The lower one is used.
         for (let i = 0; ; i += 1) {
           let next;
           try {
             if (!fsMod.lstatSync(hop).isSymbolicLink()) break;
-            if (i >= 40) { unresolved = true; break; }
+            if (i >= 32) { unresolved = true; break; }
             next = path.resolve(path.dirname(hop), fsMod.readlinkSync(hop));
           } catch (e) {
             if (e && e.code === 'ENOENT') break;
@@ -927,36 +928,53 @@ const COMMANDS = {
     // two wraps at once cannot both take the same free name. A central
     // handoff keeps its topic name, as before.
     const choose = central ? null : (index) => threadsMod.chooseProjectKey(t.slug, t.path, opts.home, index);
+    // Everything that decided this path may be handed out is decided again
+    // under the lock: whether it is protected, whether it is now a declared
+    // thread (a migration can finish while this waits), and whether the
+    // thread list can still be read for a central path.
+    const guard = () => {
+      const p = configMod.loadProtection(opts.home);
+      if (!p.ok) return `protected handoffs could not be read: ${p.errors.join('; ')}`;
+      if (configMod.isProtected(p, t.path, opts.home)) return `${t.path} is protected`;
+      const now = registryMod.readRegistry(opts.home);
+      if (central && now.state === 'invalid') return `the thread list is invalid, so whether ${t.path} is a thread cannot be told`;
+      if (now.state === 'ok' && [...registryMod.declaredPaths(now.registry)].some((d) => handoffs.resolvePath(d) === handoffs.resolvePath(t.path))) {
+        return `${t.path} is a declared thread; write it with cli.js save --thread ${t.slug}`;
+      }
+      if (central && now.state === 'ok' && (homeCwd || (fsMod.existsSync(t.path) && threadsMod.couldBeThread(t.path, opts.home)))) {
+        return `${t.path} may be a thread or home history now that threads are set up; choose another topic`;
+      }
+      return null;
+    };
     let key;
     let assigned = false;
     if (opts.noRecord) {
+      const blocked = guard();
+      if (blocked) {
+        process.exitCode = 1;
+        if (opts.json) return emit(opts, { kind: t.kind, slug: t.slug, refused: blocked }, []);
+        return emit(opts, {}, [`Not handed out: ${blocked}`]);
+      }
       const c = choose ? choose(handoffs.readIndex(opts.home)) : { key: t.slug, assigned: false };
       key = c.key;
       assigned = c.assigned;
     } else {
-      // Everything that decided this path may be handed out is decided again
-      // under the lock: whether it is protected, whether it is now a declared
-      // thread (a migration can finish while this waits), and whether the
-      // thread list can still be read for a central path.
-      const guard = () => {
-        const p = configMod.loadProtection(opts.home);
-        if (!p.ok) return `protected handoffs could not be read: ${p.errors.join('; ')}`;
-        if (configMod.isProtected(p, t.path, opts.home)) return `${t.path} is protected`;
-        const now = registryMod.readRegistry(opts.home);
-        if (central && now.state === 'invalid') return `the thread list is invalid, so whether ${t.path} is a thread cannot be told`;
-        if (now.state === 'ok' && [...registryMod.declaredPaths(now.registry)].some((d) => handoffs.resolvePath(d) === handoffs.resolvePath(t.path))) {
-          return `${t.path} is a declared thread; write it with cli.js save --thread ${t.slug}`;
-        }
-        if (central && now.state === 'ok' && (homeCwd || (fsMod.existsSync(t.path) && threadsMod.couldBeThread(t.path, opts.home)))) {
-          return `${t.path} may be a thread or home history now that threads are set up; choose another topic`;
-        }
-        return null;
-      };
       record = handoffs.recordHandoff({ slug: t.slug, target: t.path, kind: t.kind, home: opts.home, choose, guard });
-      if (record.refusedPath) {
+      // The guard runs inside the lock only when the lock was taken. Refused
+      // there (busy, unwritable), or with --no-record, it has not run since
+      // the first checks, so it runs now: the latest answer available
+      // without the lock, instead of none.
+      // A central path whose lock was refused is not handed out at all: a
+      // migration holding the lock can declare it a thread after any check
+      // made from outside the lock, and a central path is the kind that can
+      // become one. A project path cannot, so it gets the fresh check.
+      const blocked = record.refusedPath
+        || (record.key === undefined && central ? `the handoff index is busy (${record.reason || 'lock refused'}), so whether ${t.path} is still free cannot be told; run the wrap again` : null)
+        || (record.key === undefined ? guard() : null);
+      if (blocked) {
         process.exitCode = 1;
-        if (opts.json) return emit(opts, { kind: t.kind, slug: t.slug, refused: record.refusedPath }, []);
-        return emit(opts, {}, [`Not handed out: ${record.refusedPath}`]);
+        if (opts.json) return emit(opts, { kind: t.kind, slug: t.slug, refused: blocked }, []);
+        return emit(opts, {}, [`Not handed out: ${blocked}`]);
       }
       if (record.key === undefined) {
         // Refused before choosing (a busy or unwritable lock): decide from a
