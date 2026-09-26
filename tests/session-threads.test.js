@@ -1878,6 +1878,28 @@ check('find gives no age for a thread link that loops', () => {
   const b = json(home, ['find', 'brand-thread']).body;
   assert.strictEqual(b.thread.exists, true);
   assert.strictEqual(b.match.mtime, null);
+  const out = run(home, ['find', 'brand-thread']).stdout;
+  assert.match(out, /last touched: unknown/);
+  assert.doesNotMatch(out, /\d{4,} days ago/);
+});
+
+check('a link chain longer than the system can open is refused', () => {
+  const home = migrated();
+  const real = path.join(home, 'long', 'HANDOFF.md');
+  fs.mkdirSync(path.dirname(real), { recursive: true });
+  fs.writeFileSync(real, 'x');
+  let prev = real;
+  for (let i = 0; i < 45; i += 1) {
+    const link = path.join(home, 'long', `hop-${i}.md`);
+    fs.symlinkSync(prev, link);
+    prev = link;
+  }
+  const repo = path.join(home, 'code', 'toolong');
+  fs.mkdirSync(path.join(repo, '.git'), { recursive: true });
+  fs.symlinkSync(prev, path.join(repo, 'HANDOFF.md'));
+  const r = json(home, ['target', 'x', '--cwd', repo]);
+  assert.strictEqual(r.status, 1);
+  assert.match(r.body.refused, /cannot be followed/);
 });
 
 process.stdout.write(`\n${failures === 0 ? 'all passed' : `${failures} failed`}\n`);

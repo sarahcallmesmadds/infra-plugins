@@ -761,8 +761,11 @@ function migratePlan({ slugs, home = os.homedir(), now = Date.now() }) {
       // A project the index knows by this name, from before threads existed:
       // moving its entry keeps it in its pool, where forgetting it did not.
       const indexedHere = handoffs.readIndex(home)[key];
+      // Only where rekey will act: a central handoff of this name exists to
+      // become the thread. Without one the name cannot be a thread at all.
       const project = indexedHere && samePath(indexedHere.path, found.path) && !threadShaped(found.path, home)
-        && !handoffs.resolvePath(found.path).startsWith(`${handoffs.resolvePath(root)}${path.sep}`);
+        && !handoffs.resolvePath(found.path).startsWith(`${handoffs.resolvePath(root)}${path.sep}`)
+        && centralTaken(key, home);
       problems.push(project
         ? `${s}: the index maps it to the project handoff ${found.path}; run cli.js rekey ${key} to move that entry to its own name, then plan again`
         : `${s}: ${found.path} is not an open central handoff (archived and project handoffs cannot be threads)`);
@@ -1046,7 +1049,7 @@ function finishPendingLocked(home) {
       // A thread whose Working directory has moved off home since the plan
       // would take the rule and then be refused as out of scope, stranding it
       // with the item cleared. Stopped here instead, with the item kept.
-      if (!inHomeScope(text, home)) throw new Error(`${t.path} no longer names the home directory as its working directory`);
+      if (!inHomeScope(text, home)) throw new Error(`${t.path} no longer names the home directory as its working directory; set its **Working directory:** line back to the home directory, then run cli.js migrate finish again`);
       const live = handoffs.bulletsIn(text).live.map(handoffs.normalizeConstraint);
       const has = live.includes(handoffs.normalizeConstraint(item.text));
       let next = text;

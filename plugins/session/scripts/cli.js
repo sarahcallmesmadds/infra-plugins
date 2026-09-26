@@ -575,10 +575,13 @@ const COMMANDS = {
       ]);
     }
     if (match) {
-      const age = Math.round((Date.now() - match.mtime) / 86400000);
+      // No age when none could be read: null would print as 1970.
+      const age = typeof match.mtime === 'number' ? Math.round((Date.now() - match.mtime) / 86400000) : null;
       const lines = [
         `${match.path}`,
-        `  kind: ${match.kind}, last touched ${age} day${age === 1 ? '' : 's'} ago`,
+        age === null
+          ? `  kind: ${match.kind}, last touched: unknown (the file cannot be read)`
+          : `  kind: ${match.kind}, last touched ${age} day${age === 1 ? '' : 's'} ago`,
       ];
       if (match.history) lines.push('  Kept as history: threads are set up, and this handoff is not one, so it binds nothing.');
       if (resolved.kind === 'thread' && resolved.unreadable) {
@@ -863,13 +866,13 @@ const COMMANDS = {
         const spellings = [handoffs.resolvePath(t.path)];
         let hop = t.path;
         let unresolved = false;
-        // Past the system's own limit of 40 resolutions nothing can open the
-        // chain anyway, so one still a link after 64 hops is refused.
+        // The system's own limit is 40 resolutions: a chain still a link
+        // after 40 hops cannot be opened, so the wrap's write would fail.
         for (let i = 0; ; i += 1) {
           let next;
           try {
             if (!fsMod.lstatSync(hop).isSymbolicLink()) break;
-            if (i >= 64) { unresolved = true; break; }
+            if (i >= 40) { unresolved = true; break; }
             next = path.resolve(path.dirname(hop), fsMod.readlinkSync(hop));
           } catch (e) {
             if (e && e.code === 'ENOENT') break;
