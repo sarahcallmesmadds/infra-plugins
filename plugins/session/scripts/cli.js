@@ -969,7 +969,7 @@ const COMMANDS = {
       // made from outside the lock, and a central path is the kind that can
       // become one. A project path cannot, so it gets the fresh check.
       const blocked = record.refusedPath
-        || (record.key === undefined && central ? `the handoff index is busy (${record.reason || 'lock refused'}), so whether ${t.path} is still free cannot be told; run the wrap again` : null)
+        || (record.key === undefined && central ? `the handoff index could not be locked (${record.reason || 'lock refused'}), so whether ${t.path} is still free cannot be told; ${/another session/.test(String(record.reason)) ? 'run the wrap again' : 'fix that first'}` : null)
         || (record.key === undefined ? guard() : null);
       if (blocked) {
         process.exitCode = 1;

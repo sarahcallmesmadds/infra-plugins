@@ -2018,7 +2018,8 @@ check('a central path is not handed out when the lock is busy', () => {
   `], { encoding: 'utf8' });
   const body = JSON.parse(r.stdout);
   assert.strictEqual(body.path, undefined, r.stdout);
-  assert.match(body.refused, /busy/);
+  assert.match(body.refused, /could not be locked \(another session/);
+  assert.match(body.refused, /run the wrap again/);
 });
 
 check('--no-record still runs the path checks', () => {
