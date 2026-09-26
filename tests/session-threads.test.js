@@ -2039,5 +2039,41 @@ check('the plan refuses when HANDOFF-.md cannot be counted', () => {
   assert.strictEqual(json(home, ['migrate', 'plan', '--threads', 'site-thread']).body.reason, 'unreadable');
 });
 
+check('the plan refuses two thread names that are one file through a link', () => {
+  const home = setUp();
+  fs.symlinkSync(docPath(home, 'brand-thread'), docPath(home, 'alias-thread'));
+  const r = json(home, ['migrate', 'plan', '--threads', 'brand-thread,alias-thread']);
+  assert.strictEqual(r.status, 1);
+  assert.match(r.body.detail, /named twice/);
+});
+
+check('a plan listing a thread twice under one gained rule is refused', () => {
+  const home = setUp();
+  const { planFile, manifest } = migrate(home, ['site-thread', 'brand-thread']);
+  manifest.gained.push({ text: 'Twice.', threads: ['brand-thread', 'brand-thread'], disposition: 'drop' });
+  fs.writeFileSync(planFile, JSON.stringify(manifest, null, 2));
+  const r = json(home, ['migrate', 'apply', planFile, '--confirm-sessions-restarted']);
+  assert.strictEqual(r.body.finalPerThread, undefined);
+  assert.strictEqual(apply(home, planFile).body.committed, false);
+});
+
+check('a link swapped in while target waited for the lock is refused', () => {
+  const home = migrated();
+  const repo = path.join(home, 'code', 'swap');
+  fs.mkdirSync(path.join(repo, '.git'), { recursive: true });
+  const r = spawnSync(process.execPath, ['-e', `
+    const h = require(${JSON.stringify(path.join(ROOT, 'scripts', 'handoffs.js'))});
+    const real = h.recordHandoff;
+    h.recordHandoff = (o) => {
+      require('fs').symlinkSync(${JSON.stringify(docPath(home, 'site-thread'))}, ${JSON.stringify(path.join(repo, 'HANDOFF.md'))});
+      return real(o);
+    };
+    require(${JSON.stringify(CLI)}).main(['target', 'x', '--cwd', ${JSON.stringify(repo)}, '--json', '--home', ${JSON.stringify(home)}]);
+  `], { encoding: 'utf8' });
+  const body = JSON.parse(r.stdout);
+  assert.strictEqual(body.path, undefined, r.stdout);
+  assert.match(body.refused, /symbolic link/);
+});
+
 process.stdout.write(`\n${failures === 0 ? 'all passed' : `${failures} failed`}\n`);
 process.exit(failures === 0 ? 0 : 1);

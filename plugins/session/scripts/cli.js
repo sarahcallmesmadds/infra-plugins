@@ -849,55 +849,59 @@ const COMMANDS = {
     const central = t.kind === 'central';
     const homeCwd = central && threadsMod.isHomeDir(opts.cwd, opts.home);
     const existingMaybeThread = central && fsMod.existsSync(t.path) && threadsMod.couldBeThread(t.path, opts.home);
-    let linkedCentral = false;
-    let linkedIntoHandoffs = false;
-    let linkUnresolved = false;
-    try {
-      if (fsMod.lstatSync(t.path).isSymbolicLink()) {
-        linkedCentral = central;
-        // A project HANDOFF.md linked to a file elsewhere is a legitimate
-        // shared setup; linked into the handoffs folder, the wrap would write
-        // over a thread or a history document.
-        // Judged on the link's own target as well as its real path: a link to
-        // a thread file that is not there yet has no real path, and the wrap
-        // would then create the thread's file directly, skipping save.
-        const roots = [handoffs.resolvePath(handoffs.handoffRoot(opts.home)), path.resolve(handoffs.handoffRoot(opts.home))];
-        // Every hop of the chain, since a link to a link to a missing thread
-        // file got through when only the first hop was read.
-        const spellings = [handoffs.resolvePath(t.path)];
-        let hop = t.path;
-        let unresolved = false;
-        // The systems' limits are 40 resolutions on Linux and 32 on macOS: a
-        // chain still a link after 32 hops may not open, so the wrap's write
-        // could fail. The lower one is used.
-        for (let i = 0; ; i += 1) {
-          let next;
-          try {
-            if (!fsMod.lstatSync(hop).isSymbolicLink()) break;
-            if (i >= 32) { unresolved = true; break; }
-            next = path.resolve(path.dirname(hop), fsMod.readlinkSync(hop));
-          } catch (e) {
-            if (e && e.code === 'ENOENT') break;
-            unresolved = true;
-            break;
+    // A wrap writes to the path it is handed, and a central file that is a
+    // symlink writes through to whatever it points at, a project's own
+    // handoff included, whatever that document says it is. A function, so
+    // the guard under the lock can ask it again: a link swapped in while
+    // target waited is otherwise written through.
+    const linkRefusal = () => {
+      let linkedCentral = false;
+      let linkedIntoHandoffs = false;
+      let linkUnresolved = false;
+      try {
+        if (fsMod.lstatSync(t.path).isSymbolicLink()) {
+          linkedCentral = central;
+          // A project HANDOFF.md linked to a file elsewhere is a legitimate
+          // shared setup; linked into the handoffs folder, the wrap would write
+          // over a thread or a history document.
+          // Judged on the link's own target as well as its real path: a link to
+          // a thread file that is not there yet has no real path, and the wrap
+          // would then create the thread's file directly, skipping save.
+          const roots = [handoffs.resolvePath(handoffs.handoffRoot(opts.home)), path.resolve(handoffs.handoffRoot(opts.home))];
+          // Every hop of the chain, since a link to a link to a missing thread
+          // file got through when only the first hop was read.
+          const spellings = [handoffs.resolvePath(t.path)];
+          let hop = t.path;
+          let unresolved = false;
+          // The systems' limits are 40 resolutions on Linux and 32 on macOS: a
+          // chain still a link after 32 hops may not open, so the wrap's write
+          // could fail. The lower one is used.
+          for (let i = 0; ; i += 1) {
+            let next;
+            try {
+              if (!fsMod.lstatSync(hop).isSymbolicLink()) break;
+              if (i >= 32) { unresolved = true; break; }
+              next = path.resolve(path.dirname(hop), fsMod.readlinkSync(hop));
+            } catch (e) {
+              if (e && e.code === 'ENOENT') break;
+              unresolved = true;
+              break;
+            }
+            spellings.push(next, handoffs.resolvePath(path.dirname(next)));
+            hop = next;
           }
-          spellings.push(next, handoffs.resolvePath(path.dirname(next)));
-          hop = next;
+          linkUnresolved = unresolved;
+          linkedIntoHandoffs = spellings.some((p) => p && roots.some((r) => p === r || p.startsWith(`${r}${path.sep}`)));
         }
-        linkUnresolved = unresolved;
-        linkedIntoHandoffs = spellings.some((p) => p && roots.some((r) => p === r || p.startsWith(`${r}${path.sep}`)));
-      }
-    } catch (_) { /* nothing there */ }
+      } catch (_) { /* nothing there */ }
+      if (linkedCentral) return `${t.path} is a symbolic link, and a wrap would write through it to another document; choose another topic`;
+      if (linkedIntoHandoffs) return `${t.path} is a symbolic link into the handoffs folder, and a wrap would write over the handoff it points at; replace the link with a real file`;
+      if (linkUnresolved) return `${t.path} is a symbolic link that cannot be followed to a file (a loop, or a link that cannot be read), so where a wrap would write cannot be told; replace it with a real file`;
+      return null;
+    };
     let refusal = null;
     if (!protection.ok) refusal = `protected handoffs could not be read: ${protection.errors.join('; ')}`;
-    else if (linkedCentral || linkedIntoHandoffs || linkUnresolved) {
-      // A wrap writes to the path it is handed, and a central file that is a
-      // symlink writes through to whatever it points at, a project's own
-      // handoff included, whatever that document says it is.
-      if (linkedCentral) refusal = `${t.path} is a symbolic link, and a wrap would write through it to another document; choose another topic`;
-      else if (linkedIntoHandoffs) refusal = `${t.path} is a symbolic link into the handoffs folder, and a wrap would write over the handoff it points at; replace the link with a real file`;
-      else refusal = `${t.path} is a symbolic link that cannot be followed to a file (a loop, or a link that cannot be read), so where a wrap would write cannot be told; replace it with a real file`;
-    }
+    else if (linkRefusal()) refusal = linkRefusal();
     else if (configMod.isProtected(protection, t.path, opts.home)) refusal = `${t.path} is protected`;
     else if (central && reg.state === 'invalid') {
       refusal = `the thread list is invalid, so whether ${t.path} is a thread cannot be told: ${reg.errors.join('; ')}`;
@@ -935,6 +939,8 @@ const COMMANDS = {
     const guard = () => {
       const p = configMod.loadProtection(opts.home);
       if (!p.ok) return `protected handoffs could not be read: ${p.errors.join('; ')}`;
+      const link = linkRefusal();
+      if (link) return link;
       if (configMod.isProtected(p, t.path, opts.home)) return `${t.path} is protected`;
       const now = registryMod.readRegistry(opts.home);
       if (central && now.state === 'invalid') return `the thread list is invalid, so whether ${t.path} is a thread cannot be told`;

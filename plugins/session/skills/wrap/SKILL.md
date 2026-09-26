@@ -596,6 +596,9 @@ version of it that does not.
 - saved, and declared if it was new: `Handoff saved to [path].` then the pickup
   line below, using the `slug` that `save` returned, which is the name as the
   script stored it.
+- saved, but `indexUpdated: false` with an `indexConflict`: the same, plus a
+  line naming the conflicting path, because two documents now answer to the
+  name and every `find` will say so until one is renamed or forgotten.
 - saved, but `indexUpdated: false`: the same, plus one line that the index was
   not updated. A thread is still found by name.
 - saved as a new thread but `declared: false`: `Handoff saved to [path], but it

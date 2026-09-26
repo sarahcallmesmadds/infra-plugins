@@ -793,8 +793,10 @@ function migratePlan({ slugs, home = os.homedir(), now = Date.now() }) {
       continue;
     }
     if (!inHomeScope(text, home)) { problems.push(`${s}: its working directory is not the home directory`); continue; }
-    if (seen.has(found.path) || threads.some((t) => t.slug === key)) { problems.push(`${s}: named twice`); continue; }
-    seen.add(found.path);
+    // By real path, as the thread list validates: two names for one file
+    // through a link passed here and failed at apply, as a failed write.
+    if (seen.has(handoffs.resolvePath(found.path)) || threads.some((t) => t.slug === key)) { problems.push(`${s}: named twice`); continue; }
+    seen.add(handoffs.resolvePath(found.path));
     // The exact spelling the thread list requires, not however the index
     // happened to spell the same file: a path through a symlinked home passed
     // here and then failed registry validation at apply.
@@ -889,6 +891,9 @@ function checkShape(manifest) {
     // otherwise caught only when the list was written, and reported as a
     // failed write, which reads as a disk problem rather than a bad plan.
     else if (!r.threads.every((x) => manifest.threads.some((t) => t && t.slug === x))) problems.push(`gained ${i + 1} names a thread that is not in this plan`);
+    // A thread listed twice would be counted off twice in the final counts
+    // and dropped once, so the number approved would not be the one written.
+    else if (new Set(r.threads).size !== r.threads.length) problems.push(`gained ${i + 1} names a thread twice`);
   });
   if (typeof manifest.fingerprint !== 'string') problems.push('fingerprint is missing');
   return problems;
