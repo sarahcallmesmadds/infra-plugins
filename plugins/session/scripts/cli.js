@@ -12,6 +12,16 @@
 //   cli.js recent                the newest handoffs, for the pickup menu
 //   cli.js target [topic]        where wrap should write from here
 //   cli.js constraints           what earlier handoffs say is still binding here
+//   cli.js constraints --thread <slug>
+//                                the rules one thread binds, from its own file
+//   cli.js capabilities          what this copy of the scripts can do
+//   cli.js threads               the declared threads, for wrap to pick from
+//   cli.js save --thread <slug> --from <draft> --base <rev|none> --generation N [--create]
+//                                the only way a thread's handoff is written
+//   cli.js declare <slug>        add an existing home handoff to the thread list
+//   cli.js migrate plan --threads a,b [--out plan.json]
+//   cli.js migrate apply <plan.json> --accept-narrowing --confirm-sessions-restarted
+//   cli.js migrate finish        write what an interrupted apply left pending
 //   cli.js memory                the memory directory for this project, if any
 //   cli.js memory-check          is that directory still worth loading
 //   cli.js mcp-probe             transition-only core-tools monitor
@@ -36,23 +46,59 @@ const sessionsMod = require(path.join(__dirname, 'sessions.js'));
 const mcpHealth = require(path.join(__dirname, 'mcp-health.js'));
 const configMod = require(path.join(__dirname, 'config.js'));
 const memoryMod = require(path.join(__dirname, 'memory.js'));
+const threadsMod = require(path.join(__dirname, 'threads.js'));
+const registryMod = require(path.join(__dirname, 'registry.js'));
+
+// What this copy of the scripts supports. The skills ask for this first and
+// stop if it is missing, because the skill text and the scripts are installed
+// as one plugin in each host but can still disagree: a session that loaded an
+// older copy, or a host that has not updated yet. An older script prints its
+// command list for an unknown command and exits 1, which no skill can mistake
+// for this object.
+const CAPABILITIES = { threads: 1 };
+
+// Flags that take a value, and flags that stand alone. Anything else starting
+// with `--` is an error rather than an argument.
+//
+// It used to be an argument. An unknown flag fell through into the positional
+// list, so `constraints --thread site-thread` run against a copy that did not
+// know `--thread` quietly answered a different question, the whole pool for the
+// working directory, and printed it as if it were the thread's rules.
+const VALUE_FLAGS = new Set(['--days', '--cwd', '--home', '--self', '--thread', '--from', '--base', '--generation', '--out', '--threads', '--file']);
+const BOOL_FLAGS = new Set(['--json', '--dry-run', '--no-record', '--fix', '--create', '--accept-narrowing', '--confirm-sessions-restarted']);
 
 function parseArgs(argv) {
   const out = {
     command: null, rest: [], json: false, dryRun: false, self: null, noRecord: false, fix: false,
     days: handoffs.DEFAULT_STALE_DAYS, cwd: process.cwd(), home: os.homedir(),
+    thread: null, file: null, from: null, base: null, generation: null, out: null, threads: null,
+    create: false, acceptNarrowing: false, sessionsRestarted: false, error: null,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
-    if (a === '--json') out.json = true;
-    else if (a === '--dry-run') out.dryRun = true;
-    else if (a === '--days') out.days = parseInt(argv[++i], 10);
-    else if (a === '--cwd') out.cwd = argv[++i];
-    else if (a === '--home') out.home = argv[++i];
-    else if (a === '--self') out.self = argv[++i];
-    else if (a === '--no-record') out.noRecord = true;
-    else if (a === '--fix') out.fix = true;
-    else if (!out.command) out.command = a;
+    if (a.startsWith('--')) {
+      if (VALUE_FLAGS.has(a)) {
+        const v = argv[i + 1];
+        // An empty value is refused too: `--thread ""` would otherwise vanish
+        // and answer for the directory the command ran in, the silent wrong
+        // answer the flag exists to prevent.
+        if (v === undefined || v === '' || v.startsWith('--')) { out.error = `${a} needs a value`; continue; }
+        i += 1;
+        if (a === '--days') out.days = parseInt(v, 10);
+        else if (a === '--generation') out.generation = /^\d+$/.test(v) ? parseInt(v, 10) : NaN;
+        else out[{ '--cwd': 'cwd', '--home': 'home', '--self': 'self', '--thread': 'thread', '--from': 'from', '--base': 'base', '--out': 'out', '--threads': 'threads', '--file': 'file' }[a]] = v;
+      } else if (BOOL_FLAGS.has(a)) {
+        if (a === '--json') out.json = true;
+        else if (a === '--dry-run') out.dryRun = true;
+        else if (a === '--no-record') out.noRecord = true;
+        else if (a === '--fix') out.fix = true;
+        else if (a === '--create') out.create = true;
+        else if (a === '--accept-narrowing') out.acceptNarrowing = true;
+        else if (a === '--confirm-sessions-restarted') out.sessionsRestarted = true;
+      } else {
+        out.error = `unknown flag ${a}`;
+      }
+    } else if (!out.command) out.command = a;
     else out.rest.push(a);
   }
   if (!Number.isFinite(out.days) || out.days < 0) out.days = handoffs.DEFAULT_STALE_DAYS;
@@ -65,6 +111,54 @@ function emit(opts, payload, lines) {
     return;
   }
   process.stdout.write(`${lines.join('\n')}\n`);
+}
+
+// The rules one thread binds, or why they cannot be given right now.
+function printThreadConstraints(opts, t) {
+  if (t.refused) process.exitCode = 1;
+  if (opts.json) return emit(opts, t, []);
+  if (t.refused === 'registry-invalid') {
+    return emit(opts, {}, [`The thread list at ${t.path} cannot be read, so no thread's rules can be given:`, ...t.errors.map((e) => `  ${e}`)]);
+  }
+  if (t.refused === 'migration-unfinished') {
+    const lines = [`A migration is part way through (${t.pendingTotal} rule${t.pendingTotal === 1 ? '' : 's'} still to write), so no thread's rules are given until it finishes.`,
+      'Run: cli.js migrate finish'];
+    if (t.pending && t.pending.length) {
+      lines.push('', 'Still to be written into this thread:', ...t.pending.map((p) => `  ${p.kind === 'add' ? '+' : '-'} ${p.text}`));
+    }
+    return emit(opts, {}, lines);
+  }
+  if (t.refused === 'declared-no-directory') {
+    return emit(opts, {}, [`${t.slug} is declared as a thread, and ${t.path} has no **Working directory:** line, so which scope it belongs to cannot be told. Restore that line.`]);
+  }
+  if (t.refused === 'declared-out-of-scope') {
+    return emit(opts, {}, [`${t.slug} is declared as a thread, but ${t.path} says it was written outside the home directory. Its rules are not read as binding; fix the thread list.`]);
+  }
+  if (t.refused === 'declared-unreadable') {
+    return emit(opts, {}, [`${t.slug} is declared at ${t.path}, and that file could not be read: ${t.detail}`]);
+  }
+  if (t.refused === 'declared-missing') {
+    return emit(opts, {}, [`${t.slug} is declared at ${t.path}, and that file is not there.`]);
+  }
+  if (!t.binding) {
+    return emit(opts, {}, [
+      `${opts.thread} is not a declared thread${t.path ? ` (${t.kind}: ${t.path})` : ''}, so it binds nothing.`,
+      'Run cli.js threads to see the threads.',
+    ]);
+  }
+  const lines = [];
+  for (const p of t.nearDuplicates || []) {
+    lines.push('Two constraints look like one rule in two wordings, differing only here:',
+      `  "${p.a.differs}"`, `  "${p.b.differs}"`,
+      '  Retire one by deleting it and recording the retirement.', '');
+  }
+  if (!t.constraints.length) {
+    lines.push(`No constraints recorded in ${t.slug} (${t.path}).`);
+    return emit(opts, {}, lines);
+  }
+  lines.push(`${t.constraints.length} constraint${t.constraints.length === 1 ? '' : 's'} in force for thread ${t.slug}:`,
+    ...t.constraints.map((c) => `  - ${c.text}`));
+  return emit(opts, {}, lines);
 }
 
 const COMMANDS = {
@@ -142,10 +236,20 @@ const COMMANDS = {
     const result = handoffs.archiveStale({
       days: opts.days, home: opts.home, dryRun: opts.dryRun,
     });
+    // Set before either output, so --json and text agree on success.
+    if (result.refused) process.exitCode = 1;
     if (opts.json) return emit(opts, result, []);
 
     if (result.skipped) {
       return emit(opts, result, [`No handoffs directory at ${result.root}. Nothing to sweep.`]);
+    }
+    // Nothing moved in either case, and both say why rather than printing a
+    // summary of a sweep that did not happen.
+    if (result.refused) {
+      return emit(opts, result, [`Sweep refused: ${result.refused}. Nothing moved.`]);
+    }
+    if (result.lockSkipped) {
+      return emit(opts, result, [`Sweep skipped: ${result.lockSkipped}. Nothing moved; the next wrap will sweep.`]);
     }
 
     const verb = opts.dryRun ? 'Would archive' : 'Archived';
@@ -194,6 +298,12 @@ const COMMANDS = {
       lines.push(`Left ${result.unreachable.length} index ${plural(result.unreachable.length)} alone, `
         + `because the directory holding ${it} could not be read: ${result.unreachable.map((u) => u.slug).join(', ')}.${remedy}`);
     }
+    if (result.protectedSkipped && result.protectedSkipped.length) {
+      lines.push(`Left ${result.protectedSkipped.length} protected handoff${result.protectedSkipped.length === 1 ? '' : 's'} where ${result.protectedSkipped.length === 1 ? 'it is' : 'they are'}.`);
+    }
+    if (result.collisions && result.collisions.length) {
+      lines.push(`Did not move ${result.collisions.join(', ')}: a document with the same name is already in the archive. Which one to keep is a person's call.`);
+    }
     // Last, and unmissable. Everything above this describes what was worked
     // out; this is whether any of it reached the disk.
     if (!result.indexWritten) {
@@ -207,14 +317,36 @@ const COMMANDS = {
   // `target` adds entries and, until this existed, nothing removed one. An
   // entry whose project has since been deleted or moved stayed for good, and
   // clearing a single one meant hand-editing JSON.
+  // Moves a project's index entry off a name a thread has taken. migrate plan
+  // names this when a 0.8 index maps a thread's name to a project.
+  rekey(opts) {
+    const slug = opts.rest[0];
+    if (!slug) {
+      process.exitCode = 1;
+      if (opts.json) return emit(opts, { rekeyed: false, reason: 'no slug given' }, []);
+      return emit(opts, {}, ['Which one? Usage: cli.js rekey <slug>']);
+    }
+    const r = threadsMod.rekeyProject(slug, opts.home);
+    if (!r.rekeyed) process.exitCode = 1;
+    if (opts.json) return emit(opts, r, []);
+    return emit(opts, {}, [r.rekeyed
+      ? `Moved "${r.from}" to "${r.to}" for ${r.path}. Pick it up with /pickup ${r.to}.`
+      : `Not moved: ${r.reason}.`]);
+  },
+
   forget(opts) {
     const slug = opts.rest[0];
     if (!slug) {
+      process.exitCode = 1;
       if (opts.json) return emit(opts, { removed: false, reason: 'no slug given' }, []);
       return emit(opts, {}, ['Which one? Usage: cli.js forget <slug>']);
     }
 
     const result = handoffs.forgetHandoff(slug, opts.home);
+    // A refusal is not the same answer as "not in the index", so it exits
+    // nonzero where "not in the index" does not.
+    // So does a write that failed: it is not "not in the index" either.
+    if (result.refused || result.reason === 'the index could not be written') process.exitCode = 1;
     if (opts.json) return emit(opts, result, []);
 
     if (!result.removed) {
@@ -244,7 +376,9 @@ const COMMANDS = {
       ? handoffs.applyReconcile({ home: opts.home })
       : handoffs.reconcileIndex({ home: opts.home });
 
+    if (result.refused) process.exitCode = 1;
     if (opts.json) return emit(opts, result, []);
+    if (result.refused) process.stdout.write(`Nothing recorded: ${result.refused}.\n\n`);
 
     const plural = (n, one, many) => (n === 1 ? one : many);
     const lines = [];
@@ -332,7 +466,7 @@ const COMMANDS = {
         lines.push(`Recorded ${r} ${plural(r, 'entry', 'entries')} for ${plural(r, 'a document', 'documents')} that had none:`);
         for (const d of result.recorded) lines.push(`  ${d.slug}`);
         const skipped = n - r;
-        if (skipped > 0) {
+        if (skipped > 0 && !result.refused) {
           lines.push(`  ${skipped} ${plural(skipped, 'was', 'were')} recorded by something else while this ran, and left alone.`);
         }
         lines.push('');
@@ -379,24 +513,92 @@ const COMMANDS = {
 
   find(opts) {
     const slug = opts.rest[0];
-    const match = handoffs.findHandoff(slug, opts.home);
-    const stale = match ? null : handoffs.staleRecord(slug, opts.home);
+    if (!slug) {
+      process.exitCode = 1;
+      if (opts.json) return emit(opts, { error: 'no slug given', match: null }, []);
+      return emit(opts, {}, ['Which one? Usage: cli.js find <slug>']);
+    }
+    // A declared thread is answered from the thread list, which is the
+    // authority for it; the index and the search order only ever guessed.
+    const resolved = threadsMod.resolve(slug, opts.home);
+    let match = handoffs.findHandoff(slug, opts.home);
+    if (resolved.kind === 'thread') {
+      let mtime = null;
+      // The document's own time through a live link; lstat only for a link
+      // whose target is gone, so it stays "there and unreadable" and a live
+      // link does not report the age of the link instead of the document.
+      // Any other failure (a loop, a target that cannot be accessed) shows no
+      // age at all rather than the link's, since the document cannot be read.
+      // One lstat, kept: reading it twice let a link removed in between
+      // throw out of find instead of reporting the thread missing.
+      try { mtime = require('fs').statSync(resolved.path).mtimeMs; } catch (e) {
+        let link = null;
+        try { link = require('fs').lstatSync(resolved.path); } catch (__) { /* nothing there */ }
+        if (!link || !link.isSymbolicLink()) resolved.exists = false;
+        else mtime = e && e.code === 'ENOENT' ? link.mtimeMs : null;
+      }
+      match = resolved.exists ? { path: resolved.path, kind: 'thread', mtime } : null;
+    } else if (match && resolved.kind === 'history') {
+      match = { ...match, history: true };
+    }
+    const stale = match || resolved.kind === 'thread' ? null : handoffs.staleRecord(slug, opts.home);
+    // A broken thread list only makes the answer uncertain for something that
+    // could be a thread: a project handoff never is.
+    const listUncertain = resolved.mode === 'invalid'
+      && (!match || threadsMod.couldBeThread(match.path, opts.home)
+        || threadsMod.slugCouldBeThread(slug, opts.home));
+    // There and unreadable exits non-zero for any kind, as every other
+    // "found but cannot be read" answer here does.
+    if ((resolved.kind === 'thread' && (!resolved.exists || resolved.unreadable)) || listUncertain
+      || (resolved.kind !== 'thread' && match && resolved.unreadable)) process.exitCode = 1;
     if (opts.json) {
       return emit(opts, {
-        slug, match, stale, tried: handoffs.searchPaths(slug, opts.home),
+        slug,
+        match,
+        stale,
+        tried: handoffs.searchPaths(slug, opts.home),
+        mode: resolved.mode,
+        registryErrors: resolved.mode === 'invalid' ? resolved.errors : [],
+        listUncertain,
+        unreadable: resolved.kind !== 'thread' && resolved.unreadable ? resolved.unreadable : null,
+        thread: resolved.kind === 'thread'
+          ? {
+            slug: resolved.slug, path: resolved.path, exists: resolved.exists, unreadable: resolved.unreadable,
+            rev: resolved.rev, generation: resolved.generation, conflicts: resolved.conflicts,
+          }
+          : null,
       }, []);
     }
-    if (match) {
-      const age = Math.round((Date.now() - match.mtime) / 86400000);
+    if (resolved.kind === 'thread' && !resolved.exists) {
       return emit(opts, {}, [
-        `${match.path}`,
-        `  kind: ${match.kind}, last touched ${age} day${age === 1 ? '' : 's'} ago`,
+        `${resolved.slug} is a declared thread, and its file ${resolved.path} is not there.`,
+        ...(resolved.conflicts || []).map((c) => `The index also gives this slug to ${c.indexed}.`),
       ]);
+    }
+    if (match) {
+      // No age when none could be read: null would print as 1970.
+      const age = typeof match.mtime === 'number' ? Math.round((Date.now() - match.mtime) / 86400000) : null;
+      const lines = [
+        `${match.path}`,
+        age === null
+          ? `  kind: ${match.kind}, last touched: unknown (the file cannot be read)`
+          : `  kind: ${match.kind}, last touched ${age} day${age === 1 ? '' : 's'} ago`,
+      ];
+      if (match.history) lines.push('  Kept as history: threads are set up, and this handoff is not one, so it binds nothing.');
+      if (resolved.kind === 'thread' && resolved.unreadable) {
+        lines.push('  This thread\'s file is there and cannot be read, so it cannot be picked up or saved.');
+      } else if (resolved.unreadable) {
+        lines.push(`  This handoff is there and cannot be read: ${resolved.unreadable}`);
+      }
+      if (listUncertain) lines.push('  The thread list cannot be read, so whether this is a declared thread is unknown.');
+      for (const c of resolved.conflicts || []) lines.push(`  Conflict: the index also gives this slug to ${c.indexed}.`);
+      return emit(opts, {}, lines);
     }
     // A stale entry and no entry at all produced the same message, so a moved
     // project read as a handoff that never existed. The recorded path is the one
     // fact worth having here, because it says where to look.
     const lines = [`No handoff found for "${slug}".`];
+    if (listUncertain) lines.push('The thread list cannot be read, so a declared thread by this name cannot be ruled out.');
     if (stale) {
       // `unreachable` cannot tell a moved project from an unmounted volume, so
       // it names both rather than implying the one that happens to be rarer.
@@ -442,8 +644,97 @@ const COMMANDS = {
   // Scope is the repository rather than the directory, so a worktree inherits
   // from its main checkout. That specific mismatch is what hid it.
   constraints(opts) {
+    // A handoff named by its file, which is how /wrap ends for a project whose
+    // name belongs to a thread. The Working directory is parsed here, never
+    // pasted into --cwd by the skill: a pasted `~/...` or a line carrying a
+    // note such as "(git worktree of ...)" names no real folder and answered
+    // with an empty list that read exactly like a first wrap.
+    if (opts.file) {
+      const fsMod = require('fs');
+      const fail = (why) => {
+        process.exitCode = 1;
+        return emit(opts, { error: why, constraints: [] }, [`Cannot say what binds ${opts.file}: ${why}.`]);
+      };
+      if (opts.thread) return fail('give --file or --thread, not both');
+      const file = opts.file === '~' || opts.file.startsWith('~/') ? path.join(opts.home, opts.file.slice(2)) : opts.file;
+      let text;
+      try { text = fsMod.readFileSync(file, 'utf8'); } catch (e) { return fail(`it could not be read: ${e.message}`); }
+      // A central handoff, which may be a thread, is answered by its name so a
+      // thread gets its own rules rather than the home pool as history, but
+      // only when that name leads back to this same file. The index can map
+      // the name to another document, and a symlink's own name can be another
+      // thread's; answering by name then answered for a file nobody named.
+      // Both spellings are tried, the target's first so a link inside the
+      // folder with a name of its own still answers as the thread it points
+      // at, then the link's, slugified.
+      const byName = threadsMod.threadShaped(file, opts.home)
+        && [handoffs.resolvePath(file), file]
+          .map((p) => handoffs.slugify(path.basename(p).replace(/^HANDOFF-/, '').replace(/\.md$/, '')))
+          .find((name) => {
+            const r = threadsMod.resolve(name, opts.home);
+            return r.path && handoffs.resolvePath(r.path) === handoffs.resolvePath(file);
+          });
+      if (byName) {
+        opts.thread = byName;
+      } else {
+        const dir = handoffs.handoffDir(text);
+        if (!dir) return fail('it has no **Working directory:** line');
+        // The pool for the file's own Working directory, the same answer
+        // --cwd gives for it. The file itself is not added: it is in the pool
+        // already when the index lists it, and adding one the index does not
+        // list let a stale worktree copy bring back a retired rule.
+        opts.cwd = dir;
+      }
+    }
+    if (opts.thread) {
+      const t = threadsMod.threadConstraints({ slug: opts.thread, home: opts.home });
+      // Before migration, and for any handoff outside the home scope after it,
+      // the answer is the older pool for the handoff's own working directory,
+      // exactly as 0.8. Anything else is a thread, history, or a refusal.
+      if (t.mode !== 'pre-migration' && t.mode !== 'pooled') return printThreadConstraints(opts, t);
+      // Never the directory this command happens to run in. Answering for that
+      // instead of the named handoff is the silent wrong answer --thread exists
+      // to prevent, so a handoff that cannot be found, or names no working
+      // directory, is said out loud.
+      let dir = t.dir || null;
+      let unreadable = t.unreadable || null;
+      const found = handoffs.findHandoff(opts.thread, opts.home);
+      if (!dir && found) {
+        try { dir = handoffs.handoffDir(require('fs').readFileSync(found.path, 'utf8')); } catch (e) { unreadable = e.message; }
+      }
+      if (!found || !dir) {
+        process.exitCode = 1;
+        let why = !found ? `no handoff found for "${opts.thread}"` : `${found.path} has no **Working directory:** line`;
+        if (found && unreadable) why = `${found.path} could not be read: ${unreadable}`;
+        return emit(opts, { error: why, constraints: [] }, [`Cannot say what binds ${opts.thread}: ${why}.`]);
+      }
+      opts.cwd = dir;
+    }
     const r = handoffs.carriedConstraints({ cwd: opts.cwd, home: opts.home });
+    // With the thread list unreadable, a pool sharing home's scope may hold
+    // every thread's rules, and which of them bind cannot be told. Refused
+    // rather than listed: a warning above a confident list is carried anyway.
+    // Other scopes never held a thread and are answered as usual.
+    if (r.registry === 'invalid' && r.homeScope) {
+      process.exitCode = 1;
+      const why = `the thread list ${registryMod.registryPath(opts.home)} cannot be read, so which rules bind this folder cannot be told; fix it first`;
+      return emit(opts, { error: why, refused: 'registry-invalid', constraints: [] }, [`Cannot say what binds ${opts.cwd}: ${why}.`]);
+    }
+    // After migration the home pool is history. Every home thread binds only
+    // its own file, so this list is shown for reference and says so first.
+    const reg = registryMod.readRegistry(opts.home);
+    r.binding = !(reg.state === 'ok' && r.home);
     if (opts.json) return emit(opts, r, []);
+    if (!r.binding) {
+      process.stdout.write('History, not binding: home threads each bind only their own file. '
+        + 'Use constraints --thread <slug> for a thread\'s rules.\n\n');
+    }
+    if (r.registry === 'invalid') {
+      // Only reached outside home's scope, which the refusal above covers, and
+      // a thread's document always names home, so none is in this list.
+      process.stdout.write('The thread list cannot be read. This folder is outside the home directory\'s scope, '
+        + 'so no thread\'s rules are in this list, but fix ~/.planning/handoffs/threads.json before relying on any thread answer.\n\n');
+    }
 
     // Anything that makes the answer less than complete is said before the
     // answer, never after it. A truncated scan and a retirement that hit
@@ -467,6 +758,15 @@ const COMMANDS = {
       warnings.push(
         `Scan hit its ceiling of ${handoffs.CONSTRAINT_SCAN_CAP} handoffs, so an older one may not have been read.`,
         'Treat the list below as incomplete.',
+        '',
+      );
+    }
+    // Listed and unreadable is not the same as holding nothing, and a list
+    // printed without saying so reads as complete.
+    if (r.unreadable && r.unreadable.length) {
+      warnings.push(
+        `${r.unreadable.length} handoff${r.unreadable.length === 1 ? '' : 's'} could not be read, so any rules in ${r.unreadable.length === 1 ? 'it' : 'them'} are missing below:`,
+        ...r.unreadable.map((u) => `  ${u}`),
         '',
       );
     }
@@ -534,11 +834,323 @@ const COMMANDS = {
   // checks the file is actually there.
   target(opts) {
     const t = handoffs.writeTarget(opts.cwd, opts.rest.join(' '), opts.home);
-    if (!opts.noRecord) {
-      handoffs.recordHandoff({ slug: t.slug, target: t.path, kind: t.kind, home: opts.home });
+    // Two paths this never hands out, because the next thing a wrap does with
+    // it is write there directly: a protected handoff, and a declared thread,
+    // which is only ever written through `save`.
+    const protection = configMod.loadProtection(opts.home);
+    const reg = registryMod.readRegistry(opts.home);
+    // Project handoffs are never threads and are handed out as before. A
+    // central path is refused whenever it could involve a thread: while the
+    // thread list is broken (which paths are declared cannot be read), when
+    // the session is in the home directory (home handoffs are saved as
+    // threads), and when a file is already there that could be a thread or
+    // home history (see couldBeThread; what cannot be told counts as home).
+    const fsMod = require('fs');
+    const central = t.kind === 'central';
+    const homeCwd = central && threadsMod.isHomeDir(opts.cwd, opts.home);
+    const existingMaybeThread = central && fsMod.existsSync(t.path) && threadsMod.couldBeThread(t.path, opts.home);
+    // A wrap writes to the path it is handed, and a central file that is a
+    // symlink writes through to whatever it points at, a project's own
+    // handoff included, whatever that document says it is. A function, so
+    // the guard under the lock can ask it again: a link swapped in while
+    // target waited is otherwise written through.
+    const linkRefusal = () => {
+      let linkedCentral = false;
+      let linkedIntoHandoffs = false;
+      let linkUnresolved = false;
+      try {
+        if (fsMod.lstatSync(t.path).isSymbolicLink()) {
+          linkedCentral = central;
+          // A project HANDOFF.md linked to a file elsewhere is a legitimate
+          // shared setup; linked into the handoffs folder, the wrap would write
+          // over a thread or a history document.
+          // Judged on the link's own target as well as its real path: a link to
+          // a thread file that is not there yet has no real path, and the wrap
+          // would then create the thread's file directly, skipping save.
+          const roots = [handoffs.resolvePath(handoffs.handoffRoot(opts.home)), path.resolve(handoffs.handoffRoot(opts.home))];
+          // Every hop of the chain, since a link to a link to a missing thread
+          // file got through when only the first hop was read.
+          const spellings = [handoffs.resolvePath(t.path)];
+          let hop = t.path;
+          let unresolved = false;
+          // The systems' limits are 40 resolutions on Linux and 32 on macOS: a
+          // chain still a link after 32 hops may not open, so the wrap's write
+          // could fail. The lower one is used.
+          for (let i = 0; ; i += 1) {
+            let next;
+            try {
+              if (!fsMod.lstatSync(hop).isSymbolicLink()) break;
+              if (i >= 32) { unresolved = true; break; }
+              next = path.resolve(path.dirname(hop), fsMod.readlinkSync(hop));
+            } catch (e) {
+              if (e && e.code === 'ENOENT') break;
+              unresolved = true;
+              break;
+            }
+            spellings.push(next, handoffs.resolvePath(path.dirname(next)));
+            hop = next;
+          }
+          linkUnresolved = unresolved;
+          linkedIntoHandoffs = spellings.some((p) => p && roots.some((r) => p === r || p.startsWith(`${r}${path.sep}`)));
+        }
+      } catch (_) { /* nothing there */ }
+      if (linkedCentral) return `${t.path} is a symbolic link, and a wrap would write through it to another document; choose another topic`;
+      if (linkedIntoHandoffs) return `${t.path} is a symbolic link into the handoffs folder, and a wrap would write over the handoff it points at; replace the link with a real file`;
+      if (linkUnresolved) return `${t.path} is a symbolic link that cannot be followed to a file (a loop, or a link that cannot be read), so where a wrap would write cannot be told; replace it with a real file`;
+      return null;
+    };
+    let refusal = null;
+    if (!protection.ok) refusal = `protected handoffs could not be read: ${protection.errors.join('; ')}`;
+    else if (linkRefusal()) refusal = linkRefusal();
+    else if (configMod.isProtected(protection, t.path, opts.home)) refusal = `${t.path} is protected`;
+    else if (central && reg.state === 'invalid') {
+      refusal = `the thread list is invalid, so whether ${t.path} is a thread cannot be told: ${reg.errors.join('; ')}`;
+    } else if (central && reg.state === 'ok' && registryMod.declaredPaths(reg.registry).has(t.path)) {
+      refusal = `${t.path} is a declared thread; write it with cli.js save --thread ${t.slug}`;
+    } else if (central && reg.state === 'ok' && (homeCwd || existingMaybeThread)) {
+      refusal = homeCwd
+        ? 'threads are set up, so a handoff written from the home directory is saved as a thread: '
+          + 'cli.js save --thread <slug> (add --create for a new one)'
+        : `${t.path} already exists and may be home history, which is never rewritten; choose another topic`;
     }
-    if (opts.json) return emit(opts, t, []);
-    emit(opts, {}, [t.path, `  kind: ${t.kind}, pickup slug: ${t.slug}`]);
+    if (refusal) {
+      process.exitCode = 1;
+      // The path is left out on purpose: a caller that skims past `refused`
+      // must not find a writable path in the answer.
+      if (opts.json) return emit(opts, { kind: t.kind, slug: t.slug, refused: refusal }, []);
+      return emit(opts, {}, [`Not handed out: ${refusal}`]);
+    }
+    let record = null;
+    // A project whose name is taken by a thread is indexed under
+    // `<name>-project` instead, so /pickup has a name that opens it and, as
+    // importantly, the index still lists it: the index is how every pool finds
+    // project handoffs. Leaving it out of the index was tried first and lost
+    // its rules for every other folder in its repository (a worktree, a
+    // subfolder, the main checkout), each patch for that opening the next.
+    // Only if the alternative is taken as well does it fall back to a path.
+    // The name is chosen inside recordHandoff's lock (see chooseProjectKey), so
+    // two wraps at once cannot both take the same free name. A central
+    // handoff keeps its topic name, as before.
+    const choose = central ? null : (index) => threadsMod.chooseProjectKey(t.slug, t.path, opts.home, index);
+    // Everything that decided this path may be handed out is decided again
+    // under the lock: whether it is protected, whether it is now a declared
+    // thread (a migration can finish while this waits), and whether the
+    // thread list can still be read for a central path.
+    const guard = () => {
+      const p = configMod.loadProtection(opts.home);
+      if (!p.ok) return `protected handoffs could not be read: ${p.errors.join('; ')}`;
+      const link = linkRefusal();
+      if (link) return link;
+      if (configMod.isProtected(p, t.path, opts.home)) return `${t.path} is protected`;
+      const now = registryMod.readRegistry(opts.home);
+      if (central && now.state === 'invalid') return `the thread list is invalid, so whether ${t.path} is a thread cannot be told`;
+      if (now.state === 'ok' && [...registryMod.declaredPaths(now.registry)].some((d) => handoffs.resolvePath(d) === handoffs.resolvePath(t.path))) {
+        return `${t.path} is a declared thread; write it with cli.js save --thread ${t.slug}`;
+      }
+      if (central && now.state === 'ok' && (homeCwd || (fsMod.existsSync(t.path) && threadsMod.couldBeThread(t.path, opts.home)))) {
+        return `${t.path} may be a thread or home history now that threads are set up; choose another topic`;
+      }
+      return null;
+    };
+    let key;
+    let assigned = false;
+    if (opts.noRecord) {
+      const blocked = guard();
+      if (blocked) {
+        process.exitCode = 1;
+        if (opts.json) return emit(opts, { kind: t.kind, slug: t.slug, refused: blocked }, []);
+        return emit(opts, {}, [`Not handed out: ${blocked}`]);
+      }
+      const c = choose ? choose(handoffs.readIndex(opts.home)) : { key: t.slug, assigned: false };
+      key = c.key;
+      assigned = c.assigned;
+    } else {
+      record = handoffs.recordHandoff({ slug: t.slug, target: t.path, kind: t.kind, home: opts.home, choose, guard });
+      // The guard runs inside the lock only when the lock was taken. Refused
+      // there (busy, unwritable), or with --no-record, it has not run since
+      // the first checks, so it runs now: the latest answer available
+      // without the lock, instead of none.
+      // A central path whose lock was refused is not handed out at all: a
+      // migration holding the lock can declare it a thread after any check
+      // made from outside the lock, and a central path is the kind that can
+      // become one. A project path cannot, so it gets the fresh check.
+      const blocked = record.refusedPath
+        || (record.key === undefined && central ? `the handoff index could not be locked (${record.reason || 'lock refused'}), so whether ${t.path} is still free cannot be told; ${/another session/.test(String(record.reason)) ? 'run the wrap again' : 'fix that first'}` : null)
+        || (record.key === undefined ? guard() : null);
+      if (blocked) {
+        process.exitCode = 1;
+        if (opts.json) return emit(opts, { kind: t.kind, slug: t.slug, refused: blocked }, []);
+        return emit(opts, {}, [`Not handed out: ${blocked}`]);
+      }
+      if (record.key === undefined) {
+        // Refused before choosing (a busy or unwritable lock): decide from a
+        // fresh read which name it would have been, so a thread-named project
+        // is not handed its bare name, which /pickup would open as the thread.
+        const c = choose ? choose(handoffs.readIndex(opts.home)) : { key: t.slug, assigned: false };
+        key = c.key;
+        assigned = c.assigned;
+      } else {
+        key = record.key;
+        assigned = Boolean(record.assigned);
+      }
+    }
+    // An assigned name exists only in the index, so one that was not recorded
+    // (--no-record, a refused lock, a failed write) leads nowhere and is not
+    // handed out; the project is then picked up by its path. A project's own
+    // folder name is still handed out, as in 0.8, with the retry advice below.
+    // An empty key too: a folder whose name slugifies to nothing (`___`) got
+    // pickupSlug '', and find "" then called a written file not written.
+    const shadowed = !key || Boolean(record && record.shadowed)
+      || (assigned && !(record && record.recorded));
+    if (!key) key = t.slug;
+    const pickupSlug = shadowed ? null : key;
+    if (opts.json) {
+      return emit(opts, {
+        ...t, recorded: record ? record.recorded : false, recordReason: record && record.reason,
+        pickupSlug,
+      }, []);
+    }
+    // The plain answer says what the JSON says, with or without --no-record.
+    const lines = [t.path, shadowed
+      ? `  kind: ${t.kind}, pickup slug: none, because ${record && record.reason ? record.reason : `"${key}" is not recorded by this run (--no-record)`}; pick this up by its path: /pickup ${t.path}`
+      : `  kind: ${t.kind}, pickup slug: ${key}${key !== t.slug ? ` ("${t.slug}" is taken)` : ''}`];
+    // Said, because a project handoff whose entry was not recorded may not be
+    // found by name later, and the wrap is the moment that can still be fixed.
+    if (record && !record.recorded) {
+      lines.push(shadowed
+        ? `  Not recorded in the index: ${record.reason}.`
+        : `  Not recorded in the index (${record.reason}). Run this again before relying on /pickup ${key}.`);
+    }
+    emit(opts, {}, lines);
+  },
+
+  capabilities(opts) {
+    emit(opts, CAPABILITIES, [JSON.stringify(CAPABILITIES)]);
+  },
+
+  threads(opts) {
+    const r = threadsMod.listThreads(opts.home);
+    if (r.mode === 'invalid') process.exitCode = 1;
+    if (opts.json) return emit(opts, r, []);
+    if (r.mode === 'pre-migration') {
+      return emit(opts, {}, ['Threads are not set up here yet. Central handoffs are still written one per session.',
+        'To set them up: cli.js migrate plan --threads <slug,slug,...>']);
+    }
+    if (r.mode === 'invalid') {
+      return emit(opts, {}, ['The thread list cannot be read:', ...r.errors.map((e) => `  ${e}`)]);
+    }
+    const lines = [`${r.threads.length} thread${r.threads.length === 1 ? '' : 's'}, generation ${r.generation}:`];
+    for (const t of r.threads) {
+      lines.push(`  ${t.slug}${t.exists ? (t.unreadable ? '  (CANNOT BE READ)' : '') : '  (FILE MISSING)'}`);
+      if (t.subject) lines.push(`      ${t.subject}`);
+    }
+    if (r.pending) lines.push('', `A migration is part way through: run cli.js migrate finish.`);
+    emit(opts, {}, lines);
+  },
+
+  save(opts) {
+    const result = threadsMod.saveThread({
+      slug: opts.thread,
+      from: opts.from,
+      base: opts.base,
+      generation: opts.generation,
+      create: opts.create,
+      home: opts.home,
+    });
+    if (!result.saved || (opts.create && !result.declared)) process.exitCode = 1;
+    if (opts.json) return emit(opts, result, []);
+    if (!result.saved) {
+      const lines = [`Not saved (${result.reason}): ${result.detail}`];
+      if (result.previousUnchanged === true) lines.push('The previous handoff is unchanged.');
+      if (result.nothingWritten === true) lines.push(`Nothing was written to ${result.path || 'the thread path'}.`);
+      if (result.draft) lines.push(`The draft is kept at ${result.draft}.`);
+      return emit(opts, {}, lines);
+    }
+    const lines = [`Saved ${result.path}`, `  rev ${result.rev.slice(0, 12)}`];
+    if (!result.indexUpdated) {
+      lines.push(result.indexConflict
+        ? `  The index was not updated: it records this slug for ${result.indexConflict}. cli.js find will report the conflict.`
+        : '  The index was not updated. The thread is still found by name.');
+    }
+    if (opts.create && !result.declared) lines.push(`  Not yet declared as a thread: run cli.js declare ${result.slug}`);
+    emit(opts, {}, lines);
+  },
+
+  declare(opts) {
+    const r = threadsMod.declareThread({ slug: opts.rest[0], home: opts.home });
+    if (!r.declared) process.exitCode = 1;
+    if (opts.json) return emit(opts, r, []);
+    emit(opts, {}, [r.declared ? `Declared ${r.slug} (${r.path}).` : `Not declared (${r.reason}): ${r.detail}`]);
+  },
+
+  migrate(opts) {
+    const sub = opts.rest[0];
+    const fs = require('fs');
+    if (sub === 'plan') {
+      const r = threadsMod.migratePlan({ slugs: String(opts.threads || '').split(','), home: opts.home });
+      if (!r.ok) {
+        process.exitCode = 1;
+        return emit(opts, r, [`No plan (${r.reason}):`, ...String(r.detail).split('\n').map((l) => `  ${l}`)]);
+      }
+      // The only file this ever writes, and only where it is told to. The plan
+      // is the document a person fills in, so it has to be somewhere they chose.
+      if (opts.out) {
+        try {
+          fs.writeFileSync(opts.out, `${JSON.stringify(r.manifest, null, 2)}\n`);
+        } catch (e) {
+          process.exitCode = 1;
+          return emit(opts, { ok: false, reason: 'out', detail: e.message }, [`Could not write the plan to ${opts.out}: ${e.message}`]);
+        }
+      }
+      if (opts.json) return emit(opts, r.manifest, []);
+      const m = r.manifest;
+      const lines = [
+        `${m.threads.length} threads, ${m.scannedDocuments} home handoffs read.`,
+        '',
+        // "After" is the thread's own file before the choices below; a
+        // thread:<slug> adds one and a drop removes one. Said, because the
+        // narrowing is approved against these numbers.
+        'What each thread binds today, and in its own file before the choices below (thread:<slug> adds to it, drop removes from it):',
+        ...m.perThread.map((p) => `  ${p.slug}: ${p.bindingToday} -> ${p.bindingAfter}`),
+        '',
+        `${m.lost.length} rule${m.lost.length === 1 ? '' : 's'} bind today and are in no thread. Each needs retire, shared:done, or thread:<slug>.`,
+        ...m.lost.map((r) => `  - ${r.text}  (from ${r.from})`),
+        '',
+        `${m.gained.length} rule${m.gained.length === 1 ? '' : 's'} would start binding. Each needs keep or drop.`,
+        ...m.gained.map((r) => `  + ${r.text}  (in ${r.threads.join(', ')})`),
+        '',
+      ];
+      lines.push(opts.out ? `Plan written to ${opts.out}. Fill in each disposition, then run migrate apply.`
+        : 'Nothing written. Rerun with --out <file> to save the plan for review.');
+      return emit(opts, {}, lines);
+    }
+    if (sub === 'apply') {
+      const r = threadsMod.migrateApply({
+        manifestPath: opts.rest[1], acceptNarrowing: opts.acceptNarrowing, sessionsRestarted: opts.sessionsRestarted, home: opts.home,
+      });
+      if (!r.committed || (r.failures && r.failures.length)) process.exitCode = 1;
+      if (opts.json) return emit(opts, r, []);
+      if (!r.committed) {
+        return emit(opts, {}, [`Not applied (${r.reason}):`, ...String(r.detail).split('\n').map((l) => `  ${l}`),
+          ...(r.finalPerThread ? ['', 'What each thread will bind once this plan is applied:', ...r.finalPerThread.map((p) => `  ${p.slug}: ${p.bindingFinal}`)] : [])]);
+      }
+      const lines = [`Threads declared, generation ${r.generation}. ${r.applied.length} rule change${r.applied.length === 1 ? '' : 's'} written into threads.`];
+      if (r.failures.length) {
+        lines.push(`Stopped with ${r.remaining === null ? 'an unknown number' : r.remaining} still pending: ${r.failures[0].error}`,
+          'Run cli.js migrate finish once that is fixed.');
+      }
+      return emit(opts, {}, lines);
+    }
+    if (sub === 'finish') {
+      const r = threadsMod.migrateFinish({ home: opts.home });
+      if (!r.finished) process.exitCode = 1;
+      if (opts.json) return emit(opts, r, []);
+      if (r.reason) return emit(opts, {}, [`Not finished (${r.reason}): ${r.detail}`]);
+      if (!r.finished) return emit(opts, {}, [`Stopped with ${r.remaining === null ? 'an unknown number' : r.remaining} still pending: ${r.failures[0].error}`]);
+      return emit(opts, {}, [`Done. ${r.applied.length} written.`]);
+    }
+    process.exitCode = 1;
+    emit(opts, { error: 'migrate needs plan, apply or finish' }, ['Usage: cli.js migrate plan|apply|finish']);
   },
 
   memory(opts) {
@@ -642,6 +1254,11 @@ const COMMANDS = {
 
 function main(argv) {
   const opts = parseArgs(argv);
+  if (opts.error) {
+    process.stderr.write(`session: ${opts.error}. This copy of cli.js may be older or newer than the skill calling it.\n`);
+    if (opts.json) process.stdout.write(`${JSON.stringify({ error: opts.error })}\n`);
+    process.exit(2);
+  }
   const fn = COMMANDS[opts.command];
   if (!fn) {
     process.stdout.write(`Commands: ${Object.keys(COMMANDS).join(', ')}\n`);

@@ -318,21 +318,16 @@ a handoff.
 A lock abandoned by a session that died is taken over after 30 seconds, and says
 so on stderr, because it means somebody's write was interrupted.
 
-If the lock cannot be taken within five seconds, the write still goes ahead
-without it and says so on stderr, naming what may have been lost. Going ahead is
-deliberate: losing an index entry degrades `/pickup` to the guessed locations, and
-failing the wrap to protect it would cost the handoff itself, which is the thing
-worth keeping. Saying so is equally deliberate, because a skip path quieter than
-the pass path is indistinguishable from success.
+If the lock cannot be taken within five seconds, nothing is written, and the
+command says why: a thread's one document is saved through the same gate, and a
+document written beside another session has no second copy. `target` reports
+that the entry was not recorded, the sweep reports it was skipped and moves
+nothing, and `save` refuses and keeps the draft.
 
-That wait and that warning happen once per write, not once per step inside it.
+That wait happens once per command, not once per step inside it.
 The archive sweep changes the index twice, repointing what it moved and then
 pruning what has gone, and both run inside one region that asks for the lock
 once. Whatever answer it gets, both halves get the same one.
-
-The warning belongs to the write, not to the attempt. A run that changed nothing
-says nothing, because nothing could have been lost: a sweep with nothing to move
-and nothing to prune is silent, and so is any `--dry-run`.
 
 A dry run does not take the lock at all. It cannot write, so it has nothing to
 protect and no reason to queue behind a session that is writing. Reads are safe
@@ -392,7 +387,7 @@ Belt and braces, the write path also asks whether the lock is still this
 session's before it writes. The heartbeat makes a takeover unlikely rather than
 impossible, and the cost of being wrong is two sessions rewriting the index at
 once, which is the thing all of this exists to prevent. If it has been taken, the
-write still goes ahead, for the reason above, and says so.
+write is abandoned and says so.
 
 A command that changes nothing creates nothing. The lock lives inside
 `~/.planning/handoffs/`, so taking it means creating that folder, which would put
@@ -467,7 +462,105 @@ run. Pause documents are never indexed and are not scanned. Handoffs kept beside
 their work cannot be enumerated at all: the index is the only record of where they
 went, which is the whole reason it exists.
 
+## Threads: one handoff per subject
+
+Where threads are set up, every handoff written from the home directory belongs
+to a thread: one document per subject, rewritten in place at every wrap, and the
+only place that thread's rules live. Two problems led here. Each wrap used to
+write a new document named after that session, so one subject piled up dozens
+of them and nothing said which was current. And every home handoff pooled its
+rules with every other, so a pickup of any thread printed hundreds of rules
+belonging to other work.
+
+Which documents are threads is declared, in `~/.planning/handoffs/threads.json`,
+not inferred from names. Anything not declared is history: kept, readable, never
+rewritten, and binding on nothing.
+
+Threads cover the home scope only, meaning central handoffs whose working
+directory is the home directory itself, compared as a real path. Threads are
+not supported where the home directory is itself a git checkout, because every
+folder inside it shares home's pool and no clean line can be drawn: `migrate
+plan` refuses there, and a thread list found in one is treated as invalid. Project handoffs kept beside their work, and
+central handoffs written from inside a repository, keep the older behaviour
+described in the rest of this file.
+
+```bash
+cli.js threads                      # the declared threads and their subjects
+cli.js constraints --thread <slug>  # the rules one thread binds: its own file, nothing else
+cli.js save --thread <slug> --from <draft> --base <rev|none> --generation <N> [--create]
+cli.js declare <slug>               # add an existing home handoff to the list
+```
+
+**`save` is the only way a thread is written.** `/wrap` writes the whole new
+document to a draft, and `save` swaps it in only if the thread is still at the
+revision this session read, checking and writing under one lock. Another session
+saving in between is a conflict, not an overwrite, and the draft is kept.
+
+**Setting threads up is a reviewed migration**, run once:
+
+```bash
+cli.js migrate plan --threads a-thread,b-thread --out plan.json
+cli.js migrate apply plan.json --accept-narrowing --confirm-sessions-restarted
+cli.js migrate finish               # only if an apply stopped part way
+```
+
+The plan writes nothing but the file you name. It shows, for each thread, how
+many rules bind it today and how many will after, which is the narrowing the
+change exists to make and is accepted once, explicitly. It lists every rule that
+binds today and is in no declared thread, each needing `retire`, `shared:done` or
+`thread:<slug>`, and every rule that would start binding, each needing `keep` or
+`drop`. Apply refuses if any home handoff changed after the plan, including its
+modification time, because that alone can change which rules bind today.
+
+Apply writes the thread list first and the assigned rules into threads second.
+The other order revived rules: saving an older thread made it the newest
+document, and a rule a newer one had retired came back. While an apply is part
+way through, no thread's rules are given and no thread is saved, because half a
+migration is neither the old answer nor the new one.
+
+Before the migration, nothing changes. `constraints --thread` gives the older
+pooled answer for the handoff's own working directory, and `/wrap` writes the
+way it always has.
+
+### A project named like a thread
+
+`/pickup <name>` opens the thread, so a project whose folder has a thread's name
+is recorded in the index as `<name>-project` instead (or `-project-2` and on,
+if that is taken), and `/wrap` ends with that name. It stays in the index, which
+is how its worktrees and subfolders find its rules. A plain project whose
+folder name is already given to such a project gets a numbered name rather
+than taking it over.
+
+If an index from before threads maps a thread's name to a project, `migrate
+plan` refuses that name and says to run `cli.js rekey <name>`, which moves the
+entry to the project's own name. Forgetting the entry instead would leave the
+project out of every pool until its next wrap, and that wrap reads the pool
+before it records anything.
+
+## Protected handoffs
+
+Handoffs nothing here may move or rewrite, named in `~/.claude/session.config.json`:
+
+```json
+{
+  "protectedHandoffs": ["~/.planning/handoffs/HANDOFF-some-record.md"]
+}
+```
+
+Exact paths, each absolute or starting with `~/`; a relative entry is refused,
+because it would protect a different file from each directory. The sweep leaves them where they are, `save` refuses them, and
+`target` will not hand one out. If that file exists and cannot be read, or this
+entry is not a list of paths, every command that moves or writes a handoff
+refuses rather than falling back to an empty list, because the empty list is
+exactly the sweep that moves the files the entry was written to protect. The
+status line and the memory check do not read this entry and are unaffected.
+
 ## Constraints that outlive the session that set them
+
+Inside a thread, this section is simpler: a thread's rules are the bullets in
+its own file, retiring one is deleting it and noting it once, and restating it
+later brings it back. What follows is how the older pooled scope still works
+for everything else.
 
 A handoff records what happened. It also has to record what is still binding,
 because a decision made in one session does not stop applying when the next
@@ -546,8 +639,10 @@ approximation retires nothing. When a retirement matches nothing the command
 says so, because a retirement that silently fails is the same defect as a
 constraint that silently vanishes.
 
-**Limits worth knowing.** The scan reads at most 500 handoffs, newest first, and
-says so when it hits that ceiling. Archived handoffs are read: a constraint does
+**Limits worth knowing.** The scan reads at most 500 handoffs belonging to the
+scope, newest first, and says so when it hits that ceiling. The ceiling applies
+after filtering by scope, so another project's volume of handoffs cannot push
+this one's oldest rule out of the window. Archived handoffs are read: a constraint does
 not stop applying because the document carrying it went quiet for 30 days.
 
 ## What pickup deliberately does not do
@@ -577,7 +672,13 @@ what the manifest can declare, not what the host reads. Measured with a probe
 hook added to the Codex-installed copy: Codex has its own hooks engine, reads
 each installed plugin's `hooks/hooks.json`, and runs the commands.
 
-Both runtimes share one copy of the logic in `scripts/`.
+Both runtimes share one copy of the logic in `scripts/`. They are still two
+installed copies, one per host, so after an update each host needs its own
+update and restart. `/wrap` and `/pickup` check the scripts beside them with
+`cli.js capabilities` first and stop if those are older than the skill, rather
+than running an older script that would answer a different question.
+
+Codex has no `/pickup` command; ask for the pickup skill with the slug instead.
 
 The real difference is what an update does to a session that is already open.
 Codex replaces the plugin's version folder, so that session is left pointing at
