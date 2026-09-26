@@ -114,6 +114,9 @@ The same JSON says which kind of handoff this is.
   `HANDOFF.md` whose name is also a central handoff's, because the name may
   belong to a thread. A repository handoff with a name of its own is never
   affected and carries on as below.
+- **`unreadable` is set** (at the top level, for a handoff that is not a
+  thread). The file is there and cannot be read: say so, with the path, and
+  stop.
 - **Neither.** Threads are not set up here yet (`mode: "pre-migration"`), or this
   is a project handoff kept beside its work. Carry on as below.
 

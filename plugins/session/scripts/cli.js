@@ -852,10 +852,13 @@ const COMMANDS = {
         const spellings = [handoffs.resolvePath(t.path)];
         let hop = t.path;
         let unresolved = false;
-        for (let i = 0; i < 40; i += 1) {
+        // Past the system's own limit of 40 resolutions nothing can open the
+        // chain anyway, so one still a link after 64 hops is refused.
+        for (let i = 0; ; i += 1) {
           let next;
           try {
             if (!fsMod.lstatSync(hop).isSymbolicLink()) break;
+            if (i >= 64) { unresolved = true; break; }
             next = path.resolve(path.dirname(hop), fsMod.readlinkSync(hop));
           } catch (e) {
             if (e && e.code === 'ENOENT') break;
@@ -864,7 +867,6 @@ const COMMANDS = {
           }
           spellings.push(next, handoffs.resolvePath(path.dirname(next)));
           hop = next;
-          if (i === 39) unresolved = true;
         }
         linkedIntoHandoffs = unresolved
           || spellings.some((p) => p && roots.some((r) => p === r || p.startsWith(`${r}${path.sep}`)));
@@ -934,9 +936,11 @@ const COMMANDS = {
     // (--no-record, a refused lock, a failed write) leads nowhere and is not
     // handed out; the project is then picked up by its path. A project's own
     // folder name is still handed out, as in 0.8, with the retry advice below.
-    const shadowed = key === null || Boolean(record && record.shadowed)
+    // An empty key too: a folder whose name slugifies to nothing (`___`) got
+    // pickupSlug '', and find "" then called a written file not written.
+    const shadowed = !key || Boolean(record && record.shadowed)
       || (assigned && !(record && record.recorded));
-    if (key === null) key = t.slug;
+    if (!key) key = t.slug;
     const pickupSlug = shadowed ? null : key;
     if (opts.json) {
       return emit(opts, {

@@ -1767,5 +1767,60 @@ check('a two-hop link from a project HANDOFF.md to a missing thread file is refu
   assert.strictEqual(r.body.path, undefined);
 });
 
+check('a forty-hop link chain ending outside the handoffs folder is handed out', () => {
+  const home = migrated();
+  const real = path.join(home, 'shared', 'HANDOFF.md');
+  fs.mkdirSync(path.dirname(real), { recursive: true });
+  fs.writeFileSync(real, 'x');
+  let prev = real;
+  for (let i = 0; i < 39; i += 1) {
+    const link = path.join(home, 'shared', `hop-${i}.md`);
+    fs.symlinkSync(prev, link);
+    prev = link;
+  }
+  const repo = path.join(home, 'code', 'deep');
+  fs.mkdirSync(path.join(repo, '.git'), { recursive: true });
+  fs.symlinkSync(prev, path.join(repo, 'HANDOFF.md'));
+  const r = json(home, ['target', 'x', '--cwd', repo]);
+  assert.strictEqual(r.status, 0, JSON.stringify(r.body));
+  assert.strictEqual(r.body.path, path.join(repo, 'HANDOFF.md'));
+});
+
+// --------------------------------------------- Devin CLI round 12 on 19e3f9c ----
+
+check('a folder whose name slugifies to nothing is picked up by its path', () => {
+  const home = migrated();
+  const repo = path.join(home, 'code', '___');
+  fs.mkdirSync(path.join(repo, '.git'), { recursive: true });
+  const r = json(home, ['target', 'x', '--cwd', repo]).body;
+  assert.strictEqual(r.pickupSlug, null);
+});
+
+check('a project reached through a symlinked folder keeps its name before its first write', () => {
+  const t = require(path.join(ROOT, 'scripts', 'threads.js'));
+  const home = migrated();
+  const realDir = path.join(home, 'real', 'brand-thread');
+  fs.mkdirSync(realDir, { recursive: true });
+  fs.symlinkSync(path.join(home, 'real'), path.join(home, 'linked'));
+  const index = { 'brand-thread-project-4': { path: path.join(realDir, 'HANDOFF.md'), kind: 'project', recorded_at: new Date().toISOString() } };
+  assert.strictEqual(t.projectKey('brand-thread', path.join(home, 'linked', 'brand-thread', 'HANDOFF.md'), home, index), 'brand-thread-project-4');
+});
+
+check('rekey refuses a name no thread contests', () => {
+  const home = migrated();
+  const repo = path.join(home, 'code', 'plain');
+  fs.mkdirSync(repo, { recursive: true });
+  setIndex(home, 'plain', { path: path.join(repo, 'HANDOFF.md'), kind: 'project', recorded_at: '2026-01-01T00:00:00.000Z' });
+  const r = json(home, ['rekey', 'plain']);
+  assert.strictEqual(r.status, 1);
+  assert.strictEqual(r.body.rekeyed, false);
+  assert.strictEqual(handoffs.readIndex(home).plain.path, path.join(repo, 'HANDOFF.md'));
+});
+
+check('pickup stops on a handoff find reports unreadable', () => {
+  const pickup = fs.readFileSync(path.join(ROOT, 'skills', 'pickup', 'SKILL.md'), 'utf8');
+  assert.match(pickup, /\*\*`unreadable` is set\*\*/);
+});
+
 process.stdout.write(`\n${failures === 0 ? 'all passed' : `${failures} failed`}\n`);
 process.exit(failures === 0 ? 0 : 1);

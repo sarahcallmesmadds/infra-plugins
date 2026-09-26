@@ -148,6 +148,16 @@ function freeNumbered(key, target, home = os.homedir(), index = handoffs.readInd
   return firstFree(key, (n) => `-${n + 1}`, target, home, index, /-\d+$/);
 }
 
+// The same file, even before it exists: samePath falls back to the written
+// spelling for a missing file, so a project reached through a symlinked folder
+// looked like a different one at every wrap before its first write, and was
+// given a new name each time. Its folder is compared by real path instead.
+function sameSpelling(a, b) {
+  if (samePath(a, b)) return true;
+  return path.basename(a) === path.basename(b)
+    && handoffs.resolvePath(path.dirname(a)) === handoffs.resolvePath(path.dirname(b));
+}
+
 // A central name counts as taken when anything is there, a dangling link
 // included: existsSync reads a dangling link as absent, and the name was then
 // handed to a project while the thread list could still claim it.
@@ -167,7 +177,7 @@ function firstFree(base, suffix, target, home, index, shape) {
   // and a project holding `-project-9` in a small index was moved off it.
   const heldAnywhere = Object.keys(index).find((k) => {
     const e = index[k];
-    if (!e || typeof e.path !== 'string' || !samePath(e.path, target) || !shape.test(k)) return false;
+    if (!e || typeof e.path !== 'string' || !sameSpelling(e.path, target) || !shape.test(k)) return false;
     return base.startsWith(k.replace(shape, '').replace(/-+$/, ''));
   });
   if (heldAnywhere) return heldAnywhere;
@@ -183,7 +193,7 @@ function firstFree(base, suffix, target, home, index, shape) {
   // free since, so its name does not change between wraps.
   const held = candidates.find((k) => {
     const e = index[k];
-    return e && typeof e.path === 'string' && samePath(e.path, target);
+    return e && typeof e.path === 'string' && sameSpelling(e.path, target);
   });
   if (held) return held;
   return candidates.find((k) => !liveOtherEntry(index[k], target)
@@ -210,6 +220,13 @@ function rekeyProject(slug, home = os.homedir()) {
   return handoffs.mutateIndex(home, (index, saveIndex) => {
     const entry = index[key];
     if (!entry || typeof entry.path !== 'string') return { rekeyed: false, reason: `nothing is recorded for "${key}"` };
+    // Only a contested name: a thread holds it, or a central handoff of that
+    // name exists to become one. Renaming any other project silently changed
+    // its pickup name, and for one outside the search roots the old name then
+    // found nothing.
+    if (!projectNameShadowed(key, home) && !centralTaken(key, home)) {
+      return { rekeyed: false, reason: `"${key}" is not a thread's name, so its entry stays as it is` };
+    }
     if (threadShaped(entry.path, home) || entry.path.startsWith(`${handoffs.handoffRoot(home)}${path.sep}`)) {
       return { rekeyed: false, reason: `"${key}" is recorded for ${entry.path}, which is not a project handoff` };
     }
@@ -734,11 +751,15 @@ function migratePlan({ slugs, home = os.homedir(), now = Date.now() }) {
     const found = handoffs.findHandoff(s, home);
     const key = handoffs.slugify(s);
     if (!found) { problems.push(`${s}: no handoff found`); continue; }
-    if (path.dirname(found.path) !== root || found.kind !== 'central') {
+    // Judged by real path: an index entry spelling the central file through a
+    // symlinked home fell into the project branch below, which advised a
+    // rekey that then refused.
+    if (handoffs.resolvePath(path.dirname(found.path)) !== handoffs.resolvePath(root) || found.kind !== 'central') {
       // A project the index knows by this name, from before threads existed:
       // moving its entry keeps it in its pool, where forgetting it did not.
       const indexedHere = handoffs.readIndex(home)[key];
-      const project = indexedHere && samePath(indexedHere.path, found.path) && !String(found.path).startsWith(`${root}${path.sep}`);
+      const project = indexedHere && samePath(indexedHere.path, found.path) && !threadShaped(found.path, home)
+        && !handoffs.resolvePath(found.path).startsWith(`${handoffs.resolvePath(root)}${path.sep}`);
       problems.push(project
         ? `${s}: the index maps it to the project handoff ${found.path}; run cli.js rekey ${key} to move that entry to its own name, then plan again`
         : `${s}: ${found.path} is not an open central handoff (archived and project handoffs cannot be threads)`);
