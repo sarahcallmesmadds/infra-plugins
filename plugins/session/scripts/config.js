@@ -254,7 +254,13 @@ function loadProtection(home = os.homedir()) {
 function resolveProtected(p, home = os.homedir()) {
   const expanded = p === '~' ? home : (p.startsWith('~/') ? path.join(home, p.slice(2)) : p);
   const absolute = path.resolve(expanded);
-  try { return fs.realpathSync(absolute); } catch (_) { return absolute; }
+  try { return fs.realpathSync(absolute); } catch (_) {
+    // A file not there yet: its folder by real path, so a protected path
+    // written through a symlinked folder still matches the same file reached
+    // by its real path. Keeping the written spelling let a wrap given the
+    // real path write where the protection was meant to hold.
+    try { return path.join(fs.realpathSync(path.dirname(absolute)), path.basename(absolute)); } catch (__) { return absolute; }
+  }
 }
 
 function isProtected(protection, target, home = os.homedir()) {

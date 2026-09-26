@@ -2075,5 +2075,20 @@ check('a link swapped in while target waited for the lock is refused', () => {
   assert.match(body.refused, /symbolic link/);
 });
 
+check('a protection for a file not there yet holds through a symlinked folder', () => {
+  const config = require(path.join(ROOT, 'scripts', 'config.js'));
+  const home = setUp();
+  const alias = path.join(fs.realpathSync(os.tmpdir()), `session-palias-${process.pid}-${Date.now()}`);
+  fs.symlinkSync(dirOf(home), alias);
+  try {
+    fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+    fs.writeFileSync(path.join(home, '.claude', 'session.config.json'), JSON.stringify({ protectedHandoffs: [path.join(alias, 'HANDOFF-future.md')] }));
+    const p = config.loadProtection(home);
+    assert.strictEqual(config.isProtected(p, docPath(home, 'future'), home), true);
+  } finally {
+    fs.rmSync(alias, { force: true });
+  }
+});
+
 process.stdout.write(`\n${failures === 0 ? 'all passed' : `${failures} failed`}\n`);
 process.exit(failures === 0 ? 0 : 1);
