@@ -527,8 +527,14 @@ const COMMANDS = {
       // The document's own time through a live link; lstat only for a link
       // whose target is gone, so it stays "there and unreadable" and a live
       // link does not report the age of the link instead of the document.
-      try { mtime = require('fs').statSync(resolved.path).mtimeMs; } catch (_) {
-        try { mtime = require('fs').lstatSync(resolved.path).mtimeMs; } catch (__) { resolved.exists = false; }
+      // Any other failure (a loop, a target that cannot be accessed) shows no
+      // age at all rather than the link's, since the document cannot be read.
+      try { mtime = require('fs').statSync(resolved.path).mtimeMs; } catch (e) {
+        let linkThere = false;
+        try { linkThere = require('fs').lstatSync(resolved.path).isSymbolicLink(); } catch (__) { /* nothing there */ }
+        if (!linkThere) resolved.exists = false;
+        else if (e && e.code === 'ENOENT') mtime = require('fs').lstatSync(resolved.path).mtimeMs;
+        else mtime = null;
       }
       match = resolved.exists ? { path: resolved.path, kind: 'thread', mtime } : null;
     } else if (match && resolved.kind === 'history') {

@@ -1869,5 +1869,16 @@ check('a link loop is refused as unfollowable, not as a link into the handoffs f
   assert.match(r.body.refused, /cannot be followed/);
 });
 
+check('find gives no age for a thread link that loops', () => {
+  const home = migrated();
+  fs.rmSync(docPath(home, 'brand-thread'));
+  const other = path.join(home, 'loop.md');
+  fs.symlinkSync(docPath(home, 'brand-thread'), other);
+  fs.symlinkSync(other, docPath(home, 'brand-thread'));
+  const b = json(home, ['find', 'brand-thread']).body;
+  assert.strictEqual(b.thread.exists, true);
+  assert.strictEqual(b.match.mtime, null);
+});
+
 process.stdout.write(`\n${failures === 0 ? 'all passed' : `${failures} failed`}\n`);
 process.exit(failures === 0 ? 0 : 1);
