@@ -524,8 +524,12 @@ const COMMANDS = {
     let match = handoffs.findHandoff(slug, opts.home);
     if (resolved.kind === 'thread') {
       let mtime = null;
-      // lstat, so a link whose target is gone stays "there and unreadable".
-      try { mtime = require('fs').lstatSync(resolved.path).mtimeMs; } catch (_) { resolved.exists = false; }
+      // The document's own time through a live link; lstat only for a link
+      // whose target is gone, so it stays "there and unreadable" and a live
+      // link does not report the age of the link instead of the document.
+      try { mtime = require('fs').statSync(resolved.path).mtimeMs; } catch (_) {
+        try { mtime = require('fs').lstatSync(resolved.path).mtimeMs; } catch (__) { resolved.exists = false; }
+      }
       match = resolved.exists ? { path: resolved.path, kind: 'thread', mtime } : null;
     } else if (match && resolved.kind === 'history') {
       match = { ...match, history: true };
@@ -837,6 +841,7 @@ const COMMANDS = {
     const existingMaybeThread = central && fsMod.existsSync(t.path) && threadsMod.couldBeThread(t.path, opts.home);
     let linkedCentral = false;
     let linkedIntoHandoffs = false;
+    let linkUnresolved = false;
     try {
       if (fsMod.lstatSync(t.path).isSymbolicLink()) {
         linkedCentral = central;
@@ -868,19 +873,19 @@ const COMMANDS = {
           spellings.push(next, handoffs.resolvePath(path.dirname(next)));
           hop = next;
         }
-        linkedIntoHandoffs = unresolved
-          || spellings.some((p) => p && roots.some((r) => p === r || p.startsWith(`${r}${path.sep}`)));
+        linkUnresolved = unresolved;
+        linkedIntoHandoffs = spellings.some((p) => p && roots.some((r) => p === r || p.startsWith(`${r}${path.sep}`)));
       }
     } catch (_) { /* nothing there */ }
     let refusal = null;
     if (!protection.ok) refusal = `protected handoffs could not be read: ${protection.errors.join('; ')}`;
-    else if (linkedCentral || linkedIntoHandoffs) {
+    else if (linkedCentral || linkedIntoHandoffs || linkUnresolved) {
       // A wrap writes to the path it is handed, and a central file that is a
       // symlink writes through to whatever it points at, a project's own
       // handoff included, whatever that document says it is.
-      refusal = linkedCentral
-        ? `${t.path} is a symbolic link, and a wrap would write through it to another document; choose another topic`
-        : `${t.path} is a symbolic link into the handoffs folder, and a wrap would write over the handoff it points at; replace the link with a real file`;
+      if (linkedCentral) refusal = `${t.path} is a symbolic link, and a wrap would write through it to another document; choose another topic`;
+      else if (linkedIntoHandoffs) refusal = `${t.path} is a symbolic link into the handoffs folder, and a wrap would write over the handoff it points at; replace the link with a real file`;
+      else refusal = `${t.path} is a symbolic link that cannot be followed to a file (a loop, or a link that cannot be read), so where a wrap would write cannot be told; replace it with a real file`;
     }
     else if (configMod.isProtected(protection, t.path, opts.home)) refusal = `${t.path} is protected`;
     else if (central && reg.state === 'invalid') {
@@ -1045,7 +1050,10 @@ const COMMANDS = {
       const lines = [
         `${m.threads.length} threads, ${m.scannedDocuments} home handoffs read.`,
         '',
-        'What each thread binds, today and after:',
+        // "After" is the thread's own file before the choices below; a
+        // thread:<slug> adds one and a drop removes one. Said, because the
+        // narrowing is approved against these numbers.
+        'What each thread binds today, and in its own file before the choices below (thread:<slug> adds to it, drop removes from it):',
         ...m.perThread.map((p) => `  ${p.slug}: ${p.bindingToday} -> ${p.bindingAfter}`),
         '',
         `${m.lost.length} rule${m.lost.length === 1 ? '' : 's'} bind today and are in no thread. Each needs retire, shared:done, or thread:<slug>.`,

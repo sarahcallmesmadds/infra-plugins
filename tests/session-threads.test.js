@@ -651,7 +651,7 @@ check('the pool scan applies its ceiling after filtering by scope', () => {
   assert.strictEqual(r.truncated, false);
 });
 
-// ------------------------------------------------ Devin CLI round one ----
+// -------------------------------------- index entries still being written ----
 
 function setIndex(home, slug, entry) {
   const f = path.join(dirOf(home), 'index.json');
@@ -767,7 +767,7 @@ check('the constraints list says when a handoff could not be read', () => {
   }
 });
 
-// ------------------------------------------------ Devin CLI round two ----
+// ------------------------------------------------- target after migration ----
 
 check('after migration target refuses a brand-new home topic too', () => {
   // A session still running the older skill calls target and writes whatever
@@ -834,7 +834,7 @@ check('find says in plain text when a match is history', () => {
   assert.match(run(home, ['find', 'old-session']).stdout, /Kept as history/);
 });
 
-// ----------------------------------------------------- Devin app round ----
+// ----------------------------------- dangling and unreadable thread lists ----
 
 check('a dangling thread list symlink is invalid, not absent', () => {
   const home = migrated();
@@ -860,7 +860,7 @@ check('the plain migration plan lists the rules, not only the counts', () => {
   assert.match(run(home, ['migrate', 'plan', '--threads', 'site-thread,brand-thread']).stdout, /- Only in history\.\s+\(from old-session\)/);
 });
 
-// ------------------------------------------- persona review of 7e3bcf7 ----
+// -------------------------------------------------- sessions outside home ----
 
 check('a session outside home is not handed an existing home history handoff', () => {
   const home = migrated();
@@ -898,7 +898,7 @@ check('find says a declared thread cannot be read', () => {
   }
 });
 
-// ------------------------------------------------ Devin CLI round three ----
+// ---------------------------------------------------- unreadable handoffs ----
 
 check('before migration, an unreadable handoff is called unreadable', () => {
   const home = setUp();
@@ -926,7 +926,7 @@ check('find says when the thread list cannot be read', () => {
   assert.match(r.stdout, /thread list cannot be read/);
 });
 
-// ------------------------------------------- persona review of 8abdb9e ----
+// ----------------------------------- files with no Working directory line ----
 
 check('target treats an existing file with no Working directory line as home', () => {
   const home = migrated();
@@ -1026,7 +1026,7 @@ check('a thread list that breaks while the sweep waits for the lock stops it', (
   assert.deepStrictEqual(r.moved, []);
 });
 
-// ------------------------------------------ Devin CLI round 4 and the app ----
+// ------------------------------------------------- home as a git checkout ----
 
 check('when home is a git checkout, threads are refused rather than half supported', () => {
   const home = tmpHome();
@@ -1062,7 +1062,7 @@ check('declare re-checks the file under the lock', () => {
   assert.ok(!registry(home).threads.some((x) => x.slug === 'old-session'));
 });
 
-// --------------------------------------- persona and Codex on 35ce31a ----
+// ---------------------------------------------------- broken thread lists ----
 
 check('with a broken list, an archived home handoff does not get the whole pool', () => {
   const home = migrated();
@@ -1143,7 +1143,7 @@ check('a symlinked home inside a checkout is caught', () => {
   }
 });
 
-// ------------------------- persona, Codex round 9 and the Devin app on 019480a ----
+// ----------------------------------------- broken lists and project pools ----
 
 check('with a broken list, a project whose document names home is refused, not pooled with home', () => {
   const home = migrated();
@@ -1230,7 +1230,7 @@ check('wrap checks a null-pickupSlug handoff by its path and ends with the path;
   assert.match(pickup, /constraints --file "<the path>"/);
 });
 
-// ------------------------------------------------- Devin CLI round 7 on 5f6ed96 ----
+// ---------------------------------------------- migration plan edge cases ----
 
 check('the plan refuses a slug the index still maps to an unreachable file', () => {
   const home = setUp();
@@ -1294,7 +1294,7 @@ check('recording a project checks the thread list again under the lock', () => {
   assert.strictEqual(json(home, ['find', 'brand-thread']).body.thread.conflicts.length, 0);
 });
 
-// ------------------------------------------------ Codex round 10 on 5452290 ----
+// ---------------------------------- pickup slugs while the list is broken ----
 
 check('while the list cannot be read, a project whose name may be a thread gets name-project', () => {
   const home = migrated();
@@ -1333,7 +1333,7 @@ check('a central handoff that is a symlink to an archived one is not handed out 
   assert.strictEqual(r.body.path, undefined, JSON.stringify(r.body));
 });
 
-// --------------------------------------------- Devin CLI round 8 on 5452290 ----
+// ------------------------------------------- failed writes and exit codes ----
 
 check('a new thread whose write fails says nothing was written, not that a previous one is unchanged', () => {
   const t = require(path.join(ROOT, 'scripts', 'threads.js'));
@@ -1377,7 +1377,7 @@ check('outside home, the broken-list note no longer says thread rules may be cou
   assert.match(out, /no thread's rules are in this list/);
 });
 
-// ------------------------------------------------ persona review of 5452290 ----
+// ----------------------------------------------------- constraints --file ----
 
 check('constraints --file reads the Working directory itself, notes and all', () => {
   const home = migrated();
@@ -1415,7 +1415,7 @@ check('an index entry whose path is not a string is skipped by findHandoff', () 
   assert.doesNotMatch(r.stderr, /DeprecationWarning|TypeError/);
 });
 
-// ----------------------------- persona and Codex round 11 on 2e03125 ----
+// ------------------------------ thread-named projects across a repository ----
 
 check('a project named like a thread keeps its rules across wrap and pickup, in its worktree and subfolders too', () => {
   const home = migrated();
@@ -1465,7 +1465,7 @@ check('reconcile survives an index entry whose path is not a string', () => {
   assert.doesNotMatch(r.stderr, /TypeError|ERR_INVALID_ARG_TYPE/);
 });
 
-// ------------------------------------------------ Codex round 12 on 5e1f5e5 ----
+// --------------------------------------------- unindexed project handoffs ----
 
 check('before migration an unindexed project handoff binds nothing new, exactly as 0.8', () => {
   const home = setUp();
@@ -1475,7 +1475,7 @@ check('before migration an unindexed project handoff binds nothing new, exactly 
   assert.deepStrictEqual(json(home, ['constraints', '--cwd', repo]).body.constraints, []);
 });
 
-// -------------------------------------------- persona review of 5e1f5e5 ----
+// ------------------------------------- worktrees, pause notes and aliases ----
 
 check('a worktree\'s unindexed own handoff does not bring back a rule its checkout retired', () => {
   const home = migrated();
@@ -1511,7 +1511,7 @@ check('--file on a link inside the folder with its own name answers as the threa
   assert.deepStrictEqual(json(home, ['constraints', '--file', link]).body.constraints.map((c) => c.text), ['Brand rule.']);
 });
 
-// ------------------------------------------------ Codex round 13 on 1112d16 ----
+// ------------------------------------------------- history-named projects ----
 
 check('a project named like a history handoff does not have its unindexed file read in', () => {
   const home = migrated();
@@ -1521,7 +1521,7 @@ check('a project named like a history handoff does not have its unindexed file r
   assert.deepStrictEqual(json(home, ['constraints', '--cwd', repo]).body.constraints, []);
 });
 
-// --------------------------------------------- Devin CLI round 9 on 2e03125 ----
+// ---------------------------------------- symbolic links and usage errors ----
 
 check('target refuses a central path that is a symbolic link, wherever it points', () => {
   const home = migrated();
@@ -1573,7 +1573,7 @@ check('migrate finish before migration says why', () => {
   assert.match(out, /threads are not set up/);
 });
 
-// -------------------------------------------- Devin CLI round 10 on 6d37a85 ----
+// ----------------------------------------- links into the handoffs folder ----
 
 check('a project HANDOFF.md linked into the handoffs folder is not handed out', () => {
   const home = migrated();
@@ -1603,7 +1603,7 @@ check('forget with no slug is a usage error', () => {
   assert.strictEqual(run(home, ['forget']).status, 1);
 });
 
-// -------------------------------------------- persona review of cbef693 ----
+// ------------------------------------------------ project name collisions ----
 
 check('a folder really named name-project does not take a thread-named project\'s entry', () => {
   const home = migrated();
@@ -1665,7 +1665,7 @@ check('rekey moves a 0.8 entry for a thread name onto the project name, and the 
   assert.deepStrictEqual(json(home, ['constraints', '--cwd', repo]).body.constraints.map((c) => c.text), ['Rule A.']);
 });
 
-// ------------------ Codex round 14, Devin CLI round 11, persona on c2085dc ----
+// --------------------------------------------- name choice under the lock ----
 
 check('two projects choosing a name at once cannot both get it', () => {
   const home = migrated();
@@ -1727,7 +1727,7 @@ check('pickup checks that a central path leads back to the same file', () => {
   assert.match(pickup, /check that the match \(or\s+`thread.path`\) is that same file/);
 });
 
-// ------------------------------------------------ Codex round 15 on 19e3f9c ----
+// ---------------------------------------------------------- refused locks ----
 
 check('a refused index lock does not hand a thread-named project the thread\'s name', () => {
   const home = migrated();
@@ -1743,7 +1743,7 @@ check('a refused index lock does not hand a thread-named project the thread\'s n
   assert.strictEqual(body.pickupSlug, null);
 });
 
-// -------------------------------------------- persona review of 19e3f9c ----
+// --------------------------------------------- held names and link chains ----
 
 check('a project keeps a high-numbered name it already holds in a small index', () => {
   const t = require(path.join(ROOT, 'scripts', 'threads.js'));
@@ -1786,7 +1786,7 @@ check('a forty-hop link chain ending outside the handoffs folder is handed out',
   assert.strictEqual(r.body.path, path.join(repo, 'HANDOFF.md'));
 });
 
-// --------------------------------------------- Devin CLI round 12 on 19e3f9c ----
+// ------------------------------- empty slugs, symlinked folders and rekey ----
 
 check('a folder whose name slugifies to nothing is picked up by its path', () => {
   const home = migrated();
@@ -1820,6 +1820,53 @@ check('rekey refuses a name no thread contests', () => {
 check('pickup stops on a handoff find reports unreadable', () => {
   const pickup = fs.readFileSync(path.join(ROOT, 'skills', 'pickup', 'SKILL.md'), 'utf8');
   assert.match(pickup, /\*\*`unreadable` is set\*\*/);
+});
+
+// ------------------------------------------ finishing and link ages ----
+
+check('migrate finish stops, keeping the item, when a thread no longer names home', () => {
+  const home = migrated();
+  const reg = registry(home);
+  reg.pending = [{ kind: 'add', slug: 'brand-thread', text: 'Pending rule.' }];
+  fs.writeFileSync(path.join(dirOf(home), 'threads.json'), JSON.stringify(reg));
+  fs.writeFileSync(docPath(home, 'brand-thread'), handoff('/somewhere/else', ['Brand rule.']));
+  const f = json(home, ['migrate', 'finish']);
+  assert.notStrictEqual(f.body.remaining, 0, JSON.stringify(f.body));
+  assert.strictEqual(registry(home).pending.length, 1);
+  assert.doesNotMatch(fs.readFileSync(docPath(home, 'brand-thread'), 'utf8'), /Pending rule/);
+});
+
+check('find reports a linked thread\'s own document time, not the link\'s', () => {
+  const home = migrated();
+  const real = path.join(home, 'kept', 'brand.md');
+  fs.mkdirSync(path.dirname(real), { recursive: true });
+  fs.renameSync(docPath(home, 'brand-thread'), real);
+  fs.symlinkSync(real, docPath(home, 'brand-thread'));
+  const old = new Date(Date.now() - 30 * 86400000);
+  fs.lutimesSync(docPath(home, 'brand-thread'), old, old);
+  const now = new Date();
+  fs.utimesSync(real, now, now);
+  const m = json(home, ['find', 'brand-thread']).body.match;
+  assert.ok(Math.abs(m.mtime - now.getTime()) < 5000, `${m.mtime} vs ${now.getTime()}`);
+});
+
+check('a shorter name the same folder holds is not taken as its project name', () => {
+  const t = require(path.join(ROOT, 'scripts', 'threads.js'));
+  const home = migrated();
+  const target = path.join(home, 'code', 'brand-thread-extra', 'HANDOFF.md');
+  const k = t.projectKey('brand-thread-extra', target, home, { 'brand-project': { path: target, kind: 'project', recorded_at: new Date().toISOString() } });
+  assert.strictEqual(k, 'brand-thread-extra-project');
+});
+
+check('a link loop is refused as unfollowable, not as a link into the handoffs folder', () => {
+  const home = migrated();
+  const repo = path.join(home, 'code', 'loop');
+  fs.mkdirSync(path.join(repo, '.git'), { recursive: true });
+  fs.symlinkSync(path.join(repo, 'b.md'), path.join(repo, 'HANDOFF.md'));
+  fs.symlinkSync(path.join(repo, 'HANDOFF.md'), path.join(repo, 'b.md'));
+  const r = json(home, ['target', 'x', '--cwd', repo]);
+  assert.strictEqual(r.status, 1);
+  assert.match(r.body.refused, /cannot be followed/);
 });
 
 process.stdout.write(`\n${failures === 0 ? 'all passed' : `${failures} failed`}\n`);

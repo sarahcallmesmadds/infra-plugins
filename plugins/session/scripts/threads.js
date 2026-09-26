@@ -178,7 +178,10 @@ function firstFree(base, suffix, target, home, index, shape) {
   const heldAnywhere = Object.keys(index).find((k) => {
     const e = index[k];
     if (!e || typeof e.path !== 'string' || !sameSpelling(e.path, target) || !shape.test(k)) return false;
-    return base.startsWith(k.replace(shape, '').replace(/-+$/, ''));
+    // Exactly the stem this search would have cut for that suffix, so a
+    // shorter name the same folder happens to hold is not taken as its own.
+    const tail = k.match(shape)[0];
+    return k.slice(0, k.length - tail.length) === base.slice(0, 60 - tail.length).replace(/-+$/, '');
   });
   if (heldAnywhere) return heldAnywhere;
   let files = 0;
@@ -1040,6 +1043,10 @@ function finishPendingLocked(home) {
       if (config.isProtected(protection, t.path, home)) throw new Error(`${t.path} is protected`);
       if (lockLost(handoffs.indexLockPath(home))) throw new Error('the handoff lock was taken over');
       const text = fs.readFileSync(t.path, 'utf8');
+      // A thread whose Working directory has moved off home since the plan
+      // would take the rule and then be refused as out of scope, stranding it
+      // with the item cleared. Stopped here instead, with the item kept.
+      if (!inHomeScope(text, home)) throw new Error(`${t.path} no longer names the home directory as its working directory`);
       const live = handoffs.bulletsIn(text).live.map(handoffs.normalizeConstraint);
       const has = live.includes(handoffs.normalizeConstraint(item.text));
       let next = text;
