@@ -795,10 +795,26 @@ function migratePlan({ slugs, home = os.homedir(), now = Date.now() }) {
     if (!inHomeScope(text, home)) { problems.push(`${s}: its working directory is not the home directory`); continue; }
     if (seen.has(found.path) || threads.some((t) => t.slug === key)) { problems.push(`${s}: named twice`); continue; }
     seen.add(found.path);
-    threads.push({ slug: key, path: found.path, rev: rev(text), live: handoffs.bulletsIn(text).live });
+    // The exact spelling the thread list requires, not however the index
+    // happened to spell the same file: a path through a symlinked home passed
+    // here and then failed registry validation at apply.
+    threads.push({ slug: key, path: path.join(root, `HANDOFF-${key}.md`), rev: rev(text), live: handoffs.bulletsIn(text).live });
   }
   if (problems.length) return { ok: false, reason: 'bad-threads', detail: problems.join('\n') };
 
+  // Every central file has to be countable. recentHandoffs skips one whose
+  // stat fails, which would leave it out of both the rules and the
+  // fingerprint without a word.
+  for (const dir of [root, path.join(root, 'archived')]) {
+    let names = [];
+    try { names = fs.readdirSync(dir); } catch (e) {
+      if (!(e && e.code === 'ENOENT')) return { ok: false, reason: 'unreadable', detail: `${dir} could not be listed: ${e.message}` };
+    }
+    const bad = names.filter((n) => /^HANDOFF-.+\.md$/.test(n)).filter((n) => {
+      try { fs.statSync(path.join(dir, n)); return false; } catch (_) { return true; }
+    });
+    if (bad.length) return { ok: false, reason: 'unreadable', detail: `these handoffs could not be read: ${bad.map((n) => path.join(dir, n)).join(', ')}` };
+  }
   const before = handoffs.carriedConstraints({ cwd: home, home, includeThreads: true });
   // A handoff that is listed and cannot be read is missing from both the rule
   // comparison and the fingerprint, so the plan would be approved against less
@@ -906,11 +922,45 @@ function sameRows(a, b, field) {
 // assignments first was the other order, and it reintroduced the defect the
 // whole change exists to remove: saving an older thread made it the newest
 // document and revived a rule a newer one had retired.
+// What each thread will bind once apply has written the choices in the plan:
+// its own rules, plus every lost rule sent to it with thread:<slug>, less every
+// gained rule dropped from it. The plan's own counts are from before those
+// choices, and the narrowing is approved against these instead.
+function finalCounts(manifest) {
+  // The plan stores each thread's own count, not its rules. A lost rule is by
+  // definition in no thread, so sending one adds exactly one; a gained rule is
+  // by definition in the threads it lists, so dropping it removes one there.
+  const out = {};
+  for (const p of manifest.perThread || []) out[p.slug] = p.bindingAfter;
+  const seen = new Set();
+  for (const r of manifest.lost) {
+    const m = /^thread:(.+)$/.exec(String(r.disposition || ''));
+    const k = m && `${m[1]}\u0000${handoffs.normalizeConstraint(r.text)}`;
+    if (m && m[1] in out && !seen.has(k)) { out[m[1]] += 1; seen.add(k); }
+  }
+  for (const r of manifest.gained) {
+    if (r.disposition === 'drop') for (const s of r.threads) if (s in out) out[s] -= 1;
+  }
+  return Object.entries(out).map(([slug, n]) => ({ slug, bindingFinal: n }));
+}
+
 function migrateApply({
   manifestPath, acceptNarrowing = false, sessionsRestarted = false, home = os.homedir(), now = Date.now(),
 }) {
   if (!acceptNarrowing) {
-    return { committed: false, reason: 'narrowing-not-accepted', detail: 'each thread will bind only its own rules; pass --accept-narrowing once you have read perThread' };
+    // Shown with the refusal when the plan can be read and its choices are
+    // complete, so the approval is given against the finished counts.
+    let finalPerThread;
+    try {
+      const m = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+      if (!checkShape(m).length && !checkDispositions(m).length) finalPerThread = finalCounts(m);
+    } catch (_) { /* shown when the plan is readable */ }
+    return {
+      committed: false,
+      reason: 'narrowing-not-accepted',
+      detail: 'each thread will bind only its own rules; read finalPerThread, then pass --accept-narrowing',
+      ...(finalPerThread ? { finalPerThread } : {}),
+    };
   }
   if (!sessionsRestarted) {
     return { committed: false, reason: 'sessions', detail: 'finish or restart every session in Claude Code and Codex first, then pass --confirm-sessions-restarted' };
@@ -1103,6 +1153,7 @@ module.exports = {
   declareThread,
   migratePlan,
   migrateApply,
+  finalCounts,
   migrateFinish,
   insertBullet,
   dropBullet,

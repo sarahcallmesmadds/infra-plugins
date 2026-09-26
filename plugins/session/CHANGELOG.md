@@ -14,6 +14,7 @@ One handoff per thread, for handoffs written from the home directory.
   move or rewrite. An unreadable entry stops every handoff write instead of
   protecting nothing.
   Each entry must be absolute or start with `~/`; a relative one is refused.
+  A listed file that is there and cannot be read also stops every write.
 - Behaviour change: when another session holds the handoff index lock, commands
   now refuse after the five second wait instead of writing without it. `target`
   says the entry was not recorded; the sweep moves nothing.

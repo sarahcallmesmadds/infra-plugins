@@ -233,7 +233,20 @@ function loadProtection(home = os.homedir()) {
       errors.push(`protectedHandoffs entry ${i + 1} (${e}) must be an absolute path or start with ~/`);
       return;
     }
-    paths.push(resolveProtected(e, home));
+    const resolved = resolveProtected(e, home);
+    // A protected file that is there and cannot be read stops every write,
+    // like an unreadable config does: nothing can confirm it is still the
+    // document the entry protects. A path with nothing at it is only a
+    // protection waiting for its file.
+    let there = false;
+    try { fs.lstatSync(resolved); there = true; } catch (_) { /* nothing there */ }
+    if (there) {
+      try { fs.accessSync(resolved, fs.constants.R_OK); } catch (err) {
+        errors.push(`protectedHandoffs entry ${i + 1} (${e}) is there and cannot be read: ${err.message}`);
+        return;
+      }
+    }
+    paths.push(resolved);
   });
   return { ok: errors.length === 0, paths, errors };
 }

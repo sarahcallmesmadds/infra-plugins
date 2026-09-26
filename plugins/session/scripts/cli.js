@@ -529,12 +529,13 @@ const COMMANDS = {
       // link does not report the age of the link instead of the document.
       // Any other failure (a loop, a target that cannot be accessed) shows no
       // age at all rather than the link's, since the document cannot be read.
+      // One lstat, kept: reading it twice let a link removed in between
+      // throw out of find instead of reporting the thread missing.
       try { mtime = require('fs').statSync(resolved.path).mtimeMs; } catch (e) {
-        let linkThere = false;
-        try { linkThere = require('fs').lstatSync(resolved.path).isSymbolicLink(); } catch (__) { /* nothing there */ }
-        if (!linkThere) resolved.exists = false;
-        else if (e && e.code === 'ENOENT') mtime = require('fs').lstatSync(resolved.path).mtimeMs;
-        else mtime = null;
+        let link = null;
+        try { link = require('fs').lstatSync(resolved.path); } catch (__) { /* nothing there */ }
+        if (!link || !link.isSymbolicLink()) resolved.exists = false;
+        else mtime = e && e.code === 'ENOENT' ? link.mtimeMs : null;
       }
       match = resolved.exists ? { path: resolved.path, kind: 'thread', mtime } : null;
     } else if (match && resolved.kind === 'history') {
@@ -933,7 +934,30 @@ const COMMANDS = {
       key = c.key;
       assigned = c.assigned;
     } else {
-      record = handoffs.recordHandoff({ slug: t.slug, target: t.path, kind: t.kind, home: opts.home, choose });
+      // Everything that decided this path may be handed out is decided again
+      // under the lock: whether it is protected, whether it is now a declared
+      // thread (a migration can finish while this waits), and whether the
+      // thread list can still be read for a central path.
+      const guard = () => {
+        const p = configMod.loadProtection(opts.home);
+        if (!p.ok) return `protected handoffs could not be read: ${p.errors.join('; ')}`;
+        if (configMod.isProtected(p, t.path, opts.home)) return `${t.path} is protected`;
+        const now = registryMod.readRegistry(opts.home);
+        if (central && now.state === 'invalid') return `the thread list is invalid, so whether ${t.path} is a thread cannot be told`;
+        if (now.state === 'ok' && [...registryMod.declaredPaths(now.registry)].some((d) => handoffs.resolvePath(d) === handoffs.resolvePath(t.path))) {
+          return `${t.path} is a declared thread; write it with cli.js save --thread ${t.slug}`;
+        }
+        if (central && now.state === 'ok' && (homeCwd || (fsMod.existsSync(t.path) && threadsMod.couldBeThread(t.path, opts.home)))) {
+          return `${t.path} may be a thread or home history now that threads are set up; choose another topic`;
+        }
+        return null;
+      };
+      record = handoffs.recordHandoff({ slug: t.slug, target: t.path, kind: t.kind, home: opts.home, choose, guard });
+      if (record.refusedPath) {
+        process.exitCode = 1;
+        if (opts.json) return emit(opts, { kind: t.kind, slug: t.slug, refused: record.refusedPath }, []);
+        return emit(opts, {}, [`Not handed out: ${record.refusedPath}`]);
+      }
       if (record.key === undefined) {
         // Refused before choosing (a busy or unwritable lock): decide from a
         // fresh read which name it would have been, so a thread-named project
@@ -1082,7 +1106,10 @@ const COMMANDS = {
       });
       if (!r.committed || (r.failures && r.failures.length)) process.exitCode = 1;
       if (opts.json) return emit(opts, r, []);
-      if (!r.committed) return emit(opts, {}, [`Not applied (${r.reason}):`, ...String(r.detail).split('\n').map((l) => `  ${l}`)]);
+      if (!r.committed) {
+        return emit(opts, {}, [`Not applied (${r.reason}):`, ...String(r.detail).split('\n').map((l) => `  ${l}`),
+          ...(r.finalPerThread ? ['', 'What each thread will bind once this plan is applied:', ...r.finalPerThread.map((p) => `  ${p.slug}: ${p.bindingFinal}`)] : [])]);
+      }
       const lines = [`Threads declared, generation ${r.generation}. ${r.applied.length} rule change${r.applied.length === 1 ? '' : 's'} written into threads.`];
       if (r.failures.length) {
         lines.push(`Stopped with ${r.remaining === null ? 'an unknown number' : r.remaining} still pending: ${r.failures[0].error}`,

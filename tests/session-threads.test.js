@@ -1902,5 +1902,93 @@ check('a link chain longer than the system can open is refused', () => {
   assert.match(r.body.refused, /cannot be followed/);
 });
 
+// ------------------------------- checks made again under the index lock ----
+
+check('a path that became a declared thread while target waited is not handed out', () => {
+  const home = setUp();
+  const notes = path.join(home, 'notes');
+  fs.mkdirSync(notes);
+  const r = spawnSync(process.execPath, ['-e', `
+    const h = require(${JSON.stringify(path.join(ROOT, 'scripts', 'handoffs.js'))});
+    const real = h.recordHandoff;
+    h.recordHandoff = (o) => {
+      // The migration lands while this call waits for the lock.
+      require('fs').writeFileSync(${JSON.stringify(path.join(dirOf(home), 'threads.json'))},
+        JSON.stringify({ version: 1, generation: 1, threads: [{ slug: 'brand-thread', path: ${JSON.stringify(docPath(home, 'brand-thread'))} }], pending: [] }));
+      return real(o);
+    };
+    require(${JSON.stringify(CLI)}).main(['target', 'brand-thread', '--cwd', ${JSON.stringify(notes)}, '--json', '--home', ${JSON.stringify(home)}]);
+  `], { encoding: 'utf8' });
+  const body = JSON.parse(r.stdout);
+  assert.strictEqual(body.path, undefined, r.stdout);
+  assert.ok(body.refused, r.stdout);
+});
+
+check('a protection added while target waited is honoured', () => {
+  const home = setUp();
+  const notes = path.join(home, 'notes');
+  fs.mkdirSync(notes);
+  const r = spawnSync(process.execPath, ['-e', `
+    const h = require(${JSON.stringify(path.join(ROOT, 'scripts', 'handoffs.js'))});
+    const fs = require('fs');
+    const real = h.recordHandoff;
+    h.recordHandoff = (o) => {
+      fs.mkdirSync(${JSON.stringify(path.join(home, '.claude'))}, { recursive: true });
+      fs.writeFileSync(${JSON.stringify(path.join(home, '.claude', 'session.config.json'))}, JSON.stringify({ protectedHandoffs: [${JSON.stringify(docPath(home, 'fresh-topic'))}] }));
+      return real(o);
+    };
+    require(${JSON.stringify(CLI)}).main(['target', 'fresh-topic', '--cwd', ${JSON.stringify(notes)}, '--json', '--home', ${JSON.stringify(home)}]);
+  `], { encoding: 'utf8' });
+  const body = JSON.parse(r.stdout);
+  assert.strictEqual(body.path, undefined, r.stdout);
+  assert.match(body.refused, /protected/);
+});
+
+check('an existing protected file that cannot be read stops every write', () => {
+  const home = setUp();
+  fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+  fs.writeFileSync(path.join(home, '.claude', 'session.config.json'), JSON.stringify({ protectedHandoffs: [docPath(home, 'brand-thread')] }));
+  fs.chmodSync(docPath(home, 'brand-thread'), 0o000);
+  try {
+    const notes = path.join(home, 'notes');
+    fs.mkdirSync(notes);
+    const r = json(home, ['target', 'other-topic', '--cwd', notes]);
+    assert.strictEqual(r.status, 1);
+    assert.match(r.body.refused, /cannot be read/);
+  } finally {
+    fs.chmodSync(docPath(home, 'brand-thread'), 0o644);
+  }
+});
+
+check('the plan writes the exact thread path even when the index spells it through a link', () => {
+  const home = setUp();
+  const alias = path.join(fs.realpathSync(os.tmpdir()), `session-alias-${process.pid}-${Date.now()}`);
+  fs.symlinkSync(home, alias);
+  try {
+    setIndex(home, 'brand-thread', { path: path.join(alias, '.planning', 'handoffs', 'HANDOFF-brand-thread.md'), kind: 'central', recorded_at: '2026-01-01T00:00:00.000Z' });
+    const { planFile, manifest } = migrate(home, ['site-thread', 'brand-thread']);
+    assert.strictEqual(manifest.threads.find((t) => t.slug === 'brand-thread').path, docPath(home, 'brand-thread'));
+    assert.strictEqual(apply(home, planFile).body.committed, true);
+  } finally {
+    fs.rmSync(alias, { force: true });
+  }
+});
+
+check('the plan refuses when a central file cannot be counted', () => {
+  const home = setUp();
+  fs.symlinkSync(path.join(home, 'gone.md'), docPath(home, 'broken'));
+  const r = json(home, ['migrate', 'plan', '--threads', 'site-thread']);
+  assert.strictEqual(r.status, 1);
+  assert.strictEqual(r.body.reason, 'unreadable');
+});
+
+check('apply without the narrowing flag shows what each thread will bind once the choices are written', () => {
+  const home = setUp();
+  const { planFile } = migrate(home, ['site-thread', 'brand-thread'], { lost: (row) => (row.text === 'Only in history.' ? 'thread:brand-thread' : 'retire') });
+  const r = json(home, ['migrate', 'apply', planFile, '--confirm-sessions-restarted']);
+  assert.strictEqual(r.body.reason, 'narrowing-not-accepted');
+  assert.strictEqual(r.body.finalPerThread.find((p) => p.slug === 'brand-thread').bindingFinal, 2);
+});
+
 process.stdout.write(`\n${failures === 0 ? 'all passed' : `${failures} failed`}\n`);
 process.exit(failures === 0 ? 0 : 1);

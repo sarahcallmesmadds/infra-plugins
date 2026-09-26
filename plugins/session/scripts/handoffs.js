@@ -159,12 +159,18 @@ function readIndex(home = os.homedir()) {
 // `choose`, when given, picks the index name from the index as it stands
 // inside the lock and returns `{ key, assigned }`; a name picked from an
 // earlier read could be taken by another wrap in between.
-function recordHandoff({ slug, target, kind, home = os.homedir(), now = Date.now(), choose = null }) {
+// `guard`, when given, runs inside the lock before anything is recorded and
+// returns a reason to refuse the path itself, or null. A check made before the
+// lock can be stale by the time it is held: a migration declaring this path a
+// thread, or a protection added, while this call waited.
+function recordHandoff({ slug, target, kind, home = os.homedir(), now = Date.now(), choose = null, guard = null }) {
   if (!slug || !target) return { recorded: false, reason: 'no slug or path' };
   // The one caller that always writes, so it is the one allowed to create the
   // handoffs folder. Recording a handoff on a machine that has never had one is
   // the whole job, not a side effect of looking.
   return mutateIndex(home, (handoffs, save) => {
+    const blocked = guard ? guard() : null;
+    if (blocked) return { recorded: false, refusedPath: blocked, reason: blocked };
     const chosen = choose ? choose(handoffs) : { key: slug, assigned: false };
     if (!chosen.key) return { recorded: false, shadowed: true, key: null, reason: `every name for "${slugify(slug)}" is taken, so this project is picked up by its path` };
     slug = chosen.key;
