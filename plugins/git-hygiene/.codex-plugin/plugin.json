@@ -1,7 +1,7 @@
 {
   "name": "git-hygiene",
-  "version": "0.3.12",
-  "description": "Tells you which branches are proved safe to delete and which are not, then cleans up the proved-safe ones once you approve them. Held branches stay untouched unless separate evidence clears them; commit reachability alone is never described as proof that their work exists nowhere else.",
+  "version": "0.4.0",
+  "description": "Tells you which branches are proved safe to delete and blocks misplaced project worktrees when you configure their folder. It cleans up only the branches you approve; held branches stay untouched unless separate evidence clears them.",
   "author": {
     "name": "Sarah Madden",
     "url": "https://github.com/sarahcallmesmadds"
@@ -20,7 +20,7 @@
   "interface": {
     "displayName": "Git Hygiene",
     "shortDescription": "Which branches are proved safe to delete, and which are not",
-    "longDescription": "Branches pile up and nothing tells you which ones matter. Git Hygiene separates age from deletion evidence. It shows branches proved safe by reachability or independent merge or content evidence, and keeps everything else as not proved safe without claiming the work exists nowhere else. It deletes only after approval, re-checks each branch immediately before deletion, and uses a separate confirmed force step only when a locally verified branch is safe but lowercase git branch -d refuses it. Anything it cannot classify is kept and the reason is shown.",
+    "longDescription": "Branches pile up and nothing tells you which ones matter. Git Hygiene separates age from deletion evidence. It shows branches proved safe by reachability or independent merge or content evidence, and keeps everything else as not proved safe without claiming the work exists nowhere else. It deletes only after approval, re-checks each branch immediately before deletion, and uses a separate confirmed force step only when a locally verified branch is safe but lowercase git branch -d refuses it. Anything it cannot classify is kept and the reason is shown. With an optional setting, it blocks misplaced project worktrees and points to the folder to use.",
     "developerName": "Sarah Madden",
     "category": "Engineering",
     "capabilities": [
@@ -31,7 +31,8 @@
       "Which of my branches are safe to delete?",
       "Clean up the merged branches in this repo.",
       "Do I have stale branches anywhere?",
-      "Am I still carrying old branches with unfinished work?"
+      "Am I still carrying old branches with unfinished work?",
+      "Keep my project worktrees in one folder."
     ]
   }
 }

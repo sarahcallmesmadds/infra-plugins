@@ -1,6 +1,6 @@
 # git-hygiene
 
-Which branches are proved safe to delete, and which are not.
+Safe branch cleanup, plus a place for your project worktrees.
 
 Branches pile up. Every so often you notice, feel vaguely bad about it, and
 either delete a pile of them or none of them. Both are bad options, because the
@@ -187,9 +187,36 @@ file is an error rather than a reason to look elsewhere. Naming an interpreter
 and silently getting a different one hides the mistake, and a directory passes
 an executable check while starting nothing.
 
-## Configuration
+## Keep project worktrees together
 
-None needed. The defaults are at the top of `scripts/classify.js`:
+The Bash hook blocks a new `git worktree add` if its destination is inside your
+configured project folder but outside your chosen worktree folder. It tells you
+which folder to use. It does not move worktrees that already exist, and it
+leaves destinations outside your configured project folder alone. If a shell
+expression hides the destination from the hook, it blocks the command and tells
+the agent to use an explicit path so it can check it.
+
+To turn it on, add `worktreeLocation` to
+`~/.claude/git-hygiene.config.json`:
+
+```json
+{
+  "worktreeLocation": {
+    "projectRoot": "~/Code",
+    "worktreeRoot": "~/Code/Worktrees"
+  }
+}
+```
+
+The worktree folder must be inside the project folder. If the setting is
+missing or invalid, the hook does not block worktree commands. Claude Code and
+Codex read the same file. Codex asks you to review and trust the hook before its
+first use.
+
+## Branch cleanup settings
+
+Branch cleanup needs no configuration. Its defaults are at the top of
+`scripts/classify.js`:
 
 ```js
 protectedBranches: ['main', 'master', 'develop', 'release'],
