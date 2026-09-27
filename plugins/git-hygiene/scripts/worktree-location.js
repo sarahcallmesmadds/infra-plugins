@@ -98,7 +98,8 @@ function shellTokens(command) {
       while (i + 1 < command.length && command[i + 1] !== '\n') i += 1;
       continue;
     }
-    if (char === '\\' && quote !== "'") {
+    if (char === '\\' && (quote === null
+        || quote === '"' && ['$','`','"','\\','\n'].includes(command[i + 1]))) {
       if (!token) tildeEligible = false;
       tokenStarted = true;
       escaped = true;
@@ -141,6 +142,17 @@ function shellTokens(command) {
     if (char === '`') {
       const end = command.indexOf('`', i + 1);
       if (end >= 0) { substitutions.push(command.slice(i + 1, end)); token += command.slice(i, end + 1); tokenStarted = true; hasUnquoted = true; i = end; continue; }
+    }
+    if ((char === '<' || char === '>') && command[i + 1] === '(') {
+      const end = substitutionEnd(command, i + 1);
+      if (end > i) {
+        substitutions.push(command.slice(i + 2, end));
+        token += command.slice(i, end + 1);
+        tokenStarted = true;
+        hasUnquoted = true;
+        i = end;
+        continue;
+      }
     }
     if (char === '<' || char === '>') {
       flush();
@@ -243,7 +255,7 @@ function gitCommand(tokens, start, activeCwd, unresolvedVariables) {
       continue;
     }
     if (token === '-c' || token === '--git-dir' || token === '--work-tree'
-        || token === '--namespace') {
+        || token === '--namespace' || token === '--config-env') {
       index += 2;
       continue;
     }
@@ -253,7 +265,8 @@ function gitCommand(tokens, start, activeCwd, unresolvedVariables) {
         || token === '--glob-pathspecs' || token === '--noglob-pathspecs'
         || token === '--icase-pathspecs'
         || token === '--no-replace-objects' || token === '--no-lazy-fetch'
-        || token === '--paginate' || token === '-P'
+        || token === '--paginate' || token === '-P' || token === '--bare'
+        || token.startsWith('--config-env=')
         || token === '--exec-path' || token === '--html-path' || token === '--man-path'
         || token === '--info-path' || token.startsWith('--exec-path=')
         || token.startsWith('-c')) {
@@ -343,12 +356,12 @@ function unwrapCommand(tokens, start, activeCwd, unresolvedVariables) {
   return { index, cwd };
 }
 
-function misplacedTarget(command, cwd, policy, inheritedVariables = []) {
+function misplacedTarget(command, cwd, policy, inheritedVariables = [], cwdUnknown = false) {
   const source = stripHereDocuments(command);
   const tokens = shellTokens(source);
   const suppliedCwd = path.resolve(cwd || process.cwd());
   const logicalPwd = process.env.PWD && path.resolve(process.env.PWD);
-  let activeCwd = logicalPwd && physicalPath(logicalPwd) === physicalPath(suppliedCwd)
+  let activeCwd = cwdUnknown ? null : logicalPwd && physicalPath(logicalPwd) === physicalPath(suppliedCwd)
     ? logicalPwd : suppliedCwd;
   const cwdStack = [];
   const directoryStack = [];
@@ -360,7 +373,7 @@ function misplacedTarget(command, cwd, policy, inheritedVariables = []) {
     if (item.op) {
       if (item.op.startsWith('redirect:')) {
         for (const nested of (tokens[index + 1] && tokens[index + 1].substitutions) || []) {
-          const nestedTarget = misplacedTarget(nested, activeCwd, policy, [...unresolvedVariables]);
+          const nestedTarget = misplacedTarget(nested, activeCwd, policy, [...unresolvedVariables], activeCwd === null);
           if (nestedTarget) return nestedTarget;
         }
         index += 1;
@@ -382,7 +395,7 @@ function misplacedTarget(command, cwd, policy, inheritedVariables = []) {
       continue;
     }
     for (const nested of item.substitutions || []) {
-      const nestedTarget = misplacedTarget(nested, activeCwd, policy, [...unresolvedVariables]);
+      const nestedTarget = misplacedTarget(nested, activeCwd, policy, [...unresolvedVariables], activeCwd === null);
       if (nestedTarget) return nestedTarget;
     }
     if (!commandStart) continue;
@@ -408,6 +421,8 @@ function misplacedTarget(command, cwd, policy, inheritedVariables = []) {
     }
     if (executable === 'pushd') {
       if (!tokens[index + 1] || tokens[index + 1].op) { activeCwd = null; continue; }
+      const prior = tokens[index - 1] && tokens[index - 1].op;
+      if (prior === '&&' || prior === '||') conditionalDirectory = true;
       let inPipelineOrBackground = index > 0 && tokens[index - 1].op === '|';
       for (let look = index + 2; look < tokens.length && !tokens[look].op
           || (tokens[look] && ['|', '&'].includes(tokens[look].op)); look += 1) {
@@ -420,6 +435,8 @@ function misplacedTarget(command, cwd, policy, inheritedVariables = []) {
       continue;
     }
     if (executable === 'popd') {
+      const prior = tokens[index - 1] && tokens[index - 1].op;
+      if (prior === '&&' || prior === '||') conditionalDirectory = true;
       activeCwd = directoryStack.length ? directoryStack.pop() : null;
       continue;
     }
@@ -444,7 +461,7 @@ function misplacedTarget(command, cwd, policy, inheritedVariables = []) {
         const unresolvedScriptVariable = script.match(/\$\{?([A-Za-z_][A-Za-z0-9_]*)/g) || [];
         if (unresolvedScriptVariable.some((entry) => unresolvedVariables.has(entry.replace(/^\$\{?/, '').replace(/\}?$/, '')))
             && /\bgit\b[\s\S]*\bworktree\b[\s\S]*\badd\b/.test(script)) return { unknown: true };
-        const nested = misplacedTarget(script, commandCwd, policy, [...unresolvedVariables]);
+        const nested = misplacedTarget(script, commandCwd, policy, [...unresolvedVariables], commandCwd === null);
         if (nested) return nested;
       }
       continue;
@@ -484,7 +501,7 @@ function misplacedTarget(command, cwd, policy, inheritedVariables = []) {
     const result = gitCommand(tokens, index, commandCwd, unresolvedVariables);
     for (let argument = index + 1; argument < result.end; argument += 1) {
       for (const nested of tokens[argument].substitutions || []) {
-        const nestedTarget = misplacedTarget(nested, commandCwd, policy, [...unresolvedVariables]);
+        const nestedTarget = misplacedTarget(nested, commandCwd, policy, [...unresolvedVariables], commandCwd === null);
         if (nestedTarget) return nestedTarget;
       }
     }
