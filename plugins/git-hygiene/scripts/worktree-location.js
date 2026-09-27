@@ -137,7 +137,9 @@ function shellTokens(command) {
       flush();
       continue;
     }
-    if (';&|(){}'.includes(char)) {
+    if (';&|()'.includes(char)
+        || (char === '{' && !tokenStarted && /\s/.test(command[i + 1] || ''))
+        || (char === '}' && !tokenStarted)) {
       flush();
       const pair = command.slice(i, i + 2);
       if (pair === '&&' || pair === '||') {
@@ -166,7 +168,7 @@ function expandShellText(token, unresolvedVariables = new Set()) {
       });
   }
   if (expanded.includes('$') || expanded.includes('$(') || expanded.includes('`')
-      || /[*?\[]/.test(expanded)) return null;
+      || /[*?\[{}]/.test(expanded)) return null;
   return expanded;
 }
 
@@ -181,9 +183,15 @@ function expandShellPath(token, cwd, unresolvedVariables = new Set()) {
 function expandCdPath(token, cwd, unresolvedVariables, physical = false) {
   const expanded = expandShellText(token, unresolvedVariables);
   if (expanded === null || !cwd) return null;
-  if (physical) return physicalPath(path.isAbsolute(expanded)
-    ? expanded : `${cwd}${path.sep}${expanded}`);
-  return path.resolve(cwd, expanded);
+  if (expanded === '-') return null;
+  const logical = path.isAbsolute(expanded) ? path.resolve(expanded) : path.resolve(cwd, expanded);
+  const resolved = physical ? physicalPath(path.isAbsolute(expanded)
+    ? expanded : `${cwd}${path.sep}${expanded}`) : physicalPath(logical);
+  try {
+    if (!fs.statSync(resolved).isDirectory()) return null;
+    fs.accessSync(resolved, fs.constants.R_OK | fs.constants.X_OK);
+  } catch (_) { return null; }
+  return physical ? resolved : logical;
 }
 
 function gitCommand(tokens, start, activeCwd, unresolvedVariables) {
@@ -273,7 +281,14 @@ function misplacedTarget(command, cwd, policy) {
   for (let index = 0; index < tokens.length; index += 1) {
     const item = tokens[index];
     if (item.op) {
-      if (item.op.startsWith('redirect:')) { index += 1; continue; }
+      if (item.op.startsWith('redirect:')) {
+        for (const nested of (tokens[index + 1] && tokens[index + 1].substitutions) || []) {
+          const nestedTarget = misplacedTarget(nested, activeCwd, policy);
+          if (nestedTarget) return nestedTarget;
+        }
+        index += 1;
+        continue;
+      }
       if (item.op === ';' && conditionalDirectory) {
         activeCwd = null;
         unresolvedVariables.add('PWD');
@@ -318,7 +333,9 @@ function misplacedTarget(command, cwd, policy) {
       while (tokens[candidate] && !tokens[candidate].op) {
         const assignment = tokens[candidate].value.match(/^([A-Za-z_][A-Za-z0-9_]*)=/);
         if (assignment) unresolvedVariables.add(assignment[1]);
-        if (assignment || tokens[candidate].value.startsWith('-')) candidate += 1;
+        if (assignment) candidate += 1;
+        else if (executable === 'env' && ['-u', '--unset', '-C', '--chdir'].includes(tokens[candidate].value)) candidate += 2;
+        else if (tokens[candidate].value.startsWith('-')) candidate += 1;
         else break;
       }
       if (tokens[candidate] && !tokens[candidate].op
@@ -413,7 +430,7 @@ function stripHereDocuments(command) {
       if (closing) delimiter = null;
       output.push(shellBody ? line : '');
       if (closing) {
-        if (expandBody) output.push(...extractCommandSubstitutions(body.join('\n')));
+        if (expandBody) output.push(...extractCommandSubstitutions(body.join('\n'), true));
         if (shellBody) output.push(')');
         shellBody = false;
         expandBody = false;
@@ -476,15 +493,25 @@ function findHereDocument(line) {
   return null;
 }
 
-function extractCommandSubstitutions(command) {
+function extractCommandSubstitutions(command, heredocExpansion = false) {
   const found = [];
   let quote = null;
   let escaped = false;
   for (let i = 0; i < command.length; i += 1) {
     const char = command[i];
     if (escaped) { escaped = false; continue; }
-    if (char === '\\' && quote !== "'") { escaped = true; continue; }
+    if (char === '\\' && (heredocExpansion || quote !== "'")) { escaped = true; continue; }
     if (quote) {
+      if (heredocExpansion) {
+        if (char === '$' && command[i + 1] === '(') {
+          const end = substitutionEnd(command, i + 1);
+          if (end > i) { found.push(command.slice(i + 2, end)); i = end; }
+        } else if (char === '`') {
+          const end = command.indexOf('`', i + 1);
+          if (end >= 0) { found.push(command.slice(i + 1, end)); i = end; }
+        }
+        continue;
+      }
       if (char === quote) quote = null;
       else if (quote === '"' && char === '$' && command[i + 1] === '(') {
         const end = substitutionEnd(command, i + 1);
@@ -495,8 +522,8 @@ function extractCommandSubstitutions(command) {
       }
       continue;
     }
-    if (char === "'") { quote = char; continue; }
-    if (char === '"') { quote = char; continue; }
+    if (!heredocExpansion && char === "'") { quote = char; continue; }
+    if (!heredocExpansion && char === '"') { quote = char; continue; }
     if (char === '$' && command[i + 1] === '(') {
       const end = substitutionEnd(command, i + 1);
       if (end > i) { found.push(command.slice(i + 2, end)); i = end; }
