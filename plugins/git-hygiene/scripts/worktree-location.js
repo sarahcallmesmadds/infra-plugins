@@ -59,15 +59,17 @@ function shellTokens(command) {
   let tildeEligible = true;
   let tokenStarted = false;
   let escapedExpansion = false;
+  let substitutions = [];
   const flush = () => {
     if (tokenStarted) tokens.push({ value: token, quoted, singleQuoted, tildeEligible,
-      escapedExpansion, substitutions: singleQuoted ? [] : extractCommandSubstitutions(token) });
+      escapedExpansion, substitutions });
     token = '';
     quoted = false;
     singleQuoted = false;
     tildeEligible = true;
     tokenStarted = false;
     escapedExpansion = false;
+    substitutions = [];
   };
 
   for (let i = 0; i < command.length; i += 1) {
@@ -97,11 +99,11 @@ function shellTokens(command) {
     if (quote) {
       if (quote === '"' && char === '$' && command[i + 1] === '(') {
         const end = substitutionEnd(command, i + 1);
-        if (end > i) { token += command.slice(i, end + 1); i = end; continue; }
+        if (end > i) { substitutions.push(command.slice(i + 2, end)); token += command.slice(i, end + 1); i = end; continue; }
       }
       if (quote === '"' && char === '`') {
         const end = command.indexOf('`', i + 1);
-        if (end >= 0) { token += command.slice(i, end + 1); i = end; continue; }
+        if (end >= 0) { substitutions.push(command.slice(i + 1, end)); token += command.slice(i, end + 1); i = end; continue; }
       }
       if (char === quote) quote = null;
       else { token += char; quoted = true; if (quote === "'") singleQuoted = true; }
@@ -116,11 +118,20 @@ function shellTokens(command) {
     }
     if (char === '$' && command[i + 1] === '(') {
       const end = substitutionEnd(command, i + 1);
-      if (end > i) { token += command.slice(i, end + 1); tokenStarted = true; i = end; continue; }
+      if (end > i) { substitutions.push(command.slice(i + 2, end)); token += command.slice(i, end + 1); tokenStarted = true; i = end; continue; }
     }
     if (char === '`') {
       const end = command.indexOf('`', i + 1);
-      if (end >= 0) { token += command.slice(i, end + 1); tokenStarted = true; i = end; continue; }
+      if (end >= 0) { substitutions.push(command.slice(i + 1, end)); token += command.slice(i, end + 1); tokenStarted = true; i = end; continue; }
+    }
+    if (char === '<' || char === '>') {
+      flush();
+      if (tokens.length && /^\d+$/.test(tokens[tokens.length - 1].value)) tokens.pop();
+      let redirection = char;
+      if (command[i + 1] === char) { redirection += char; i += 1; }
+      if (command[i + 1] === '&') { redirection += '&'; i += 1; }
+      tokens.push({ op: `redirect:${redirection}` });
+      continue;
     }
     if (/\s/.test(char)) {
       flush();
@@ -178,7 +189,11 @@ function expandCdPath(token, cwd, unresolvedVariables, physical = false) {
 function gitCommand(tokens, start, activeCwd, unresolvedVariables) {
   let index = start + 1;
   let repoCwd = activeCwd;
-  while (index < tokens.length && !tokens[index].op) {
+  while (index < tokens.length && (!tokens[index].op || tokens[index].op.startsWith('redirect:'))) {
+    if (tokens[index].op && tokens[index].op.startsWith('redirect:')) {
+      index += 2;
+      continue;
+    }
     const token = tokens[index].value;
     if (token === '-C' && tokens[index + 1] && !tokens[index + 1].op) {
       const next = expandShellPath(tokens[index + 1], repoCwd, unresolvedVariables);
@@ -214,7 +229,11 @@ function gitCommand(tokens, start, activeCwd, unresolvedVariables) {
     return { end: index, target: null, unknown: false };
   }
   index += 2;
-  while (index < tokens.length && !tokens[index].op) {
+  while (index < tokens.length && (!tokens[index].op || tokens[index].op.startsWith('redirect:'))) {
+    if (tokens[index].op && tokens[index].op.startsWith('redirect:')) {
+      index += 2;
+      continue;
+    }
     const token = tokens[index].value;
     if (token === '--') {
       index += 1;
@@ -247,11 +266,19 @@ function misplacedTarget(command, cwd, policy) {
   let activeCwd = logicalPwd && physicalPath(logicalPwd) === physicalPath(suppliedCwd)
     ? logicalPwd : suppliedCwd;
   const cwdStack = [];
+  const directoryStack = [];
   const unresolvedVariables = new Set();
+  let conditionalDirectory = false;
   let commandStart = true;
   for (let index = 0; index < tokens.length; index += 1) {
     const item = tokens[index];
     if (item.op) {
+      if (item.op.startsWith('redirect:')) { index += 1; continue; }
+      if (item.op === ';' && conditionalDirectory) {
+        activeCwd = null;
+        unresolvedVariables.add('PWD');
+        conditionalDirectory = false;
+      }
       if (item.op === '(') cwdStack.push(activeCwd);
       if (item.op === ')') activeCwd = cwdStack.length ? cwdStack.pop() : null;
       commandStart = true;
@@ -273,6 +300,17 @@ function misplacedTarget(command, cwd, policy) {
         const assignment = tokens[next].value.match(/^([A-Za-z_][A-Za-z0-9_]*)=/);
         if (assignment) unresolvedVariables.add(assignment[1]);
       }
+      continue;
+    }
+    if (executable === 'pushd') {
+      if (!tokens[index + 1] || tokens[index + 1].op) { activeCwd = null; continue; }
+      directoryStack.push(activeCwd);
+      activeCwd = expandCdPath(tokens[index + 1], activeCwd, unresolvedVariables);
+      index += 1;
+      continue;
+    }
+    if (executable === 'popd') {
+      activeCwd = directoryStack.length ? directoryStack.pop() : null;
       continue;
     }
     if (['env', 'command', 'builtin'].includes(executable)) {
@@ -323,13 +361,8 @@ function misplacedTarget(command, cwd, policy) {
       }
     }
     if (commandExecutable === 'cd' && tokens[cdOperand] && !tokens[cdOperand].op) {
-      const previousOp = tokens[index - 1] && tokens[index - 1].op;
-      if (previousOp === '&&' || previousOp === '||' || activeCwd === null) {
-        activeCwd = null;
-        unresolvedVariables.add('PWD');
-        index = cdOperand;
-        continue;
-      }
+      const prior = tokens[index - 1] && tokens[index - 1].op;
+      if (prior === '&&' || prior === '||') conditionalDirectory = true;
       let inPipelineOrBackground = false;
       for (let look = cdOperand + 1; look < tokens.length && !tokens[look].op
           || (tokens[look] && ['|', '&'].includes(tokens[look].op)); look += 1) {
@@ -426,8 +459,13 @@ function findHereDocument(line) {
       if (!wordQuote && (/\s/.test(part) || ';&|(){}'.includes(part))) break;
       if (!wordQuote && (part === "'" || part === '"')) { wordQuote = part; quoted = true; cursor += 1; continue; }
       if (wordQuote && part === wordQuote) { wordQuote = null; cursor += 1; continue; }
-      if (part === '\\' && wordQuote !== "'") { quoted = true; cursor += 1; }
-      else delimiter += part;
+      if (part === '\\' && wordQuote !== "'") {
+        quoted = true;
+        cursor += 1;
+        if (cursor < line.length) delimiter += line[cursor++];
+        continue;
+      }
+      delimiter += part;
       cursor += 1;
     }
     if (delimiter) {
