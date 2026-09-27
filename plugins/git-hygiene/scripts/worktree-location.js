@@ -56,11 +56,13 @@ function shellTokens(command) {
   let escaped = false;
   let quoted = false;
   let singleQuoted = false;
+  let tildeEligible = true;
   const flush = () => {
-    if (token) tokens.push({ value: token, quoted, singleQuoted });
+    if (token) tokens.push({ value: token, quoted, singleQuoted, tildeEligible });
     token = '';
     quoted = false;
     singleQuoted = false;
+    tildeEligible = true;
   };
 
   for (let i = 0; i < command.length; i += 1) {
@@ -77,6 +79,7 @@ function shellTokens(command) {
       continue;
     }
     if (char === '\\' && quote !== "'") {
+      if (!token) tildeEligible = false;
       escaped = true;
       continue;
     }
@@ -86,6 +89,7 @@ function shellTokens(command) {
       continue;
     }
     if (char === "'" || char === '"') {
+      if (!token) tildeEligible = false;
       quote = char;
       quoted = true;
       continue;
@@ -94,7 +98,7 @@ function shellTokens(command) {
       flush();
       continue;
     }
-    if (';&|'.includes(char)) {
+    if (';&|()'.includes(char)) {
       flush();
       const pair = command.slice(i, i + 2);
       if (pair === '&&' || pair === '||') {
@@ -112,7 +116,7 @@ function shellTokens(command) {
 
 function expandShellPath(token, cwd) {
   const value = token.value;
-  let expanded = token.quoted ? value : value.replace(/^~(?=\/|$)/, os.homedir());
+  let expanded = token.tildeEligible === false ? value : value.replace(/^~(?=\/|$)/, os.homedir());
   if (!token.singleQuoted) {
     expanded = expanded.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)/g,
       (match, braced, bare) => process.env[braced || bare] || match);
@@ -145,7 +149,10 @@ function gitCommand(tokens, start, activeCwd) {
       continue;
     }
     if (token.startsWith('--git-dir=') || token.startsWith('--work-tree=')
-        || token.startsWith('--namespace=') || token === '--no-pager' || token.startsWith('-c')) {
+        || token.startsWith('--namespace=') || token === '--no-pager'
+        || token === '--no-optional-locks' || token === '--literal-pathspecs'
+        || token === '--no-replace-objects' || token === '--no-lazy-fetch'
+        || token.startsWith('-c')) {
       index += 1;
       continue;
     }
@@ -190,6 +197,7 @@ function misplacedTarget(command, cwd, policy) {
     const item = tokens[index];
     if (item.op) { commandStart = true; continue; }
     if (!commandStart) continue;
+    if (['then', 'do', 'else', 'elif'].includes(item.value)) continue;
     commandStart = false;
     const executable = item.value.split('/').pop();
     if (executable === 'env') {
@@ -198,23 +206,26 @@ function misplacedTarget(command, cwd, policy) {
           && (/^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[candidate].value)
             || tokens[candidate].value.startsWith('-'))) candidate += 1;
       if (tokens[candidate] && !tokens[candidate].op
-          && tokens[candidate].value.split('/').pop() === 'git') index = candidate - 1;
+          && tokens[candidate].value.split('/').pop() === 'git') index = candidate;
       else continue;
     } else if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(item.value)) {
       let candidate = index;
       while (tokens[candidate] && !tokens[candidate].op
           && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[candidate].value)) candidate += 1;
       if (tokens[candidate] && !tokens[candidate].op
-          && tokens[candidate].value.split('/').pop() === 'git') index = candidate - 1;
+          && tokens[candidate].value.split('/').pop() === 'git') index = candidate;
       else continue;
     }
     const commandItem = tokens[index];
     const commandExecutable = commandItem.value.split('/').pop();
     const piped = index > 0 && tokens[index - 1].op === '|';
-    if (commandExecutable === 'cd' && tokens[index + 1] && !tokens[index + 1].op) {
-      const changed = activeCwd && expandShellPath(tokens[index + 1], activeCwd);
+    let cdOperand = index + 1;
+    if (commandExecutable === 'cd' && tokens[cdOperand]
+        && tokens[cdOperand].value === '--') cdOperand += 1;
+    if (commandExecutable === 'cd' && tokens[cdOperand] && !tokens[cdOperand].op) {
+      const changed = activeCwd && expandShellPath(tokens[cdOperand], activeCwd);
       activeCwd = piped ? activeCwd : changed;
-      index += 1;
+      index = cdOperand;
       continue;
     }
     if (commandExecutable !== 'git') continue;
@@ -241,8 +252,12 @@ function stripHereDocuments(command) {
     output.push(line);
     const visible = line.replace(/'(?:[^']*)'|"(?:\\.|[^"])*"|\\./g, ' ')
       .replace(/(^|\s)#[^\n]*/g, '$1');
-    const match = visible.match(/<<(-?)\s*([A-Za-z_][A-Za-z0-9_.-]*)/);
-    if (match) { stripTabs = Boolean(match[1]); delimiter = match[3]; }
+    const operator = visible.match(/<<(-?)\s*/);
+    if (operator) {
+      const raw = line.slice(operator.index + operator[0].length);
+      const word = raw.match(/^(?:'([^']+)'|"([^"]+)"|([A-Za-z_][A-Za-z0-9_.-]*))/);
+      if (word) { stripTabs = Boolean(operator[1]); delimiter = word[1] || word[2] || word[3]; }
+    }
   }
   return output.join('\n');
 }
