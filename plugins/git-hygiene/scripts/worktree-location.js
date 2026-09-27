@@ -194,7 +194,7 @@ function expandShellText(token, unresolvedVariables = new Set(), allowCommandSub
   const value = token.value;
   if (token.escapedExpansion && value.includes('$')) return null;
   if (value.startsWith('~') && !/^~(?:\/|$)/.test(value) && !token.quoted) return null;
-  const literalSingleQuoted = token.singleQuoted && !token.hasDoubleQuoted && !token.hasUnquoted;
+  const literalSingleQuoted = token.singleQuoted && !token.hasDoubleQuoted;
   let expanded = token.tildeEligible === false ? value : value.replace(/^~(?=\/|$)/, os.homedir());
   if (!literalSingleQuoted) {
     expanded = expanded.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)/g,
@@ -265,7 +265,7 @@ function gitCommand(tokens, start, activeCwd, unresolvedVariables) {
         || token === '--glob-pathspecs' || token === '--noglob-pathspecs'
         || token === '--icase-pathspecs'
         || token === '--no-replace-objects' || token === '--no-lazy-fetch'
-        || token === '--paginate' || token === '-P' || token === '--bare'
+        || token === '--paginate' || token === '-p' || token === '-P' || token === '--bare'
         || token.startsWith('--config-env=')
         || token === '--exec-path' || token === '--html-path' || token === '--man-path'
         || token === '--info-path' || token.startsWith('--exec-path=')
@@ -410,7 +410,11 @@ function misplacedTarget(command, cwd, policy, inheritedVariables = [], cwdUnkno
     const unwrapped = unwrapCommand(tokens, index, activeCwd, unresolvedVariables);
     index = unwrapped.index;
     const commandCwd = unwrapped.cwd;
-    if (!tokens[index] || tokens[index].op) continue;
+    if (!tokens[index] || tokens[index].op) {
+      commandStart = true;
+      index -= 1;
+      continue;
+    }
     const executable = tokens[index].value.split('/').pop();
     if (executable === 'export') {
       for (let next = index + 1; tokens[next] && !tokens[next].op; next += 1) {
@@ -431,6 +435,7 @@ function misplacedTarget(command, cwd, policy, inheritedVariables = [], cwdUnkno
       if (inPipelineOrBackground) { index += 1; continue; }
       directoryStack.push(activeCwd);
       activeCwd = expandCdPath(tokens[index + 1], activeCwd, unresolvedVariables);
+      unresolvedVariables.add('PWD');
       index += 1;
       continue;
     }
@@ -438,6 +443,7 @@ function misplacedTarget(command, cwd, policy, inheritedVariables = [], cwdUnkno
       const prior = tokens[index - 1] && tokens[index - 1].op;
       if (prior === '&&' || prior === '||') conditionalDirectory = true;
       activeCwd = directoryStack.length ? directoryStack.pop() : null;
+      unresolvedVariables.add('PWD');
       continue;
     }
     const commandItem = tokens[index];
