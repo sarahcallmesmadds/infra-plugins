@@ -111,6 +111,7 @@ function shellTokens(command) {
       } else tokens.push({ op: char });
       continue;
     }
+    tokenStarted = true;
     token += char;
   }
   if (escaped) token += '\\';
@@ -256,18 +257,23 @@ function misplacedTarget(command, cwd, policy) {
     const commandExecutable = commandItem.value.split('/').pop();
     if (['bash', 'sh', 'zsh', 'dash'].includes(commandExecutable)) {
       let scriptIndex = index + 1;
+      let hasCommandFlag = false;
       while (tokens[scriptIndex] && !tokens[scriptIndex].op
-          && tokens[scriptIndex].value !== '-c') scriptIndex += 1;
-      if (tokens[scriptIndex] && tokens[scriptIndex].value === '-c'
-          && tokens[scriptIndex + 1] && !tokens[scriptIndex + 1].op) {
-        const nested = misplacedTarget(tokens[scriptIndex + 1].value, activeCwd, policy);
+          && tokens[scriptIndex].value.startsWith('-')) {
+        if (/^-[^-]*c/.test(tokens[scriptIndex].value)) hasCommandFlag = true;
+        scriptIndex += 1;
+      }
+      if (hasCommandFlag && tokens[scriptIndex] && !tokens[scriptIndex].op) {
+        const nested = misplacedTarget(tokens[scriptIndex].value, activeCwd, policy);
         if (nested) return nested;
       }
       continue;
     }
     let cdOperand = index + 1;
-    if (commandExecutable === 'cd' && tokens[cdOperand]
-        && tokens[cdOperand].value === '--') cdOperand += 1;
+    if (commandExecutable === 'cd') {
+      while (tokens[cdOperand] && !tokens[cdOperand].op
+          && ['--', '-P', '-L'].includes(tokens[cdOperand].value)) cdOperand += 1;
+    }
     if (commandExecutable === 'cd' && tokens[cdOperand] && !tokens[cdOperand].op) {
       let inPipelineOrBackground = false;
       for (let look = cdOperand + 1; look < tokens.length && !tokens[look].op
@@ -331,7 +337,8 @@ function findHereDocument(line) {
     if (quote) { if (char === quote) quote = null; continue; }
     if (char === "'" || char === '"') { quote = char; continue; }
     if (char === '#' && (i === 0 || /\s/.test(line[i - 1]))) break;
-    if (char !== '<' || line[i + 1] !== '<' || line[i + 2] === '<') continue;
+    if (char === '<' && line[i + 1] === '<' && line[i + 2] === '<') { i += 2; continue; }
+    if (char !== '<' || line[i + 1] !== '<') continue;
     let cursor = i + 2;
     let stripTabs = false;
     if (line[cursor] === '-') { stripTabs = true; cursor += 1; }
