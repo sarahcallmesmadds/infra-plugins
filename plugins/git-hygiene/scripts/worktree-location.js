@@ -58,19 +58,23 @@ function shellTokens(command) {
   let singleQuoted = false;
   let tildeEligible = true;
   let tokenStarted = false;
+  let escapedExpansion = false;
   const flush = () => {
-    if (tokenStarted) tokens.push({ value: token, quoted, singleQuoted, tildeEligible });
+    if (tokenStarted) tokens.push({ value: token, quoted, singleQuoted, tildeEligible,
+      escapedExpansion, substitutions: singleQuoted ? [] : extractCommandSubstitutions(token) });
     token = '';
     quoted = false;
     singleQuoted = false;
     tildeEligible = true;
     tokenStarted = false;
+    escapedExpansion = false;
   };
 
   for (let i = 0; i < command.length; i += 1) {
     const char = command[i];
     if (escaped) {
       if (char === '\n') { escaped = false; continue; }
+      if (char === '$' || char === '`') escapedExpansion = true;
       token += char;
       escaped = false;
       continue;
@@ -80,6 +84,10 @@ function shellTokens(command) {
       tokens.push({ op: ';' });
       continue;
     }
+    if (!quote && char === '#' && !tokenStarted) {
+      while (i + 1 < command.length && command[i + 1] !== '\n') i += 1;
+      continue;
+    }
     if (char === '\\' && quote !== "'") {
       if (!token) tildeEligible = false;
       tokenStarted = true;
@@ -87,6 +95,14 @@ function shellTokens(command) {
       continue;
     }
     if (quote) {
+      if (quote === '"' && char === '$' && command[i + 1] === '(') {
+        const end = substitutionEnd(command, i + 1);
+        if (end > i) { token += command.slice(i, end + 1); i = end; continue; }
+      }
+      if (quote === '"' && char === '`') {
+        const end = command.indexOf('`', i + 1);
+        if (end >= 0) { token += command.slice(i, end + 1); i = end; continue; }
+      }
       if (char === quote) quote = null;
       else { token += char; quoted = true; if (quote === "'") singleQuoted = true; }
       continue;
@@ -97,6 +113,14 @@ function shellTokens(command) {
       quote = char;
       quoted = true;
       continue;
+    }
+    if (char === '$' && command[i + 1] === '(') {
+      const end = substitutionEnd(command, i + 1);
+      if (end > i) { token += command.slice(i, end + 1); tokenStarted = true; i = end; continue; }
+    }
+    if (char === '`') {
+      const end = command.indexOf('`', i + 1);
+      if (end >= 0) { token += command.slice(i, end + 1); tokenStarted = true; i = end; continue; }
     }
     if (/\s/.test(char)) {
       flush();
@@ -121,6 +145,7 @@ function shellTokens(command) {
 
 function expandShellText(token, unresolvedVariables = new Set()) {
   const value = token.value;
+  if (token.escapedExpansion && value.includes('$')) return null;
   let expanded = token.tildeEligible === false ? value : value.replace(/^~(?=\/|$)/, os.homedir());
   if (!token.singleQuoted) {
     expanded = expanded.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)/g,
@@ -145,6 +170,8 @@ function expandShellPath(token, cwd, unresolvedVariables = new Set()) {
 function expandCdPath(token, cwd, unresolvedVariables, physical = false) {
   const expanded = expandShellText(token, unresolvedVariables);
   if (expanded === null || !cwd) return null;
+  if (path.isAbsolute(expanded)) return physicalPath(expanded);
+  if (path.isAbsolute(expanded)) return physicalPath(expanded);
   // The shell's default cd follows logical PWD semantics, resolving '..' before
   // following symlinks. The resulting process directory is then physical.
   return physical ? physicalPath(`${cwd}${path.sep}${expanded}`)
@@ -177,6 +204,7 @@ function gitCommand(tokens, start, activeCwd, unresolvedVariables) {
         || token.startsWith('--namespace=') || token === '--no-pager'
         || token === '--no-optional-locks' || token === '--literal-pathspecs'
         || token === '--no-replace-objects' || token === '--no-lazy-fetch'
+        || token === '--paginate' || token === '-P'
         || token.startsWith('-c')) {
       index += 1;
       continue;
@@ -216,8 +244,7 @@ function gitCommand(tokens, start, activeCwd, unresolvedVariables) {
 
 function misplacedTarget(command, cwd, policy) {
   const source = stripHereDocuments(command);
-  const nestedCommands = extractCommandSubstitutions(source);
-  const tokens = shellTokens(source.concat(nestedCommands.map((part) => `\n${part}`).join('')));
+  const tokens = shellTokens(source);
   let activeCwd = path.resolve(cwd || process.cwd());
   const cwdStack = [];
   const unresolvedVariables = new Set();
@@ -229,6 +256,10 @@ function misplacedTarget(command, cwd, policy) {
       if (item.op === ')') activeCwd = cwdStack.length ? cwdStack.pop() : null;
       commandStart = true;
       continue;
+    }
+    for (const nested of item.substitutions || []) {
+      const nestedTarget = misplacedTarget(nested, activeCwd, policy);
+      if (nestedTarget) return nestedTarget;
     }
     if (!commandStart) continue;
     if (['if', 'then', 'do', 'else', 'elif', '!', 'time'].includes(item.value)) continue;
@@ -250,7 +281,7 @@ function misplacedTarget(command, cwd, policy) {
         else break;
       }
       if (tokens[candidate] && !tokens[candidate].op
-          && ['git', 'cd'].includes(tokens[candidate].value.split('/').pop())) index = candidate;
+          && ['git', 'cd', 'bash', 'sh', 'zsh', 'dash'].includes(tokens[candidate].value.split('/').pop())) index = candidate;
       else continue;
     } else if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(item.value)) {
       let candidate = index;
@@ -321,7 +352,6 @@ function misplacedTarget(command, cwd, policy) {
 function stripHereDocuments(command) {
   const lines = command.split('\n');
   const output = [];
-  const substitutions = [];
   let delimiter = null;
   let stripTabs = false;
   let expandBody = false;
@@ -330,12 +360,15 @@ function stripHereDocuments(command) {
     if (delimiter) {
       const closing = (stripTabs ? line.replace(/^\t+/, '') : line) === delimiter;
       if (closing) delimiter = null;
+      const expandedCommands = [];
       if (expandBody) {
         const pattern = /\$\(([^()]*(?:\([^()]*\)[^()]*)*)\)|`([^`]*)`/g;
         let match;
-        while ((match = pattern.exec(line))) substitutions.push(match[1] || match[2]);
+        while ((match = pattern.exec(line))) expandedCommands.push(match[1] || match[2]);
       }
       output.push(shellBody ? line : '');
+      output.push(...expandedCommands);
+      if (closing && shellBody) output.push(')');
       if (closing) shellBody = false;
       continue;
     }
@@ -346,9 +379,10 @@ function stripHereDocuments(command) {
       delimiter = heredoc.delimiter;
       expandBody = !heredoc.quoted;
       shellBody = heredoc.shellScript;
+      if (shellBody) output.push('(');
     }
   }
-  return output.concat(substitutions).join('\n');
+  return output.join('\n');
 }
 
 function findHereDocument(line) {
