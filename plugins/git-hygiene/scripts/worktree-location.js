@@ -58,19 +58,21 @@ function shellTokens(command) {
   let singleQuoted = false;
   let hasDoubleQuoted = false;
   let hasUnquoted = false;
+  let hasUnquotedGlob = false;
   let tildeEligible = true;
   let tokenStarted = false;
   let escapedExpansion = false;
   let substitutions = [];
   const flush = () => {
     if (tokenStarted) tokens.push({ value: token, quoted, singleQuoted, hasDoubleQuoted,
-      hasUnquoted, tildeEligible,
+      hasUnquoted, hasUnquotedGlob, tildeEligible,
       escapedExpansion, substitutions });
     token = '';
     quoted = false;
     singleQuoted = false;
     hasDoubleQuoted = false;
     hasUnquoted = false;
+    hasUnquotedGlob = false;
     tildeEligible = true;
     tokenStarted = false;
     escapedExpansion = false;
@@ -161,6 +163,7 @@ function shellTokens(command) {
     }
     tokenStarted = true;
     hasUnquoted = true;
+    if ('*?[]{}'.includes(char)) hasUnquotedGlob = true;
     token += char;
   }
   if (escaped) token += '\\';
@@ -168,7 +171,8 @@ function shellTokens(command) {
   return tokens;
 }
 
-function expandShellText(token, unresolvedVariables = new Set()) {
+function expandShellText(token, unresolvedVariables = new Set(), allowCommandSubstitutions = false,
+  allowUnresolvedVariables = false) {
   const value = token.value;
   if (token.escapedExpansion && value.includes('$')) return null;
   const literalSingleQuoted = token.singleQuoted && !token.hasDoubleQuoted && !token.hasUnquoted;
@@ -180,8 +184,10 @@ function expandShellText(token, unresolvedVariables = new Set()) {
         return unresolvedVariables.has(name) ? match : (process.env[name] || match);
       });
   }
-  if ((!literalSingleQuoted && (expanded.includes('$') || expanded.includes('$(') || expanded.includes('`')))
-      || (!token.quoted && /[*?\[{}]/.test(expanded))) return null;
+  const unresolvedExpansion = /\$(?:[A-Za-z_][A-Za-z0-9_]*|\{[A-Za-z_][A-Za-z0-9_]*\})/.test(expanded);
+  if ((!literalSingleQuoted && (unresolvedExpansion && !allowUnresolvedVariables
+      || !allowCommandSubstitutions && (expanded.includes('$(') || expanded.includes('`'))))
+      || (token.hasUnquotedGlob && /[*?\[{}]/.test(expanded))) return null;
   return expanded;
 }
 
@@ -236,12 +242,17 @@ function gitCommand(tokens, start, activeCwd, unresolvedVariables) {
     if (token.startsWith('--git-dir=') || token.startsWith('--work-tree=')
         || token.startsWith('--namespace=') || token === '--no-pager'
         || token === '--no-optional-locks' || token === '--literal-pathspecs'
+        || token === '--glob-pathspecs' || token === '--noglob-pathspecs'
+        || token === '--icase-pathspecs'
         || token === '--no-replace-objects' || token === '--no-lazy-fetch'
         || token === '--paginate' || token === '-P'
+        || token === '--exec-path' || token === '--html-path' || token === '--man-path'
+        || token === '--info-path' || token.startsWith('--exec-path=')
         || token.startsWith('-c')) {
       index += 1;
       continue;
     }
+    if (token === '--super-prefix' || token === '--config-env') { index += 2; continue; }
     break;
   }
 
@@ -353,7 +364,14 @@ function misplacedTarget(command, cwd, policy, inheritedVariables = []) {
         const assignment = tokens[candidate].value.match(/^([A-Za-z_][A-Za-z0-9_]*)=/);
         if (assignment) unresolvedVariables.add(assignment[1]);
         if (assignment) candidate += 1;
-        else if (executable === 'env' && ['-u', '--unset', '-C', '--chdir'].includes(tokens[candidate].value)) {
+        else if (executable === 'env' && tokens[candidate].value.startsWith('--chdir=')) {
+          commandCwd = expandShellPath({ ...tokens[candidate], value: tokens[candidate].value.slice(9) }, commandCwd, unresolvedVariables);
+          candidate += 1;
+        } else if (executable === 'env' && tokens[candidate].value.startsWith('-C')
+            && tokens[candidate].value.length > 2) {
+          commandCwd = expandShellPath({ ...tokens[candidate], value: tokens[candidate].value.slice(2) }, commandCwd, unresolvedVariables);
+          candidate += 1;
+        } else if (executable === 'env' && ['-u', '--unset', '-C', '--chdir'].includes(tokens[candidate].value)) {
           const option = tokens[candidate].value;
           const operand = tokens[candidate + 1];
           if ((option === '-C' || option === '--chdir') && operand && !operand.op) {
@@ -389,8 +407,14 @@ function misplacedTarget(command, cwd, policy, inheritedVariables = []) {
         scriptIndex += 1;
       }
       if (hasCommandFlag && tokens[scriptIndex] && !tokens[scriptIndex].op) {
-        const script = expandShellText(tokens[scriptIndex], unresolvedVariables);
-        if (script === null) return { unknown: true };
+        const script = expandShellText(tokens[scriptIndex], unresolvedVariables, true, true);
+        if (script === null) {
+          return /\bgit\b[\s\S]*\bworktree\b[\s\S]*\badd\b/.test(tokens[scriptIndex].value)
+            ? { unknown: true } : null;
+        }
+        const unresolvedScriptVariable = script.match(/\$\{?([A-Za-z_][A-Za-z0-9_]*)/g) || [];
+        if (unresolvedScriptVariable.some((entry) => unresolvedVariables.has(entry.replace(/^\$\{?/, '').replace(/\}?$/, '')))
+            && /\bgit\b[\s\S]*\bworktree\b[\s\S]*\badd\b/.test(script)) return { unknown: true };
         const nested = misplacedTarget(script, commandCwd, policy, [...unresolvedVariables]);
         if (nested) return nested;
       }
@@ -408,7 +432,7 @@ function misplacedTarget(command, cwd, policy, inheritedVariables = []) {
     if (commandExecutable === 'cd' && tokens[cdOperand] && !tokens[cdOperand].op) {
       const prior = tokens[index - 1] && tokens[index - 1].op;
       if (prior === '&&' || prior === '||') conditionalDirectory = true;
-      let inPipelineOrBackground = false;
+      let inPipelineOrBackground = index > 0 && tokens[index - 1].op === '|';
       for (let look = cdOperand + 1; look < tokens.length && !tokens[look].op
           || (tokens[look] && ['|', '&'].includes(tokens[look].op)); look += 1) {
         if (tokens[look].op === '|' || tokens[look].op === '&') inPipelineOrBackground = true;
