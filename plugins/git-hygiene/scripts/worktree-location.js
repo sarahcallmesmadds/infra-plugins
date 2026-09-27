@@ -57,12 +57,14 @@ function shellTokens(command) {
   let quoted = false;
   let singleQuoted = false;
   let tildeEligible = true;
+  let tokenStarted = false;
   const flush = () => {
-    if (token) tokens.push({ value: token, quoted, singleQuoted, tildeEligible });
+    if (tokenStarted) tokens.push({ value: token, quoted, singleQuoted, tildeEligible });
     token = '';
     quoted = false;
     singleQuoted = false;
     tildeEligible = true;
+    tokenStarted = false;
   };
 
   for (let i = 0; i < command.length; i += 1) {
@@ -80,6 +82,7 @@ function shellTokens(command) {
     }
     if (char === '\\' && quote !== "'") {
       if (!token) tildeEligible = false;
+      tokenStarted = true;
       escaped = true;
       continue;
     }
@@ -90,6 +93,7 @@ function shellTokens(command) {
     }
     if (char === "'" || char === '"') {
       if (!token) tildeEligible = false;
+      tokenStarted = true;
       quote = char;
       quoted = true;
       continue;
@@ -98,7 +102,7 @@ function shellTokens(command) {
       flush();
       continue;
     }
-    if (';&|()'.includes(char)) {
+    if (';&|(){}'.includes(char)) {
       flush();
       const pair = command.slice(i, i + 2);
       if (pair === '&&' || pair === '||') {
@@ -114,7 +118,7 @@ function shellTokens(command) {
   return tokens;
 }
 
-function expandShellPath(token, cwd, unresolvedVariables = new Set()) {
+function expandShellText(token, unresolvedVariables = new Set()) {
   const value = token.value;
   let expanded = token.tildeEligible === false ? value : value.replace(/^~(?=\/|$)/, os.homedir());
   if (!token.singleQuoted) {
@@ -126,9 +130,23 @@ function expandShellPath(token, cwd, unresolvedVariables = new Set()) {
   }
   if (expanded.includes('$') || expanded.includes('$(') || expanded.includes('`')
       || /[*?\[]/.test(expanded)) return null;
+  return expanded;
+}
+
+function expandShellPath(token, cwd, unresolvedVariables = new Set()) {
+  const expanded = expandShellText(token, unresolvedVariables);
+  if (expanded === null) return null;
   if (!cwd && !path.isAbsolute(expanded)) return null;
   const joined = path.isAbsolute(expanded) ? expanded : `${cwd}${path.sep}${expanded}`;
   return physicalPath(joined);
+}
+
+function expandCdPath(token, cwd, unresolvedVariables) {
+  const expanded = expandShellText(token, unresolvedVariables);
+  if (expanded === null || !cwd) return null;
+  // The shell's default cd follows logical PWD semantics, resolving '..' before
+  // following symlinks. The resulting process directory is then physical.
+  return physicalPath(path.resolve(cwd, expanded));
 }
 
 function gitCommand(tokens, start, activeCwd, unresolvedVariables) {
@@ -212,7 +230,7 @@ function misplacedTarget(command, cwd, policy) {
     if (['if', 'then', 'do', 'else', 'elif', '!', 'time'].includes(item.value)) continue;
     commandStart = false;
     const executable = item.value.split('/').pop();
-    if (executable === 'env' || executable === 'command') {
+    if (['env', 'command', 'builtin'].includes(executable)) {
       let candidate = index + 1;
       while (tokens[candidate] && !tokens[candidate].op) {
         const assignment = tokens[candidate].value.match(/^([A-Za-z_][A-Za-z0-9_]*)=/);
@@ -236,13 +254,31 @@ function misplacedTarget(command, cwd, policy) {
     }
     const commandItem = tokens[index];
     const commandExecutable = commandItem.value.split('/').pop();
-    const piped = index > 0 && tokens[index - 1].op === '|';
+    if (['bash', 'sh', 'zsh', 'dash'].includes(commandExecutable)) {
+      let scriptIndex = index + 1;
+      while (tokens[scriptIndex] && !tokens[scriptIndex].op
+          && tokens[scriptIndex].value !== '-c') scriptIndex += 1;
+      if (tokens[scriptIndex] && tokens[scriptIndex].value === '-c'
+          && tokens[scriptIndex + 1] && !tokens[scriptIndex + 1].op) {
+        const nested = misplacedTarget(tokens[scriptIndex + 1].value, activeCwd, policy);
+        if (nested) return nested;
+      }
+      continue;
+    }
     let cdOperand = index + 1;
     if (commandExecutable === 'cd' && tokens[cdOperand]
         && tokens[cdOperand].value === '--') cdOperand += 1;
     if (commandExecutable === 'cd' && tokens[cdOperand] && !tokens[cdOperand].op) {
-      const changed = activeCwd && expandShellPath(tokens[cdOperand], activeCwd, unresolvedVariables);
-      activeCwd = piped ? activeCwd : changed;
+      let inPipelineOrBackground = false;
+      for (let look = cdOperand + 1; look < tokens.length && !tokens[look].op
+          || (tokens[look] && ['|', '&'].includes(tokens[look].op)); look += 1) {
+        if (tokens[look].op === '|' || tokens[look].op === '&') inPipelineOrBackground = true;
+      }
+      const changed = expandCdPath(tokens[cdOperand], activeCwd, unresolvedVariables);
+      if (!inPipelineOrBackground) {
+        activeCwd = changed;
+        unresolvedVariables.add('PWD');
+      }
       index = cdOperand;
       continue;
     }
@@ -259,26 +295,62 @@ function misplacedTarget(command, cwd, policy) {
 function stripHereDocuments(command) {
   const lines = command.split('\n');
   const output = [];
+  const substitutions = [];
   let delimiter = null;
   let stripTabs = false;
+  let expandBody = false;
   for (const line of lines) {
     if (delimiter) {
       if ((stripTabs ? line.replace(/^\t+/, '') : line) === delimiter) delimiter = null;
+      if (expandBody) {
+        const pattern = /\$\(([^()]*(?:\([^()]*\)[^()]*)*)\)|`([^`]*)`/g;
+        let match;
+        while ((match = pattern.exec(line))) substitutions.push(match[1] || match[2]);
+      }
       output.push('');
       continue;
     }
     output.push(line);
-    const visible = line.replace(/'(?:[^']*)'|"(?:\\.|[^"])*"|\\./g,
-      (match) => ' '.repeat(match.length))
-      .replace(/(^|\s)#[^\n]*/g, '$1');
-    const operator = visible.match(/<<(-?)\s*/);
-    if (operator) {
-      const raw = line.slice(operator.index + operator[0].length);
-      const word = raw.match(/^(?:'([^']*)'|"([^"]*)"|([A-Za-z_][A-Za-z0-9_.-]*))/);
-      if (word) { stripTabs = Boolean(operator[1]); delimiter = word[1] || word[2] || word[3]; }
+    const heredoc = findHereDocument(line);
+    if (heredoc) {
+      stripTabs = heredoc.stripTabs;
+      delimiter = heredoc.delimiter;
+      expandBody = !heredoc.quoted;
     }
   }
-  return output.join('\n');
+  return output.concat(substitutions).join('\n');
+}
+
+function findHereDocument(line) {
+  let quote = null;
+  let escaped = false;
+  for (let i = 0; i < line.length - 1; i += 1) {
+    const char = line[i];
+    if (escaped) { escaped = false; continue; }
+    if (char === '\\' && quote !== "'") { escaped = true; continue; }
+    if (quote) { if (char === quote) quote = null; continue; }
+    if (char === "'" || char === '"') { quote = char; continue; }
+    if (char === '#' && (i === 0 || /\s/.test(line[i - 1]))) break;
+    if (char !== '<' || line[i + 1] !== '<' || line[i + 2] === '<') continue;
+    let cursor = i + 2;
+    let stripTabs = false;
+    if (line[cursor] === '-') { stripTabs = true; cursor += 1; }
+    while (/\s/.test(line[cursor] || '') && cursor < line.length) cursor += 1;
+    let delimiter = '';
+    let wordQuote = null;
+    let quoted = false;
+    while (cursor < line.length) {
+      const part = line[cursor];
+      if (!wordQuote && /\s/.test(part)) break;
+      if (!wordQuote && (part === "'" || part === '"')) { wordQuote = part; quoted = true; cursor += 1; continue; }
+      if (wordQuote && part === wordQuote) { wordQuote = null; cursor += 1; continue; }
+      if (part === '\\' && wordQuote !== "'") { quoted = true; cursor += 1; }
+      else delimiter += part;
+      cursor += 1;
+    }
+    if (delimiter) return { delimiter, stripTabs, quoted };
+  }
+  return null;
 }
 
 module.exports = { loadPolicy, misplacedTarget };
