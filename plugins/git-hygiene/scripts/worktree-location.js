@@ -154,6 +154,12 @@ function shellTokens(command) {
         continue;
       }
     }
+    if (char === '<' && command.slice(i, i + 3) === '<<<') {
+      flush();
+      tokens.push({ op: 'redirect:<<<' });
+      i += 2;
+      continue;
+    }
     if (char === '<' || char === '>') {
       flush();
       if (tokens.length && /^\d+$/.test(tokens[tokens.length - 1].value)
@@ -400,8 +406,8 @@ function misplacedTarget(command, cwd, policy, inheritedVariables = [], cwdUnkno
       if (nestedTarget) return nestedTarget;
     }
     if (!commandStart) continue;
-    if (['if', 'then', 'do', 'else', 'elif', 'fi', '!', 'time'].includes(item.value)) {
-      if (['then', 'else', 'elif', 'fi'].includes(item.value)) {
+    if (['if', 'then', 'do', 'else', 'elif', 'fi', 'while', 'until', '!', 'time'].includes(item.value)) {
+      if (['then', 'else', 'elif', 'fi', 'while', 'until'].includes(item.value)) {
         activeCwd = null;
         unresolvedVariables.add('PWD');
       }
@@ -432,11 +438,15 @@ function misplacedTarget(command, cwd, policy, inheritedVariables = [], cwdUnkno
     }
     if (executable === 'pushd') {
       if (!tokens[index + 1] || tokens[index + 1].op) { activeCwd = null; continue; }
+      for (const nested of tokens[index + 1].substitutions || []) {
+        const nestedTarget = misplacedTarget(nested, activeCwd, policy, [...unresolvedVariables], activeCwd === null);
+        if (nestedTarget) return nestedTarget;
+      }
       const prior = tokens[index - 1] && tokens[index - 1].op;
       if (prior === '&&' || prior === '||') conditionalDirectory = true;
       let inPipelineOrBackground = index > 0 && tokens[index - 1].op === '|';
-      for (let look = index + 2; look < tokens.length && !tokens[look].op
-          || (tokens[look] && ['|', '&'].includes(tokens[look].op)); look += 1) {
+      for (let look = index + 2; look < tokens.length && (!tokens[look].op
+          || ['|', '&'].includes(tokens[look].op) || tokens[look].op.startsWith('redirect:')); look += 1) {
         if (tokens[look].op === '|' || tokens[look].op === '&') inPipelineOrBackground = true;
       }
       if (inPipelineOrBackground) { index += 1; continue; }
@@ -450,8 +460,8 @@ function misplacedTarget(command, cwd, policy, inheritedVariables = [], cwdUnkno
       const prior = tokens[index - 1] && tokens[index - 1].op;
       if (prior === '&&' || prior === '||') conditionalDirectory = true;
       let inPipelineOrBackground = index > 0 && tokens[index - 1].op === '|';
-      for (let look = index + 1; look < tokens.length && !tokens[look].op
-          || (tokens[look] && ['|', '&'].includes(tokens[look].op)); look += 1) {
+      for (let look = index + 1; look < tokens.length && (!tokens[look].op
+          || ['|', '&'].includes(tokens[look].op) || tokens[look].op.startsWith('redirect:')); look += 1) {
         if (tokens[look].op === '|' || tokens[look].op === '&') inPipelineOrBackground = true;
       }
       if (inPipelineOrBackground) continue;
@@ -491,6 +501,14 @@ function misplacedTarget(command, cwd, policy, inheritedVariables = [], cwdUnkno
         const nested = misplacedTarget(script, commandCwd, policy, [...unresolvedVariables], commandCwd === null);
         if (nested) return nested;
       }
+      for (let input = index + 1; tokens[input]; input += 1) {
+        if (tokens[input].op === 'redirect:<<<' && tokens[input + 1] && !tokens[input + 1].op) {
+          const nested = misplacedTarget(tokens[input + 1].value, commandCwd, policy,
+            [...unresolvedVariables], commandCwd === null);
+          if (nested) return nested;
+        }
+        if (tokens[input].op && !tokens[input].op.startsWith('redirect:')) break;
+      }
       continue;
     }
     let cdOperand = index + 1;
@@ -503,11 +521,15 @@ function misplacedTarget(command, cwd, policy, inheritedVariables = [], cwdUnkno
       }
     }
     if (commandExecutable === 'cd' && tokens[cdOperand] && !tokens[cdOperand].op) {
+      for (const nested of tokens[cdOperand].substitutions || []) {
+        const nestedTarget = misplacedTarget(nested, activeCwd, policy, [...unresolvedVariables], activeCwd === null);
+        if (nestedTarget) return nestedTarget;
+      }
       const prior = tokens[index - 1] && tokens[index - 1].op;
       if (prior === '&&' || prior === '||') conditionalDirectory = true;
       let inPipelineOrBackground = index > 0 && tokens[index - 1].op === '|';
-      for (let look = cdOperand + 1; look < tokens.length && !tokens[look].op
-          || (tokens[look] && ['|', '&'].includes(tokens[look].op)); look += 1) {
+      for (let look = cdOperand + 1; look < tokens.length && (!tokens[look].op
+          || ['|', '&'].includes(tokens[look].op) || tokens[look].op.startsWith('redirect:')); look += 1) {
         if (tokens[look].op === '|' || tokens[look].op === '&') inPipelineOrBackground = true;
       }
       const changed = expandCdPath(tokens[cdOperand], activeCwd, unresolvedVariables, physicalCd);
@@ -611,11 +633,25 @@ function findHereDocument(line) {
       cursor += 1;
     }
     if (delimiter) {
-      const shellScript = /(?:^|&&|;|\|)\s*(?:(?:command|env)\s+)*(?:[A-Za-z_][A-Za-z0-9_]*=\S+\s+)*(?:\/[^\s]+\/)?(?:bash|sh|zsh|dash)(?:\s|$)/.test(line);
+      const shellScript = isShellStdinCommand(line.slice(0, i));
       return { delimiter, stripTabs, quoted, shellScript };
     }
   }
   return null;
+}
+
+function isShellStdinCommand(prefix) {
+  const segment = prefix.split(/&&|\|\||[;|&]/).pop().trim();
+  const words = segment.match(/"[^"]*"|'[^']*'|\S+/g) || [];
+  let index = 0;
+  while (index < words.length) {
+    const word = words[index].replace(/^['"]|['"]$/g, '');
+    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(word)) { index += 1; continue; }
+    const executable = word.split('/').pop();
+    if (['env', 'command', 'builtin'].includes(executable)) { index += 1; continue; }
+    return ['bash', 'sh', 'zsh', 'dash'].includes(executable);
+  }
+  return false;
 }
 
 function extractCommandSubstitutions(command, heredocExpansion = false) {
