@@ -194,7 +194,8 @@ function expandShellText(token, unresolvedVariables = new Set(), allowCommandSub
   const value = token.value;
   if (token.escapedExpansion && value.includes('$')) return null;
   if (value.startsWith('~') && !/^~(?:\/|$)/.test(value) && !token.quoted) return null;
-  const literalSingleQuoted = token.singleQuoted && !token.hasDoubleQuoted;
+  if (token.singleQuoted && token.hasUnquoted && /\$\{?[A-Za-z_]/.test(value)) return null;
+  const literalSingleQuoted = token.singleQuoted && !token.hasDoubleQuoted && !token.hasUnquoted;
   let expanded = token.tildeEligible === false ? value : value.replace(/^~(?=\/|$)/, os.homedir());
   if (!literalSingleQuoted) {
     expanded = expanded.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)/g,
@@ -408,6 +409,12 @@ function misplacedTarget(command, cwd, policy, inheritedVariables = [], cwdUnkno
     }
     commandStart = false;
     const unwrapped = unwrapCommand(tokens, index, activeCwd, unresolvedVariables);
+    for (let prefix = index; prefix < unwrapped.index; prefix += 1) {
+      for (const nested of tokens[prefix].substitutions || []) {
+        const nestedTarget = misplacedTarget(nested, activeCwd, policy, [...unresolvedVariables], activeCwd === null);
+        if (nestedTarget) return nestedTarget;
+      }
+    }
     index = unwrapped.index;
     const commandCwd = unwrapped.cwd;
     if (!tokens[index] || tokens[index].op) {
@@ -442,8 +449,22 @@ function misplacedTarget(command, cwd, policy, inheritedVariables = [], cwdUnkno
     if (executable === 'popd') {
       const prior = tokens[index - 1] && tokens[index - 1].op;
       if (prior === '&&' || prior === '||') conditionalDirectory = true;
+      let inPipelineOrBackground = index > 0 && tokens[index - 1].op === '|';
+      for (let look = index + 1; look < tokens.length && !tokens[look].op
+          || (tokens[look] && ['|', '&'].includes(tokens[look].op)); look += 1) {
+        if (tokens[look].op === '|' || tokens[look].op === '&') inPipelineOrBackground = true;
+      }
+      if (inPipelineOrBackground) continue;
       activeCwd = directoryStack.length ? directoryStack.pop() : null;
       unresolvedVariables.add('PWD');
+      continue;
+    }
+    if (executable === 'eval') {
+      const bodyTokens = [];
+      for (let part = index + 1; tokens[part] && !tokens[part].op; part += 1) bodyTokens.push(tokens[part].value);
+      const body = bodyTokens.join(' ');
+      const nested = misplacedTarget(body, commandCwd, policy, [...unresolvedVariables], commandCwd === null);
+      if (nested) return nested;
       continue;
     }
     const commandItem = tokens[index];
