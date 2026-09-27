@@ -185,7 +185,8 @@ function expandShellText(token, unresolvedVariables = new Set(), allowCommandSub
       });
   }
   const unresolvedExpansion = /\$(?:[A-Za-z_][A-Za-z0-9_]*|\{[A-Za-z_][A-Za-z0-9_]*\})/.test(expanded);
-  if ((!literalSingleQuoted && (unresolvedExpansion && !allowUnresolvedVariables
+  if ((!literalSingleQuoted && (expanded.includes('$') && !allowCommandSubstitutions
+      || unresolvedExpansion && !allowUnresolvedVariables
       || !allowCommandSubstitutions && (expanded.includes('$(') || expanded.includes('`'))))
       || (token.hasUnquotedGlob && /[*?\[{}]/.test(expanded))) return null;
   return expanded;
@@ -256,11 +257,16 @@ function gitCommand(tokens, start, activeCwd, unresolvedVariables) {
     break;
   }
 
-  if (!tokens[index] || tokens[index].value !== 'worktree'
-      || !tokens[index + 1] || tokens[index + 1].value !== 'add') {
+  if (!tokens[index] || tokens[index].value !== 'worktree') {
     return { end: index, target: null, unknown: false };
   }
-  index += 2;
+  let addIndex = index + 1;
+  while (tokens[addIndex] && tokens[addIndex].op
+      && tokens[addIndex].op.startsWith('redirect:')) addIndex += 2;
+  if (!tokens[addIndex] || tokens[addIndex].value !== 'add') {
+    return { end: addIndex, target: null, unknown: false };
+  }
+  index = addIndex + 1;
   while (index < tokens.length && (!tokens[index].op || tokens[index].op.startsWith('redirect:'))) {
     if (tokens[index].op && tokens[index].op.startsWith('redirect:')) {
       index += 2;
@@ -290,6 +296,46 @@ function gitCommand(tokens, start, activeCwd, unresolvedVariables) {
   return { end: index, target: null, unknown: false };
 }
 
+function unwrapCommand(tokens, start, activeCwd, unresolvedVariables) {
+  let index = start;
+  let cwd = activeCwd;
+  while (tokens[index] && !tokens[index].op) {
+    const token = tokens[index].value;
+    const assignment = token.match(/^([A-Za-z_][A-Za-z0-9_]*)=/);
+    if (assignment) {
+      unresolvedVariables.add(assignment[1]);
+      index += 1;
+      continue;
+    }
+    const executable = token.split('/').pop();
+    if (!['env', 'command', 'builtin'].includes(executable)) return { index, cwd };
+    index += 1;
+    while (tokens[index] && !tokens[index].op) {
+      const arg = tokens[index].value;
+      const envAssignment = arg.match(/^([A-Za-z_][A-Za-z0-9_]*)=/);
+      if (envAssignment) {
+        unresolvedVariables.add(envAssignment[1]);
+        index += 1;
+      } else if (executable === 'env' && (arg === '-C' || arg === '--chdir'
+          || arg === '-u' || arg === '--unset')) {
+        const operand = tokens[index + 1];
+        if (operand && !operand.op && (arg === '-C' || arg === '--chdir')) {
+          cwd = expandShellPath(operand, cwd, unresolvedVariables);
+        }
+        index += 2;
+      } else if (executable === 'env' && arg.startsWith('--chdir=')) {
+        cwd = expandShellPath({ ...tokens[index], value: arg.slice(9) }, cwd, unresolvedVariables);
+        index += 1;
+      } else if (executable === 'env' && arg.startsWith('-C') && arg.length > 2) {
+        cwd = expandShellPath({ ...tokens[index], value: arg.slice(2) }, cwd, unresolvedVariables);
+        index += 1;
+      } else if (arg.startsWith('-')) index += 1;
+      else break;
+    }
+  }
+  return { index, cwd };
+}
+
 function misplacedTarget(command, cwd, policy, inheritedVariables = []) {
   const source = stripHereDocuments(command);
   const tokens = shellTokens(source);
@@ -307,7 +353,7 @@ function misplacedTarget(command, cwd, policy, inheritedVariables = []) {
     if (item.op) {
       if (item.op.startsWith('redirect:')) {
         for (const nested of (tokens[index + 1] && tokens[index + 1].substitutions) || []) {
-          const nestedTarget = misplacedTarget(nested, activeCwd, policy);
+          const nestedTarget = misplacedTarget(nested, activeCwd, policy, [...unresolvedVariables]);
           if (nestedTarget) return nestedTarget;
         }
         index += 1;
@@ -329,7 +375,7 @@ function misplacedTarget(command, cwd, policy, inheritedVariables = []) {
       continue;
     }
     for (const nested of item.substitutions || []) {
-      const nestedTarget = misplacedTarget(nested, activeCwd, policy);
+      const nestedTarget = misplacedTarget(nested, activeCwd, policy, [...unresolvedVariables]);
       if (nestedTarget) return nestedTarget;
     }
     if (!commandStart) continue;
@@ -338,8 +384,11 @@ function misplacedTarget(command, cwd, policy, inheritedVariables = []) {
       continue;
     }
     commandStart = false;
-    const executable = item.value.split('/').pop();
-    let commandCwd = activeCwd;
+    const unwrapped = unwrapCommand(tokens, index, activeCwd, unresolvedVariables);
+    index = unwrapped.index;
+    const commandCwd = unwrapped.cwd;
+    if (!tokens[index] || tokens[index].op) continue;
+    const executable = tokens[index].value.split('/').pop();
     if (executable === 'export') {
       for (let next = index + 1; tokens[next] && !tokens[next].op; next += 1) {
         const assignment = tokens[next].value.match(/^([A-Za-z_][A-Za-z0-9_]*)=/);
@@ -349,6 +398,12 @@ function misplacedTarget(command, cwd, policy, inheritedVariables = []) {
     }
     if (executable === 'pushd') {
       if (!tokens[index + 1] || tokens[index + 1].op) { activeCwd = null; continue; }
+      let inPipelineOrBackground = index > 0 && tokens[index - 1].op === '|';
+      for (let look = index + 2; look < tokens.length && !tokens[look].op
+          || (tokens[look] && ['|', '&'].includes(tokens[look].op)); look += 1) {
+        if (tokens[look].op === '|' || tokens[look].op === '&') inPipelineOrBackground = true;
+      }
+      if (inPipelineOrBackground) { index += 1; continue; }
       directoryStack.push(activeCwd);
       activeCwd = expandCdPath(tokens[index + 1], activeCwd, unresolvedVariables);
       index += 1;
@@ -357,44 +412,6 @@ function misplacedTarget(command, cwd, policy, inheritedVariables = []) {
     if (executable === 'popd') {
       activeCwd = directoryStack.length ? directoryStack.pop() : null;
       continue;
-    }
-    if (['env', 'command', 'builtin'].includes(executable)) {
-      let candidate = index + 1;
-      while (tokens[candidate] && !tokens[candidate].op) {
-        const assignment = tokens[candidate].value.match(/^([A-Za-z_][A-Za-z0-9_]*)=/);
-        if (assignment) unresolvedVariables.add(assignment[1]);
-        if (assignment) candidate += 1;
-        else if (executable === 'env' && tokens[candidate].value.startsWith('--chdir=')) {
-          commandCwd = expandShellPath({ ...tokens[candidate], value: tokens[candidate].value.slice(9) }, commandCwd, unresolvedVariables);
-          candidate += 1;
-        } else if (executable === 'env' && tokens[candidate].value.startsWith('-C')
-            && tokens[candidate].value.length > 2) {
-          commandCwd = expandShellPath({ ...tokens[candidate], value: tokens[candidate].value.slice(2) }, commandCwd, unresolvedVariables);
-          candidate += 1;
-        } else if (executable === 'env' && ['-u', '--unset', '-C', '--chdir'].includes(tokens[candidate].value)) {
-          const option = tokens[candidate].value;
-          const operand = tokens[candidate + 1];
-          if ((option === '-C' || option === '--chdir') && operand && !operand.op) {
-            commandCwd = expandShellPath(operand, commandCwd, unresolvedVariables);
-          }
-          candidate += 2;
-        }
-        else if (tokens[candidate].value.startsWith('-')) candidate += 1;
-        else break;
-      }
-      if (tokens[candidate] && !tokens[candidate].op
-          && ['git', 'cd', 'bash', 'sh', 'zsh', 'dash'].includes(tokens[candidate].value.split('/').pop())) index = candidate;
-      else continue;
-    } else if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(item.value)) {
-      let candidate = index;
-      while (tokens[candidate] && !tokens[candidate].op
-          && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[candidate].value)) candidate += 1;
-      for (let assigned = index; assigned < candidate; assigned += 1) {
-        unresolvedVariables.add(tokens[assigned].value.split('=')[0]);
-      }
-      if (tokens[candidate] && !tokens[candidate].op
-          && ['git', 'bash', 'sh', 'zsh', 'dash'].includes(tokens[candidate].value.split('/').pop())) index = candidate;
-      else continue;
     }
     const commandItem = tokens[index];
     const commandExecutable = commandItem.value.split('/').pop();
