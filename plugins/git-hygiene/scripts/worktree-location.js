@@ -105,6 +105,12 @@ function shellTokens(command) {
       continue;
     }
     if (quote) {
+      if (quote === '"' && char === '\\'
+          && !['$', '`', '"', '\\', '\n'].includes(command[i + 1])) {
+        token += '\\';
+        quoted = true;
+        continue;
+      }
       if (quote === '"') hasDoubleQuoted = true;
       if (quote === "'") singleQuoted = true;
       if (quote === '"' && char === '$' && command[i + 1] === '(') {
@@ -175,6 +181,7 @@ function expandShellText(token, unresolvedVariables = new Set(), allowCommandSub
   allowUnresolvedVariables = false) {
   const value = token.value;
   if (token.escapedExpansion && value.includes('$')) return null;
+  if (value.startsWith('~') && !/^~(?:\/|$)/.test(value) && !token.quoted) return null;
   const literalSingleQuoted = token.singleQuoted && !token.hasDoubleQuoted && !token.hasUnquoted;
   let expanded = token.tildeEligible === false ? value : value.replace(/^~(?=\/|$)/, os.homedir());
   if (!literalSingleQuoted) {
@@ -379,8 +386,11 @@ function misplacedTarget(command, cwd, policy, inheritedVariables = []) {
       if (nestedTarget) return nestedTarget;
     }
     if (!commandStart) continue;
-    if (['if', 'then', 'do', 'else', 'elif', '!', 'time'].includes(item.value)) {
-      if (item.value === 'then') { activeCwd = null; unresolvedVariables.add('PWD'); }
+    if (['if', 'then', 'do', 'else', 'elif', 'fi', '!', 'time'].includes(item.value)) {
+      if (['then', 'else', 'elif', 'fi'].includes(item.value)) {
+        activeCwd = null;
+        unresolvedVariables.add('PWD');
+      }
       continue;
     }
     commandStart = false;
@@ -426,8 +436,10 @@ function misplacedTarget(command, cwd, policy, inheritedVariables = []) {
       if (hasCommandFlag && tokens[scriptIndex] && !tokens[scriptIndex].op) {
         const script = expandShellText(tokens[scriptIndex], unresolvedVariables, true, true);
         if (script === null) {
-          return /\bgit\b[\s\S]*\bworktree\b[\s\S]*\badd\b/.test(tokens[scriptIndex].value)
-            ? { unknown: true } : null;
+          if (/\bgit\b[\s\S]*\bworktree\b[\s\S]*\badd\b/.test(tokens[scriptIndex].value)) {
+            return { unknown: true };
+          }
+          continue;
         }
         const unresolvedScriptVariable = script.match(/\$\{?([A-Za-z_][A-Za-z0-9_]*)/g) || [];
         if (unresolvedScriptVariable.some((entry) => unresolvedVariables.has(entry.replace(/^\$\{?/, '').replace(/\}?$/, '')))
