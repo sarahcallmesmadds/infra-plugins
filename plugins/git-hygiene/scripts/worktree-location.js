@@ -136,7 +136,8 @@ function shellTokens(command) {
     }
     if (char === '<' || char === '>') {
       flush();
-      if (tokens.length && /^\d+$/.test(tokens[tokens.length - 1].value)) tokens.pop();
+      if (tokens.length && /^\d+$/.test(tokens[tokens.length - 1].value)
+          && !tokens[tokens.length - 1].quoted && !/\s/.test(command[i - 1] || '')) tokens.pop();
       let redirection = char;
       if (command[i + 1] === char) { redirection += char; i += 1; }
       if (command[i + 1] === '&') { redirection += '&'; i += 1; }
@@ -306,6 +307,11 @@ function misplacedTarget(command, cwd, policy, inheritedVariables = []) {
         unresolvedVariables.add('PWD');
         conditionalDirectory = false;
       }
+      if (item.op === '||' && conditionalDirectory) {
+        activeCwd = null;
+        unresolvedVariables.add('PWD');
+        conditionalDirectory = false;
+      }
       if (item.op === '(') cwdStack.push(activeCwd);
       if (item.op === ')') activeCwd = cwdStack.length ? cwdStack.pop() : null;
       commandStart = true;
@@ -383,7 +389,9 @@ function misplacedTarget(command, cwd, policy, inheritedVariables = []) {
         scriptIndex += 1;
       }
       if (hasCommandFlag && tokens[scriptIndex] && !tokens[scriptIndex].op) {
-        const nested = misplacedTarget(tokens[scriptIndex].value, commandCwd, policy, [...unresolvedVariables]);
+        const script = expandShellText(tokens[scriptIndex], unresolvedVariables);
+        if (script === null) return { unknown: true };
+        const nested = misplacedTarget(script, commandCwd, policy, [...unresolvedVariables]);
         if (nested) return nested;
       }
       continue;
