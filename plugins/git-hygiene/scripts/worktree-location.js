@@ -170,12 +170,9 @@ function expandShellPath(token, cwd, unresolvedVariables = new Set()) {
 function expandCdPath(token, cwd, unresolvedVariables, physical = false) {
   const expanded = expandShellText(token, unresolvedVariables);
   if (expanded === null || !cwd) return null;
-  if (path.isAbsolute(expanded)) return physicalPath(expanded);
-  if (path.isAbsolute(expanded)) return physicalPath(expanded);
-  // The shell's default cd follows logical PWD semantics, resolving '..' before
-  // following symlinks. The resulting process directory is then physical.
-  return physical ? physicalPath(`${cwd}${path.sep}${expanded}`)
-    : physicalPath(path.resolve(cwd, expanded));
+  if (physical) return physicalPath(path.isAbsolute(expanded)
+    ? expanded : `${cwd}${path.sep}${expanded}`);
+  return path.resolve(cwd, expanded);
 }
 
 function gitCommand(tokens, start, activeCwd, unresolvedVariables) {
@@ -232,11 +229,11 @@ function gitCommand(tokens, start, activeCwd, unresolvedVariables) {
       index += 1;
       continue;
     }
-    const target = repoCwd && expandShellPath(tokens[index], repoCwd, unresolvedVariables);
+    const target = expandShellPath(tokens[index], repoCwd, unresolvedVariables);
     return { end: index + 1, target, unknown: !target };
   }
   if (index < tokens.length && !tokens[index].op) {
-    const target = repoCwd && expandShellPath(tokens[index], repoCwd, unresolvedVariables);
+    const target = expandShellPath(tokens[index], repoCwd, unresolvedVariables);
     return { end: index + 1, target, unknown: !target };
   }
   return { end: index, target: null, unknown: false };
@@ -245,7 +242,10 @@ function gitCommand(tokens, start, activeCwd, unresolvedVariables) {
 function misplacedTarget(command, cwd, policy) {
   const source = stripHereDocuments(command);
   const tokens = shellTokens(source);
-  let activeCwd = path.resolve(cwd || process.cwd());
+  const suppliedCwd = path.resolve(cwd || process.cwd());
+  const logicalPwd = process.env.PWD && path.resolve(process.env.PWD);
+  let activeCwd = logicalPwd && physicalPath(logicalPwd) === physicalPath(suppliedCwd)
+    ? logicalPwd : suppliedCwd;
   const cwdStack = [];
   const unresolvedVariables = new Set();
   let commandStart = true;
@@ -262,7 +262,10 @@ function misplacedTarget(command, cwd, policy) {
       if (nestedTarget) return nestedTarget;
     }
     if (!commandStart) continue;
-    if (['if', 'then', 'do', 'else', 'elif', '!', 'time'].includes(item.value)) continue;
+    if (['if', 'then', 'do', 'else', 'elif', '!', 'time'].includes(item.value)) {
+      if (item.value === 'then') { activeCwd = null; unresolvedVariables.add('PWD'); }
+      continue;
+    }
     commandStart = false;
     const executable = item.value.split('/').pop();
     if (executable === 'export') {
@@ -291,7 +294,7 @@ function misplacedTarget(command, cwd, policy) {
         unresolvedVariables.add(tokens[assigned].value.split('=')[0]);
       }
       if (tokens[candidate] && !tokens[candidate].op
-          && tokens[candidate].value.split('/').pop() === 'git') index = candidate;
+          && ['git', 'bash', 'sh', 'zsh', 'dash'].includes(tokens[candidate].value.split('/').pop())) index = candidate;
       else continue;
     }
     const commandItem = tokens[index];
@@ -320,6 +323,13 @@ function misplacedTarget(command, cwd, policy) {
       }
     }
     if (commandExecutable === 'cd' && tokens[cdOperand] && !tokens[cdOperand].op) {
+      const previousOp = tokens[index - 1] && tokens[index - 1].op;
+      if (previousOp === '&&' || previousOp === '||' || activeCwd === null) {
+        activeCwd = null;
+        unresolvedVariables.add('PWD');
+        index = cdOperand;
+        continue;
+      }
       let inPipelineOrBackground = false;
       for (let look = cdOperand + 1; look < tokens.length && !tokens[look].op
           || (tokens[look] && ['|', '&'].includes(tokens[look].op)); look += 1) {
@@ -341,6 +351,12 @@ function misplacedTarget(command, cwd, policy) {
     }
     if (commandExecutable !== 'git') continue;
     const result = gitCommand(tokens, index, activeCwd, unresolvedVariables);
+    for (let argument = index + 1; argument < result.end; argument += 1) {
+      for (const nested of tokens[argument].substitutions || []) {
+        const nestedTarget = misplacedTarget(nested, activeCwd, policy);
+        if (nestedTarget) return nestedTarget;
+      }
+    }
     if (result.target && isWithin(result.target, policy.projectRoot)
         && !isWithin(result.target, policy.worktreeRoot)) return result.target;
     if (result.unknown) return { unknown: true };
@@ -356,20 +372,20 @@ function stripHereDocuments(command) {
   let stripTabs = false;
   let expandBody = false;
   let shellBody = false;
+  let body = [];
   for (const line of lines) {
     if (delimiter) {
       const closing = (stripTabs ? line.replace(/^\t+/, '') : line) === delimiter;
+      if (!closing) body.push(line);
       if (closing) delimiter = null;
-      const expandedCommands = [];
-      if (expandBody) {
-        const pattern = /\$\(([^()]*(?:\([^()]*\)[^()]*)*)\)|`([^`]*)`/g;
-        let match;
-        while ((match = pattern.exec(line))) expandedCommands.push(match[1] || match[2]);
-      }
       output.push(shellBody ? line : '');
-      output.push(...expandedCommands);
-      if (closing && shellBody) output.push(')');
-      if (closing) shellBody = false;
+      if (closing) {
+        if (expandBody) output.push(...extractCommandSubstitutions(body.join('\n')));
+        if (shellBody) output.push(')');
+        shellBody = false;
+        expandBody = false;
+        body = [];
+      }
       continue;
     }
     output.push(line);
@@ -379,6 +395,7 @@ function stripHereDocuments(command) {
       delimiter = heredoc.delimiter;
       expandBody = !heredoc.quoted;
       shellBody = heredoc.shellScript;
+      body = [];
       if (shellBody) output.push('(');
     }
   }
