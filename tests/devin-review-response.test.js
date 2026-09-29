@@ -1461,6 +1461,39 @@ check('an interrupted finding cannot be substituted by a different source report
   assert.match(result.stderr, /report IDs must match the transcript reconciliation/i);
 });
 
+check('malformed interrupted findings fail validation without an uncaught exception', () => {
+  const result = validate((state) => {
+    makeClean(state);
+    const run = addCli(state, {
+      id: 'DEVIN-CLI-1', status: 'interrupted', outcome: null, count: 0,
+      supersededBy: 'DEVIN-CLI-2',
+    });
+    addCli(state, { id: 'DEVIN-CLI-2', status: 'complete', outcome: 'clean', count: 0 });
+    run.capture.partial_reconciliation.findings = [null];
+    writeJson(run.file, run.capture);
+  });
+  assert.strictEqual(result.status, 1);
+  assert.match(result.stderr, /partial reconciliation finding 1 has an unknown schema/i);
+  assert.doesNotMatch(result.stderr, /TypeError|Cannot read properties/i);
+});
+
+check('pre-push rejects SIGINT claims without native transcript proof', () => {
+  const atifRefusal = JSON.stringify({
+    schema_version: 'ATIF-v1.7',
+    steps: [{ source: 'agent', message: 'Review stopped.', observation: {
+      results: [{ content: 'Tool execution was rejected by the user' }],
+    } }],
+  });
+  const result = validate((state) => {
+    makeClean(state);
+    addCli(state, { id: 'DEVIN-CLI-1', status: 'interrupted', outcome: null, count: 0,
+      supersededBy: 'DEVIN-CLI-2', outputText: atifRefusal });
+    addCli(state, { id: 'DEVIN-CLI-2', status: 'complete', outcome: 'clean', count: 0 });
+  });
+  assert.strictEqual(result.status, 1);
+  assert.match(result.stderr, /interruption signal is not proved by the native transcript/i);
+});
+
 check('CLI status is derived from the recorded exit code and raw output', () => {
   const falseComplete = validate((state) => {
     makeClean(state);
@@ -2231,6 +2264,36 @@ check('finish-cli records interrupted Devin exports without calling them clean',
   assert.strictEqual(finished.interrupted_at, finished.finished_at);
 }));
 
+check('finish-cli rejects unproven interruption signals and inapplicable outcomes', () => temp((dir) => {
+  const repo = initRepo(dir);
+  for (const [name, extraFlags, expectedError] of [
+    ['signal', ['--termination-signal', 'SIGINT'], /requires matching native transcript evidence/i],
+    ['outcome', ['--outcome', 'clean'], /only valid for a completed CLI run/i],
+  ]) {
+    const capture = path.join(dir, `${name}.json`);
+    const output = path.join(dir, `${name}-output.json`);
+    const reconciliationFile = path.join(dir, `${name}-reconciliation.json`);
+    let result = spawnSync(process.execPath, [EVIDENCE, 'start-cli', '--repo-root', repo,
+      '--purpose', 'proactive', '--output', output, '--out', capture], { encoding: 'utf8' });
+    assert.strictEqual(result.status, 0, result.stderr);
+    writeJson(output, {
+      schema_version: 'ATIF-v1.7',
+      steps: [{ source: 'agent', message: 'Review stopped at a permission request.',
+        observation: { results: [{ content: 'Tool execution was rejected by the user' }] } }],
+    });
+    writeJson(reconciliationFile, partialReconciliation(fs.readFileSync(output)));
+    const flags = [EVIDENCE, 'finish-cli', '--repo-root', repo,
+      '--capture', capture, '--output', output,
+      '--interruption-reason', 'A permission-gated request prevented the final verdict.',
+      '--interrupted-at', new Date().toISOString(),
+      '--reconciliation', reconciliationFile, ...extraFlags];
+    result = spawnSync(process.execPath, flags, { encoding: 'utf8' });
+    assert.strictEqual(result.status, 2);
+    assert.match(result.stderr, expectedError);
+    assert.strictEqual(JSON.parse(fs.readFileSync(capture)).status, 'started');
+  }
+}));
+
 check('finish-cli requires every assistant message in an explicit reconciliation', () => temp((dir) => {
   const repo = initRepo(dir);
   const capture = path.join(dir, 'counted-interruption.json');
@@ -2318,6 +2381,22 @@ check('partial reconciliation preserves repeated findings by message and source 
   );
   assert.deepStrictEqual(checked.errors, []);
   assert.deepStrictEqual(checked.reportIds, ['CLI-REPORT-1', 'CLI-REPORT-2']);
+});
+
+check('partial reconciliation matches overlapping quote occurrences', () => {
+  const transcript = JSON.stringify({
+    schema_version: 'devin-cli-session-transcript-v1',
+    kind: 'devin_cli_session_transcript', session_id: 'overlapping-findings',
+    messages: [{ role: 'assistant', content: 'aaaa' }],
+  });
+  const reconciliation = partialReconciliation(transcript, [
+    { id: 'CLI-REPORT-1', message_index: 0, quote: 'aaa', occurrence: 1 },
+  ]);
+  const checked = evidenceModule().validatePartialReconciliation(
+    transcript, crypto.createHash('sha256').update(transcript).digest('hex'), reconciliation
+  );
+  assert.deepStrictEqual(checked.errors, []);
+  assert.deepStrictEqual(checked.reportIds, ['CLI-REPORT-1']);
 });
 
 check('partial reconciliation rejects an unaccounted assistant message', () => {
@@ -2558,7 +2637,7 @@ check('prepare-reconciliation creates an unresolved checklist for every assistan
   assert.match(result.stderr, /refusing to overwrite/i);
 }));
 
-check('native partial transcript reconciliation treats tool-call-only assistant messages as empty text', () => {
+check('partial transcript reconciliation treats tool-call-only assistant messages as empty text', () => {
   const transcript = JSON.stringify({
     schema_version: 'devin-cli-session-transcript-v1',
     kind: 'devin_cli_session_transcript',
@@ -2571,6 +2650,16 @@ check('native partial transcript reconciliation treats tool-call-only assistant 
   });
   const messages = evidenceModule().assistantMessages(transcript);
   assert.deepStrictEqual(messages, ['', 'No finding was reported before cancellation.']);
+  const atif = JSON.stringify({
+    schema_version: 'ATIF-v1.7',
+    steps: [
+      { source: 'agent', tool_calls: [{ function_name: 'exec' }] },
+      { source: 'agent', message: 'No finding was reported before cancellation.' },
+    ],
+  });
+  assert.deepStrictEqual(evidenceModule().assistantMessages(atif), [
+    '', 'No finding was reported before cancellation.',
+  ]);
 });
 
 check('finish-cli rejects an excessive finding count without allocating it', () => temp((dir) => {

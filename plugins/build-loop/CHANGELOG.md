@@ -9,7 +9,9 @@ the plugin is and how to use it. Nothing here is needed to install or run it.
 Every assistant message is explicitly accounted for, and each partial finding
 is tied to an exact transcript quote and source report ID. The response gate
 still requires a later complete retry for the same purpose and commit. Unknown
-failures remain blocked as incomplete.
+failures remain blocked as incomplete. Tool-only transcript steps are accounted
+for, malformed reconciliation entries fail validation cleanly, and interruption
+signals and outcome flags must match evidence the capture can prove.
 
 ## Upgrading to 0.10.21
 

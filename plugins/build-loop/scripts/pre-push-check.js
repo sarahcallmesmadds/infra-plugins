@@ -15,6 +15,7 @@ const {
   classifyCliExecution,
   collectAppEvidence,
   normalizeAppPayload,
+  observedTerminationSignal,
   parseCliCompletion,
   validatePartialReconciliation,
 } = require('./review-evidence');
@@ -439,6 +440,10 @@ function validateCliCapture(run, round, roundFile, errors) {
       const outputStat = fs.statSync(capture.raw_output_path);
       const digest = crypto.createHash('sha256').update(output).digest('hex');
       if (digest !== capture.raw_output_sha256) errors.push(`${run.id}: raw CLI output checksum differs from its capture`);
+      if (capture.status === 'interrupted' && capture.termination_signal !== null
+          && observedTerminationSignal(output) !== capture.termination_signal) {
+        errors.push(`${run.id}: interruption signal is not proved by the native transcript`);
+      }
       if (Number.isFinite(startedAt) && outputStat.mtimeMs < startedAt) {
         errors.push(`${run.id}: raw CLI output predates the capture start`);
       }
@@ -650,7 +655,7 @@ function validateReports(round, runState, app, errors) {
         const capture = runState.cliCaptures.get(run.id);
         const expectedIds = capture && object(capture.partial_reconciliation)
           && Array.isArray(capture.partial_reconciliation.findings)
-          ? capture.partial_reconciliation.findings.map((finding) => finding.id) : [];
+          ? capture.partial_reconciliation.findings.filter(object).map((finding) => finding.id) : [];
         const reportedIds = reports.slice().sort((left, right) => left.ordinal - right.ordinal)
           .map((report) => report.id);
         if (!sameJson(expectedIds, reportedIds)) {

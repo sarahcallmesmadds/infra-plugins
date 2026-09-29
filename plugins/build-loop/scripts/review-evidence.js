@@ -586,6 +586,24 @@ function interruptedTranscript(text) {
     && parsed.termination.log_line.includes('Ctrl-C detected during request processing, requesting cancellation');
 }
 
+function observedTerminationSignal(text) {
+  let parsed;
+  try { parsed = JSON.parse(Buffer.isBuffer(text) ? text.toString('utf8') : String(text || '')); }
+  catch (_) { return null; }
+  if (isObject(parsed)
+      && parsed.schema_version === 'devin-cli-session-transcript-v1'
+      && parsed.kind === 'devin_cli_session_transcript'
+      && typeof parsed.session_id === 'string'
+      && Array.isArray(parsed.messages) && parsed.messages.length > 0
+      && isObject(parsed.termination)
+      && parsed.termination.signal === 'SIGINT'
+      && typeof parsed.termination.log_line === 'string'
+      && parsed.termination.log_line.includes('Ctrl-C detected during request processing, requesting cancellation')) {
+    return 'SIGINT';
+  }
+  return null;
+}
+
 function assistantMessages(text) {
   let parsed;
   try { parsed = JSON.parse(Buffer.isBuffer(text) ? text.toString('utf8') : String(text || '')); }
@@ -593,7 +611,7 @@ function assistantMessages(text) {
   let messages;
   if (isObject(parsed) && parsed.schema_version === 'ATIF-v1.7' && Array.isArray(parsed.steps)) {
     messages = parsed.steps.filter((step) => isObject(step) && step.source === 'agent')
-      .map((step) => step.message);
+      .map((step) => step.message === undefined || step.message === null ? '' : step.message);
   } else if (isObject(parsed) && parsed.schema_version === 'devin-cli-session-transcript-v1'
       && parsed.kind === 'devin_cli_session_transcript' && Array.isArray(parsed.messages)) {
     messages = parsed.messages.filter((message) => isObject(message) && message.role === 'assistant')
@@ -610,7 +628,7 @@ function occurrenceExists(text, quote, occurrence) {
   for (let index = 0; index <= occurrence; index += 1) {
     position = text.indexOf(quote, cursor);
     if (position < 0) return false;
-    cursor = position + quote.length;
+    cursor = position + 1;
   }
   return position >= 0;
 }
@@ -844,19 +862,24 @@ function finishCli(flags) {
   const outputSha256 = crypto.createHash('sha256').update(output).digest('hex');
   const interruptionReason = flags['--interruption-reason'] || null;
   const interruptedAt = flags['--interrupted-at'] || null;
-  const terminationSignal = flags['--termination-signal'] || null;
+  const suppliedTerminationSignal = flags['--termination-signal'] || null;
+  let terminationSignal = null;
   if (status === 'interrupted') {
     if (!nonBlankText(interruptionReason) || !nonBlankText(interruptedAt)) {
       throw new Error('interrupted CLI runs require --interruption-reason and --interrupted-at');
     }
-    if (terminationSignal !== null && terminationSignal !== 'SIGINT') {
+    if (suppliedTerminationSignal !== null && suppliedTerminationSignal !== 'SIGINT') {
       throw new Error('--termination-signal must be SIGINT when supplied');
+    }
+    terminationSignal = observedTerminationSignal(output);
+    if (suppliedTerminationSignal !== null && suppliedTerminationSignal !== terminationSignal) {
+      throw new Error('--termination-signal requires matching native transcript evidence');
     }
     const interruptionMs = Date.parse(interruptedAt);
     if (!Number.isFinite(interruptionMs) || interruptionMs < startedAt || interruptionMs > Date.now()) {
       throw new Error('--interrupted-at must be a valid instant between capture start and now');
     }
-  } else if (interruptionReason !== null || interruptedAt !== null || terminationSignal !== null) {
+  } else if (interruptionReason !== null || interruptedAt !== null || suppliedTerminationSignal !== null) {
     throw new Error('interruption fields are only valid for an interrupted CLI export');
   } else if (exitCode === null) {
     throw new Error('--exit-code is required for non-interrupted CLI runs');
@@ -864,6 +887,9 @@ function finishCli(flags) {
   const suppliedOutcome = flags['--outcome'];
   if (suppliedOutcome !== undefined && !['clean', 'findings'].includes(suppliedOutcome)) {
     throw new Error('--outcome must be clean or findings');
+  }
+  if (status === 'interrupted' && suppliedOutcome !== undefined) {
+    throw new Error('--outcome is only valid for a completed CLI run');
   }
   let suppliedCount = null;
   if (flags['--finding-count'] !== undefined) {
@@ -1072,6 +1098,7 @@ module.exports = {
   containsCliCompletionMarker,
   assistantMessages,
   validatePartialReconciliation,
+  observedTerminationSignal,
   parseReviewBody,
   recognizedPreflight,
 };
