@@ -9,12 +9,17 @@ function main(event) {
 
   const policy = loadPolicy();
   if (!policy) return;
-  const target = misplacedTarget(command, event.cwd, policy);
+  let target;
+  try {
+    target = misplacedTarget(command, event.cwd, policy);
+  } catch (_) {
+    target = { unknown: true };
+  }
   if (!target) return;
 
-  const detail = typeof target === 'string'
-    ? `The destination is ${target}.`
-    : 'The destination uses shell expansion and cannot be checked safely.';
+  const detail = typeof target === 'string' || (target && typeof target.target === 'string')
+    ? `The destination is ${typeof target === 'string' ? target : target.target}.`
+    : 'The command or destination cannot be checked safely.';
   const reason = `Keep project worktrees in ${policy.worktreeRoot}. ${detail} Use ${policy.worktreeRoot}/<repo>/<task> for this worktree.`;
   process.stdout.write(JSON.stringify({
     hookSpecificOutput: {
@@ -37,5 +42,4 @@ process.stdin.on('end', () => {
   } catch (_) {
     // A convenience guard must never break the shell when its own input is bad.
   }
-  process.exit(0);
 });

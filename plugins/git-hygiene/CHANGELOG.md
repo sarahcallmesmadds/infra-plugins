@@ -3,14 +3,14 @@
 Upgrade notes for past versions, moved out of the README so that file stays
 focused on current installation, configuration and behavior.
 
-## 0.4.0 — 2026-09-27
+## 0.4.1 — 2026-09-28
 
 **Project worktrees can stay together.** When `worktreeLocation` is set in
-`~/.claude/git-hygiene.config.json`, the Bash hook blocks a `git worktree add`
-destination inside the configured project folder unless it is under the
-configured worktree folder. The hook runs in Claude Code and Codex. It leaves
-worktrees outside the configured project folder alone. A destination hidden
-inside a shell expression is blocked until an explicit path is supplied.
+`~/.claude/git-hygiene.config.json`, the Bash hook checks one standalone,
+literal `git worktree add` or `git worktree move` command. Destinations must
+be exactly `<worktreeRoot>/<repo>/<task>`. Compound shell syntax, redirects,
+substitutions, wrappers, functions, scripts and other interpreters are outside
+its scope. This is a convenience check, not a sandbox or shell parser.
 
 ## 0.3.12 — 2026-08-29
 

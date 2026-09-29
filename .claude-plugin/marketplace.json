@@ -28,7 +28,7 @@
       "name": "git-hygiene",
       "source": "./plugins/git-hygiene",
       "description": "Tells you which branches are proved safe to delete and blocks misplaced project worktrees when you configure their folder. It cleans up only the branches you approve; held branches stay untouched unless separate evidence clears them.",
-      "version": "0.4.0",
+      "version": "0.4.1",
       "author": {
         "name": "Sarah Madden"
       },
