@@ -3,6 +3,15 @@
 Upgrade notes for past versions, moved out of the README so that file stays
 focused on current installation, configuration and behavior.
 
+## 0.4.1 — 2026-09-28
+
+**Project worktrees can stay together.** When `worktreeLocation` is set in
+`~/.claude/git-hygiene.config.json`, the Bash hook checks one standalone,
+literal `git worktree add` or `git worktree move` command. Destinations must
+be exactly `<worktreeRoot>/<repo>/<task>`. Compound shell syntax, redirects,
+substitutions, wrappers, functions, scripts and other interpreters are outside
+its scope. This is a convenience check, not a sandbox or shell parser.
+
 ## 0.3.12 — 2026-08-29
 
 **Keep now means "not proved safe to delete," not "deleting would lose work."**
