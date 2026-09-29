@@ -575,15 +575,7 @@ function interruptedTranscript(text) {
       && isObject(finalStep.observation.results[0])
       && finalStep.observation.results[0].content === 'Tool execution was rejected by the user';
   }
-  return isObject(parsed)
-    && parsed.schema_version === 'devin-cli-session-transcript-v1'
-    && parsed.kind === 'devin_cli_session_transcript'
-    && typeof parsed.session_id === 'string'
-    && Array.isArray(parsed.messages) && parsed.messages.length > 0
-    && isObject(parsed.termination)
-    && parsed.termination.signal === 'SIGINT'
-    && typeof parsed.termination.log_line === 'string'
-    && parsed.termination.log_line.includes('Ctrl-C detected during request processing, requesting cancellation');
+  return observedTerminationSignal(output) === 'SIGINT';
 }
 
 function observedTerminationSignal(text) {
@@ -888,14 +880,19 @@ function finishCli(flags) {
   if (suppliedOutcome !== undefined && !['clean', 'findings'].includes(suppliedOutcome)) {
     throw new Error('--outcome must be clean or findings');
   }
-  if (status === 'interrupted' && suppliedOutcome !== undefined) {
-    throw new Error('--outcome is only valid for a completed CLI run');
-  }
   let suppliedCount = null;
   if (flags['--finding-count'] !== undefined) {
     suppliedCount = nonNegativeInteger(flags['--finding-count'], '--finding-count');
     if (suppliedCount > MAX_REPORT_COUNT) {
       throw new Error(`--finding-count must not exceed ${MAX_REPORT_COUNT}`);
+    }
+  }
+  if (status !== 'complete' && suppliedOutcome !== undefined) {
+    throw new Error('--outcome is only valid for a completed CLI run');
+  }
+  if (suppliedCount !== null) {
+    if (!['complete', 'interrupted'].includes(status)) {
+      throw new Error('--finding-count is only valid for completed or interrupted CLI exports');
     }
   }
   let partialReconciliation = null;

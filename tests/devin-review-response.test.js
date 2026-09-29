@@ -2235,6 +2235,28 @@ check('finish-cli distinguishes recognized preflight refusal from unknown failur
   }
 }));
 
+check('finish-cli rejects outcome and count claims for failed exports', () => temp((dir) => {
+  const repo = initRepo(dir);
+  for (const [kind, outputText, extraFlags, expectedError] of [
+    ['incomplete-outcome', 'Error: network vanished\n', ['--outcome', 'findings'], /outcome is only valid for a completed CLI run/i],
+    ['incomplete-count', 'Error: network vanished\n', ['--finding-count', '3'], /finding-count is only valid for completed or interrupted CLI exports/i],
+    ['preflight-outcome', 'Error: Tool call rejected by permission mode auto: synthetic read\n', ['--outcome', 'findings'], /outcome is only valid for a completed CLI run/i],
+    ['preflight-count', 'Error: Tool call rejected by permission mode auto: synthetic read\n', ['--finding-count', '3'], /finding-count is only valid for completed or interrupted CLI exports/i],
+  ]) {
+    const capture = path.join(dir, `${kind}.json`);
+    const output = path.join(dir, `${kind}.txt`);
+    let result = spawnSync(process.execPath, [EVIDENCE, 'start-cli', '--repo-root', repo,
+      '--purpose', 'proactive', '--output', output, '--out', capture], { encoding: 'utf8' });
+    assert.strictEqual(result.status, 0, result.stderr);
+    fs.writeFileSync(output, outputText);
+    result = spawnSync(process.execPath, [EVIDENCE, 'finish-cli', '--repo-root', repo,
+      '--capture', capture, '--output', output, '--exit-code', '1', ...extraFlags], { encoding: 'utf8' });
+    assert.strictEqual(result.status, 2);
+    assert.match(result.stderr, expectedError);
+    assert.strictEqual(JSON.parse(fs.readFileSync(capture)).status, 'started');
+  }
+}));
+
 check('finish-cli records interrupted Devin exports without calling them clean', () => temp((dir) => {
   const repo = initRepo(dir);
   const capture = path.join(dir, 'interrupted.json');
