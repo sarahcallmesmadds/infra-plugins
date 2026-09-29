@@ -25,11 +25,20 @@ const CLI_KEYS = [
   'schema_version', 'kind', 'repository_root', 'purpose', 'review_head_sha',
   'started_at', 'start_git_status', 'exit_code', 'status', 'outcome',
   'reported_finding_count', 'raw_output_path', 'raw_output_sha256',
-  'finished_at', 'finish_head_sha', 'finish_git_status',
+  'finished_at', 'finish_head_sha', 'finish_git_status', 'interrupted_at',
+  'interruption_reason', 'termination_signal', 'partial_reconciliation',
+];
+const LEGACY_CLI_KEYS = CLI_KEYS.slice(0, 16);
+const PRE_RECONCILIATION_CLI_KEYS = [
+  ...LEGACY_CLI_KEYS, 'interrupted_at', 'interruption_reason', 'termination_signal',
 ];
 
 function isObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function nonBlankText(value) {
+  return typeof value === 'string' && value.trim() !== '';
 }
 
 function spawnDiagnostic(result) {
@@ -42,6 +51,10 @@ function sameKeys(value, keys) {
   const actual = Object.keys(value).sort();
   const expected = [...keys].sort();
   return actual.length === expected.length && actual.every((key, index) => key === expected[index]);
+}
+
+function sameJson(left, right) {
+  return JSON.stringify(left) === JSON.stringify(right);
 }
 
 function parseArgs(argv) {
@@ -486,6 +499,10 @@ function startCli(flags) {
     finished_at: null,
     finish_head_sha: null,
     finish_git_status: null,
+    interrupted_at: null,
+    interruption_reason: null,
+    termination_signal: null,
+    partial_reconciliation: null,
   };
   const reservations = [];
   try {
@@ -528,23 +545,241 @@ function cliResponseText(text) {
   let parsed;
   try { parsed = JSON.parse(output); }
   catch (_) { return output; }
-  if (!isObject(parsed) || parsed.schema_version !== 'ATIF-v1.7' || !Array.isArray(parsed.steps)) return '';
-  const finalStep = parsed.steps[parsed.steps.length - 1];
-  if (!isObject(finalStep) || finalStep.source !== 'agent' || typeof finalStep.message !== 'string') return '';
-  return finalStep.message.replace(/\r\n/g, '\n');
+  if (!isObject(parsed)) return '';
+  if (parsed.schema_version === 'ATIF-v1.7' && Array.isArray(parsed.steps)) {
+    const finalStep = parsed.steps[parsed.steps.length - 1];
+    if (!isObject(finalStep) || finalStep.source !== 'agent' || typeof finalStep.message !== 'string') return '';
+    return finalStep.message.replace(/\r\n/g, '\n');
+  }
+  if (parsed.schema_version === 'devin-cli-session-transcript-v1'
+      && parsed.kind === 'devin_cli_session_transcript' && Array.isArray(parsed.messages)) {
+    const finalMessage = parsed.messages[parsed.messages.length - 1];
+    if (!isObject(finalMessage) || finalMessage.role !== 'assistant'
+        || typeof finalMessage.content !== 'string'
+        || (Array.isArray(finalMessage.tool_calls) && finalMessage.tool_calls.length > 0)) return '';
+    return finalMessage.content.replace(/\r\n/g, '\n');
+  }
+  return '';
+}
+
+function interruptedTranscript(text) {
+  const output = Buffer.isBuffer(text) ? text.toString('utf8') : String(text || '');
+  let parsed;
+  try { parsed = JSON.parse(output); }
+  catch (_) { return false; }
+  if (isObject(parsed) && parsed.schema_version === 'ATIF-v1.7' && Array.isArray(parsed.steps)) {
+    const finalStep = parsed.steps[parsed.steps.length - 1];
+    return isObject(finalStep) && finalStep.source === 'agent'
+      && isObject(finalStep.observation) && Array.isArray(finalStep.observation.results)
+      && finalStep.observation.results.length === 1
+      && isObject(finalStep.observation.results[0])
+      && finalStep.observation.results[0].content === 'Tool execution was rejected by the user';
+  }
+  return isObject(parsed)
+    && parsed.schema_version === 'devin-cli-session-transcript-v1'
+    && parsed.kind === 'devin_cli_session_transcript'
+    && typeof parsed.session_id === 'string'
+    && Array.isArray(parsed.messages) && parsed.messages.length > 0
+    && isObject(parsed.termination)
+    && parsed.termination.signal === 'SIGINT'
+    && typeof parsed.termination.log_line === 'string'
+    && parsed.termination.log_line.includes('Ctrl-C detected during request processing, requesting cancellation');
+}
+
+function assistantMessages(text) {
+  let parsed;
+  try { parsed = JSON.parse(Buffer.isBuffer(text) ? text.toString('utf8') : String(text || '')); }
+  catch (_) { return null; }
+  let messages;
+  if (isObject(parsed) && parsed.schema_version === 'ATIF-v1.7' && Array.isArray(parsed.steps)) {
+    messages = parsed.steps.filter((step) => isObject(step) && step.source === 'agent')
+      .map((step) => step.message);
+  } else if (isObject(parsed) && parsed.schema_version === 'devin-cli-session-transcript-v1'
+      && parsed.kind === 'devin_cli_session_transcript' && Array.isArray(parsed.messages)) {
+    messages = parsed.messages.filter((message) => isObject(message) && message.role === 'assistant')
+      .map((message) => message.content === undefined || message.content === null ? '' : message.content);
+  } else {
+    return null;
+  }
+  return messages.every((message) => typeof message === 'string') ? messages : null;
+}
+
+function occurrenceExists(text, quote, occurrence) {
+  let position = -1;
+  let cursor = 0;
+  for (let index = 0; index <= occurrence; index += 1) {
+    position = text.indexOf(quote, cursor);
+    if (position < 0) return false;
+    cursor = position + quote.length;
+  }
+  return position >= 0;
+}
+
+function validatePartialReconciliation(output, transcriptSha256, reconciliation) {
+  const errors = [];
+  const recordKeys = ['schema_version', 'kind', 'transcript_sha256', 'messages', 'findings'];
+  if (!sameKeys(reconciliation, recordKeys)) {
+    return { errors: ['partial reconciliation has an unknown schema'], findings: [], reportIds: [] };
+  }
+  if (reconciliation.schema_version !== 1 || reconciliation.kind !== 'devin_cli_partial_reconciliation') {
+    errors.push('partial reconciliation has an unknown schema');
+  }
+  if (reconciliation.transcript_sha256 !== transcriptSha256) {
+    errors.push('partial reconciliation transcript checksum differs from raw CLI output');
+  }
+  const messages = assistantMessages(output);
+  if (!messages) errors.push('partial reconciliation requires a supported transcript with string assistant messages');
+  if (!Array.isArray(reconciliation.messages)) errors.push('partial reconciliation messages must be an array');
+  const messageRecords = Array.isArray(reconciliation.messages) ? reconciliation.messages : [];
+  if (messages && messageRecords.length !== messages.length) {
+    errors.push('partial reconciliation must account for every assistant message');
+  }
+  const findings = Array.isArray(reconciliation.findings) ? reconciliation.findings : [];
+  if (!Array.isArray(reconciliation.findings)) errors.push('partial reconciliation findings must be an array');
+  if (findings.length > MAX_REPORT_COUNT) errors.push(`partial reconciliation findings must not exceed ${MAX_REPORT_COUNT}`);
+  const messageFindingIds = [];
+  for (let index = 0; index < messageRecords.length; index += 1) {
+    const record = messageRecords[index];
+    if (!sameKeys(record, ['message_index', 'classification', 'finding_ids'])) {
+      errors.push(`partial reconciliation message ${index} has an unknown schema`);
+      continue;
+    }
+    if (record.message_index !== index) errors.push(`partial reconciliation message indexes must be contiguous from zero`);
+    if (!['no_findings', 'findings'].includes(record.classification)) {
+      errors.push(`partial reconciliation message ${index} must be classified no_findings or findings`);
+    }
+    if (!Array.isArray(record.finding_ids)
+        || record.finding_ids.some((id) => !nonBlankText(id))
+        || new Set(record.finding_ids).size !== record.finding_ids.length) {
+      errors.push(`partial reconciliation message ${index} finding_ids must be unique nonblank IDs`);
+      continue;
+    }
+    if (record.classification === 'no_findings' && record.finding_ids.length !== 0) {
+      errors.push(`partial reconciliation message ${index} is no_findings but lists findings`);
+    }
+    if (record.classification === 'findings' && record.finding_ids.length === 0) {
+      errors.push(`partial reconciliation message ${index} is findings but lists no IDs`);
+    }
+    if (messages && typeof messages[index] === 'string') {
+      messageFindingIds.push(...record.finding_ids.map((id) => ({ id, messageIndex: index })));
+    }
+  }
+  const reportIds = [];
+  const seenIds = new Set();
+  for (const [index, finding] of findings.entries()) {
+    if (!sameKeys(finding, ['id', 'message_index', 'quote', 'occurrence'])) {
+      errors.push(`partial reconciliation finding ${index + 1} has an unknown schema`);
+      continue;
+    }
+    if (!nonBlankText(finding.id) || seenIds.has(finding.id)) {
+      errors.push(`partial reconciliation finding ${index + 1} ID must be unique and nonblank`);
+    } else {
+      seenIds.add(finding.id);
+      reportIds.push(finding.id);
+    }
+    if (!Number.isInteger(finding.message_index) || finding.message_index < 0
+        || !messages || finding.message_index >= messages.length) {
+      errors.push(`partial reconciliation finding ${index + 1} has an invalid message_index`);
+    } else if (!nonBlankText(finding.quote)) {
+      errors.push(`partial reconciliation finding ${index + 1} quote is required`);
+    } else if (!Number.isInteger(finding.occurrence) || finding.occurrence < 0
+        || !occurrenceExists(messages[finding.message_index], finding.quote, finding.occurrence)) {
+      errors.push(`partial reconciliation finding ${index + 1} quote is not present at its stated occurrence`);
+    }
+  }
+  const declaredFindingIds = messageFindingIds.map((item) => item.id);
+  const recordFindingIds = findings.filter(isObject).map((item) => item.id);
+  if (!sameJson(declaredFindingIds.slice().sort(), recordFindingIds.slice().sort())) {
+    errors.push('partial reconciliation message finding_ids do not match its finding records');
+  }
+  if (messages) {
+    for (const item of messageFindingIds) {
+      const finding = findings.find((candidate) => isObject(candidate) && candidate.id === item.id);
+      if (finding && finding.message_index !== item.messageIndex) {
+        errors.push(`partial reconciliation finding ${item.id} points to a different message than its message record`);
+      }
+    }
+  }
+  return { errors, findings, reportIds };
+}
+
+function completionMarkerMatch(line) {
+  return String(line || '').replace(/[\p{White_Space}\uFEFF]+$/u, '')
+    .match(/^DEVIN_REVIEW_COMPLETE outcome=(clean|findings) finding_count=(0|[1-9][0-9]*)$/);
+}
+
+function markdownFenceOpening(line) {
+  const match = String(line || '').match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
+  if (!match || (match[1][0] === '`' && match[2].includes('`'))) return null;
+  return { character: match[1][0], length: match[1].length };
+}
+
+function markdownFenceClosing(line, openFence) {
+  const match = String(line || '').match(/^ {0,3}(`{3,}|~{3,})[\t ]*$/);
+  return match && match[1][0] === openFence.character && match[1].length >= openFence.length;
+}
+
+function linesOutsideCodeFences(text) {
+  let codeFence = null;
+  return String(text || '').replace(/\r\n/g, '\n').split('\n').map((line) => {
+    if (codeFence) {
+      if (markdownFenceClosing(line, codeFence)) codeFence = null;
+      return null;
+    }
+    const fence = markdownFenceOpening(line);
+    if (fence) {
+      codeFence = fence;
+      return null;
+    }
+    return line;
+  });
+}
+
+function containsCliCompletionMarker(text) {
+  const output = Buffer.isBuffer(text) ? text.toString('utf8') : String(text || '');
+  let parsed;
+  try { parsed = JSON.parse(output); }
+  catch (_) { return false; }
+  const hasMarker = (message) => {
+    return linesOutsideCodeFences(message).some((line) => line !== null && completionMarkerMatch(line));
+  };
+  if (isObject(parsed) && parsed.schema_version === 'ATIF-v1.7' && Array.isArray(parsed.steps)) {
+    return parsed.steps.some((step) => (
+      isObject(step) && step.source === 'agent' && typeof step.message === 'string'
+      && hasMarker(step.message)
+    ));
+  }
+  if (isObject(parsed) && parsed.schema_version === 'devin-cli-session-transcript-v1'
+      && parsed.kind === 'devin_cli_session_transcript' && Array.isArray(parsed.messages)) {
+    return parsed.messages.some((message) => (
+      isObject(message) && message.role === 'assistant' && typeof message.content === 'string'
+      && hasMarker(message.content)
+    ));
+  }
+  return false;
 }
 
 function parseCliCompletion(text) {
-  const output = cliResponseText(text).trimEnd();
-  const match = output.match(/(?:^|\n)DEVIN_REVIEW_COMPLETE outcome=(clean|findings) finding_count=(0|[1-9][0-9]*)$/);
-  if (!match) return null;
-  const count = Number(match[2]);
-  if (!Number.isSafeInteger(count) || count > MAX_REPORT_COUNT) return null;
-  if ((match[1] === 'clean' && count !== 0) || (match[1] === 'findings' && count < 1)) return null;
-  return { outcome: match[1], finding_count: count };
+  const lines = linesOutsideCodeFences(cliResponseText(text));
+  while (lines.length > 0) {
+    const line = lines.pop();
+    if (line === null) return null;
+    if (line.replace(/[\p{White_Space}\uFEFF]+$/u, '') === '') continue;
+    const match = completionMarkerMatch(line);
+    if (!match) return null;
+    const count = Number(match[2]);
+    if (!Number.isSafeInteger(count) || count > MAX_REPORT_COUNT) return null;
+    if ((match[1] === 'clean' && count !== 0) || (match[1] === 'findings' && count < 1)) return null;
+    return { outcome: match[1], finding_count: count };
+  }
+  return null;
 }
 
 function classifyCliExecution(exitCode, output) {
+  if (interruptedTranscript(output) && !containsCliCompletionMarker(output)) return 'interrupted';
+  if (exitCode === null || exitCode === undefined) {
+    throw new Error('CLI exit code is required unless the export proves an interrupted run');
+  }
   if (!Number.isSafeInteger(exitCode) || exitCode < 0) {
     throw new Error('CLI exit code must be a non-negative integer');
   }
@@ -560,7 +795,9 @@ function finishCli(flags) {
   const root = fs.realpathSync(required(flags, '--repo-root'));
   const captureFile = fs.realpathSync(required(flags, '--capture'));
   const capture = readJson(captureFile, 'CLI capture');
-  if (!sameKeys(capture, CLI_KEYS) || capture.kind !== 'devin_cli_capture' || capture.schema_version !== 1) {
+  if ((!sameKeys(capture, CLI_KEYS) && !sameKeys(capture, PRE_RECONCILIATION_CLI_KEYS)
+      && !sameKeys(capture, LEGACY_CLI_KEYS))
+      || capture.kind !== 'devin_cli_capture' || capture.schema_version !== 1) {
     throw new Error('CLI capture has an unknown schema');
   }
   if (capture.status !== 'started') throw new Error('CLI capture is not awaiting completion');
@@ -597,12 +834,33 @@ function finishCli(flags) {
   if (!Number.isFinite(startedAt) || fs.statSync(outputFile).mtimeMs < startedAt) {
     throw new Error('CLI output predates the capture start');
   }
-  const exitCode = nonNegativeInteger(required(flags, '--exit-code'), '--exit-code');
+  const exitCode = flags['--exit-code'] === undefined
+    ? null : nonNegativeInteger(flags['--exit-code'], '--exit-code');
   if (exitCode === 0 && output.toString('utf8').trim() === '') {
     throw new Error('a successful CLI run requires non-empty output evidence');
   }
   const status = classifyCliExecution(exitCode, output);
   const completion = parseCliCompletion(output);
+  const outputSha256 = crypto.createHash('sha256').update(output).digest('hex');
+  const interruptionReason = flags['--interruption-reason'] || null;
+  const interruptedAt = flags['--interrupted-at'] || null;
+  const terminationSignal = flags['--termination-signal'] || null;
+  if (status === 'interrupted') {
+    if (!nonBlankText(interruptionReason) || !nonBlankText(interruptedAt)) {
+      throw new Error('interrupted CLI runs require --interruption-reason and --interrupted-at');
+    }
+    if (terminationSignal !== null && terminationSignal !== 'SIGINT') {
+      throw new Error('--termination-signal must be SIGINT when supplied');
+    }
+    const interruptionMs = Date.parse(interruptedAt);
+    if (!Number.isFinite(interruptionMs) || interruptionMs < startedAt || interruptionMs > Date.now()) {
+      throw new Error('--interrupted-at must be a valid instant between capture start and now');
+    }
+  } else if (interruptionReason !== null || interruptedAt !== null || terminationSignal !== null) {
+    throw new Error('interruption fields are only valid for an interrupted CLI export');
+  } else if (exitCode === null) {
+    throw new Error('--exit-code is required for non-interrupted CLI runs');
+  }
   const suppliedOutcome = flags['--outcome'];
   if (suppliedOutcome !== undefined && !['clean', 'findings'].includes(suppliedOutcome)) {
     throw new Error('--outcome must be clean or findings');
@@ -613,6 +871,23 @@ function finishCli(flags) {
     if (suppliedCount > MAX_REPORT_COUNT) {
       throw new Error(`--finding-count must not exceed ${MAX_REPORT_COUNT}`);
     }
+  }
+  let partialReconciliation = null;
+  let partialFindingTotal = 0;
+  if (status === 'interrupted') {
+    const reconciliationFile = fs.realpathSync(required(flags, '--reconciliation'));
+    if (reconciliationFile === captureFile || reconciliationFile === outputFile) {
+      throw new Error('partial reconciliation must use a separate file from the CLI capture and output');
+    }
+    partialReconciliation = readJson(reconciliationFile, 'partial reconciliation');
+    const checked = validatePartialReconciliation(output, outputSha256, partialReconciliation);
+    if (checked.errors.length > 0) throw new Error(checked.errors.join('; '));
+    partialFindingTotal = checked.findings.length;
+    if (suppliedCount !== null && suppliedCount !== partialFindingTotal) {
+      throw new Error('--finding-count differs from the partial reconciliation record');
+    }
+  } else if (flags['--reconciliation'] !== undefined) {
+    throw new Error('--reconciliation is only valid for an interrupted CLI run');
   }
   let outcome = null;
   let count = 0;
@@ -626,6 +901,7 @@ function finishCli(flags) {
       throw new Error('--finding-count differs from the CLI completion marker');
     }
   }
+  if (status === 'interrupted') count = partialFindingTotal;
   const finished = {
     ...capture,
     exit_code: exitCode,
@@ -633,10 +909,14 @@ function finishCli(flags) {
     outcome,
     reported_finding_count: count,
     raw_output_path: outputFile,
-    raw_output_sha256: crypto.createHash('sha256').update(output).digest('hex'),
-    finished_at: new Date().toISOString(),
+    raw_output_sha256: outputSha256,
+    finished_at: interruptedAt || new Date().toISOString(),
     finish_head_sha: finishHead,
     finish_git_status: finishStatus,
+    interrupted_at: interruptedAt,
+    interruption_reason: interruptionReason,
+    termination_signal: terminationSignal,
+    partial_reconciliation: partialReconciliation,
   };
   atomicWriteJson(captureFile, finished);
   for (const reservation of reservations) {
@@ -646,12 +926,91 @@ function finishCli(flags) {
   return finished;
 }
 
+function reconcileInterruptedCli(flags) {
+  const root = fs.realpathSync(required(flags, '--repo-root'));
+  const captureFile = fs.realpathSync(required(flags, '--capture'));
+  const outputFile = fs.realpathSync(required(flags, '--output'));
+  const capture = readJson(captureFile, 'CLI capture');
+  if ((!sameKeys(capture, LEGACY_CLI_KEYS) && !sameKeys(capture, PRE_RECONCILIATION_CLI_KEYS))
+      || capture.kind !== 'devin_cli_capture'
+      || capture.schema_version !== 1 || capture.status !== 'incomplete') {
+    throw new Error('reconcile-cli requires a legacy incomplete CLI capture');
+  }
+  if (fs.realpathSync(capture.repository_root) !== root) throw new Error('CLI capture repository differs from --repo-root');
+  if (fs.realpathSync(capture.raw_output_path) !== outputFile) throw new Error('CLI output differs from the path reserved by start-cli');
+  const output = fs.readFileSync(outputFile);
+  const digest = crypto.createHash('sha256').update(output).digest('hex');
+  if (digest !== capture.raw_output_sha256) throw new Error('raw CLI output checksum differs from its capture');
+  if (classifyCliExecution(capture.exit_code, output) !== 'interrupted') {
+    throw new Error('raw CLI output does not prove an interrupted execution');
+  }
+  const finishStatus = gitStatus(root);
+  if (finishStatus.length > 0) throw new Error('reconcile-cli requires the same clean worktree and index');
+  const finishHead = fullSha(git(root, ['rev-parse', 'HEAD']), 'repository HEAD');
+  if (finishHead !== capture.review_head_sha || capture.finish_head_sha !== capture.review_head_sha) {
+    throw new Error('repository HEAD differs from the interrupted CLI capture');
+  }
+  const reason = required(flags, '--interruption-reason');
+  const reconciliationFile = fs.realpathSync(required(flags, '--reconciliation'));
+  if (reconciliationFile === captureFile || reconciliationFile === outputFile) {
+    throw new Error('partial reconciliation must use a separate file from the CLI capture and output');
+  }
+  const reconciliation = readJson(reconciliationFile, 'partial reconciliation');
+  const checked = validatePartialReconciliation(output, digest, reconciliation);
+  if (checked.errors.length > 0) throw new Error(checked.errors.join('; '));
+  const count = checked.findings.length;
+  if (flags['--finding-count'] !== undefined
+      && nonNegativeInteger(flags['--finding-count'], '--finding-count') !== count) {
+    throw new Error('--finding-count differs from the partial reconciliation record');
+  }
+  const interrupted = {
+    ...capture,
+    status: 'interrupted',
+    reported_finding_count: count,
+    interrupted_at: capture.finished_at,
+    interruption_reason: reason,
+    termination_signal: null,
+    partial_reconciliation: reconciliation,
+  };
+  atomicWriteJson(captureFile, interrupted);
+  return interrupted;
+}
+
+function prepareReconciliation(flags) {
+  const outputFile = fs.realpathSync(required(flags, '--output'));
+  const reconciliationFile = destinationPath(required(flags, '--out'));
+  if (reconciliationFile === outputFile) {
+    throw new Error('partial reconciliation must use a separate file from the CLI output');
+  }
+  if (pathEntryExists(reconciliationFile)) {
+    throw new Error(`refusing to overwrite existing partial reconciliation: ${reconciliationFile}`);
+  }
+  const output = fs.readFileSync(outputFile);
+  const messages = assistantMessages(output);
+  if (!messages) throw new Error('partial reconciliation requires a supported transcript with string assistant messages');
+  const reconciliation = {
+    schema_version: 1,
+    kind: 'devin_cli_partial_reconciliation',
+    transcript_sha256: crypto.createHash('sha256').update(output).digest('hex'),
+    messages: messages.map((_, messageIndex) => ({
+      message_index: messageIndex,
+      classification: 'unresolved',
+      finding_ids: [],
+    })),
+    findings: [],
+  };
+  writeNewJson(reconciliationFile, reconciliation);
+  return reconciliation;
+}
+
 function usage() {
   return [
     'usage:',
     '  review-evidence.js capture-app --repo owner/repository --pr N --head SHA --reviewer-id 158243242 --out FILE',
     '  review-evidence.js start-cli --repo-root DIR --purpose proactive|recovery --output FILE --out FILE',
-    '  review-evidence.js finish-cli --repo-root DIR --capture FILE --output FILE --exit-code N [--outcome clean|findings --finding-count N]',
+    '  review-evidence.js finish-cli --repo-root DIR --capture FILE --output FILE [--exit-code N] [--outcome clean|findings --finding-count N] [--interruption-reason TEXT --interrupted-at ISO --reconciliation FILE [--termination-signal SIGINT]]',
+    '  review-evidence.js reconcile-cli --repo-root DIR --capture FILE --output FILE --interruption-reason TEXT --reconciliation FILE',
+    '  review-evidence.js prepare-reconciliation --output FILE --out FILE',
   ].join('\n');
 }
 
@@ -681,6 +1040,16 @@ function main(argv) {
       console.log(`CLI capture finished with status ${capture.status}`);
       return;
     }
+    if (command === 'reconcile-cli') {
+      const capture = reconcileInterruptedCli(flags);
+      console.log(`CLI capture reconciled with status ${capture.status}`);
+      return;
+    }
+    if (command === 'prepare-reconciliation') {
+      const reconciliation = prepareReconciliation(flags);
+      console.log(`partial reconciliation prepared for ${reconciliation.messages.length} assistant messages`);
+      return;
+    }
     throw new Error(usage());
   } catch (error) {
     console.error(`review-evidence: ${error.message}`);
@@ -692,12 +1061,17 @@ function main(argv) {
 module.exports = {
   APP_KEYS,
   CLI_KEYS,
+  PRE_RECONCILIATION_CLI_KEYS,
   classifyCliExecution,
   DEVIN_REVIEWER_ID,
   MAX_REPORT_COUNT,
   collectAppEvidence,
   normalizeAppPayload,
   parseCliCompletion,
+  interruptedTranscript,
+  containsCliCompletionMarker,
+  assistantMessages,
+  validatePartialReconciliation,
   parseReviewBody,
   recognizedPreflight,
 };

@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "kind": "devin_cli_partial_reconciliation",
+  "transcript_sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "messages": [
+    {
+      "message_index": 0,
+      "classification": "findings",
+      "finding_ids": ["CLI-REPORT-1"]
+    },
+    {
+      "message_index": 1,
+      "classification": "no_findings",
+      "finding_ids": []
+    }
+  ],
+  "findings": [
+    {
+      "id": "CLI-REPORT-1",
+      "message_index": 0,
+      "quote": "The parser drops validation for empty input.",
+      "occurrence": 0
+    }
+  ]
+}

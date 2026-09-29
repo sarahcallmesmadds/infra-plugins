@@ -184,6 +184,60 @@ Use the same fresh-file rule for a permission-mode retry. Unknown failures are
 stop. A pasted or manually transcribed finding is not authenticated CLI evidence
 and cannot complete the round.
 
+If execution started but did not reach a final completion marker, preserve the
+available CLI or native session transcript as the reserved output file and
+record why and when it stopped. Use `finish-cli` with
+`--interruption-reason` and `--interrupted-at`; omit `--exit-code` when it is
+unknown. Have `prepare-reconciliation` create a checklist from the transcript:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/review-evidence.js" prepare-reconciliation \
+  --output "{scratch}/devin-cli-1.txt" \
+  --out "{scratch}/devin-cli-1-reconciliation.json"
+```
+
+Then read the complete assistant transcript and finish the checklist. Account for every assistant message as
+`no_findings` or `findings`. For each finding, use a stable report ID, the
+message index, an exact quote from that message, and its zero-based occurrence
+when that quote repeats. Do not classify unresolved or unreviewed message text
+as `no_findings`. The complete example is
+[partial-reconciliation.example.json](references/partial-reconciliation.example.json).
+
+The record's `transcript_sha256` must be the SHA-256 of the preserved output
+bytes. `finish-cli` rejects any `unresolved` message, validates every message
+and quote, embeds the reconciliation in the capture, and derives the finding
+count from its finding records. Use each finding's ID as its CLI `source_reports`
+ID. The report IDs must later match the interrupted run's `source_reports` IDs in the
+same order as their ordinals. Do not use a manually supplied count as a
+substitute for this record. Supply `--termination-signal SIGINT` only when the
+native CLI log records Ctrl-C cancellation. The recognized trace must end with
+the exact explicit tool-rejection result or prove SIGINT cancellation, and it
+must not contain a completed verdict in any assistant response. Preserve visible
+commands and results in a session transcript; do not turn an absent output into
+an invented clean response.
+
+Finish the interrupted capture with:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/review-evidence.js" finish-cli \
+  --repo-root "/path/to/repository" --capture "{scratch}/devin-cli-1.json" \
+  --output "{scratch}/devin-cli-1.txt" \
+  --interruption-reason "The saved session log records SIGINT before a verdict." \
+  --interrupted-at "2026-09-29T12:00:00-04:00" \
+  --termination-signal SIGINT \
+  --reconciliation "{scratch}/devin-cli-1-reconciliation.json"
+```
+
+For an older `incomplete` capture, `reconcile-cli` can record an interruption
+only when the original output checksum still matches and the saved output itself
+proves the interruption. Create the same reconciliation record against the
+unchanged transcript bytes and pass it with `--reconciliation`. It keeps the
+original output bytes and records the capture's finish time as the interruption
+time. Unknown errors remain `incomplete` and block the round. An `interrupted`
+run is not a clean result: link it through `superseded_by` to a later complete
+run with the same purpose and reviewed SHA. Every reconciled finding needs a
+matching source report and disposition.
+
 ## 3. Reconcile reports without dropping a source
 
 Every app comment, app hidden placeholder and CLI-reported item gets its own
@@ -346,6 +400,8 @@ Stop rather than claiming success when:
 
 - the app capture is missing, incomplete, or omits a same-SHA retry or comment;
 - a known CLI execution is absent, incomplete, dirty, or for another SHA;
+- an interrupted CLI run lacks evidence, a later complete same-purpose,
+  same-SHA retry, or reconciliation of any partial findings;
 - a preflight refusal lacks a later valid `superseded_by` retry;
 - authorized hidden-finding recovery produced no usable CLI evidence;
 - a hidden app placeholder has no recovery report;
