@@ -26,8 +26,8 @@ a subject. Each of those is also how a sound document can be organised, so the
 report asks and the reader decides.
 
 Measured over 213 documents from four repositories, the two categories moved
-two readings from "little" to "some", each on a schema whose field table is
-restated in a paragraph beside an announcing sentence, and none to "strong". Two detectors that were tried were
+three readings from "little" to "some", each on a list or field table restated
+in a paragraph beside a category that was already there, and none to "strong". Two detectors that were tried were
 left out after that measurement and the reasons are in `scripts/structure.js`.
 
 ## Upgrading to 0.9.0
