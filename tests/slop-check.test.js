@@ -1807,6 +1807,18 @@ check('a sentence that starts and ends with bold does not make a section',
   softOf(PARTS_TABLE + '\nChoose **the fast path** over **the safe path**\n\nBefore building anything, an '
     + 'operator asks where the records live, who reads them next, how many arrive each week, and how anyone '
     + 'knows it worked.\n').includes('list-enumerated-twice'), false);
+// Found by review: a fence marker inside one comment paired with one in the
+// next, and the visible section between them vanished.
+check('backticks inside two comments do not fence the text between them',
+  softOf('<!-- ``` -->\n' + PARTS_TABLE + PARTS_PROSE + '\n<!-- ``` -->\n').includes('list-enumerated-twice'), true);
+check('a comment opener inside a fence is not a comment',
+  softOf('```\n<!--\n```\n\n' + PARTS_TABLE + PARTS_PROSE).includes('list-enumerated-twice'), true);
+// Found by review: a bold heading holding an italic word read as prose and
+// lost its section boundary.
+check('a bold heading holding italics is still a heading',
+  softOf(PARTS_TABLE + '\n**Why *it* matters**\n\nBefore building anything, an operator asks where the records '
+    + 'live, who reads them next, how many arrive each week, and how anyone knows it worked.\n')
+    .includes('list-enumerated-twice'), true);
 check('a contraction is not a content word',
   softOf('# Rules\n\n## Items\n\n- Don\'t skip\n- Don\'t guess\n- Don\'t wait\n\n## Later\n\nThe runner will skip a '
     + 'missing file, guess nothing about its contents and wait for the next one.\n')
@@ -1844,6 +1856,10 @@ check('"here" and "there" open a claim too',
   questionsOf('Here we go. The branch is left exactly where it was, and the summary names what '
     + 'would have moved.\n\nThere it goes. Nothing leaves the machine until a person has read the list.')
     .includes('short-claim-opener'), true);
+check('"here" or "there" with a time word is a fragment',
+  questionsOf('Here tomorrow. The shipment arrives after the gate closes and the yard empties.\n\n'
+    + 'There next week. The cargo stays in storage until collection by the carrier.')
+    .includes('short-claim-opener'), false);
 check('a pronoun and an adverb is a fragment, not a claim',
   questionsOf('This too. The branch is left exactly where it was, and the summary names what '
     + 'would have moved.\n\nThat often. Nothing leaves the machine until a person has read the list.')

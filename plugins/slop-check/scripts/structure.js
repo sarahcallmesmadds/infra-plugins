@@ -32,20 +32,48 @@
 // headings, tables and lists start and stop; they never need CommonMark's
 // answer about nested continuation lines.
 
-// The inner span may not hold the delimiter: "Choose **the fast path** over
-// **the safe path**" starts and ends with emphasis and is a sentence, not a
-// heading, and reading it as one both hid it from the prose checks and cut a
-// section boundary nothing else could see.
-const BOLD_ONLY = /^(?:\*\*(?!\s)([^*]+)\*\*|__(?!\s)([^_]+)__):?\s*$/;
+// The inner span may not hold the bold delimiter: "Choose **the fast path**
+// over **the safe path**" starts and ends with emphasis and is a sentence,
+// not a heading, and reading it as one both hid it from the prose checks and
+// cut a section boundary nothing else could see. Single-asterisk emphasis
+// inside is fine: "**Before *leaving* safely**" is a heading with a word in
+// italics.
+const BOLD_ONLY = /^(?:\*\*(?!\s)((?:(?!\*\*).)+)\*\*|__(?!\s)((?:(?!__).)+)__):?\s*$/;
 const ITALIC_ONLY = /^(?:\*(?!\s)([^*]+)\*|_(?!\s)([^_]+)_)\s*$/;
 
 // Fenced code and HTML comments come out first. A comment is text the reader
 // never sees, and a drafting note inside one was feeding the announce check.
+//
+// One pass, in document order, so neither construct is read inside the other:
+// a backtick run inside a comment is not a fence, and a "<!--" inside a fence
+// is not a comment. Two regexes in sequence paired a fence marker in one
+// comment with one in the next and erased the visible section between them.
 function stripFences(text) {
-  return String(text || '')
-    .replace(/```[\s\S]*?```/g, '\n')
-    .replace(/~~~[\s\S]*?~~~/g, '\n')
-    .replace(/<!--[\s\S]*?-->/g, ' ');
+  const src = String(text || '');
+  let out = '';
+  let i = 0;
+  while (i < src.length) {
+    const atLineStart = i === 0 || src[i - 1] === '\n';
+    const fence = atLineStart ? src.slice(i).match(/^[ \t]{0,3}(`{3,}|~{3,})/) : null;
+    if (fence) {
+      const marker = fence[1];
+      const close = new RegExp(`\\n[ \\t]{0,3}${marker[0] === '`' ? '`' : '~'}{${marker.length},}[ \\t]*(?=\\n|$)`);
+      const rest = src.slice(i + fence[0].length);
+      const m = rest.match(close);
+      i += fence[0].length + (m ? m.index + m[0].length : rest.length);
+      out += '\n';
+      continue;
+    }
+    if (src.startsWith('<!--', i)) {
+      const end = src.indexOf('-->', i + 4);
+      i = end === -1 ? src.length : end + 3;
+      out += ' ';
+      continue;
+    }
+    out += src[i];
+    i += 1;
+  }
+  return out;
 }
 
 function lineKind(raw) {
@@ -310,8 +338,11 @@ function hasVerb(s) {
   if (/\w(?:'s|'re|'ve|'ll|'d|n't)\b/i.test(flat)) return true;
   // A pronoun followed by a word is a clause ("So we talk."), unless the word
   // is an adverb that leaves a fragment ("This too.", "That often.").
-  if (/^(?:so |and |but |then )?(?:i|we|you|they|he|she|it|that|this|who|here|there)\s+\w{2,}/i.test(flat)
-    && !/^(?:so |and |but |then )?(?:i|we|you|they|he|she|it|that|this|who|here|there)\s+(?:too|often|also|again|here|there|now|then|still|always|never|only|indeed|though)[.!?]?$/i.test(flat)) return true;
+  if (/^(?:so |and |but |then )?(?:i|we|you|they|he|she|it|that|this|who)\s+\w{2,}/i.test(flat)
+    && !/^(?:so |and |but |then )?(?:i|we|you|they|he|she|it|that|this|who)\s+(?:too|often|also|again|here|there|now|then|still|always|never|only|indeed|though)[.!?]?$/i.test(flat)) return true;
+  // "Here we go." and "There it goes." are clauses; "Here tomorrow." is not.
+  // A locative opener needs a pronoun or a verb right after it.
+  if (/^(?:so |and |but |then )?(?:here|there)\s+(?:i|we|you|they|he|she|it|goes|comes|lies|sits|stands|begins|ends)\b/i.test(flat)) return true;
   if (/\b\w{3,}ed\b/i.test(flat)) return true;
   return false;
 }
