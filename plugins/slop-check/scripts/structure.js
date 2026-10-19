@@ -231,12 +231,17 @@ function contentWords(s) {
 // it. "The queue is empty." has a pronoun-free subject and no forward tail, so
 // it is not a candidate however long the next sentence is.
 
+// Every alternative runs to the end of the sentence. The adjective tails end
+// it themselves ("is simple."), and the clause tails swallow the clause they
+// open ("because of what AI removes.", "changes who builds."), which is the
+// placeholder the next sentence fills. A tail with its own content after it
+// ("is simple because seals shrink.") matches nothing here.
 const FORWARD_TAIL = new RegExp([
-  "\\b(?:is|was|are|were|'s|seems?|sounds?)\\s+(?:also\\s+|very\\s+|quite\\s+)?(?:simple|clear|obvious|straightforward|easy|plain|subtle|telling|the point|the reason|the key|the hard part|the catch|the problem|the difference|already there|worth \\w+ing|where (?:\\w+ ){1,3}(?:starts?|begins?|comes? in))\\b",
-  "\\bbecause of (?:what|how|who|where|when)\\b",
-  "\\bmakes? (?:it|this|that|them|the \\w+(?: \\w+)?) (?:concrete|clear|simple|obvious|real|plain|visible)\\b",
-  "\\bcomes? down to\\b",
-  "\\b(?:changes?|decides?|explains?|shows?|answers?|tells? (?:you|us)) (?:who|what|how|why|where|when)\\b",
+  "\\b(?:is|was|are|were|'s|seems?|sounds?)\\s+(?:also\\s+|very\\s+|quite\\s+)?(?:simple|clear|obvious|straightforward|easy|plain|subtle|telling|the point|the reason|the key|the hard part|the catch|the problem|the difference|already there|worth \\w+ing(?: here| now| briefly)?|where (?:\\w+ ){1,3}(?:starts?|begins?|comes? in))[.!?]*$",
+  "\\bbecause of (?:what|how|who|where|when)\\b[^.!?]*[.!?]*$",
+  "\\bmakes? (?:it|this|that|them|the \\w+(?: \\w+)?) (?:concrete|clear|simple|obvious|real|plain|visible)[.!?]*$",
+  "\\bcomes? down to\\b[^.!?]*[.!?]*$",
+  "\\b(?:changes?|decides?|explains?|shows?|answers?|tells? (?:you|us)) (?:who|what|how|why|where|when)\\b[^.!?]*[.!?]*$",
 ].join('|'), 'i');
 
 const ABSTRACT_HEAD = /^(?:the|a|an|one|two|three|four|its|this|that|these|those|our|their|his|her|my|your|several|a few|both)\s+(?:\w+\s+)?(?:reasons?|points?|thinking|idea|ideas|answers?|questions?|examples?|things?|parts?|lessons?|takeaways?|catch|trick|key|difference|problem|result|upshot|argument|case|story|explanation)\b/i;
@@ -257,12 +262,7 @@ function announceThenExplain(paragraphs) {
       const pronounSubject = /^(?:it|that|this|there|here)\b/i.test(s);
       const abstractSubject = ABSTRACT_HEAD.test(s);
       if (!pronounSubject && !abstractSubject) continue;
-      // The tail has to end the sentence: "It is simple because seals shrink."
-      // carries its content after the tail and is not an announcement, however
-      // few words that content takes. Only punctuation may follow.
-      const tail = s.match(FORWARD_TAIL);
-      if (!tail) continue;
-      if (/\w/.test(s.slice(tail.index + tail[0].length))) continue;
+      if (!FORWARD_TAIL.test(s)) continue;
       hits.push(s);
       if (i === 0) opening += 1;
     }
