@@ -19,7 +19,8 @@ rest on.
 Three more are printed under "Worth asking about the structure, counted
 against nothing" and never move the reading: two or more paragraphs opening on
 a very short pronoun sentence, three or more consecutive paragraphs opening
-with a bold label sharing its first two words, and an opening that names the
+with a bold label of which at least two share their first two words, and an
+opening that names the
 event (a date, the room, the minutes, who co-teaches) under a title that names
 a subject. Each of those is also how a sound document can be organised, so the
 report asks and the reader decides.

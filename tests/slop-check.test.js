@@ -1731,6 +1731,21 @@ check('a sentence that starts and ends with bold is prose, not a heading',
 check('a sentence opening with a digit is its own sentence',
   softOf('It matters now because of what the change removes. 3 steps that a person took without noticing '
     + 'have to be designed on purpose once the work runs without them.').includes('announce-then-explain'), true);
+// Found by review: the fault set as its own one-line paragraph could never hit.
+check('an announcement set as its own paragraph is read against the next one',
+  softOf('It matters now because of what the change removes.\n\nWhen a person does the work by hand, they set '
+    + 'the pace, catch what looks wrong and pass it along, so none of that has to be designed.')
+    .includes('announce-then-explain'), true);
+check('a leading "so" does not hide the subject',
+  softOf('So it matters now because of what the change removes. When a person does the work by hand, they set '
+    + 'the pace, catch what looks wrong and pass it along, so none of that has to be designed.')
+    .includes('announce-then-explain'), true);
+check('an indefinite article before the tail noun still reads as a tail',
+  softOf("There's a catch. The housing was machined to the old tolerance and the new seal was cut to the "
+    + 'revised one, so the two never met at full pressure.').includes('announce-then-explain'), true);
+check('a straight single quote can open a sentence',
+  softOf("It is simple. 'The housing was machined to the old tolerance and the new seal was cut to the revised "
+    + "one, so the two never met.'").includes('announce-then-explain'), true);
 check('a sentence in a fenced block is not read',
   softOf('```\n' + ANNOUNCE + '\n```').includes('announce-then-explain'), false);
 // Found by review: plain() kept the words inside backticks, so an announcing
@@ -1842,6 +1857,27 @@ check('a bare bold heading touching its paragraph is still a heading',
   softOf('# Audit\n\n## First\n\n- Audit the system logs\n- Audit the server logs\n- Audit the access logs\n\n'
     + '**Second**\nAudit the system logs, audit the server logs, and audit the access logs.\n')
     .includes('list-enumerated-twice'), true);
+// Found by review: the shared-word guard protected list candidates only.
+check('three items sharing three words are not found again in one sentence about those words',
+  softOf('# Audit\n\n## First\n\n- Review system audit logs\n- Archive system audit logs\n- Scan system audit logs\n\n'
+    + '## Second\n\nThe nightly job inspects system audit logs and rotates them out.\n')
+    .includes('list-enumerated-twice'), false);
+check('...while a sentence that names each item still counts',
+  softOf('# Audit\n\n## First\n\n- Review system audit logs\n- Archive system audit logs\n- Scan system audit logs\n\n'
+    + '## Second\n\nThe nightly job reviews, archives and scans the system audit logs before the report.\n')
+    .includes('list-enumerated-twice'), true);
+// Found by review: a literal "<!--" in running text ate the document.
+check('a comment opener in running text with no closer in its block is literal',
+  softOf('Intro text mentions the <!-- marker.\n\n' + ANNOUNCE).includes('announce-then-explain'), true);
+check('a code span may close on a later line of its block',
+  softOf('The marker `<!--\nliteral` opens a comment.\n\n' + ANNOUNCE).includes('announce-then-explain'), true);
+// Found by review: an indented wrapped line under a list item was an item.
+check('a wrapped line under a list item belongs to the item',
+  hitsOf('# Audit\n\n## First\n\n- Audit the system logs\n    rotate them weekly\n- Audit the server logs\n- Audit the access logs\n\n'
+    + '## Second\n\n- Audit the system logs\n- Audit the server logs\n- Audit the access logs\n', 'list-enumerated-twice')[0]
+    .includes('3 of 3 items'), true);
+check('an intraword underscore is not emphasis',
+  require(path.join(base, 'structure.js')).blocksOf('the snake_case_field name')[0].text, 'the snake_case_field name');
 check('a contraction is not a content word',
   softOf('# Rules\n\n## Items\n\n- Don\'t skip\n- Don\'t guess\n- Don\'t wait\n\n## Later\n\nThe runner will skip a '
     + 'missing file, guess nothing about its contents and wait for the next one.\n')

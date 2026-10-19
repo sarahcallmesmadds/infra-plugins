@@ -69,14 +69,20 @@ function stripFences(text) {
     // runs to the end of the document. plain() blanks the span later. A run
     // of backticks with no closing run of the same length on its line is
     // literal text.
+    // Neither a code span nor an inline comment crosses a blank line: the
+    // block that holds the opener is as far as its closer may be.
+    const blockEndFrom = (at) => {
+      const m = src.slice(at).match(/\n[ \t]*\n/);
+      return m ? at + m.index : src.length;
+    };
     if (src[i] === '`') {
+      const blockEnd = blockEndFrom(i);
       let runEnd = i + 1;
       while (src[runEnd] === '`') runEnd += 1;
       const run = src.slice(i, runEnd);
-      const lineEnd = src.indexOf('\n', runEnd);
-      const line = src.slice(runEnd, lineEnd === -1 ? src.length : lineEnd);
-      const close = line.indexOf(run);
-      const closeIsExact = close !== -1 && line[close + run.length] !== '`';
+      const rest = src.slice(runEnd, blockEnd);
+      const close = rest.indexOf(run);
+      const closeIsExact = close !== -1 && rest[close + run.length] !== '`';
       if (closeIsExact) {
         const end = runEnd + close + run.length;
         out += src.slice(i, end);
@@ -88,9 +94,20 @@ function stripFences(text) {
       continue;
     }
     if (src.startsWith('<!--', i)) {
-      const end = src.indexOf('-->', i + 4);
-      i = end === -1 ? src.length : end + 3;
-      out += ' ';
+      // A whole-line opener is a comment block and may run to its closer
+      // anywhere. An opener after visible text on its line is a comment only
+      // when it closes inside its own block; otherwise it is the four
+      // characters "<!--" in running prose, as tells.js also reads them.
+      const blockEnd = blockEndFrom(i);
+      const closeIn = src.indexOf('-->', i + 4);
+      const closeInBlock = closeIn !== -1 && closeIn < blockEnd;
+      if (atLineStart || closeInBlock) {
+        i = closeIn === -1 ? src.length : closeIn + 3;
+        out += ' ';
+        continue;
+      }
+      out += '<!--';
+      i += 4;
       continue;
     }
     out += src[i];
@@ -105,6 +122,10 @@ function lineKind(raw) {
   if (/^#{1,6}\s/.test(line)) return 'heading';
   if (/^\|/.test(line)) return 'table';
   if (/^(?:[-*+]|\d{1,3}[.)])\s/.test(line)) return 'list';
+  // An indented line without a marker continues whatever block is open; the
+  // block loop folds it into the list item above, keeps it in an open
+  // paragraph, and otherwise reads four columns of it as code.
+  if (/^\s/.test(raw)) return 'continuation';
   if (/^(?:---+|\*\*\*+|___+)\s*$/.test(line)) return 'rule';
   if (/^\[\^[^\]]+\]:/.test(line)) return 'note';
   if (/^>/.test(line)) return 'quote';
@@ -138,7 +159,8 @@ function plain(s) {
     .replace(/!\[([^\]\n]*)\]\([^)\n]{0,2000}\)/g, '$1')
     .replace(/\[([^\]\n]*)\]\([^)\n]{0,2000}\)/g, '$1')
     .replace(/(\*\*|__)(.+?)\1/g, '$2')
-    .replace(/(\*|_)(.+?)\1/g, '$2')
+    .replace(/\*(.+?)\*/g, '$1')
+    .replace(/(?<![\w])_(.+?)_(?![\w])/g, '$1')
     .replace(/\[\^[^\]]+\]/g, '')
     .replace(/\s+/g, ' ')
     .trim();
@@ -215,7 +237,15 @@ function blocksOf(text) {
     // code is not prose, a heading or a list however it is shaped. Inside an
     // open block it is a wrapped line, a nested item or a continuation, and
     // stays with the block it continues.
-    if (/^(?: {4}|\t)/.test(raw) && !current && kind !== 'blank') kind = 'blank';
+    if (!current && kind !== 'blank' && /^(?: {4}|\t)/.test(raw)) kind = 'blank';
+    if (kind === 'continuation') {
+      if (current && current.kind === 'list') {
+        current.lines[current.lines.length - 1] += ` ${raw.trim()}`;
+        return;
+      }
+      kind = current && current.kind === 'text' ? 'text'
+        : /^(?: {4}|\t)/.test(raw) ? 'blank' : 'text';
+    }
     // A bold-only line ending in sentence punctuation with prose directly
     // under it, no blank line between, is a run-in label and its paragraph:
     // "**Setup.**" over "Inspect the surface." is the shape the label checks
@@ -256,7 +286,7 @@ function blocksOf(text) {
 
 function sentencesIn(paragraphText) {
   return String(paragraphText)
-    .split(/(?<=[.!?])\s+(?=[A-Z0-9"'(“‘])/)
+    .split(/(?<=[.!?])\s+(?=[A-Z0-9"\''(“‘])/)
     .map((s) => s.trim())
     .filter(Boolean);
 }
@@ -318,7 +348,7 @@ function contentWords(s) {
 // was on the list and is not: its object is the answer ("It comes down to
 // trust."), so it names the content rather than deferring it.
 const FORWARD_TAIL = new RegExp([
-  "\\b(?:is|was|are|were|'s|seems?|sounds?)\\s+(?:also\\s+|very\\s+|quite\\s+)?(?:simple|clear|obvious|straightforward|easy|plain|subtle|telling|the point|the reason|the key|the hard part|the catch|the problem|the difference|already there|worth \\w+ing(?: here| now| briefly)?|where (?:\\w+ ){1,3}(?:starts?|begins?|comes? in))[.!?]*$",
+  "\\b(?:is|was|are|were|'s|seems?|sounds?)\\s+(?:also\\s+|very\\s+|quite\\s+)?(?:(?:a|an|the|some)\\s+)?(?:(?:simple|clear|obvious|straightforward|easy|plain|subtle|telling)(?:\\s+(?:fix|one|problem|point|reason|case|thing|part))?|point|reason|key|hard part|catch|problem|difference|already there|worth \\w+ing(?: here| now| briefly)?|where (?:\\w+ ){1,3}(?:starts?|begins?|comes? in))[.!?]*$",
   "\\bbecause of (?:what|how|who|where|when)\\b[^.!?]*[.!?]*$",
   "\\bmakes? (?:it|this|that|them|the \\w+(?: \\w+)?) (?:concrete|clear|simple|obvious|real|plain|visible)[.!?]*$",
   "\\b(?:changes?|decides?|explains?|shows?|answers?|tells? (?:you|us)) (?:who|what|how|why|where|when)\\b[^.!?]*[.!?]*$",
@@ -329,18 +359,26 @@ const ABSTRACT_HEAD = /^(?:the|a|an|one|two|three|four|its|this|that|these|those
 function announceThenExplain(paragraphs) {
   const hits = [];
   let opening = 0;
-  for (const p of paragraphs) {
-    const sentences = sentencesIn(p);
-    for (let i = 0; i + 1 < sentences.length; i += 1) {
+  for (let pi = 0; pi < paragraphs.length; pi += 1) {
+    const sentences = sentencesIn(paragraphs[pi]);
+    // The last sentence of a paragraph is compared with the first of the
+    // next one: an announcement set as its own one-line paragraph, with the
+    // explanation under it, is the most natural typography of the fault.
+    const following = pi + 1 < paragraphs.length ? sentencesIn(paragraphs[pi + 1])[0] : null;
+    for (let i = 0; i < sentences.length; i += 1) {
       const s = sentences[i];
-      const next = sentences[i + 1];
+      const next = i + 1 < sentences.length ? sentences[i + 1] : following;
+      if (!next) continue;
       const n = wordsOf(s).length;
       if (n < 3 || n > 12) continue;
       if (/[:;]/.test(s)) continue;
       if (/\?$/.test(s)) continue;
       if (wordsOf(next).length < Math.ceil(n * 1.5)) continue;
-      const pronounSubject = /^(?:it|that|this|there|here)\b/i.test(s);
-      const abstractSubject = ABSTRACT_HEAD.test(s);
+      // "So it matters now..." is the same sentence as "It matters now...",
+      // and the short-opener check already allows the same openers.
+      const bare = s.replace(/^(?:so|and|but|then|now),?\s+/i, '');
+      const pronounSubject = /^(?:it|that|this|there|here)\b/i.test(bare);
+      const abstractSubject = ABSTRACT_HEAD.test(bare);
       if (!pronounSubject && !abstractSubject) continue;
       if (!FORWARD_TAIL.test(s)) continue;
       hits.push(s);
@@ -477,18 +515,32 @@ function labelRuns(blocks) {
 // `used` holds indices already claimed: when the candidate is another list,
 // each of its items may stand for one source item only, or three items that
 // share three words would all be found again in one unrelated entry.
-function reappearsAt(item, sentences, used) {
+// `common` holds the words every item of the sequence shares: a match has to
+// reach at least one word outside that set, or "Review system audit logs",
+// "Archive system audit logs" and "Scan system audit logs" are all found
+// again in one sentence about system audit logs that reviews, archives and
+// scans nothing.
+function reappearsAt(item, sentences, used, common) {
   const words = [...new Set(contentWords(item))];
   if (words.length < 2) return -1;
   const need = Math.ceil(words.length * 0.7);
+  const distinct = words.filter((w) => !common.has(w));
   for (let i = 0; i < sentences.length; i += 1) {
     if (used && used.has(i)) continue;
     const have = new Set(sentences[i].words);
     let shared = 0;
     for (const w of words) if (have.has(w)) shared += 1;
-    if (shared >= need) return i;
+    if (shared < need) continue;
+    if (distinct.length && !distinct.some((w) => have.has(w))) continue;
+    return i;
   }
   return -1;
+}
+
+function commonWords(items) {
+  const sets = items.map((i) => new Set(contentWords(i)));
+  if (!sets.length) return new Set();
+  return new Set([...sets[0]].filter((w) => sets.every((set) => set.has(w))));
 }
 
 function excerpt(text, words = 8) {
@@ -496,6 +548,10 @@ function excerpt(text, words = 8) {
   return all.length > words ? `${all.slice(0, words).join(' ')}...` : all.join(' ');
 }
 
+// A document with no headings is one section, and a list said again inside
+// it is not reported: the check is for a list enumerated in another section,
+// which is what the author named, and the same list twice in one unbroken
+// run of prose is a different and rarer fault.
 function sectionIndexOf(blocks) {
   const index = new Map();
   let n = 0;
@@ -547,11 +603,12 @@ function listEnumeratedTwice(blocks) {
   const hits = [];
   for (const seq of sequences) {
     let best = null;
+    const common = commonWords(seq.items);
     for (const c of candidates) {
       if (c.section === seq.section || c.sequence === seq) continue;
       const used = c.what === 'list' ? new Set() : null;
       const again = seq.items.filter((item) => {
-        const at = reappearsAt(item, c.sentences, used);
+        const at = reappearsAt(item, c.sentences, used, common);
         if (at === -1) return false;
         if (used) used.add(at);
         return true;
