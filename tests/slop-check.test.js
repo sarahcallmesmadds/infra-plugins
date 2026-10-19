@@ -2015,6 +2015,12 @@ check('CRLF line endings are read like LF',
 check('"I\'m done." carries a verb',
   questionsOf("I'm done. The branch is left exactly where it was, and the summary names what would have moved.\n\n"
     + 'Now we ship. Nothing leaves the machine until a person has read the list.').includes('short-claim-opener'), true);
+check('"room for" and "room to" are not rooms',
+  questionsOf('# Capacity planning\n\nThe session leaves room for the guests to talk, and room to grow.\n')
+    .includes('logistics-before-the-subject'), false);
+check('a comment on its own line inside a paragraph does not split it',
+  JSON.stringify(require(path.join(base, 'structure.js')).blocksOf('First sentence here.\n<!-- note -->\nSecond sentence here.')
+    .map((b) => b.text)), JSON.stringify(['First sentence here. Second sentence here.']));
 check('a one-sentence italic line is a paragraph, not a subtitle',
   questionsOf('# Capacity planning\n\n*A 90 minute session in the room for the dinner guests.*\n')
     .includes('logistics-before-the-subject'), true);

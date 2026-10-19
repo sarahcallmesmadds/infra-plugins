@@ -53,11 +53,26 @@ const ITALIC_ONLY = /^(?:\*(?!\s)([^*]+)\*|_(?!\s)([^_]+)_)\s*$/;
 // marker in front.
 function visibleLines(text) {
   const tells = require('./tells.js');
-  return tells.withoutFencedBlocks(String(text || '').replace(/\r\n?/g, '\n')).map((line) => {
-    if (line.startsWith(tells.MARKDOWN_BOUNDARY)) return '';
-    if (line.startsWith(tells.MARKDOWN_PARAGRAPH_CONTINUATION)) return line.slice(1);
-    return line;
+  const raw = tells.withoutFencedBlocks(String(text || '').replace(/\r\n?/g, '\n'));
+  const out = [];
+  raw.forEach((line, i) => {
+    if (line.startsWith(tells.MARKDOWN_BOUNDARY)) {
+      // A hidden line with visible text directly above and below it, such as
+      // a comment on its own line inside a paragraph, is dropped rather than
+      // read as a blank: a blank would split the paragraph in two and hand
+      // the paragraph checks a boundary the reader never sees.
+      const above = i > 0 && raw[i - 1].trim() && !raw[i - 1].startsWith(tells.MARKDOWN_BOUNDARY);
+      const below = i + 1 < raw.length && raw[i + 1].trim() && !raw[i + 1].startsWith(tells.MARKDOWN_BOUNDARY);
+      if (!(above && below)) out.push('');
+      return;
+    }
+    if (line.startsWith(tells.MARKDOWN_PARAGRAPH_CONTINUATION)) {
+      out.push(line.slice(1));
+      return;
+    }
+    out.push(line);
   });
+  return out;
 }
 
 
@@ -649,7 +664,8 @@ const EVENT_TOKENS = [
   ].join('|'), 'i')],
   ['minutes', /\b\d+[- ]?minutes?\b/i],
   ['the session', /\bsessions?\b/i],
-  ['the room', /\b(?:(?:the|a|our) (?:\w+ )?rooms?|rooms? [A-Z0-9]\w*)\b/i],
+  // "Room 4" and "Room B" are places; "room for growth" is not.
+  ['the room', /\b(?:[Tt]he|[Aa]|[Oo]ur) (?:\w+ )?[Rr]ooms?\b|\b[Rr]ooms? (?:\d+\w*|[A-Z])\b/],
   ['the venue', /\bvenues?\b/i],
   ['co-teaching', /\bco-?teach(?:es|ing)?\b/i],
   ['attendees', /\battendees?\b/i],
