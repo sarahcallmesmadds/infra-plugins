@@ -55,9 +55,11 @@ function stripFences(text) {
   const blanks = [];
   for (const m of src.matchAll(/\n[ \t]*\n/g)) blanks.push(m.index);
   let blankCursor = 0;
-  const blockEndFrom = (at) => {
+  // The end of the block holding `at`, or of the block `skip` blank lines on.
+  const blockEndFrom = (at, skip = 0) => {
     while (blankCursor < blanks.length && blanks[blankCursor] < at) blankCursor += 1;
-    return blankCursor < blanks.length ? blanks[blankCursor] : src.length;
+    const index = blankCursor + skip;
+    return index < blanks.length ? blanks[index] : src.length;
   };
   let out = '';
   let i = 0;
@@ -101,16 +103,16 @@ function stripFences(text) {
     if (src.startsWith('<!--', i)) {
       // A whole-line opener is a comment block and runs to its closer, or to
       // the end when there is none. An opener after visible text is a comment
-      // when a closer exists anywhere later, even past a blank line, and the
-      // four literal characters "<!--" when none does. Two reviewers pulled
-      // opposite ways here: one that a lone "<!--" in prose must not swallow
-      // the document, the other that a drafting note closed two paragraphs
-      // later must not surface as prose and raise a counted category. Both
-      // hold under this rule; what it gives up is an unclosed literal "<!--"
-      // pairing with an unrelated closer far below, which is the rarer case
-      // and the one whose cost is a silent miss rather than a false report.
+      // when its closer comes within the next two blocks, and the four
+      // literal characters "<!--" otherwise. Two reviewers pulled opposite
+      // ways here: one that a lone "<!--" in prose must not swallow the
+      // document, the other that a drafting note closed a paragraph or two
+      // later must not surface as prose and raise a counted category. Two
+      // blocks is the reach that holds both: a note spans a paragraph or two,
+      // and an unrelated closer sits pages away.
       const closeIn = src.indexOf('-->', i + 4);
-      if (atLineStart || closeIn !== -1) {
+      const reach = blockEndFrom(i, 2);
+      if (atLineStart || (closeIn !== -1 && closeIn < reach)) {
         i = closeIn === -1 ? src.length : closeIn + 3;
         out += ' ';
         continue;

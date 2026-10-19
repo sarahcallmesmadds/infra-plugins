@@ -1745,6 +1745,9 @@ check('...but not against the first paragraph of the next section',
 check('a comment after visible text that closes past a blank line is still a comment',
   softOf('Intro text here. <!-- ' + ANNOUNCE + '\n\nstill hidden -->\n\nThe pump has run since March '
     + 'without a fault, and the seal was replaced in June.').includes('announce-then-explain'), false);
+check('...while a closer pages below does not pair with it',
+  softOf('Intro text mentions the <!-- marker.\n\n' + ANNOUNCE + '\n\nOne more paragraph of ordinary prose '
+    + 'about the pump.\n\nAnd another about the seal.\n\nAnd a closer at the end -->').includes('announce-then-explain'), true);
 check('a leading "so" does not hide the subject',
   softOf('So it matters now because of what the change removes. When a person does the work by hand, they set '
     + 'the pace, catch what looks wrong and pass it along, so none of that has to be designed.')
