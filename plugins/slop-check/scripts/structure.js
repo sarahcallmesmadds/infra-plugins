@@ -107,9 +107,13 @@ function unpipedTableLines(lines) {
     }
     run = [];
   };
+  // A run stops at any line that is already another kind of block: a heading
+  // that happens to hold a pipe is not the table's header row, and reading it
+  // as one swallowed the heading and with it the section boundary.
   lines.forEach((raw, i) => {
     const t = raw.trim();
-    if (t && t.includes('|') && !/^(?:`{3,}|~{3,})/.test(t)) run.push(i);
+    const kind = lineKind(raw);
+    if (t && t.includes('|') && (kind === 'text' || kind === 'table')) run.push(i);
     else flush();
   });
   flush();
@@ -378,17 +382,22 @@ function labelRuns(blocks) {
   return runs;
 }
 
-function reappears(item, sentences) {
+// Returns the index of the first sentence that says the item again, or -1.
+// `used` holds indices already claimed: when the candidate is another list,
+// each of its items may stand for one source item only, or three items that
+// share three words would all be found again in one unrelated entry.
+function reappearsAt(item, sentences, used) {
   const words = [...new Set(contentWords(item))];
-  if (words.length < 2) return false;
+  if (words.length < 2) return -1;
   const need = Math.ceil(words.length * 0.7);
-  for (const s of sentences) {
-    const have = new Set(s.words);
+  for (let i = 0; i < sentences.length; i += 1) {
+    if (used && used.has(i)) continue;
+    const have = new Set(sentences[i].words);
     let shared = 0;
     for (const w of words) if (have.has(w)) shared += 1;
-    if (shared >= need) return true;
+    if (shared >= need) return i;
   }
-  return false;
+  return -1;
 }
 
 function excerpt(text, words = 8) {
@@ -449,7 +458,13 @@ function listEnumeratedTwice(blocks) {
     let best = null;
     for (const c of candidates) {
       if (c.section === seq.section || c.sequence === seq) continue;
-      const again = seq.items.filter((item) => reappears(item, c.sentences));
+      const used = c.what === 'list' ? new Set() : null;
+      const again = seq.items.filter((item) => {
+        const at = reappearsAt(item, c.sentences, used);
+        if (at === -1) return false;
+        if (used) used.add(at);
+        return true;
+      });
       if (!best || again.length > best.again.length) best = { again, candidate: c };
     }
     if (best && best.again.length >= 3) {

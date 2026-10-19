@@ -1748,6 +1748,18 @@ check('a bullet list repeated under another heading reports',
   softOf('# Audit\n\n## First\n\n- Audit the system logs\n- Audit the server logs\n- Audit the access logs\n\n'
     + '## Second\n\n- Audit the system logs\n- Audit the server logs\n- Audit the access logs\n')
     .includes('list-enumerated-twice'), true);
+// Found by review: a heading holding a pipe was swept into the table run
+// under it, which erased the section boundary the comparison depends on.
+check('a heading holding a pipe is still a heading',
+  softOf('# Audit\n\n## First\n\n- Audit the system logs\n- Audit the server logs\n- Audit the access logs\n\n'
+    + '## Second | Location\nItem | Note\n--- | ---\nAudit the system logs | nightly\nAudit the server logs | weekly\n'
+    + 'Audit the access logs | daily\n').includes('list-enumerated-twice'), true);
+// Found by review: one entry sharing three words with three source items was
+// counted three times, so a single unrelated list reported as a repeat.
+check('one entry cannot stand for three source items',
+  softOf('# Audit\n\n## First\n\n- Review system audit logs\n- Archive system audit logs\n- Scan system audit logs\n\n'
+    + '## Second\n\n- Inspect system audit logs\n- Check firewall configuration\n- Verify database backups\n')
+    .includes('list-enumerated-twice'), false);
 check('...and says it was a list',
   hitsOf('# Audit\n\n## First\n\n- Audit the system logs\n- Audit the server logs\n- Audit the access logs\n\n'
     + '## Second\n\n- Audit the system logs\n- Audit the server logs\n- Audit the access logs\n', 'list-enumerated-twice')[0]
