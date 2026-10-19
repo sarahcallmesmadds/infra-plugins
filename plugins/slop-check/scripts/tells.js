@@ -1535,4 +1535,10 @@ function checkAll(text, config = {}) {
   return { hard: hard.violations, soft, questions: structure.questions, categories, reading };
 }
 
-module.exports = { checkHard, checkAll, proseOf, sentencesOf, EM_DASH };
+// withoutFencedBlocks and the two markers are shared with structure.js, which
+// requires them lazily: the two files require each other, and a top-level
+// require from structure.js would see this object before it is filled.
+module.exports = {
+  checkHard, checkAll, proseOf, sentencesOf, EM_DASH,
+  withoutFencedBlocks, MARKDOWN_BOUNDARY, MARKDOWN_PARAGRAPH_CONTINUATION,
+};

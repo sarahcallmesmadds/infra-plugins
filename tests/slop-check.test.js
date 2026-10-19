@@ -1719,7 +1719,7 @@ check('"comes down to" followed by the answer is not an announcement',
     + 'replacement seal was cut to a new profile, so neither fits.').includes('announce-then-explain'), false);
 // Found by review: nothing stripped HTML comments, so a drafting note fed the
 // counted checks.
-check('a sentence inside an HTML comment is not read',
+check('a sentence inside an HTML comment is not read by the structural checks',
   softOf('<!-- ' + ANNOUNCE + ' -->\n\nThe pump has run since March without a fault, and the seal was '
     + 'replaced in June.').includes('announce-then-explain'), false);
 // Found by review: a line that starts and ends with emphasis read as a
@@ -1742,9 +1742,12 @@ check('...but not against the first paragraph of the next section',
     .includes('announce-then-explain'), false);
 // Found by review: a comment that closed after a blank line was literal, and
 // the hidden note surfaced as prose.
-check('a comment after visible text that closes past a blank line is still a comment',
-  softOf('Intro text here. <!-- ' + ANNOUNCE + '\n\nstill hidden -->\n\nThe pump has run since March '
-    + 'without a fault, and the seal was replaced in June.').includes('announce-then-explain'), false);
+// An inline comment cannot cross a blank line, as CommonMark and tells.js both
+// read it: the opener is literal and the text after it is prose. This is the
+// settled convention in the sibling file and is kept rather than relitigated.
+check('a comment after visible text that reaches past a blank line is literal, as in tells.js',
+  softOf('Intro text here. <!--\n\n' + ANNOUNCE + '\n\nstill hidden -->\n\nThe pump has run since March '
+    + 'without a fault, and the seal was replaced in June.').includes('announce-then-explain'), true);
 check('...while a closer pages below does not pair with it',
   softOf('Intro text mentions the <!-- marker.\n\n' + ANNOUNCE + '\n\nOne more paragraph of ordinary prose '
     + 'about the pump.\n\nAnd another about the seal.\n\nAnd a closer at the end -->').includes('announce-then-explain'), true);
@@ -1808,6 +1811,17 @@ check('one entry cannot stand for three source items',
   softOf('# Audit\n\n## First\n\n- Review system audit logs\n- Archive system audit logs\n- Scan system audit logs\n\n'
     + '## Second\n\n- Inspect system audit logs\n- Check firewall configuration\n- Verify database backups\n')
     .includes('list-enumerated-twice'), false);
+check('two lists repeating each other are one repetition',
+  hitsOf('# Audit\n\n## First\n\n- Audit the system logs\n- Audit the server logs\n- Audit the access logs\n\n'
+    + '## Second\n\n- Audit the system logs\n- Audit the server logs\n- Audit the access logs\n', 'list-enumerated-twice').length, 1);
+check('a restated table column is called a column',
+  hitsOf('# Audit\n\n## First\n\n- Audit the system logs\n- Audit the server logs\n- Audit the access logs\n\n'
+    + '## Second\n\n| Task | When |\n|---|---|\n| Audit the system logs | nightly |\n| Audit the server logs | weekly |\n'
+    + '| Audit the access logs | daily |\n', 'list-enumerated-twice')[0].includes('in one column of another section'), true);
+check('a definition-style list keeps its descriptions',
+  softOf('# Fields\n\n## Items\n\n- owner: the person who signs the record off\n- source: the system the record came from\n'
+    + '- volume: how many records arrive each week\n\n## Later\n\nEvery record names the person who signs it off, the '
+    + 'system it came from and how many arrive each week.\n').includes('list-enumerated-twice'), true);
 check('...and says it was a list',
   hitsOf('# Audit\n\n## First\n\n- Audit the system logs\n- Audit the server logs\n- Audit the access logs\n\n'
     + '## Second\n\n- Audit the system logs\n- Audit the server logs\n- Audit the access logs\n', 'list-enumerated-twice')[0]
@@ -1896,9 +1910,8 @@ check('many code spans are stripped in linear time', (() => {
   return Number(process.hrtime.bigint() - started) / 1e6 < 2000;
 })(), true);
 check('a contraction is not a content word',
-  softOf('# Rules\n\n## Items\n\n- Don\'t skip\n- Don\'t guess\n- Don\'t wait\n\n## Later\n\nThe runner will skip a '
-    + 'missing file, guess nothing about its contents and wait for the next one.\n')
-    .includes('list-enumerated-twice'), false);
+  JSON.stringify(require(path.join(base, 'structure.js')).contentWords("Don't skip, it's late")),
+  JSON.stringify(['skip', 'late']));
 check('two of four items reappearing is not enough',
   softOf(PARTS_TABLE + '\n## Why it matters\n\nAn operator asks where the records live and who reads them next, '
     + 'and leaves the rest to the build.\n').includes('list-enumerated-twice'), false);
@@ -1993,6 +2006,15 @@ check('an ISO date and an abbreviated month both count as a date',
 check('a fraction and a word beginning with a month stem are not dates',
   questionsOf('# Capacity planning\n\nThe session reserves 1/2 of capacity for 10 marvelous guests.\n')
     .includes('logistics-before-the-subject'), false);
+check('a numbered room and a logistics table are read',
+  questionsOf('# Capacity planning\n\n*90 minutes, Room 4, Oct 28*\n').includes('logistics-before-the-subject')
+  && questionsOf('# Capacity planning\n\n| Date | Oct 28 |\n|---|---|\n| Room | 4 |\n| Duration | 90 minutes |\n')
+    .includes('logistics-before-the-subject'), true);
+check('CRLF line endings are read like LF',
+  JSON.stringify(softOf((PARTS_TABLE + PARTS_PROSE).replace(/\n/g, '\r\n'))), JSON.stringify(softOf(PARTS_TABLE + PARTS_PROSE)));
+check('"I\'m done." carries a verb',
+  questionsOf("I'm done. The branch is left exactly where it was, and the summary names what would have moved.\n\n"
+    + 'Now we ship. Nothing leaves the machine until a person has read the list.').includes('short-claim-opener'), true);
 check('a one-sentence italic line is a paragraph, not a subtitle',
   questionsOf('# Capacity planning\n\n*A 90 minute session in the room for the dinner guests.*\n')
     .includes('logistics-before-the-subject'), true);

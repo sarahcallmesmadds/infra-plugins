@@ -41,91 +41,25 @@
 const BOLD_ONLY = /^(?:\*\*(?!\s)((?:(?!\*\*).)+)\*\*|__(?!\s)((?:(?!__).)+)__):?\s*$/;
 const ITALIC_ONLY = /^(?:\*(?!\s)([^*]+)\*|_(?!\s)([^_]+)_)\s*$/;
 
-// Fenced code and HTML comments come out first. A comment is text the reader
-// never sees, and a drafting note inside one was feeding the announce check.
-//
-// One pass, in document order, so neither construct is read inside the other:
-// a backtick run inside a comment is not a fence, and a "<!--" inside a fence
-// is not a comment. Two regexes in sequence paired a fence marker in one
-// comment with one in the next and erased the visible section between them.
-function stripFences(text) {
-  const src = String(text || '');
-  // Blank-line positions, found once. Looking for the next one from every
-  // code span made a document of many spans quadratic.
-  const blanks = [];
-  for (const m of src.matchAll(/\n[ \t]*\n/g)) blanks.push(m.index);
-  let blankCursor = 0;
-  // The end of the block holding `at`, or of the block `skip` blank lines on.
-  const blockEndFrom = (at, skip = 0) => {
-    while (blankCursor < blanks.length && blanks[blankCursor] < at) blankCursor += 1;
-    const index = blankCursor + skip;
-    return index < blanks.length ? blanks[index] : src.length;
-  };
-  let out = '';
-  let i = 0;
-  while (i < src.length) {
-    const atLineStart = i === 0 || src[i - 1] === '\n';
-    const fence = atLineStart ? src.slice(i).match(/^[ \t]{0,3}(`{3,}|~{3,})/) : null;
-    if (fence) {
-      const marker = fence[1];
-      const close = new RegExp(`\\n[ \\t]{0,3}${marker[0] === '`' ? '`' : '~'}{${marker.length},}[ \\t]*(?=\\n|$)`);
-      const rest = src.slice(i + fence[0].length);
-      const m = rest.match(close);
-      i += fence[0].length + (m ? m.index + m[0].length : rest.length);
-      out += '\n';
-      continue;
-    }
-    // An inline code span is copied through whole, so a "<!--" shown as code
-    // ("the marker \`<!--\` opens a comment") does not open a comment that
-    // runs to the end of the document. plain() blanks the span later. A run
-    // of backticks with no closing run of the same length on its line is
-    // literal text.
-    // A code span does not cross a blank line: the block that holds the
-    // opener is as far as its closer may be.
-    if (src[i] === '`') {
-      const blockEnd = blockEndFrom(i);
-      let runEnd = i + 1;
-      while (src[runEnd] === '`') runEnd += 1;
-      const run = src.slice(i, runEnd);
-      const rest = src.slice(runEnd, blockEnd);
-      const close = rest.indexOf(run);
-      const closeIsExact = close !== -1 && rest[close + run.length] !== '`';
-      if (closeIsExact) {
-        const end = runEnd + close + run.length;
-        out += src.slice(i, end);
-        i = end;
-        continue;
-      }
-      out += run;
-      i = runEnd;
-      continue;
-    }
-    if (src.startsWith('<!--', i)) {
-      // A whole-line opener is a comment block and runs to its closer, or to
-      // the end when there is none. An opener after visible text is a comment
-      // when its closer comes within the next two blocks, and the four
-      // literal characters "<!--" otherwise. Two reviewers pulled opposite
-      // ways here: one that a lone "<!--" in prose must not swallow the
-      // document, the other that a drafting note closed a paragraph or two
-      // later must not surface as prose and raise a counted category. Two
-      // blocks is the reach that holds both: a note spans a paragraph or two,
-      // and an unrelated closer sits pages away.
-      const closeIn = src.indexOf('-->', i + 4);
-      const reach = blockEndFrom(i, 2);
-      if (atLineStart || (closeIn !== -1 && closeIn < reach)) {
-        i = closeIn === -1 ? src.length : closeIn + 3;
-        out += ' ';
-        continue;
-      }
-      out += '<!--';
-      i += 4;
-      continue;
-    }
-    out += src[i];
-    i += 1;
-  }
-  return out;
+// Fenced code, HTML blocks, comments and code spans are read by the same
+// pass tells.js uses for the brochure check, which has been through its own
+// review rounds for exactly these shapes. A scanner written here for the same
+// job absorbed fourteen findings across five rounds (CRLF endings, markers
+// inside comments, openers inside spans, indented openers, fences inside list
+// items) before the lesson that it should not exist. The pass returns one
+// entry per input line: visible lines as written, hidden lines as empty, a
+// block boundary as a marker that reads as blank here, and a line whose
+// inline comment closed before more text as that text with a continuation
+// marker in front.
+function visibleLines(text) {
+  const tells = require('./tells.js');
+  return tells.withoutFencedBlocks(String(text || '').replace(/\r\n?/g, '\n')).map((line) => {
+    if (line.startsWith(tells.MARKDOWN_BOUNDARY)) return '';
+    if (line.startsWith(tells.MARKDOWN_PARAGRAPH_CONTINUATION)) return line.slice(1);
+    return line;
+  });
 }
+
 
 function lineKind(raw) {
   const line = raw.trim();
@@ -214,7 +148,7 @@ function unpipedTableLines(lines) {
 }
 
 function blocksOf(text) {
-  const lines = stripFences(text).split(/\r?\n/);
+  const lines = visibleLines(text);
   const blocks = [];
   const unpiped = unpipedTableLines(lines);
   let current = null;
@@ -425,19 +359,19 @@ function announceThenExplain(paragraphs) {
 // paragraph before, which is the shape the author named, and with that anchor
 // and two hits required the same corpus reports 7.
 
-const AUX = /\b(?:is|are|was|were|be|been|has|have|had|do|does|did|can|could|will|would|should|shall|may|might|must|isn't|aren't|wasn't|weren't|hasn't|haven't|hadn't|don't|doesn't|didn't|can't|couldn't|won't|wouldn't|shouldn't)\b/i;
+const AUX = /\b(?:am|is|are|was|were|be|been|has|have|had|do|does|did|can|could|will|would|should|shall|may|might|must|isn't|aren't|wasn't|weren't|hasn't|haven't|hadn't|don't|doesn't|didn't|can't|couldn't|won't|wouldn't|shouldn't)\b/i;
 
 function hasVerb(s) {
   const flat = s.replace(/[‘’]/g, "'");
   if (AUX.test(flat)) return true;
-  if (/\w(?:'s|'re|'ve|'ll|'d|n't)\b/i.test(flat)) return true;
+  if (/\w(?:'s|'re|'ve|'ll|'d|'m|n't)\b/i.test(flat)) return true;
   // A pronoun followed by a word is a clause ("So we talk."), unless the word
   // is an adverb that leaves a fragment ("This too.", "That often.").
-  if (/^(?:so |and |but |then )?(?:i|we|you|they|he|she|it|that|this|who)\s+\w{2,}/i.test(flat)
-    && !/^(?:so |and |but |then )?(?:i|we|you|they|he|she|it|that|this|who)\s+(?:too|often|also|again|here|there|now|then|still|always|never|only|indeed|though)[.!?]?$/i.test(flat)) return true;
+  if (/^(?:so |and |but |then |now )?(?:i|we|you|they|he|she|it|that|this|who)\s+\w{2,}/i.test(flat)
+    && !/^(?:so |and |but |then |now )?(?:i|we|you|they|he|she|it|that|this|who)\s+(?:too|often|also|again|here|there|now|then|still|always|never|only|indeed|though)[.!?]?$/i.test(flat)) return true;
   // "Here we go." and "There it goes." are clauses; "Here tomorrow." is not.
   // A locative opener needs a pronoun or a verb right after it.
-  if (/^(?:so |and |but |then )?(?:here|there)\s+(?:i|we|you|they|he|she|it|goes|comes|lies|sits|stands|begins|ends)\b/i.test(flat)) return true;
+  if (/^(?:so |and |but |then |now )?(?:here|there)\s+(?:i|we|you|they|he|she|it|goes|comes|lies|sits|stands|begins|ends)\b/i.test(flat)) return true;
   if (/\b\w{3,}ed\b/i.test(flat)) return true;
   return false;
 }
@@ -455,7 +389,7 @@ function shortClaimOpener(paragraphs, taken) {
     if (n < 2 || n > 5) continue;
     if (/[?:]$/.test(first)) continue;
     if (!hasVerb(first)) continue;
-    if (!/^(?:so |and |but |then )?(?:it|that|this|we|you|they|here|there)\b/i.test(first)) continue;
+    if (!/^(?:so |and |but |then |now )?(?:i|it|that|this|we|you|they|here|there)\b/i.test(first)) continue;
     if (taken.has(first)) continue;
     hits.push(first);
   }
@@ -499,7 +433,7 @@ function tableColumns(block) {
 function listItems(block) {
   const items = block.lines
     .map((l) => plain(l.replace(/^(?:[-*+]|\d{1,3}[.)])\s+/, '')))
-    .map((l) => l.split(/(?<=[.!?:])\s/)[0])
+    .map((l) => l.split(/(?<=[.!?])\s/)[0])
     .filter((l) => contentWords(l).length >= 2);
   return items.length >= 3 ? [{ label: `the list beginning "${items[0]}"`, items }] : [];
 }
@@ -583,12 +517,13 @@ function listEnumeratedTwice(blocks) {
   const section = sectionIndexOf(blocks);
   const sequences = [];
   for (const b of blocks) {
-    if (b.kind === 'table') for (const col of tableColumns(b)) sequences.push({ ...col, section: section.get(b) });
-    if (b.kind === 'list') for (const l of listItems(b)) sequences.push({ ...l, section: section.get(b) });
+    if (b.kind === 'table') for (const col of tableColumns(b)) sequences.push({ ...col, kind: 'column', section: section.get(b) });
+    if (b.kind === 'list') for (const l of listItems(b)) sequences.push({ ...l, kind: 'list', section: section.get(b) });
   }
   for (const run of labelRuns(blocks)) {
     sequences.push({
       label: `the bold labels beginning "${run[0].label}"`,
+      kind: 'run of labels',
       items: run.map((r) => r.label),
       section: section.get(run[0].block),
     });
@@ -610,7 +545,8 @@ function listEnumeratedTwice(blocks) {
   for (const other of sequences) {
     candidates.push({
       section: other.section,
-      what: 'list',
+      what: other.kind,
+      list: true,
       text: other.items.join('; '),
       sentences: other.items.map((t) => ({ words: contentWords(t) })),
       sequence: other,
@@ -618,12 +554,15 @@ function listEnumeratedTwice(blocks) {
   }
 
   const hits = [];
+  // Two sequences that repeat each other are one repetition: the pair is
+  // reported once, from whichever sequence comes first.
+  const reported = new Set();
   for (const seq of sequences) {
     let best = null;
     const common = commonWords(seq.items);
     for (const c of candidates) {
       if (c.section === seq.section || c.sequence === seq) continue;
-      const used = c.what === 'list' ? new Set() : null;
+      const used = c.list ? new Set() : null;
       const again = seq.items.filter((item) => {
         const at = reappearsAt(item, c.sentences, used, common);
         if (at === -1) return false;
@@ -631,6 +570,13 @@ function listEnumeratedTwice(blocks) {
         return true;
       });
       if (!best || again.length > best.again.length) best = { again, candidate: c };
+    }
+    if (best && best.again.length >= 3 && best.candidate.sequence) {
+      const a = sequences.indexOf(seq);
+      const b = sequences.indexOf(best.candidate.sequence);
+      const key = `${Math.min(a, b)}:${Math.max(a, b)}`;
+      if (reported.has(key)) continue;
+      reported.add(key);
     }
     if (best && best.again.length >= 3) {
       const quoted = best.again.map((i) => `"${excerpt(i, 6)}"`).join(', ');
@@ -703,13 +649,13 @@ const EVENT_TOKENS = [
   ].join('|'), 'i')],
   ['minutes', /\b\d+[- ]?minutes?\b/i],
   ['the session', /\bsessions?\b/i],
-  ['the room', /\b(?:the|a|our) (?:\w+ )?room\b/i],
-  ['the venue', /\bvenue\b/i],
+  ['the room', /\b(?:(?:the|a|our) (?:\w+ )?rooms?|rooms? [A-Z0-9]\w*)\b/i],
+  ['the venue', /\bvenues?\b/i],
   ['co-teaching', /\bco-?teach(?:es|ing)?\b/i],
   ['attendees', /\battendees?\b/i],
   ['guests', /\bguests?\b/i],
   ['the dinner', /\bdinner\b/i],
-  ['running it twice', /\brun(?:s|ning)? twice\b/i],
+  ['running it twice', /\brun(?:s|ning)?(?: it)? twice\b/i],
   ['in person', /\bin[- ]person\b/i],
   ['online', /\bonline\b/i],
   ['the webinar', /\bwebinar\b/i],
@@ -734,8 +680,8 @@ function logisticsBeforeSubject(blocks) {
     }
     if (seen >= 6) break;
     seen += 1;
-    if (b.kind === 'text' || b.kind === 'quote' || b.kind === 'subtitle') opening.push(b.text);
-    else if (b.kind === 'list') opening.push(plain(b.lines.join(' ')));
+    if (b.kind === 'text' || b.kind === 'quote' || b.kind === 'subtitle' || b.kind === 'note') opening.push(b.text);
+    else if (b.kind === 'list' || b.kind === 'table') opening.push(plain(b.lines.join(' ').replace(/\|/g, ' ')));
   }
   if (!opening.length) return null;
   const text = opening.join(' ');
