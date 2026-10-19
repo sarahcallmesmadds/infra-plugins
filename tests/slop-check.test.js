@@ -1725,9 +1725,7 @@ check('a sentence inside an HTML comment is not read by the structural checks',
 // Found by review: a line that starts and ends with emphasis read as a
 // heading, which hid it from the prose checks and cut a section boundary.
 check('a sentence that starts and ends with bold is prose, not a heading',
-  softOf('Choose **the fast path** over **the safe path** because of what it removes. When a person does '
-    + 'the work by hand, they set the pace, catch what looks wrong and pass it along, so none of that '
-    + 'has to be designed.').includes('announce-then-explain'), false);
+  require(path.join(base, 'structure.js')).blocksOf('Choose **the fast path** over **the safe path**')[0].kind, 'text');
 check('a sentence opening with a digit is its own sentence',
   softOf('It matters now because of what the change removes. 3 steps that a person took without noticing '
     + 'have to be designed on purpose once the work runs without them.').includes('announce-then-explain'), true);
@@ -1761,6 +1759,16 @@ check('an indefinite article before the tail noun still reads as a tail',
 check('a straight single quote can open a sentence',
   softOf("It is simple. 'The housing was machined to the old tolerance and the new seal was cut to the revised "
     + "one, so the two never met.'").includes('announce-then-explain'), true);
+check('"Here\'s the thing." is an announcement',
+  softOf("Here's the thing. The queue that fills faster than it drains fails on the Tuesday after a long "
+    + 'weekend, every time.').includes('announce-then-explain'), true);
+check('a sentence ending before emphasis is split there',
+  softOf('It matters now because of what the change removes. **Nobody** designs the pace, catches what looks '
+    + 'wrong or passes it along, so none of that exists until someone builds it.').includes('announce-then-explain'), true);
+check('an abbreviation does not end a sentence',
+  questionsOf('We won vs. the team that lost, and the summary names what would have moved.\n\n'
+    + 'We met Mr. Smith at the gate, and nothing leaves until a person has read the list.')
+    .includes('short-claim-opener'), false);
 check('a sentence in a fenced block is not read',
   softOf('```\n' + ANNOUNCE + '\n```').includes('announce-then-explain'), false);
 // Found by review: plain() kept the words inside backticks, so an announcing
@@ -1822,6 +1830,13 @@ check('a definition-style list keeps its descriptions',
   softOf('# Fields\n\n## Items\n\n- owner: the person who signs the record off\n- source: the system the record came from\n'
     + '- volume: how many records arrive each week\n\n## Later\n\nEvery record names the person who signs it off, the '
     + 'system it came from and how many arrive each week.\n').includes('list-enumerated-twice'), true);
+check('a wrapped line does not lift an item out of reach of its restatement',
+  softOf('# Audit\n\n## First\n\n- Audit the system logs\n    rotate them weekly and keep ninety days\n'
+    + '- Audit the server logs\n- Audit the access logs\n\n## Second\n\nThe nightly job will audit the system logs, '
+    + 'audit the server logs and audit the access logs before the report.\n').includes('list-enumerated-twice'), true);
+check('a lone line starting with a pipe is prose',
+  JSON.stringify(require(path.join(base, 'structure.js')).blocksOf('It matters now because of what the change removes.\n| and the pipe wraps here.')
+    .map((b) => b.kind)), JSON.stringify(['text']));
 check('...and says it was a list',
   hitsOf('# Audit\n\n## First\n\n- Audit the system logs\n- Audit the server logs\n- Audit the access logs\n\n'
     + '## Second\n\n- Audit the system logs\n- Audit the server logs\n- Audit the access logs\n', 'list-enumerated-twice')[0]
@@ -2021,6 +2036,9 @@ check('"room for" and "room to" are not rooms',
 check('a comment on its own line inside a paragraph does not split it',
   JSON.stringify(require(path.join(base, 'structure.js')).blocksOf('First sentence here.\n<!-- note -->\nSecond sentence here.')
     .map((b) => b.text)), JSON.stringify(['First sentence here. Second sentence here.']));
+check('frontmatter above the title does not switch the question off',
+  questionsOf('---\ntitle: Capacity planning\n---\n\n# Capacity planning\n\nThis is a 90 minute session for the '
+    + 'guests in the room.\n').includes('logistics-before-the-subject'), true);
 check('a one-sentence italic line is a paragraph, not a subtitle',
   questionsOf('# Capacity planning\n\n*A 90 minute session in the room for the dinner guests.*\n')
     .includes('logistics-before-the-subject'), true);

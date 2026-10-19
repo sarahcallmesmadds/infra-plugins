@@ -80,7 +80,6 @@ function lineKind(raw) {
   const line = raw.trim();
   if (!line) return 'blank';
   if (/^#{1,6}\s/.test(line)) return 'heading';
-  if (/^\|/.test(line)) return 'table';
   if (/^(?:[-*+]|\d{1,3}[.)])\s/.test(line)) return 'list';
   // An indented line without a marker continues whatever block is open; the
   // block loop folds it into the list item above, keeps it in an open
@@ -135,11 +134,12 @@ function headingText(line) {
   return plain(t);
 }
 
-const SEPARATOR_ROW = /^\|?\s*:?-{2,}:?\s*(?:\|\s*:?-{2,}:?\s*)*\|?\s*$/;
+const SEPARATOR_ROW = /^\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)*\|?\s*$/;
 
-// A pipe table may omit its outer pipes ("Part | Detail" over "--- | ---").
-// lineKind reads one line and cannot know that, so a contiguous run of lines
-// carrying a pipe is a table when one of them is the separator row.
+// A table is a run of lines carrying a pipe with a separator row among them,
+// whether or not the outer pipes are written. A lone line starting with a
+// pipe is prose, as CommonMark reads it; treating it as a table split the
+// paragraph it wrapped in.
 function unpipedTableLines(lines) {
   const table = new Set();
   let run = [];
@@ -155,7 +155,7 @@ function unpipedTableLines(lines) {
   lines.forEach((raw, i) => {
     const t = raw.trim();
     const kind = lineKind(raw);
-    if (t && t.includes('|') && (kind === 'text' || kind === 'table')) run.push(i);
+    if (t && t.includes('|') && kind === 'text') run.push(i);
     else flush();
   });
   flush();
@@ -200,7 +200,11 @@ function blocksOf(text) {
     if (!current && kind !== 'blank' && /^(?: {4}|\t)/.test(raw)) kind = 'blank';
     if (kind === 'continuation') {
       if (current && current.kind === 'list') {
-        current.lines[current.lines.length - 1] += ` ${raw.trim()}`;
+        // The wrapped line is kept apart from the item's first line with a
+        // marker, so the item's words for matching come from the line the
+        // author wrote as the item and a long continuation cannot lift the
+        // match bar out of reach.
+        current.lines[current.lines.length - 1] += ` \u0002${raw.trim()}`;
         return;
       }
       kind = current && current.kind === 'text' ? 'text'
@@ -246,7 +250,10 @@ function blocksOf(text) {
 
 function sentencesIn(paragraphText) {
   return String(paragraphText)
-    .split(/(?<=[.!?])\s+(?=[A-Z0-9"\''(“‘])/)
+    // Split after sentence punctuation before a capital, digit, quote,
+    // bracket or emphasis marker, but not after an initial or a common
+    // abbreviation: "vs. They lost" and "Mr. Smith" are one sentence.
+    .split(/(?<=(?<!\b[A-Z])(?<!\b(?:vs|Mr|Mrs|Ms|Dr|No|Jr|Sr|St|etc|e\.g|i\.e|a\.m|p\.m|U\.S|D\.C))[.!?])\s+(?=[A-Z0-9"'(\u201c\u2018*_\[`])/)
     .map((s) => s.trim())
     .filter(Boolean);
 }
@@ -308,7 +315,7 @@ function contentWords(s) {
 // was on the list and is not: its object is the answer ("It comes down to
 // trust."), so it names the content rather than deferring it.
 const FORWARD_TAIL = new RegExp([
-  "\\b(?:is|was|are|were|'s|seems?|sounds?)\\s+(?:also\\s+|very\\s+|quite\\s+)?(?:(?:a|an|the|some)\\s+)?(?:(?:simple|clear|obvious|straightforward|easy|plain|subtle|telling)(?:\\s+(?:fix|one|problem|point|reason|case|thing|part))?|point|reason|key|hard part|catch|problem|difference|already there|worth \\w+ing(?: here| now| briefly)?|where (?:\\w+ ){1,3}(?:starts?|begins?|comes? in))[.!?]*$",
+  "\\b(?:is|was|are|were|'s|seems?|sounds?)\\s+(?:also\\s+|very\\s+|quite\\s+)?(?:(?:a|an|the|some)\\s+)?(?:(?:simple|clear|obvious|straightforward|easy|plain|subtle|telling)(?:\\s+(?:fix|one|problem|point|reason|case|thing|part))?|point|reason|key|hard part|catch|problem|difference|thing|answer|question|deal|already there|worth \\w+ing(?: here| now| briefly)?|where (?:\\w+ ){1,3}(?:starts?|begins?|comes? in))[.!?]*$",
   "\\bbecause of (?:what|how|who|where|when)\\b[^.!?]*[.!?]*$",
   "\\bmakes? (?:it|this|that|them|the \\w+(?: \\w+)?) (?:concrete|clear|simple|obvious|real|plain|visible)[.!?]*$",
   "\\b(?:changes?|decides?|explains?|shows?|answers?|tells? (?:you|us)) (?:who|what|how|why|where|when)\\b[^.!?]*[.!?]*$",
@@ -447,7 +454,7 @@ function tableColumns(block) {
 
 function listItems(block) {
   const items = block.lines
-    .map((l) => plain(l.replace(/^(?:[-*+]|\d{1,3}[.)])\s+/, '')))
+    .map((l) => plain(l.replace(/^(?:[-*+]|\d{1,3}[.)])\s+/, '').split('\u0002')[0]))
     .map((l) => l.split(/(?<=[.!?])\s/)[0])
     .filter((l) => contentWords(l).length >= 2);
   return items.length >= 3 ? [{ label: `the list beginning "${items[0]}"`, items }] : [];
@@ -577,6 +584,14 @@ function listEnumeratedTwice(blocks) {
     const common = commonWords(seq.items);
     for (const c of candidates) {
       if (c.section === seq.section || c.sequence === seq) continue;
+      // A pair already reported from the other side is skipped as a
+      // candidate, not the whole sequence: its items may also be restated
+      // in a paragraph of a third section, and that evidence still prints.
+      if (c.sequence) {
+        const a = sequences.indexOf(seq);
+        const b = sequences.indexOf(c.sequence);
+        if (reported.has(`${Math.min(a, b)}:${Math.max(a, b)}`)) continue;
+      }
       const used = c.list ? new Set() : null;
       const again = seq.items.filter((item) => {
         const at = reappearsAt(item, c.sentences, used, common);
@@ -589,9 +604,7 @@ function listEnumeratedTwice(blocks) {
     if (best && best.again.length >= 3 && best.candidate.sequence) {
       const a = sequences.indexOf(seq);
       const b = sequences.indexOf(best.candidate.sequence);
-      const key = `${Math.min(a, b)}:${Math.max(a, b)}`;
-      if (reported.has(key)) continue;
-      reported.add(key);
+      reported.add(`${Math.min(a, b)}:${Math.max(a, b)}`);
     }
     if (best && best.again.length >= 3) {
       const quoted = best.again.map((i) => `"${excerpt(i, 6)}"`).join(', ');
@@ -679,7 +692,10 @@ const EVENT_TOKENS = [
 ];
 
 function logisticsBeforeSubject(blocks) {
-  if (!blocks.length || blocks[0].kind !== 'heading') return null;
+  // The title is the first heading among the first three blocks, so YAML
+  // frontmatter or an epigraph above it does not switch the check off.
+  const titleAt = blocks.slice(0, 3).findIndex((b) => b.kind === 'heading');
+  if (titleAt === -1) return null;
   // The window is the opening, not the document: it closes at the second
   // heading or after six blocks, whichever comes first, so a long title-plus-
   // prose piece that mentions guests on page three is not asked. Lists,
@@ -688,7 +704,7 @@ function logisticsBeforeSubject(blocks) {
   const opening = [];
   let headings = 0;
   let seen = 0;
-  for (const b of blocks.slice(1)) {
+  for (const b of blocks.slice(titleAt + 1)) {
     if (b.kind === 'heading') {
       headings += 1;
       if (headings >= 2) break;
@@ -697,7 +713,7 @@ function logisticsBeforeSubject(blocks) {
     if (seen >= 6) break;
     seen += 1;
     if (b.kind === 'text' || b.kind === 'quote' || b.kind === 'subtitle' || b.kind === 'note') opening.push(b.text);
-    else if (b.kind === 'list' || b.kind === 'table') opening.push(plain(b.lines.join(' ').replace(/\|/g, ' ')));
+    else if (b.kind === 'list' || b.kind === 'table') opening.push(plain(b.lines.join(' ').replace(/[|\u0002]/g, ' ')));
   }
   if (!opening.length) return null;
   const text = opening.join(' ');
@@ -724,6 +740,9 @@ function logisticsBeforeSubject(blocks) {
 
 // Two lists. `soft` goes into the reading beside the lexical categories in
 // tells.js; `questions` is printed beside it and counted against nothing.
+// These run on whatever checkAll is given, source files included, as the
+// lexical checks do; a code file whose comments carry headings and bullets is
+// unmeasured here, and the cheaper direction on it is a miss.
 function structuralTells(text) {
   const blocks = blocksOf(text);
   const paragraphs = blocks.filter((b) => b.kind === 'text').map((b) => b.text);
