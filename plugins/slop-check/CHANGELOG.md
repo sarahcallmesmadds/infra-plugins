@@ -23,9 +23,9 @@ event (a date, the room, the minutes, who co-teaches) under a title that names
 a subject. Each of those is also how a sound document can be organised, so the
 report asks and the reader decides.
 
-Measured over 210 documents from four repositories, the two categories moved
-two readings from "little" to "some", each on a list genuinely restated beside
-an existing category, and none to "strong". Two detectors that were tried were
+Measured over 213 documents from four repositories, the two categories moved
+two readings from "little" to "some", each on a schema whose field table is
+restated in a paragraph beside an announcing sentence, and none to "strong". Two detectors that were tried were
 left out after that measurement and the reasons are in `scripts/structure.js`.
 
 ## Upgrading to 0.9.0

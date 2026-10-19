@@ -259,7 +259,7 @@ rate at all.
 
 Splitting the copular contrast into its own category moved one document of the
 41 in this repository from "little" to "some", on a real hit rather than a
-false one. The two structural categories, measured over 210 documents across
+false one. The two structural categories, measured over 213 documents across
 four repositories, moved two from "little" to "some" and none to "strong"; the
 first versions of three of the structural checks moved 23, two of them to
 "strong", and were anchored or demoted to questions on that evidence.
