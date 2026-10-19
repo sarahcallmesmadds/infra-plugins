@@ -211,15 +211,19 @@ function blocksOf(text) {
   lines.forEach((raw, index) => {
     if (underline.has(index)) return;
     let kind = setext.has(index) ? 'heading' : unpiped.has(index) ? 'table' : lineKind(raw);
-    // Four columns of indent outside a list is indented code, and code is
-    // not prose, a heading or a list however it is shaped. Inside a list it
-    // is a nested item or a continuation and is read as the list.
-    if (/^(?: {4}|\t)/.test(raw) && !(current && current.kind === 'list') && kind !== 'blank') kind = 'blank';
-    // A bold-only line with prose directly under it, no blank line between,
-    // is a run-in label and its paragraph, not a heading: "**Setup.**" over
-    // "Inspect the surface." is the shape the label checks exist for, and
-    // reading it as a heading hid it from them and cut a section.
-    if (kind === 'heading' && !/^\s*#/.test(raw) && !setext.has(index)
+    // Four columns of indent at the start of a block is indented code, and
+    // code is not prose, a heading or a list however it is shaped. Inside an
+    // open block it is a wrapped line, a nested item or a continuation, and
+    // stays with the block it continues.
+    if (/^(?: {4}|\t)/.test(raw) && !current && kind !== 'blank') kind = 'blank';
+    // A bold-only line ending in sentence punctuation with prose directly
+    // under it, no blank line between, is a run-in label and its paragraph:
+    // "**Setup.**" over "Inspect the surface." is the shape the label checks
+    // exist for, and reading it as a heading hid it from them and cut a
+    // section. A bare "**Second**" over prose keeps its heading: the period
+    // is the marker that separates the two, because a heading does not end
+    // in one and a label does.
+    if (kind === 'heading' && /^\s*(?:\*\*|__).*[.:!?](?:\*\*|__)\s*$/.test(raw) && !setext.has(index)
       && index + 1 < lines.length && !underline.has(index + 1) && lineKind(lines[index + 1]) === 'text') {
       kind = 'text';
     }

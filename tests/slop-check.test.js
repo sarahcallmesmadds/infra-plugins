@@ -1831,6 +1831,17 @@ check('an indented code block is not a list',
   softOf('# Audit\n\n## First\n\n    - Audit the system logs\n    - Audit the server logs\n    - Audit the access logs\n\n'
     + '## Second\n\n- Audit the system logs\n- Audit the server logs\n- Audit the access logs\n')
     .includes('list-enumerated-twice'), false);
+// Found by review: a wrapped line indented four spaces was dropped as code.
+check('an indented line continuing an open paragraph stays in it',
+  softOf('# Audit\n\n## First\n\n- Audit the system logs\n- Audit the server logs\n- Audit the access logs\n\n'
+    + '## Second\n\nThis operation audits the system logs, audits the server logs,\n'
+    + '    and audits the access logs before releasing the report.\n').includes('list-enumerated-twice'), true);
+// Found by review: a bare bold heading touching its paragraph lost its
+// section boundary once bold-over-prose became a label.
+check('a bare bold heading touching its paragraph is still a heading',
+  softOf('# Audit\n\n## First\n\n- Audit the system logs\n- Audit the server logs\n- Audit the access logs\n\n'
+    + '**Second**\nAudit the system logs, audit the server logs, and audit the access logs.\n')
+    .includes('list-enumerated-twice'), true);
 check('a contraction is not a content word',
   softOf('# Rules\n\n## Items\n\n- Don\'t skip\n- Don\'t guess\n- Don\'t wait\n\n## Later\n\nThe runner will skip a '
     + 'missing file, guess nothing about its contents and wait for the next one.\n')
