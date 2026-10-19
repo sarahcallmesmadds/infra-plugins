@@ -1728,6 +1728,9 @@ check('a sentence that starts and ends with bold is prose, not a heading',
   softOf('Choose **the fast path** over **the safe path** because of what it removes. When a person does '
     + 'the work by hand, they set the pace, catch what looks wrong and pass it along, so none of that '
     + 'has to be designed.').includes('announce-then-explain'), false);
+check('a sentence opening with a digit is its own sentence',
+  softOf('It matters now because of what the change removes. 3 steps that a person took without noticing '
+    + 'have to be designed on purpose once the work runs without them.').includes('announce-then-explain'), true);
 check('a sentence in a fenced block is not read',
   softOf('```\n' + ANNOUNCE + '\n```').includes('announce-then-explain'), false);
 // Found by review: plain() kept the words inside backticks, so an announcing
@@ -1819,6 +1822,15 @@ check('a bold heading holding italics is still a heading',
   softOf(PARTS_TABLE + '\n**Why *it* matters**\n\nBefore building anything, an operator asks where the records '
     + 'live, who reads them next, how many arrive each week, and how anyone knows it worked.\n')
     .includes('list-enumerated-twice'), true);
+// Found by review: a comment opener shown in a code span opened a comment
+// that ran to the end of the document.
+check('a comment opener inside a code span is not a comment',
+  softOf('The marker `<!--` opens a comment.\n\n' + PARTS_TABLE + PARTS_PROSE).includes('list-enumerated-twice'), true);
+// Found by review: four columns of indent is code, not a list.
+check('an indented code block is not a list',
+  softOf('# Audit\n\n## First\n\n    - Audit the system logs\n    - Audit the server logs\n    - Audit the access logs\n\n'
+    + '## Second\n\n- Audit the system logs\n- Audit the server logs\n- Audit the access logs\n')
+    .includes('list-enumerated-twice'), false);
 check('a contraction is not a content word',
   softOf('# Rules\n\n## Items\n\n- Don\'t skip\n- Don\'t guess\n- Don\'t wait\n\n## Later\n\nThe runner will skip a '
     + 'missing file, guess nothing about its contents and wait for the next one.\n')
@@ -1878,6 +1890,12 @@ check('...never a category',
   softOf(LABELS).includes('run-in-labels-sharing-a-stem'), false);
 // Review supplied this one: a procedure organised the same way on purpose,
 // sharing only its first word.
+// Found by review: a bold label on its own line over its paragraph read as a
+// heading, so the label checks never saw it.
+check('a bold label on its own line above its paragraph is a run-in label',
+  questionsOf('**Setup.**\nInspect the mounting surface for cracks.\n\n**Setup.**\nDisconnect the supply '
+    + 'and tag the valve.\n\n**Setup.**\nCheck for leaks at full pressure.\n')
+    .includes('run-in-labels-sharing-a-stem'), true);
 check('three identical one-word labels share a stem',
   questionsOf('**Setup.** Inspect the mounting surface for cracks.\n\n**Setup.** Disconnect the supply '
     + 'and tag the valve.\n\n**Setup.** Check for leaks at full pressure.\n')

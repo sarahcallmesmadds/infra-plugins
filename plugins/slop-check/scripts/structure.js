@@ -64,6 +64,29 @@ function stripFences(text) {
       out += '\n';
       continue;
     }
+    // An inline code span is copied through whole, so a "<!--" shown as code
+    // ("the marker \`<!--\` opens a comment") does not open a comment that
+    // runs to the end of the document. plain() blanks the span later. A run
+    // of backticks with no closing run of the same length on its line is
+    // literal text.
+    if (src[i] === '`') {
+      let runEnd = i + 1;
+      while (src[runEnd] === '`') runEnd += 1;
+      const run = src.slice(i, runEnd);
+      const lineEnd = src.indexOf('\n', runEnd);
+      const line = src.slice(runEnd, lineEnd === -1 ? src.length : lineEnd);
+      const close = line.indexOf(run);
+      const closeIsExact = close !== -1 && line[close + run.length] !== '`';
+      if (closeIsExact) {
+        const end = runEnd + close + run.length;
+        out += src.slice(i, end);
+        i = end;
+        continue;
+      }
+      out += run;
+      i = runEnd;
+      continue;
+    }
     if (src.startsWith('<!--', i)) {
       const end = src.indexOf('-->', i + 4);
       i = end === -1 ? src.length : end + 3;
@@ -187,7 +210,19 @@ function blocksOf(text) {
   });
   lines.forEach((raw, index) => {
     if (underline.has(index)) return;
-    const kind = setext.has(index) ? 'heading' : unpiped.has(index) ? 'table' : lineKind(raw);
+    let kind = setext.has(index) ? 'heading' : unpiped.has(index) ? 'table' : lineKind(raw);
+    // Four columns of indent outside a list is indented code, and code is
+    // not prose, a heading or a list however it is shaped. Inside a list it
+    // is a nested item or a continuation and is read as the list.
+    if (/^(?: {4}|\t)/.test(raw) && !(current && current.kind === 'list') && kind !== 'blank') kind = 'blank';
+    // A bold-only line with prose directly under it, no blank line between,
+    // is a run-in label and its paragraph, not a heading: "**Setup.**" over
+    // "Inspect the surface." is the shape the label checks exist for, and
+    // reading it as a heading hid it from them and cut a section.
+    if (kind === 'heading' && !/^\s*#/.test(raw) && !setext.has(index)
+      && index + 1 < lines.length && !underline.has(index + 1) && lineKind(lines[index + 1]) === 'text') {
+      kind = 'text';
+    }
     if (kind === 'blank' || kind === 'rule') {
       close();
       return;
@@ -217,7 +252,7 @@ function blocksOf(text) {
 
 function sentencesIn(paragraphText) {
   return String(paragraphText)
-    .split(/(?<=[.!?])\s+(?=[A-Z"'(“‘])/)
+    .split(/(?<=[.!?])\s+(?=[A-Z0-9"'(“‘])/)
     .map((s) => s.trim())
     .filter(Boolean);
 }
@@ -323,7 +358,8 @@ function announceThenExplain(paragraphs) {
 // without a verb ("Three steps.") are labels rather than claims and stay out.
 //
 // A question, not a category, and anchored on a pronoun subject. Measured
-// over 210 documents from four of the author's repositories, the unanchored
+// over 210 documents from four of the author's repositories (213 by the time
+// the branch shipped, with the same result), the unanchored
 // version reported 49 of them, almost all instruction prose where "Do not ask
 // here." and "Nothing to do on upgrade." are the right length. "So we talk."
 // and "That changes who builds." open on a pronoun pointing back at the
@@ -379,7 +415,7 @@ function shortClaimOpener(paragraphs, taken) {
 // each as a sentence sharing most of the item's content words, or inside one
 // other list or table column there. A schema whose table of fields is
 // followed by one paragraph per field is the list being used rather than
-// repeated, and that was 25 of 210 ordinary documents when the check
+// repeated, and that was 25 of the same 210 documents when the check
 // accepted items found anywhere in another section.
 //
 // The hit quotes both sides: the items that reappear and the start of the
@@ -411,7 +447,9 @@ function listItems(block) {
 
 function runInLabel(block) {
   if (block.kind !== 'text') return null;
-  const m = block.lines[0].match(/^(?:\*\*|__)(?!\s)(.+?)(?:\*\*|__)[.:!?]?\s+\S/);
+  // The label and its copy may sit on one line or on two, so the block's
+  // lines are joined before the label is read.
+  const m = block.lines.join(' ').match(/^(?:\*\*|__)(?!\s)(.+?)(?:\*\*|__)[.:!?]?\s+\S/);
   return m ? plain(m[1]).replace(/[.:!?]$/, '') : null;
 }
 
@@ -528,7 +566,7 @@ function listEnumeratedTwice(blocks) {
 // that prompted this file were organised around the same four parts, and the
 // obvious detector, content-word overlap between sections, was built and
 // measured. At the threshold that caught the proving pair (an overlap
-// coefficient of 0.60), 30 of 210 ordinary documents from four repositories
+// coefficient of 0.60), 30 of the same 210 documents from four repositories
 // reported too, because a schema's "Purpose" and "Field reference" sections
 // share their nouns while saying different things, and so do a manual's
 // install and remove steps. Vocabulary cannot tell restatement from shared
