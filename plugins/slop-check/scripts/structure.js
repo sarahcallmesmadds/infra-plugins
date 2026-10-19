@@ -32,11 +32,20 @@
 // headings, tables and lists start and stop; they never need CommonMark's
 // answer about nested continuation lines.
 
-const BOLD_ONLY = /^(?:\*\*|__)(?!\s)([^*_][^]*?)(?:\*\*|__):?\s*$/;
-const ITALIC_ONLY = /^(?:\*|_)(?!\s)([^*_][^]*?)(?:\*|_)\s*$/;
+// The inner span may not hold the delimiter: "Choose **the fast path** over
+// **the safe path**" starts and ends with emphasis and is a sentence, not a
+// heading, and reading it as one both hid it from the prose checks and cut a
+// section boundary nothing else could see.
+const BOLD_ONLY = /^(?:\*\*(?!\s)([^*]+)\*\*|__(?!\s)([^_]+)__):?\s*$/;
+const ITALIC_ONLY = /^(?:\*(?!\s)([^*]+)\*|_(?!\s)([^_]+)_)\s*$/;
 
+// Fenced code and HTML comments come out first. A comment is text the reader
+// never sees, and a drafting note inside one was feeding the announce check.
 function stripFences(text) {
-  return String(text || '').replace(/```[\s\S]*?```/g, '\n').replace(/~~~[\s\S]*?~~~/g, '\n');
+  return String(text || '')
+    .replace(/```[\s\S]*?```/g, '\n')
+    .replace(/~~~[\s\S]*?~~~/g, '\n')
+    .replace(/<!--[\s\S]*?-->/g, ' ');
 }
 
 function lineKind(raw) {
@@ -89,7 +98,7 @@ function headingText(line) {
   const hash = t.match(/^#{1,6}\s+(.*)$/);
   if (hash) return plain(hash[1]).replace(/\s*:$/, '');
   const bold = t.match(BOLD_ONLY);
-  if (bold) return plain(bold[1]).replace(/\s*:$/, '');
+  if (bold) return plain(bold[1] || bold[2]).replace(/\s*:$/, '');
   return plain(t);
 }
 
@@ -172,7 +181,7 @@ function blocksOf(text) {
   close();
   for (const b of blocks) {
     if (b.kind === 'text' || b.kind === 'quote' || b.kind === 'note') {
-      b.text = plain(b.lines.join(' ').replace(/^>\s?/gm, ''));
+      b.text = plain(b.lines.map((l) => l.replace(/^>\s?/, '')).join(' '));
     }
   }
   return blocks;
@@ -210,8 +219,11 @@ function stem(w) {
 }
 
 function contentWords(s) {
+  // Contractions lose their clitic before the stop list sees them, or "don't"
+  // and "it's" count as content and "Don't skip" reappears wherever "skip"
+  // does.
   return wordsOf(plain(s).toLowerCase().replace(/[^a-z0-9'\s-]/g, ' '))
-    .map((w) => w.replace(/^'+|'+$/g, ''))
+    .map((w) => w.replace(/^'+|'+$/g, '').replace(/n't$|'(?:s|re|ve|ll|d|m)$/, ''))
     .filter((w) => w.length >= 3 && !STOP.has(w))
     .map(stem);
 }
@@ -235,12 +247,13 @@ function contentWords(s) {
 // it themselves ("is simple."), and the clause tails swallow the clause they
 // open ("because of what AI removes.", "changes who builds."), which is the
 // placeholder the next sentence fills. A tail with its own content after it
-// ("is simple because seals shrink.") matches nothing here.
+// ("is simple because seals shrink.") matches nothing here. "Comes down to"
+// was on the list and is not: its object is the answer ("It comes down to
+// trust."), so it names the content rather than deferring it.
 const FORWARD_TAIL = new RegExp([
   "\\b(?:is|was|are|were|'s|seems?|sounds?)\\s+(?:also\\s+|very\\s+|quite\\s+)?(?:simple|clear|obvious|straightforward|easy|plain|subtle|telling|the point|the reason|the key|the hard part|the catch|the problem|the difference|already there|worth \\w+ing(?: here| now| briefly)?|where (?:\\w+ ){1,3}(?:starts?|begins?|comes? in))[.!?]*$",
   "\\bbecause of (?:what|how|who|where|when)\\b[^.!?]*[.!?]*$",
   "\\bmakes? (?:it|this|that|them|the \\w+(?: \\w+)?) (?:concrete|clear|simple|obvious|real|plain|visible)[.!?]*$",
-  "\\bcomes? down to\\b[^.!?]*[.!?]*$",
   "\\b(?:changes?|decides?|explains?|shows?|answers?|tells? (?:you|us)) (?:who|what|how|why|where|when)\\b[^.!?]*[.!?]*$",
 ].join('|'), 'i');
 
@@ -297,8 +310,8 @@ function hasVerb(s) {
   if (/\w(?:'s|'re|'ve|'ll|'d|n't)\b/i.test(flat)) return true;
   // A pronoun followed by a word is a clause ("So we talk."), unless the word
   // is an adverb that leaves a fragment ("This too.", "That often.").
-  if (/^(?:so |and |but |then )?(?:i|we|you|they|he|she|it|that|this|who)\s+\w{2,}/i.test(flat)
-    && !/^(?:so |and |but |then )?(?:i|we|you|they|he|she|it|that|this|who)\s+(?:too|often|also|again|here|there|now|then|still|always|never|only|indeed|though)[.!?]?$/i.test(flat)) return true;
+  if (/^(?:so |and |but |then )?(?:i|we|you|they|he|she|it|that|this|who|here|there)\s+\w{2,}/i.test(flat)
+    && !/^(?:so |and |but |then )?(?:i|we|you|they|he|she|it|that|this|who|here|there)\s+(?:too|often|also|again|here|there|now|then|still|always|never|only|indeed|though)[.!?]?$/i.test(flat)) return true;
   if (/\b\w{3,}ed\b/i.test(flat)) return true;
   return false;
 }
@@ -491,7 +504,7 @@ function listEnumeratedTwice(blocks) {
 // subject matter, so the rule lives in the concept-brief skill's reading list
 // rather than here.
 
-// --- E. run-in bold labels sharing a stem ----------------------------------
+// --- E. run-in bold labels sharing a stem (D, section overlap, is the note above) ----------------------------------
 //
 // "**How things connect.** ..." "**How things behave over time.** ..." opening
 // paragraph after paragraph. The brochure check in tells.js wants a bullet;
@@ -504,10 +517,13 @@ function listEnumeratedTwice(blocks) {
 function runInLabelsSharingStem(blocks) {
   const hits = [];
   for (const run of labelRuns(blocks)) {
+    // Two words, or the whole label when it is one word: three paragraphs
+    // opening "**Setup.**" share a stem as surely as three opening "How things".
+    // The most repeated stem is reported, not the first one found.
     const stems = run.map((r) => wordsOf(r.label).slice(0, 2).join(' ').toLowerCase());
     const counts = new Map();
-    for (const f of stems) if (f.includes(' ')) counts.set(f, (counts.get(f) || 0) + 1);
-    const repeated = [...counts.entries()].find(([, n]) => n >= 2);
+    for (const f of stems) counts.set(f, (counts.get(f) || 0) + 1);
+    const repeated = [...counts.entries()].filter(([, n]) => n >= 2).sort((a, b) => b[1] - a[1])[0];
     if (repeated) {
       hits.push(`${run.length} consecutive paragraphs open with a bold label, ${repeated[1]} of them starting "${repeated[0]}"`);
     }
@@ -555,15 +571,24 @@ const EVENT_TOKENS = [
 
 function logisticsBeforeSubject(blocks) {
   if (!blocks.length || blocks[0].kind !== 'heading') return null;
+  // The window is the opening, not the document: it closes at the second
+  // heading or after six blocks, whichever comes first, so a long title-plus-
+  // prose piece that mentions guests on page three is not asked. Lists,
+  // quotes and subtitle lines in the window count, because "90 minutes, Room
+  // 4, Oct 28" set as an italic line or a bulleted list is exactly the shape.
   const opening = [];
   let headings = 0;
+  let seen = 0;
   for (const b of blocks.slice(1)) {
     if (b.kind === 'heading') {
       headings += 1;
       if (headings >= 2) break;
       continue;
     }
-    if (b.kind === 'text') opening.push(b.text);
+    if (seen >= 6) break;
+    seen += 1;
+    if (b.kind === 'text' || b.kind === 'quote' || b.kind === 'subtitle') opening.push(b.text);
+    else if (b.kind === 'list') opening.push(plain(b.lines.join(' ')));
   }
   if (!opening.length) return null;
   const text = opening.join(' ');

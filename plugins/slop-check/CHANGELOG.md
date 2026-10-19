@@ -12,8 +12,9 @@ A document can pass every sentence-level check and still read as unedited,
 because the habits sit above the sentence. The two that now count as
 categories: a short sentence that announces a point and leaves it to the next
 sentence ("It matters now because of what the change removes."), and a table
-column or list said again as a paragraph in another section. Both quote the
-lines they rest on.
+column, bullet list or run of bold paragraph labels whose items are said again
+in a paragraph, list or column of another section. Both quote the lines they
+rest on.
 
 Three more are printed under "Worth asking about the structure, counted
 against nothing" and never move the reading: two or more paragraphs opening on

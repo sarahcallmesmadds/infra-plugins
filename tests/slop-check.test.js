@@ -1713,6 +1713,21 @@ check('a curly apostrophe in the tail is read like a straight one',
 check('...and that sentence does report',
   softOf("It's worth naming here. The queue that fills faster than it drains fails on the Tuesday after "
     + 'a long weekend, every time.').includes('announce-then-explain'), true);
+// Found by review, twice: the object of "comes down to" is the answer.
+check('"comes down to" followed by the answer is not an announcement',
+  softOf('It comes down to the damaged seal. The housing was machined to the old tolerance and the '
+    + 'replacement seal was cut to a new profile, so neither fits.').includes('announce-then-explain'), false);
+// Found by review: nothing stripped HTML comments, so a drafting note fed the
+// counted checks.
+check('a sentence inside an HTML comment is not read',
+  softOf('<!-- ' + ANNOUNCE + ' -->\n\nThe pump has run since March without a fault, and the seal was '
+    + 'replaced in June.').includes('announce-then-explain'), false);
+// Found by review: a line that starts and ends with emphasis read as a
+// heading, which hid it from the prose checks and cut a section boundary.
+check('a sentence that starts and ends with bold is prose, not a heading',
+  softOf('Choose **the fast path** over **the safe path** because of what it removes. When a person does '
+    + 'the work by hand, they set the pace, catch what looks wrong and pass it along, so none of that '
+    + 'has to be designed.').includes('announce-then-explain'), false);
 check('a sentence in a fenced block is not read',
   softOf('```\n' + ANNOUNCE + '\n```').includes('announce-then-explain'), false);
 // Found by review: plain() kept the words inside backticks, so an announcing
@@ -1788,6 +1803,14 @@ check('a setext heading directly under another heading is a heading',
   softOf('# Framework\nThe parts\n---------\n\n- Emergency contact number\n- Battery charge level\n- Radio channel assignment\n\n'
     + 'Why it matters\n--------------\n\nConfirm the emergency contact number, the battery charge level and the '
     + 'radio channel assignment before leaving.\n').includes('list-enumerated-twice'), true);
+check('a sentence that starts and ends with bold does not make a section',
+  softOf(PARTS_TABLE + '\nChoose **the fast path** over **the safe path**\n\nBefore building anything, an '
+    + 'operator asks where the records live, who reads them next, how many arrive each week, and how anyone '
+    + 'knows it worked.\n').includes('list-enumerated-twice'), false);
+check('a contraction is not a content word',
+  softOf('# Rules\n\n## Items\n\n- Don\'t skip\n- Don\'t guess\n- Don\'t wait\n\n## Later\n\nThe runner will skip a '
+    + 'missing file, guess nothing about its contents and wait for the next one.\n')
+    .includes('list-enumerated-twice'), false);
 check('two of four items reappearing is not enough',
   softOf(PARTS_TABLE + '\n## Why it matters\n\nAn operator asks where the records live and who reads them next, '
     + 'and leaves the rest to the build.\n').includes('list-enumerated-twice'), false);
@@ -1817,6 +1840,10 @@ check('a sentence the announce check took does not count again as a short opener
     + 'on the team can put one together in an afternoon without calling it a system.\n\n'
     + 'It never pushes. The branch is left exactly where it was, and the summary names what '
     + 'would have moved.').includes('short-claim-opener'), false);
+check('"here" and "there" open a claim too',
+  questionsOf('Here we go. The branch is left exactly where it was, and the summary names what '
+    + 'would have moved.\n\nThere it goes. Nothing leaves the machine until a person has read the list.')
+    .includes('short-claim-opener'), true);
 check('a pronoun and an adverb is a fragment, not a claim',
   questionsOf('This too. The branch is left exactly where it was, and the summary names what '
     + 'would have moved.\n\nThat often. Nothing leaves the machine until a person has read the list.')
@@ -1835,6 +1862,14 @@ check('...never a category',
   softOf(LABELS).includes('run-in-labels-sharing-a-stem'), false);
 // Review supplied this one: a procedure organised the same way on purpose,
 // sharing only its first word.
+check('three identical one-word labels share a stem',
+  questionsOf('**Setup.** Inspect the mounting surface for cracks.\n\n**Setup.** Disconnect the supply '
+    + 'and tag the valve.\n\n**Setup.** Check for leaks at full pressure.\n')
+    .includes('run-in-labels-sharing-a-stem'), true);
+check('the most repeated stem is the one reported',
+  hitsOf('**How things connect.** One.\n\n**How things behave.** Two.\n\n**What we assume.** Three.\n\n'
+    + '**What we measure.** Four.\n\n**What we test.** Five.\n', 'run-in-labels-sharing-a-stem')[0]
+    .includes('3 of them starting "what we"'), true);
 check('labels sharing one word do not',
   questionsOf('**Before installation.** Inspect the mounting surface for cracks.\n\n'
     + '**Before removal.** Disconnect the supply and tag the valve.\n\n'
@@ -1871,6 +1906,14 @@ check('the same tokens after the second heading do not',
 check('two tokens are not enough',
   questionsOf('# Capacity planning\n\nThe session covers one question: how much work a step can carry. '
     + 'Guests leave with an exercise.\n').includes('logistics-before-the-subject'), false);
+// Found by review: with no second heading the whole document was the opening.
+check('without a second heading the window closes after six blocks',
+  questionsOf('# Capacity planning\n\n' + 'A step can carry only so much work before the queue behind it grows.\n\n'.repeat(6)
+    + 'The session for the guests runs on 2026-10-28 in the room.\n').includes('logistics-before-the-subject'), false);
+check('logistics set as a list or an italic line are read',
+  questionsOf('# Capacity planning\n\n- 90 minutes\n- the small room\n- for the dinner guests\n')
+    .includes('logistics-before-the-subject')
+  && questionsOf('# Capacity planning\n\n*90 minutes, the room, Oct 28*\n').includes('logistics-before-the-subject'), true);
 check('a document with no title is not asked',
   questionsOf('Capacity planning is deciding how much work a step can carry.\n\n'
     + 'This is a 90 minute session for the guests of the spring dinner, run in the small room, '
