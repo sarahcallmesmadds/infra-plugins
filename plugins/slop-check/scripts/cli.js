@@ -99,6 +99,17 @@ function formatReport(result) {
     }
   }
 
+  // Structural questions sit between the tells and the verdict and feed
+  // neither. A question is evidence for the reader, not for the scorer: the
+  // shapes it names are also how sound documents are organised, so the line
+  // says what it found and asks, rather than counting.
+  const questions = Array.isArray(result.questions) ? result.questions : [];
+  if (questions.length) {
+    lines.push('');
+    lines.push('Worth asking about the structure, counted against nothing:');
+    for (const q of questions) lines.push(`  ${q.name}: ${detailOf(q)}`);
+  }
+
   lines.push('');
   const verdict = {
     strong: 'Reads strongly of unedited machine output.',

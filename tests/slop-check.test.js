@@ -1648,5 +1648,162 @@ console.log('\nthe half that does not apply prints nothing');
     runCli(['--technical'], POST).includes('Nothing else worth flagging'), true);
 }
 
+// --- structural tells --------------------------------------------------------
+//
+// Shapes above the sentence. A document with every lexical check clean was
+// rejected on sight for these on 2026-10-19. Fixtures here are written for the
+// test; nothing from that document is in this repository.
+
+console.log('\nannounce-then-explain: a short sentence whose content arrives in the next one');
+const structural = (text) => checkAll(text);
+const softOf = (text) => structural(text).soft.map((s) => s.name);
+const questionsOf = (text) => (structural(text).questions || []).map((q) => q.name);
+const hitsOf = (text, name) => {
+  const r = structural(text);
+  const f = [...r.soft, ...(r.questions || [])].find((x) => x.name === name);
+  return f ? f.hits : [];
+};
+
+const ANNOUNCE = 'It matters now because of what the change removes. When a person does the work by hand, '
+  + 'they set the pace, catch what looks wrong and pass it along, so none of that has to be designed.';
+check('a pronoun subject with a forward tail, filled by a longer next sentence, reports',
+  softOf(ANNOUNCE).includes('announce-then-explain'), true);
+check('...and quotes the announcing sentence',
+  hitsOf(ANNOUNCE, 'announce-then-explain')[0], '"It matters now because of what the change removes."');
+check('an abstract head noun with a forward tail reports too',
+  softOf('Two examples make the decision concrete. A forecast for the board depends on the ledger, '
+    + 'on the finance numbers and on who holds budget authority, so it was never one person to build.')
+    .includes('announce-then-explain'), true);
+// Review supplied this one: a short sentence that states the problem outright
+// has an abstract subject and no forward tail, and must stay quiet whatever
+// the length of the sentence after it.
+check('a short sentence that says the thing is not an announcement',
+  softOf('The problem is a leak. Water enters through the damaged seal whenever the pump runs under '
+    + 'pressure for more than a few minutes at a time.').includes('announce-then-explain'), false);
+check('a plain subject with no forward tail is not an announcement',
+  softOf('The queue is empty. Nothing has been written to it since the last run finished at midnight, '
+    + 'which is what the schedule says should happen.').includes('announce-then-explain'), false);
+check('a forward tail with a short next sentence is not an announcement',
+  softOf('It matters now because of what the change removes. Nobody designs the pace.')
+    .includes('announce-then-explain'), false);
+check('one hit in the middle of a paragraph does not report',
+  softOf('The pump has run since March without a fault. It matters now because of what the change removes. '
+    + 'When a person does the work by hand, they set the pace, catch what looks wrong and pass it along.')
+    .includes('announce-then-explain'), false);
+check('two hits in the middle of paragraphs do report',
+  softOf('The pump has run since March without a fault. It matters now because of what the change removes. '
+    + 'When a person does the work by hand, they set the pace, catch what looks wrong and pass it along.\n\n'
+    + 'The seal was replaced in June. The reason it still leaks is simple. The housing was machined to the '
+    + 'old tolerance and the new seal was cut to the revised one, so the two never met.')
+    .includes('announce-then-explain'), true);
+check('a sentence in a fenced block is not read',
+  softOf('```\n' + ANNOUNCE + '\n```').includes('announce-then-explain'), false);
+
+console.log('\nlist-enumerated-twice: a table or list said again as a paragraph elsewhere');
+const PARTS_TABLE = '# A framework\n\n## The parts\n\n'
+  + '| Part | The question |\n|---|---|\n'
+  + '| Where the records live | Which system holds the row of record? |\n'
+  + '| Who reads them next | Which team opens the record after this one? |\n'
+  + '| How many arrive each week | What volume does the step have to carry? |\n'
+  + '| How anyone knows it worked | Which number says the step did its job? |\n';
+const PARTS_PROSE = '\n## Why it matters\n\nBefore building anything, an operator asks where the records live, '
+  + 'who reads them next, how many arrive each week, and how anyone knows it worked. '
+  + 'Those four questions are the whole method, and a system that skips one of them fails quietly.\n';
+check('a table column restated in one paragraph of another section reports',
+  softOf(PARTS_TABLE + PARTS_PROSE).includes('list-enumerated-twice'), true);
+check('...and names the column and the count',
+  hitsOf(PARTS_TABLE + PARTS_PROSE, 'list-enumerated-twice')[0],
+  '4 of 4 items in the table column "Part" are said again in one paragraph of another section');
+check('the same paragraph inside the list\'s own section is not a repeat',
+  softOf(PARTS_TABLE + '\nBefore building anything, an operator asks where the records live, '
+    + 'who reads them next, how many arrive each week, and how anyone knows it worked.\n')
+    .includes('list-enumerated-twice'), false);
+// Review supplied this one: a checklist followed by one instruction per item
+// is the list being used, and each item lands in its own paragraph.
+check('items each used in their own paragraph are not the list said again',
+  softOf('# Checklist\n\n## Items\n\n- Emergency contact number\n- Battery charge level\n- Radio channel assignment\n\n'
+    + '## Before leaving\n\nConfirm the emergency contact number with dispatch before leaving the yard.\n\n'
+    + 'Check the battery charge level against the reading taken the night before.\n\n'
+    + 'Use the radio channel assignment printed on the day sheet, not the one from last week.\n')
+    .includes('list-enumerated-twice'), false);
+check('two of four items reappearing is not enough',
+  softOf(PARTS_TABLE + '\n## Why it matters\n\nAn operator asks where the records live and who reads them next, '
+    + 'and leaves the rest to the build.\n').includes('list-enumerated-twice'), false);
+
+console.log('\nquestions are printed and never counted');
+const SHORT_OPENERS = 'It never pushes. The branch is left exactly where it was, and the summary names what '
+  + 'would have moved.\n\nThat is the whole point. Nothing leaves the machine until a person has read the '
+  + 'list and said yes to it.';
+check('two short pronoun openers raise the question',
+  questionsOf(SHORT_OPENERS).includes('short-claim-opener'), true);
+check('...and are quoted',
+  JSON.stringify(hitsOf(SHORT_OPENERS, 'short-claim-opener')),
+  JSON.stringify(['"It never pushes."', '"That is the whole point."']));
+check('one short opener does not',
+  questionsOf('It never pushes. The branch is left exactly where it was, and the summary names what '
+    + 'would have moved.').includes('short-claim-opener'), false);
+// Review supplied this one: a short factual opener without a pronoun subject
+// is ordinary good writing and stays out even twice.
+check('short openers without a pronoun subject do not',
+  questionsOf('The bridge is closed. Drivers should follow the signed diversion through the village until '
+    + 'repairs are complete.\n\nThe ferry is still running. Sailings leave on the hour and take foot passengers '
+    + 'only while the ramp is out.').includes('short-claim-opener'), false);
+check('a short opener is not a soft category',
+  softOf(SHORT_OPENERS).includes('short-claim-opener'), false);
+check('...and leaves the reading at little',
+  structural(SHORT_OPENERS).reading, 'little');
+
+const LABELS = '**How things connect.** Every record depends on one before it and feeds one after.\n\n'
+  + '**How things behave over time.** A queue that fills faster than it drains fails on a Tuesday.\n\n'
+  + '**What we assume.** Every build carries a belief nobody wrote down.\n';
+check('three run-in labels sharing their first two words raise the question',
+  questionsOf(LABELS).includes('run-in-labels-sharing-a-stem'), true);
+check('...never a category',
+  softOf(LABELS).includes('run-in-labels-sharing-a-stem'), false);
+// Review supplied this one: a procedure organised the same way on purpose,
+// sharing only its first word.
+check('labels sharing one word do not',
+  questionsOf('**Before installation.** Inspect the mounting surface for cracks.\n\n'
+    + '**Before removal.** Disconnect the supply and tag the valve.\n\n'
+    + '**After repair.** Check for leaks at full pressure.\n')
+    .includes('run-in-labels-sharing-a-stem'), false);
+check('two labelled paragraphs do not',
+  questionsOf(LABELS.split('\n\n').slice(0, 2).join('\n\n')).includes('run-in-labels-sharing-a-stem'), false);
+
+const LOGISTICS = '# Capacity planning\n\nFramed for team leads\n\nDraft, circulated 19 October. Shared with '
+  + 'anyone asked for feedback.\n\n## The session\n\nThis is a 90 minute session for the guests of the '
+  + 'spring dinner, run in the small room, and the host co-teaches it.\n\n## What capacity planning is\n\n'
+  + 'Capacity planning is deciding how much work a step can carry before the queue behind it grows.\n';
+check('event tokens before the second heading raise the question',
+  questionsOf(LOGISTICS).includes('logistics-before-the-subject'), true);
+check('...naming what it found',
+  hitsOf(LOGISTICS, 'logistics-before-the-subject')[0],
+  'is the opening about the event rather than the subject? it names a date, minutes, the session, the room, co-teaching, guests, the dinner');
+check('the same tokens after the second heading do not',
+  questionsOf('# Capacity planning\n\nCapacity planning is deciding how much work a step can carry.\n\n'
+    + '## What it is\n\nA queue that fills faster than it drains fails on a Tuesday.\n\n## Where it was taught\n\n'
+    + 'This is a 90 minute session for the guests of the spring dinner, run in the small room.\n')
+    .includes('logistics-before-the-subject'), false);
+check('two tokens are not enough',
+  questionsOf('# Capacity planning\n\nThe session covers one question: how much work a step can carry. '
+    + 'Guests leave with an exercise.\n').includes('logistics-before-the-subject'), false);
+check('a document with no title is not asked',
+  questionsOf('Capacity planning is deciding how much work a step can carry.\n\n'
+    + 'This is a 90 minute session for the guests of the spring dinner, run in the small room, '
+    + 'and the host co-teaches it.').includes('logistics-before-the-subject'), false);
+check('questions alone leave categories at zero',
+  structural(LOGISTICS + '\n' + LABELS).categories, 0);
+
+console.log('\nthe structural findings reach the report');
+const structuralReport = runCli(['--prose'], LOGISTICS + '\n' + ANNOUNCE);
+check('an announce hit prints under the softer tells',
+  structuralReport.includes('announce-then-explain: "It matters now because of what the change removes."'), true);
+check('a question prints under its own heading',
+  structuralReport.includes('Worth asking about the structure, counted against nothing:'), true);
+check('...with its evidence',
+  structuralReport.includes('logistics-before-the-subject: is the opening about the event'), true);
+check('a report with no questions has no such heading',
+  runCli(['--prose'], ANNOUNCE).includes('Worth asking about the structure'), false);
+
 console.log(`\n${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

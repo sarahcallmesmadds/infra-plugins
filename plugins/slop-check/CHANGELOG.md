@@ -3,6 +3,31 @@
 Upgrade notes for past versions. Nothing here is needed to install or run the
 plugin.
 
+## Upgrading to 0.10.0
+
+**Two structural tells join the soft categories, and three structural questions
+are printed beside the reading.** Nothing to change on your side.
+
+A document can pass every sentence-level check and still read as unedited,
+because the habits sit above the sentence. The two that now count as
+categories: a short sentence that announces a point and leaves it to the next
+sentence ("It matters now because of what the change removes."), and a table
+column or list said again as a paragraph in another section. Both quote the
+lines they rest on.
+
+Three more are printed under "Worth asking about the structure, counted
+against nothing" and never move the reading: two or more paragraphs opening on
+a very short pronoun sentence, three or more consecutive paragraphs opening
+with a bold label sharing its first two words, and an opening that names the
+event (a date, the room, the minutes, who co-teaches) under a title that names
+a subject. Each of those is also how a sound document can be organised, so the
+report asks and the reader decides.
+
+Measured over 210 documents from four repositories, the two categories moved
+two readings from "little" to "some", each on a list genuinely restated beside
+an existing category, and none to "strong". Two detectors that were tried were
+left out after that measurement and the reasons are in `scripts/structure.js`.
+
 ## Upgrading to 0.9.0
 
 **A third skill, `slide-titles`, writes and repairs slide titles.** Nothing to

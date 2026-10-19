@@ -111,6 +111,7 @@ function choppyRun(text, limit) {
 // --- soft tells ------------------------------------------------------------
 
 const P = require('./patterns.js');
+const { structuralTells } = require('./structure.js');
 
 function countPhrases(haystack, needles) {
   // Both sides folded, so a list entry spelled with one apostrophe still finds
@@ -1510,6 +1511,16 @@ function checkAll(text, config = {}) {
   const smart = (String(text).match(/[‘’“”]/g) || []).length;
   if (smart >= 6) soft.push({ name: 'typographic-quotes-throughout', count: smart });
 
+  // Shapes above the sentence: a sentence that announces the next one, the
+  // same list said twice, a short claim opening paragraph after paragraph.
+  // The lexical checks above reported a document clean on 2026-10-19 that its
+  // author rejected on sight for exactly these. The categories count like any
+  // other soft tell. The questions are printed beside the reading and never
+  // feed it, because the shapes they describe are also how good documents
+  // are organised; see structure.js for which is which and why.
+  const structure = structuralTells(text);
+  soft.push(...structure.soft);
+
   // Distinct categories, not raw hits. One phrase repeated ten times is one
   // habit; six different categories at once is a pattern. A detector may mark
   // itself standalone only after it has already aggregated a repeated structure
@@ -1520,7 +1531,7 @@ function checkAll(text, config = {}) {
   const reading =
     categories >= 4 ? 'strong' : categories >= 2 || standalone ? 'some' : 'little';
 
-  return { hard: hard.violations, soft, categories, reading };
+  return { hard: hard.violations, soft, questions: structure.questions, categories, reading };
 }
 
 module.exports = { checkHard, checkAll, proseOf, sentencesOf, EM_DASH };

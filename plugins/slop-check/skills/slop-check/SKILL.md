@@ -78,6 +78,16 @@ no position, antithesis, lists of three, forced enthusiasm, melodrama,
 brochure-style lists that repeat a bold "that" or "where" headline followed
 by explanatory copy, and sentences that are all the same length.
 
+**Structure.** Two more soft categories sit above the sentence: a short
+sentence that announces a point the next sentence then makes ("It matters now
+because of what the change removes."), and a table column or list said again
+as a paragraph in another section. Three structural questions print under
+"Worth asking about the structure" and count toward nothing: paragraphs that
+open on a very short pronoun sentence, consecutive paragraphs opening with a
+bold label sharing its first two words, and an opening about the event rather
+than the subject. A question is for you to answer with the document in front
+of you, not a finding to repeat.
+
 **Code.** Placeholders that shipped (`your-api-key`, `TODO: implement`), broad
 catches that swallow every error, comments restating the line below them,
 naming styles fighting inside one file, and everything called `data`, `result`
@@ -136,6 +146,11 @@ weigh more, but report one on its own as a finding rather than as a verdict.
 2. **Then the aggregate reading**, in one line.
 3. **Then the specific lines**, quoted. "There is filler" is useless.
    "This sentence is the filler" is actionable.
+   Then read the first paragraph yourself, sentence by sentence, and ask of
+   each whether it says a thing or announces one the next sentence says. The
+   announce check catches the common shapes and not every one, and on
+   2026-10-19 a draft went out clean with that fault in its opening. Report
+   what you find there as your own reading, beside the tool's.
 4. **Then one thing to do about it.** If it is the user's own work, offer the
    rewrite. If it is someone else's, give them the single line they could
    actually send, aimed at the missing review rather than at the tool. "This
