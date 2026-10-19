@@ -62,7 +62,11 @@ function visibleLines(text) {
       // read as a blank: a blank would split the paragraph in two and hand
       // the paragraph checks a boundary the reader never sees.
       const above = i > 0 && raw[i - 1].trim() && !raw[i - 1].startsWith(tells.MARKDOWN_BOUNDARY);
-      const below = i + 1 < raw.length && raw[i + 1].trim() && !raw[i + 1].startsWith(tells.MARKDOWN_BOUNDARY);
+      // Not when the line below is a rule or a setext underline: dropping
+      // the comment would put the rule directly under the prose and turn
+      // the prose into a heading.
+      const below = i + 1 < raw.length && raw[i + 1].trim() && !raw[i + 1].startsWith(tells.MARKDOWN_BOUNDARY)
+        && !/^\s*(?:=+|-+|\*\s*\*\s*\*[\s*]*|_\s*_\s*_[\s_]*)\s*$/.test(raw[i + 1]);
       if (!(above && below)) out.push('');
       return;
     }
@@ -203,7 +207,11 @@ function blocksOf(text) {
         // The wrapped line is kept apart from the item's first line with a
         // marker, so the item's words for matching come from the line the
         // author wrote as the item and a long continuation cannot lift the
-        // match bar out of reach.
+        // match bar out of reach. The reviewers split on this: one that the
+        // continuation must not raise the bar, the other that two lists with
+        // the same first lines and different continuations are not the same
+        // list. The item is the line the author wrote as the item, and a
+        // list repeated with different footnotes is still the list repeated.
         current.lines[current.lines.length - 1] += ` \u0002${raw.trim()}`;
         return;
       }

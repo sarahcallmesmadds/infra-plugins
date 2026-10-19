@@ -2036,6 +2036,9 @@ check('a bold line directly under prose continues the paragraph',
 check('"Room B2" is a room',
   questionsOf('# Capacity planning\n\nThe session for the guests runs on 2026-10-28 in Room B2.\n')
     .includes('logistics-before-the-subject'), true);
+check('a comment dropped from above a rule does not make the prose a heading',
+  JSON.stringify(require(path.join(base, 'structure.js')).blocksOf('First sentence.\n<!-- note -->\n---\n\nMore.')
+    .map((b) => b.kind)), JSON.stringify(['text', 'text']));
 check('"room for" and "room to" are not rooms',
   questionsOf('# Capacity planning\n\nThe session leaves room for the guests to talk, and room to grow.\n')
     .includes('logistics-before-the-subject'), false);
