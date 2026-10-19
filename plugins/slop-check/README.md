@@ -153,8 +153,9 @@ rejected on sight with every sentence-level check clean. A sentence that
 announces a point and leaves it to the next sentence: "It matters now because
 of what the change removes." followed by the sentence that says what is
 removed. The fix is to say the thing in the sentence. And a list said twice: a
-table column or a bullet list whose items turn up again, three or more of them
-inside one paragraph of another section. Both quote the lines they rest on.
+table column, a bullet list or a run of bold paragraph labels whose items turn
+up again, three or more of them inside one paragraph, list or column of another
+section. Both quote the lines they rest on.
 
 Three more structural shapes are printed as questions under their own heading
 and counted against nothing: paragraphs opening on a very short pronoun
@@ -261,10 +262,12 @@ Splitting the copular contrast into its own category moved one document of the
 false one. The two structural categories, measured over 210 documents across
 four repositories, moved two from "little" to "some" and none to "strong"; the
 first versions of three of the structural checks moved 23, two of them to
-"strong", and were anchored or demoted to questions on that evidence. That measurement is worth repeating whenever a category is added,
-because the first version of this change also added a reversed-order contrast
-pattern, and that one carried the contrast category onto 16 of the 41 before it
-was withdrawn.
+"strong", and were anchored or demoted to questions on that evidence.
+
+That measurement is worth repeating whenever a category is added, because the
+first version of the copular-contrast change also added a reversed-order
+contrast pattern, and that one carried the contrast category onto 16 of the 41
+before it was withdrawn.
 
 The checkable problems are worth much more than the stylistic ones. A shipped
 `your-api-key`, percentages that do not add up, or a left-in `oaicite` are

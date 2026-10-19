@@ -49,11 +49,13 @@ function lineKind(raw) {
   if (/^\[\^[^\]]+\]:/.test(line)) return 'note';
   if (/^>/.test(line)) return 'quote';
   if (BOLD_ONLY.test(line)) return 'heading';
-  // A short italic line under a title is a subtitle. A whole italic paragraph
-  // is a paragraph: draft 1 of the brief that prompted this file set its event
+  // A short italic line under a title is a subtitle. An italic sentence is a
+  // paragraph: draft 1 of the brief that prompted this file set its event
   // logistics in italics, and reading that as a subtitle would have hidden the
-  // very paragraph check F exists for.
-  if (ITALIC_ONLY.test(line) && wordsOf(line).length <= 8 && !/[.!?]\s/.test(line)) return 'subtitle';
+  // very paragraph check F exists for. Any sentence punctuation disqualifies,
+  // because a one-sentence italic line ends in a period followed by the
+  // closing asterisk and not by a space.
+  if (ITALIC_ONLY.test(line) && wordsOf(line).length <= 8 && !/[.!?]/.test(line)) return 'subtitle';
   return 'text';
 }
 
@@ -67,6 +69,8 @@ function wordsOf(s) {
 // code must not raise the reading of the prose around it.
 function plain(s) {
   return String(s)
+    .replace(/[\u2018\u2019\u201b]/g, "'")
+    .replace(/[\u201c\u201d]/g, '"')
     .replace(/`[^`]*`/g, ' ')
     // The destination is bounded so a document that is nothing but unclosed
     // "[a](" fragments is read in linear time rather than rescanned to its
@@ -121,8 +125,23 @@ function blocksOf(text) {
     if (current) blocks.push(current);
     current = null;
   };
+  // A setext heading is a text line with a line of = or - under it. The
+  // underline alone reads as a rule and the title as prose, which left a
+  // document organised that way with no sections at all: the list check could
+  // never fire and the logistics check read the whole document as its opening.
+  const setext = new Set();
+  const underline = new Set();
+  lines.forEach((raw, i) => {
+    if (i === 0) return;
+    if (/^\s*(?:=+|-+)\s*$/.test(raw) && lineKind(lines[i - 1]) === 'text' && !unpiped.has(i - 1)
+      && (i < 2 || !lines[i - 2].trim())) {
+      setext.add(i - 1);
+      underline.add(i);
+    }
+  });
   lines.forEach((raw, index) => {
-    const kind = unpiped.has(index) ? 'table' : lineKind(raw);
+    if (underline.has(index)) return;
+    const kind = setext.has(index) ? 'heading' : unpiped.has(index) ? 'table' : lineKind(raw);
     if (kind === 'blank' || kind === 'rule') {
       close();
       return;
@@ -229,7 +248,12 @@ function announceThenExplain(paragraphs) {
       const pronounSubject = /^(?:it|that|this|there|here)\b/i.test(s);
       const abstractSubject = ABSTRACT_HEAD.test(s);
       if (!pronounSubject && !abstractSubject) continue;
-      if (!FORWARD_TAIL.test(s)) continue;
+      // The tail has to end the sentence, or nearly: "It is simple because the
+      // seal shrank." carries its content after the tail and is not an
+      // announcement, however short it is.
+      const tail = s.match(FORWARD_TAIL);
+      if (!tail) continue;
+      if (wordsOf(s.slice(tail.index + tail[0].length)).length > 3) continue;
       hits.push(s);
       if (i === 0) opening += 1;
     }
@@ -262,7 +286,10 @@ function hasVerb(s) {
   const flat = s.replace(/[‘’]/g, "'");
   if (AUX.test(flat)) return true;
   if (/\w(?:'s|'re|'ve|'ll|'d|n't)\b/i.test(flat)) return true;
-  if (/^(?:so |and |but |then )?(?:i|we|you|they|he|she|it|that|this|who)\s+\w+/i.test(flat)) return true;
+  // A pronoun followed by a word is a clause ("So we talk."), unless the word
+  // is an adverb that leaves a fragment ("This too.", "That often.").
+  if (/^(?:so |and |but |then )?(?:i|we|you|they|he|she|it|that|this|who)\s+\w{2,}/i.test(flat)
+    && !/^(?:so |and |but |then )?(?:i|we|you|they|he|she|it|that|this|who)\s+(?:too|often|also|again|here|there|now|then|still|always|never|only|indeed|though)[.!?]?$/i.test(flat)) return true;
   if (/\b\w{3,}ed\b/i.test(flat)) return true;
   return false;
 }
@@ -480,7 +507,7 @@ function runInLabelsSharingStem(blocks) {
 // for, and stopping at the first header would have passed it.
 
 const EVENT_TOKENS = [
-  ['a date', /\b\d{1,2}(?:st|nd|rd|th)? (?:january|february|march|april|may|june|july|august|september|october|november|december)\b|\b(?:january|february|march|april|may|june|july|august|september|october|november|december) \d{1,2}(?:st|nd|rd|th)?\b/i],
+  ['a date', /\b\d{1,2}(?:st|nd|rd|th)? (?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\b|\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.? \d{1,2}(?:st|nd|rd|th)?\b|\b\d{4}-\d{2}-\d{2}\b|\b\d{1,2}\/\d{1,2}(?:\/\d{2,4})?\b/i],
   ['minutes', /\b\d+[- ]?minutes?\b/i],
   ['the session', /\bsessions?\b/i],
   ['the room', /\b(?:the|a|our) (?:\w+ )?room\b/i],

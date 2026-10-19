@@ -80,8 +80,9 @@ by explanatory copy, and sentences that are all the same length.
 
 **Structure.** Two more soft categories sit above the sentence: a short
 sentence that announces a point the next sentence then makes ("It matters now
-because of what the change removes."), and a table column or list said again
-as a paragraph in another section. Three structural questions print under
+because of what the change removes."), and a table column, bullet list or run
+of bold paragraph labels said again in a paragraph, list or column of another
+section. Three structural questions print under
 "Worth asking about the structure" and count toward nothing: paragraphs that
 open on a very short pronoun sentence, consecutive paragraphs opening with a
 bold label sharing its first two words, and an opening about the event rather

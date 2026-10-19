@@ -1696,6 +1696,20 @@ check('two hits in the middle of paragraphs do report',
     + 'The seal was replaced in June. The reason it still leaks is simple. The housing was machined to the '
     + 'old tolerance and the new seal was cut to the revised one, so the two never met.')
     .includes('announce-then-explain'), true);
+// Found by review: the tail was matched anywhere in the sentence, so a short
+// sentence carrying its content after "is simple" reported as announcing it.
+check('a forward tail followed by the content is not an announcement',
+  softOf('It is simple because the seal shrank. The housing was machined to the old tolerance and the '
+    + 'new seal was cut to the revised one, so the two never met.').includes('announce-then-explain'), false);
+// Found by review: the announce path never folded typographic apostrophes.
+check('a curly apostrophe in the tail is read like a straight one',
+  JSON.stringify(softOf('It\u2019s worth naming here. The queue that fills faster than it drains fails on '
+    + 'the Tuesday after a long weekend, every time.')),
+  JSON.stringify(softOf("It's worth naming here. The queue that fills faster than it drains fails on "
+    + 'the Tuesday after a long weekend, every time.')));
+check('...and that sentence does report',
+  softOf("It's worth naming here. The queue that fills faster than it drains fails on the Tuesday after "
+    + 'a long weekend, every time.').includes('announce-then-explain'), true);
 check('a sentence in a fenced block is not read',
   softOf('```\n' + ANNOUNCE + '\n```').includes('announce-then-explain'), false);
 // Found by review: plain() kept the words inside backticks, so an announcing
@@ -1750,6 +1764,11 @@ check('items each used in their own paragraph are not the list said again',
     + 'Check the battery charge level against the reading taken the night before.\n\n'
     + 'Use the radio channel assignment printed on the day sheet, not the one from last week.\n')
     .includes('list-enumerated-twice'), false);
+// Found by review: a setext heading read as prose plus a rule, so a document
+// organised that way had no sections and the list could never reappear.
+check('setext headings make sections too',
+  softOf(PARTS_TABLE.replace('# A framework\n', 'A framework\n===========\n').replace('## The parts\n', 'The parts\n---------\n')
+    + PARTS_PROSE.replace('## Why it matters\n', 'Why it matters\n--------------\n')).includes('list-enumerated-twice'), true);
 check('two of four items reappearing is not enough',
   softOf(PARTS_TABLE + '\n## Why it matters\n\nAn operator asks where the records live and who reads them next, '
     + 'and leaves the rest to the build.\n').includes('list-enumerated-twice'), false);
@@ -1772,6 +1791,17 @@ check('short openers without a pronoun subject do not',
   questionsOf('The bridge is closed. Drivers should follow the signed diversion through the village until '
     + 'repairs are complete.\n\nThe ferry is still running. Sailings leave on the hour and take foot passengers '
     + 'only while the ramp is out.').includes('short-claim-opener'), false);
+// One sentence is one piece of evidence: an opener the announce check already
+// reported does not also count toward the short-opener question.
+check('a sentence the announce check took does not count again as a short opener',
+  questionsOf('That changes who builds. Building a system used to be one team\'s job, and now anyone '
+    + 'on the team can put one together in an afternoon without calling it a system.\n\n'
+    + 'It never pushes. The branch is left exactly where it was, and the summary names what '
+    + 'would have moved.').includes('short-claim-opener'), false);
+check('a pronoun and an adverb is a fragment, not a claim',
+  questionsOf('This too. The branch is left exactly where it was, and the summary names what '
+    + 'would have moved.\n\nThat often. Nothing leaves the machine until a person has read the list.')
+    .includes('short-claim-opener'), false);
 check('a short opener is not a soft category',
   softOf(SHORT_OPENERS).includes('short-claim-opener'), false);
 check('...and leaves the reading at little',
@@ -1803,6 +1833,14 @@ check('event tokens before the second heading raise the question',
 check('...naming what it found',
   hitsOf(LOGISTICS, 'logistics-before-the-subject')[0],
   'is the opening about the event rather than the subject? it names a date, minutes, the session, the room, co-teaching, guests, the dinner');
+check('an ISO date and an abbreviated month both count as a date',
+  questionsOf('# Capacity planning\n\nThe session on 2026-10-28 runs in the room for the guests.\n')
+    .includes('logistics-before-the-subject')
+  && questionsOf('# Capacity planning\n\nThe session on Oct 28 runs in the room for the guests.\n')
+    .includes('logistics-before-the-subject'), true);
+check('a one-sentence italic line is a paragraph, not a subtitle',
+  questionsOf('# Capacity planning\n\n*A 90 minute session in the room for the dinner guests.*\n')
+    .includes('logistics-before-the-subject'), true);
 check('the same tokens after the second heading do not',
   questionsOf('# Capacity planning\n\nCapacity planning is deciding how much work a step can carry.\n\n'
     + '## What it is\n\nA queue that fills faster than it drains fails on a Tuesday.\n\n## Where it was taught\n\n'

@@ -1511,13 +1511,14 @@ function checkAll(text, config = {}) {
   const smart = (String(text).match(/[‘’“”]/g) || []).length;
   if (smart >= 6) soft.push({ name: 'typographic-quotes-throughout', count: smart });
 
-  // Shapes above the sentence: a sentence that announces the next one, the
-  // same list said twice, a short claim opening paragraph after paragraph.
-  // The lexical checks above reported a document clean on 2026-10-19 that its
-  // author rejected on sight for exactly these. The categories count like any
-  // other soft tell. The questions are printed beside the reading and never
-  // feed it, because the shapes they describe are also how good documents
-  // are organised; see structure.js for which is which and why.
+  // Shapes above the sentence. The lexical checks above reported a document
+  // clean on 2026-10-19 that its author rejected on sight for exactly these.
+  // Two count like any other soft tell: a sentence that announces the next
+  // one, and the same list said twice. Three are questions, printed beside the
+  // reading and never fed to it, because the shapes they describe are also how
+  // good documents are organised: a short pronoun sentence opening paragraphs,
+  // bold labels sharing a stem, and logistics before the subject. structure.js
+  // says why each sits where it does.
   const structure = structuralTells(text);
   soft.push(...structure.soft);
 
