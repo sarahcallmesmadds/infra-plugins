@@ -2030,6 +2030,12 @@ check('CRLF line endings are read like LF',
 check('"I\'m done." carries a verb',
   questionsOf("I'm done. The branch is left exactly where it was, and the summary names what would have moved.\n\n"
     + 'Now we ship. Nothing leaves the machine until a person has read the list.').includes('short-claim-opener'), true);
+check('a bold line directly under prose continues the paragraph',
+  JSON.stringify(require(path.join(base, 'structure.js')).blocksOf('First sentence here.\n<!-- note -->\n**Not a heading**\nSecond sentence here.')
+    .map((b) => b.kind)), JSON.stringify(['text']));
+check('"Room B2" is a room',
+  questionsOf('# Capacity planning\n\nThe session for the guests runs on 2026-10-28 in Room B2.\n')
+    .includes('logistics-before-the-subject'), true);
 check('"room for" and "room to" are not rooms',
   questionsOf('# Capacity planning\n\nThe session leaves room for the guests to talk, and room to grow.\n')
     .includes('logistics-before-the-subject'), false);

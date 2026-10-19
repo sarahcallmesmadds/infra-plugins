@@ -217,6 +217,11 @@ function blocksOf(text) {
     // section. A bare "**Second**" over prose keeps its heading: the period
     // is the marker that separates the two, because a heading does not end
     // in one and a label does.
+    // A bold-only line with prose directly above it, no blank between, is
+    // the paragraph continuing, as CommonMark reads it; it opens nothing.
+    if (kind === 'heading' && !/^\s*#/.test(raw) && !setext.has(index) && current && current.kind === 'text') {
+      kind = 'text';
+    }
     if (kind === 'heading' && /^\s*(?:\*\*|__).*[.:!?](?:\*\*|__)\s*$/.test(raw) && !setext.has(index)
       && index + 1 < lines.length && !underline.has(index + 1) && lineKind(lines[index + 1]) === 'text') {
       kind = 'text';
@@ -678,7 +683,7 @@ const EVENT_TOKENS = [
   ['minutes', /\b\d+[- ]?minutes?\b/i],
   ['the session', /\bsessions?\b/i],
   // "Room 4" and "Room B" are places; "room for growth" is not.
-  ['the room', /\b(?:[Tt]he|[Aa]|[Oo]ur) (?:\w+ )?[Rr]ooms?\b|\b[Rr]ooms? (?:\d+\w*|[A-Z])\b/],
+  ['the room', /\b(?:[Tt]he|[Aa]|[Oo]ur) (?:\w+ )?[Rr]ooms?\b|\b[Rr]ooms? [A-Z0-9][\w-]*\b/],
   ['the venue', /\bvenues?\b/i],
   ['co-teaching', /\bco-?teach(?:es|ing)?\b/i],
   ['attendees', /\battendees?\b/i],
