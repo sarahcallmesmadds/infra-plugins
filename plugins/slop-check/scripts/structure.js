@@ -137,8 +137,13 @@ function blocksOf(text) {
   const underline = new Set();
   lines.forEach((raw, i) => {
     if (i === 0) return;
+    // The title line has to open its paragraph: the line before it is blank,
+    // a heading, or an underline of a previous setext heading. An underline
+    // after the second line of a paragraph is a rule, as lineKind reads it.
+    const before = i >= 2 ? lines[i - 2] : '';
+    const opensParagraph = !before.trim() || lineKind(before) === 'heading' || underline.has(i - 2);
     if (/^\s*(?:=+|-+)\s*$/.test(raw) && lineKind(lines[i - 1]) === 'text' && !unpiped.has(i - 1)
-      && (i < 2 || !lines[i - 2].trim())) {
+      && opensParagraph) {
       setext.add(i - 1);
       underline.add(i);
     }
@@ -252,12 +257,12 @@ function announceThenExplain(paragraphs) {
       const pronounSubject = /^(?:it|that|this|there|here)\b/i.test(s);
       const abstractSubject = ABSTRACT_HEAD.test(s);
       if (!pronounSubject && !abstractSubject) continue;
-      // The tail has to end the sentence, or nearly: "It is simple because the
-      // seal shrank." carries its content after the tail and is not an
-      // announcement, however short it is.
+      // The tail has to end the sentence: "It is simple because seals shrink."
+      // carries its content after the tail and is not an announcement, however
+      // few words that content takes. Only punctuation may follow.
       const tail = s.match(FORWARD_TAIL);
       if (!tail) continue;
-      if (wordsOf(s.slice(tail.index + tail[0].length)).length > 3) continue;
+      if (/\w/.test(s.slice(tail.index + tail[0].length))) continue;
       hits.push(s);
       if (i === 0) opening += 1;
     }
@@ -521,8 +526,18 @@ function runInLabelsSharingStem(blocks) {
 // logistics under its first header is exactly the document this was written
 // for, and stopping at the first header would have passed it.
 
+// Month names in full or the usual abbreviations, nothing looser: "10
+// marvelous guests" matched a stem-plus-anything spelling. A slash date needs
+// its year, or "1/2 of capacity" is a date.
+const MONTHS = '(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\\.?';
+
 const EVENT_TOKENS = [
-  ['a date', /\b\d{1,2}(?:st|nd|rd|th)? (?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\b|\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.? \d{1,2}(?:st|nd|rd|th)?\b|\b\d{4}-\d{2}-\d{2}\b|\b\d{1,2}\/\d{1,2}(?:\/\d{2,4})?\b/i],
+  ['a date', new RegExp([
+    `\\b\\d{1,2}(?:st|nd|rd|th)? ${MONTHS}\\b`,
+    `\\b${MONTHS} \\d{1,2}(?:st|nd|rd|th)?\\b`,
+    '\\b\\d{4}-\\d{2}-\\d{2}\\b',
+    '\\b\\d{1,2}\\/\\d{1,2}\\/\\d{2,4}\\b',
+  ].join('|'), 'i')],
   ['minutes', /\b\d+[- ]?minutes?\b/i],
   ['the session', /\bsessions?\b/i],
   ['the room', /\b(?:the|a|our) (?:\w+ )?room\b/i],

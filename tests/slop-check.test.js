@@ -1701,6 +1701,9 @@ check('two hits in the middle of paragraphs do report',
 check('a forward tail followed by the content is not an announcement',
   softOf('It is simple because the seal shrank. The housing was machined to the old tolerance and the '
     + 'new seal was cut to the revised one, so the two never met.').includes('announce-then-explain'), false);
+check('...even when that content is three words long',
+  softOf('It is simple because seals shrink. The housing was machined to the old tolerance and the '
+    + 'new seal was cut to the revised one, so the two never met.').includes('announce-then-explain'), false);
 // Found by review: the announce path never folded typographic apostrophes.
 check('a curly apostrophe in the tail is read like a straight one',
   JSON.stringify(softOf('It\u2019s worth naming here. The queue that fills faster than it drains fails on '
@@ -1781,6 +1784,10 @@ check('items each used in their own paragraph are not the list said again',
 check('setext headings make sections too',
   softOf(PARTS_TABLE.replace('# A framework\n', 'A framework\n===========\n').replace('## The parts\n', 'The parts\n---------\n')
     + PARTS_PROSE.replace('## Why it matters\n', 'Why it matters\n--------------\n')).includes('list-enumerated-twice'), true);
+check('a setext heading directly under another heading is a heading',
+  softOf('# Framework\nThe parts\n---------\n\n- Emergency contact number\n- Battery charge level\n- Radio channel assignment\n\n'
+    + 'Why it matters\n--------------\n\nConfirm the emergency contact number, the battery charge level and the '
+    + 'radio channel assignment before leaving.\n').includes('list-enumerated-twice'), true);
 check('two of four items reappearing is not enough',
   softOf(PARTS_TABLE + '\n## Why it matters\n\nAn operator asks where the records live and who reads them next, '
     + 'and leaves the rest to the build.\n').includes('list-enumerated-twice'), false);
@@ -1850,6 +1857,9 @@ check('an ISO date and an abbreviated month both count as a date',
     .includes('logistics-before-the-subject')
   && questionsOf('# Capacity planning\n\nThe session on Oct 28 runs in the room for the guests.\n')
     .includes('logistics-before-the-subject'), true);
+check('a fraction and a word beginning with a month stem are not dates',
+  questionsOf('# Capacity planning\n\nThe session reserves 1/2 of capacity for 10 marvelous guests.\n')
+    .includes('logistics-before-the-subject'), false);
 check('a one-sentence italic line is a paragraph, not a subtitle',
   questionsOf('# Capacity planning\n\n*A 90 minute session in the room for the dinner guests.*\n')
     .includes('logistics-before-the-subject'), true);
