@@ -1736,6 +1736,15 @@ check('an announcement set as its own paragraph is read against the next one',
   softOf('It matters now because of what the change removes.\n\nWhen a person does the work by hand, they set '
     + 'the pace, catch what looks wrong and pass it along, so none of that has to be designed.')
     .includes('announce-then-explain'), true);
+check('...but not against the first paragraph of the next section',
+  softOf('It matters now because of what the change removes.\n\n## Later\n\nWhen a person does the work by '
+    + 'hand, they set the pace, catch what looks wrong and pass it along, so none of that has to be designed.')
+    .includes('announce-then-explain'), false);
+// Found by review: a comment that closed after a blank line was literal, and
+// the hidden note surfaced as prose.
+check('a comment after visible text that closes past a blank line is still a comment',
+  softOf('Intro text here. <!-- ' + ANNOUNCE + '\n\nstill hidden -->\n\nThe pump has run since March '
+    + 'without a fault, and the seal was replaced in June.').includes('announce-then-explain'), false);
 check('a leading "so" does not hide the subject',
   softOf('So it matters now because of what the change removes. When a person does the work by hand, they set '
     + 'the pace, catch what looks wrong and pass it along, so none of that has to be designed.')
@@ -1878,6 +1887,11 @@ check('a wrapped line under a list item belongs to the item',
     .includes('3 of 3 items'), true);
 check('an intraword underscore is not emphasis',
   require(path.join(base, 'structure.js')).blocksOf('the snake_case_field name')[0].text, 'the snake_case_field name');
+check('many code spans are stripped in linear time', (() => {
+  const started = process.hrtime.bigint();
+  structural(('a `b` c `d` e. ').repeat(20000));
+  return Number(process.hrtime.bigint() - started) / 1e6 < 2000;
+})(), true);
 check('a contraction is not a content word',
   softOf('# Rules\n\n## Items\n\n- Don\'t skip\n- Don\'t guess\n- Don\'t wait\n\n## Later\n\nThe runner will skip a '
     + 'missing file, guess nothing about its contents and wait for the next one.\n')

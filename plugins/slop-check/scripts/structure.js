@@ -50,6 +50,15 @@ const ITALIC_ONLY = /^(?:\*(?!\s)([^*]+)\*|_(?!\s)([^_]+)_)\s*$/;
 // comment with one in the next and erased the visible section between them.
 function stripFences(text) {
   const src = String(text || '');
+  // Blank-line positions, found once. Looking for the next one from every
+  // code span made a document of many spans quadratic.
+  const blanks = [];
+  for (const m of src.matchAll(/\n[ \t]*\n/g)) blanks.push(m.index);
+  let blankCursor = 0;
+  const blockEndFrom = (at) => {
+    while (blankCursor < blanks.length && blanks[blankCursor] < at) blankCursor += 1;
+    return blankCursor < blanks.length ? blanks[blankCursor] : src.length;
+  };
   let out = '';
   let i = 0;
   while (i < src.length) {
@@ -69,12 +78,8 @@ function stripFences(text) {
     // runs to the end of the document. plain() blanks the span later. A run
     // of backticks with no closing run of the same length on its line is
     // literal text.
-    // Neither a code span nor an inline comment crosses a blank line: the
-    // block that holds the opener is as far as its closer may be.
-    const blockEndFrom = (at) => {
-      const m = src.slice(at).match(/\n[ \t]*\n/);
-      return m ? at + m.index : src.length;
-    };
+    // A code span does not cross a blank line: the block that holds the
+    // opener is as far as its closer may be.
     if (src[i] === '`') {
       const blockEnd = blockEndFrom(i);
       let runEnd = i + 1;
@@ -94,14 +99,18 @@ function stripFences(text) {
       continue;
     }
     if (src.startsWith('<!--', i)) {
-      // A whole-line opener is a comment block and may run to its closer
-      // anywhere. An opener after visible text on its line is a comment only
-      // when it closes inside its own block; otherwise it is the four
-      // characters "<!--" in running prose, as tells.js also reads them.
-      const blockEnd = blockEndFrom(i);
+      // A whole-line opener is a comment block and runs to its closer, or to
+      // the end when there is none. An opener after visible text is a comment
+      // when a closer exists anywhere later, even past a blank line, and the
+      // four literal characters "<!--" when none does. Two reviewers pulled
+      // opposite ways here: one that a lone "<!--" in prose must not swallow
+      // the document, the other that a drafting note closed two paragraphs
+      // later must not surface as prose and raise a counted category. Both
+      // hold under this rule; what it gives up is an unclosed literal "<!--"
+      // pairing with an unrelated closer far below, which is the rarer case
+      // and the one whose cost is a silent miss rather than a false report.
       const closeIn = src.indexOf('-->', i + 4);
-      const closeInBlock = closeIn !== -1 && closeIn < blockEnd;
-      if (atLineStart || closeInBlock) {
+      if (atLineStart || closeIn !== -1) {
         i = closeIn === -1 ? src.length : closeIn + 3;
         out += ' ';
         continue;
@@ -356,15 +365,21 @@ const FORWARD_TAIL = new RegExp([
 
 const ABSTRACT_HEAD = /^(?:the|a|an|one|two|three|four|its|this|that|these|those|our|their|his|her|my|your|several|a few|both)\s+(?:\w+\s+)?(?:reasons?|points?|thinking|idea|ideas|answers?|questions?|examples?|things?|parts?|lessons?|takeaways?|catch|trick|key|difference|problem|result|upshot|argument|case|story|explanation)\b/i;
 
+// `paragraphs` carries each paragraph's text and its position among the
+// document's blocks, so that "the next paragraph" means the block directly
+// after this one and not the first prose under the next heading.
 function announceThenExplain(paragraphs) {
   const hits = [];
   let opening = 0;
   for (let pi = 0; pi < paragraphs.length; pi += 1) {
-    const sentences = sentencesIn(paragraphs[pi]);
+    const sentences = sentencesIn(paragraphs[pi].text);
     // The last sentence of a paragraph is compared with the first of the
     // next one: an announcement set as its own one-line paragraph, with the
     // explanation under it, is the most natural typography of the fault.
-    const following = pi + 1 < paragraphs.length ? sentencesIn(paragraphs[pi + 1])[0] : null;
+    // Only when the two are adjacent blocks: a heading, list or table between
+    // them means the second paragraph is not the explanation of the first.
+    const adjacent = pi + 1 < paragraphs.length && paragraphs[pi + 1].at === paragraphs[pi].at + 1;
+    const following = adjacent ? sentencesIn(paragraphs[pi + 1].text)[0] : null;
     for (let i = 0; i < sentences.length; i += 1) {
       const s = sentences[i];
       const next = i + 1 < sentences.length ? sentences[i + 1] : following;
@@ -748,7 +763,8 @@ function logisticsBeforeSubject(blocks) {
 function structuralTells(text) {
   const blocks = blocksOf(text);
   const paragraphs = blocks.filter((b) => b.kind === 'text').map((b) => b.text);
-  const announce = announceThenExplain(paragraphs);
+  const placed = blocks.map((b, at) => ({ ...b, at })).filter((b) => b.kind === 'text');
+  const announce = announceThenExplain(placed);
   const taken = new Set(announce ? announce.hits.map((h) => h.slice(1, -1)) : []);
   const findings = [
     announce,
