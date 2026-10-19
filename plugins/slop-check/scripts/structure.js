@@ -61,10 +61,13 @@ function wordsOf(s) {
   return String(s).split(/\s+/).filter((w) => /\w/.test(w));
 }
 
-// Inline markup out, words kept: **x** and *x* and `x` and [x](y) all become x.
+// Inline markup out, words kept: **x** and *x* and [x](y) become x. A code
+// span becomes a space, the way proseOf in tells.js drops it: the words inside
+// backticks are an example being shown, and an announcing sentence quoted as
+// code must not raise the reading of the prose around it.
 function plain(s) {
   return String(s)
-    .replace(/`([^`]*)`/g, '$1')
+    .replace(/`[^`]*`/g, ' ')
     // The destination is bounded so a document that is nothing but unclosed
     // "[a](" fragments is read in linear time rather than rescanned to its
     // end from every bracket. 2,000 characters is far past any real URL.
@@ -86,34 +89,58 @@ function headingText(line) {
   return plain(t);
 }
 
+const SEPARATOR_ROW = /^\|?\s*:?-{2,}:?\s*(?:\|\s*:?-{2,}:?\s*)*\|?\s*$/;
+
+// A pipe table may omit its outer pipes ("Part | Detail" over "--- | ---").
+// lineKind reads one line and cannot know that, so a contiguous run of lines
+// carrying a pipe is a table when one of them is the separator row.
+function unpipedTableLines(lines) {
+  const table = new Set();
+  let run = [];
+  const flush = () => {
+    if (run.some((i) => SEPARATOR_ROW.test(lines[i].trim()) && lines[i].includes('|'))) {
+      for (const i of run) table.add(i);
+    }
+    run = [];
+  };
+  lines.forEach((raw, i) => {
+    const t = raw.trim();
+    if (t && t.includes('|') && !/^(?:`{3,}|~{3,})/.test(t)) run.push(i);
+    else flush();
+  });
+  flush();
+  return table;
+}
+
 function blocksOf(text) {
   const lines = stripFences(text).split(/\r?\n/);
   const blocks = [];
+  const unpiped = unpipedTableLines(lines);
   let current = null;
   const close = () => {
     if (current) blocks.push(current);
     current = null;
   };
-  for (const raw of lines) {
-    const kind = lineKind(raw);
+  lines.forEach((raw, index) => {
+    const kind = unpiped.has(index) ? 'table' : lineKind(raw);
     if (kind === 'blank' || kind === 'rule') {
       close();
-      continue;
+      return;
     }
     // Headings and subtitles are one line each. Everything else runs until
     // the kind changes or a blank line closes it.
     if (kind === 'heading' || kind === 'subtitle') {
       close();
       blocks.push({ kind, lines: [raw.trim()], text: headingText(raw) });
-      continue;
+      return;
     }
     if (current && current.kind === kind) {
       current.lines.push(raw.trim());
-      continue;
+      return;
     }
     close();
     current = { kind, lines: [raw.trim()], text: '' };
-  }
+  });
   close();
   for (const b of blocks) {
     if (b.kind === 'text' || b.kind === 'quote' || b.kind === 'note') {
@@ -269,14 +296,19 @@ function shortClaimOpener(paragraphs, taken) {
 //
 // The anchor is one paragraph. The list has been said again when three or
 // more of its items turn up inside a single paragraph of another section,
-// each as a sentence sharing most of the item's content words. A schema whose
-// table of fields is followed by one paragraph per field is the list being
-// used rather than repeated, and that was 25 of 210 ordinary documents when
-// the check accepted items found anywhere in another section.
+// each as a sentence sharing most of the item's content words, or inside one
+// other list or table column there. A schema whose table of fields is
+// followed by one paragraph per field is the list being used rather than
+// repeated, and that was 25 of 210 ordinary documents when the check
+// accepted items found anywhere in another section.
+//
+// The hit quotes both sides: the items that reappear and the start of the
+// paragraph they reappear in. A count and a header alone sent the reader
+// hunting for the repetition the report claimed.
 
 function tableColumns(block) {
   const rows = block.lines
-    .filter((l) => !/^\|?\s*:?-{2,}/.test(l))
+    .filter((l) => !SEPARATOR_ROW.test(l))
     .map((l) => l.replace(/^\|/, '').replace(/\|\s*$/, '').split('|').map((c) => plain(c)));
   if (rows.length < 4) return [];
   const header = rows[0];
@@ -332,6 +364,11 @@ function reappears(item, sentences) {
   return false;
 }
 
+function excerpt(text, words = 8) {
+  const all = wordsOf(text);
+  return all.length > words ? `${all.slice(0, words).join(' ')}...` : all.join(' ');
+}
+
 function sectionIndexOf(blocks) {
   const index = new Map();
   let n = 0;
@@ -360,22 +397,37 @@ function listEnumeratedTwice(blocks) {
 
   // Every paragraph in the document as its sentences, tagged with its
   // section, so a list is never found to reappear in itself or beside itself.
-  // Tables and lists are not paragraphs here: a list restated as another list
-  // is caught when that second list is itself a sequence read above.
-  const paragraphs = blocks
+  // Every other sequence is a candidate too, as a list of its items, which is
+  // how a bullet list repeated under a later heading is found.
+  const candidates = blocks
     .filter((b) => b.kind === 'text' || b.kind === 'quote')
-    .map((b) => ({ section: section.get(b), sentences: sentencesIn(b.text).map((t) => ({ words: contentWords(t) })) }));
+    .map((b) => ({
+      section: section.get(b),
+      what: 'paragraph',
+      text: b.text,
+      sentences: sentencesIn(b.text).map((t) => ({ words: contentWords(t) })),
+    }));
+  for (const other of sequences) {
+    candidates.push({
+      section: other.section,
+      what: 'list',
+      text: other.items.join('; '),
+      sentences: other.items.map((t) => ({ words: contentWords(t) })),
+      sequence: other,
+    });
+  }
 
   const hits = [];
   for (const seq of sequences) {
-    let best = 0;
-    for (const p of paragraphs) {
-      if (p.section === seq.section) continue;
-      const again = seq.items.filter((item) => reappears(item, p.sentences)).length;
-      if (again > best) best = again;
+    let best = null;
+    for (const c of candidates) {
+      if (c.section === seq.section || c.sequence === seq) continue;
+      const again = seq.items.filter((item) => reappears(item, c.sentences));
+      if (!best || again.length > best.again.length) best = { again, candidate: c };
     }
-    if (best >= 3) {
-      hits.push(`${best} of ${seq.items.length} items in ${seq.label} are said again in one paragraph of another section`);
+    if (best && best.again.length >= 3) {
+      const quoted = best.again.map((i) => `"${excerpt(i, 6)}"`).join(', ');
+      hits.push(`${best.again.length} of ${seq.items.length} items in ${seq.label} (${quoted}) are said again in one ${best.candidate.what} of another section, the one beginning "${excerpt(best.candidate.text)}"`);
     }
   }
   return hits.length ? { name: 'list-enumerated-twice', count: hits.length, hits } : null;

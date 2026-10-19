@@ -1698,6 +1698,13 @@ check('two hits in the middle of paragraphs do report',
     .includes('announce-then-explain'), true);
 check('a sentence in a fenced block is not read',
   softOf('```\n' + ANNOUNCE + '\n```').includes('announce-then-explain'), false);
+// Found by review: plain() kept the words inside backticks, so an announcing
+// sentence shown as a code example raised the reading of the prose around it.
+check('a sentence in a code span is not read either',
+  softOf('The example reads `' + ANNOUNCE + '` and nothing else here announces.')
+    .includes('announce-then-explain'), false);
+check('...and the prose beside a code span is still read',
+  JSON.stringify(softOf(ANNOUNCE + ' A note holds `some code` as well.')), JSON.stringify(softOf(ANNOUNCE)));
 
 console.log('\nlist-enumerated-twice: a table or list said again as a paragraph elsewhere');
 const PARTS_TABLE = '# A framework\n\n## The parts\n\n'
@@ -1711,9 +1718,26 @@ const PARTS_PROSE = '\n## Why it matters\n\nBefore building anything, an operato
   + 'Those four questions are the whole method, and a system that skips one of them fails quietly.\n';
 check('a table column restated in one paragraph of another section reports',
   softOf(PARTS_TABLE + PARTS_PROSE).includes('list-enumerated-twice'), true);
-check('...and names the column and the count',
+check('...and quotes both sides: the items and the paragraph they reappear in',
   hitsOf(PARTS_TABLE + PARTS_PROSE, 'list-enumerated-twice')[0],
-  '4 of 4 items in the table column "Part" are said again in one paragraph of another section');
+  '4 of 4 items in the table column "Part" ("Where the records live", "Who reads them next", '
+  + '"How many arrive each week", "How anyone knows it worked") are said again in one paragraph of '
+  + 'another section, the one beginning "Before building anything, an operator asks where the..."');
+// Found by review: the classifier read one line at a time, so a table written
+// without its outer pipes was prose, and its column was never a sequence.
+check('a table without outer pipes is still a table',
+  softOf(PARTS_TABLE.replace(/^\| (.*) \|$/gm, '$1').replace('|---|---|', '--- | ---') + PARTS_PROSE)
+    .includes('list-enumerated-twice'), true);
+// Found by review: candidates were paragraphs only, so a bullet list repeated
+// under a later heading was never compared with itself.
+check('a bullet list repeated under another heading reports',
+  softOf('# Audit\n\n## First\n\n- Audit the system logs\n- Audit the server logs\n- Audit the access logs\n\n'
+    + '## Second\n\n- Audit the system logs\n- Audit the server logs\n- Audit the access logs\n')
+    .includes('list-enumerated-twice'), true);
+check('...and says it was a list',
+  hitsOf('# Audit\n\n## First\n\n- Audit the system logs\n- Audit the server logs\n- Audit the access logs\n\n'
+    + '## Second\n\n- Audit the system logs\n- Audit the server logs\n- Audit the access logs\n', 'list-enumerated-twice')[0]
+    .includes('in one list of another section'), true);
 check('the same paragraph inside the list\'s own section is not a repeat',
   softOf(PARTS_TABLE + '\nBefore building anything, an operator asks where the records live, '
     + 'who reads them next, how many arrive each week, and how anyone knows it worked.\n')
