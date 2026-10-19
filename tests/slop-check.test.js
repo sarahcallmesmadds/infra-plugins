@@ -2013,10 +2013,13 @@ check('event tokens before the second heading raise the question',
 check('...naming what it found',
   hitsOf(LOGISTICS, 'logistics-before-the-subject')[0],
   'is the opening about the event rather than the subject? it names a date, minutes, the session, the room, co-teaching, guests, the dinner');
+// The date is load-bearing here: without it these carry two tokens.
 check('an ISO date and an abbreviated month both count as a date',
-  questionsOf('# Capacity planning\n\nThe session on 2026-10-28 runs in the room for the guests.\n')
+  questionsOf('# Capacity planning\n\nThe session on 2026-10-28 is for the guests.\n')
     .includes('logistics-before-the-subject')
-  && questionsOf('# Capacity planning\n\nThe session on Oct 28 runs in the room for the guests.\n')
+  && questionsOf('# Capacity planning\n\nThe session on Oct 28 is for the guests.\n')
+    .includes('logistics-before-the-subject')
+  && !questionsOf('# Capacity planning\n\nThe session on the hill is for the guests.\n')
     .includes('logistics-before-the-subject'), true);
 check('a fraction and a word beginning with a month stem are not dates',
   questionsOf('# Capacity planning\n\nThe session reserves 1/2 of capacity for 10 marvelous guests.\n')
@@ -2039,6 +2042,17 @@ check('"Room B2" is a room',
 check('a comment dropped from above a rule does not make the prose a heading',
   JSON.stringify(require(path.join(base, 'structure.js')).blocksOf('First sentence.\n<!-- note -->\n---\n\nMore.')
     .map((b) => b.kind)), JSON.stringify(['text', 'text']));
+check('text after a comment closed mid-line opens no block',
+  JSON.stringify(require(path.join(base, 'structure.js')).blocksOf('Intro text <!--\n-->## Not a section\nmore')
+    .map((b) => b.kind)), JSON.stringify(['text']));
+check('frontmatter lists are not sequences',
+  softOf('---\nauthors:\n- Sarah Madden\n- Jane Doe\n- Alex Kim\n---\n\n# Paper\n\n## Byline\n\nWritten by Sarah Madden, '
+    + 'Jane Doe and Alex Kim.\n').includes('list-enumerated-twice'), false);
+check('"Here are the reasons." and "It\'s simple." are announcements',
+  softOf('Here are the reasons. The queue that fills faster than it drains fails on the Tuesday after a long '
+    + 'weekend, every time.').includes('announce-then-explain')
+  && softOf("It's simple. The queue that fills faster than it drains fails on the Tuesday after a long weekend.")
+    .includes('announce-then-explain'), true);
 check('"room for" and "room to" are not rooms',
   questionsOf('# Capacity planning\n\nThe session leaves room for the guests to talk, and room to grow.\n')
     .includes('logistics-before-the-subject'), false);

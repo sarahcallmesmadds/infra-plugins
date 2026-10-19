@@ -53,25 +53,40 @@ const ITALIC_ONLY = /^(?:\*(?!\s)([^*]+)\*|_(?!\s)([^_]+)_)\s*$/;
 // marker in front.
 function visibleLines(text) {
   const tells = require('./tells.js');
-  const raw = tells.withoutFencedBlocks(String(text || '').replace(/\r\n?/g, '\n'));
+  let src = String(text || '').replace(/\r\n?/g, '\n');
+  // YAML frontmatter is metadata, not the document: its lists were reaching
+  // the sequences and its lines the paragraph checks.
+  const front = src.match(/^---\n[\s\S]*?\n(?:---|\.\.\.)(?:\n|$)/);
+  if (front) src = src.slice(front[0].length);
+  const raw = tells.withoutFencedBlocks(src);
   const out = [];
+  const hidden = (line) => line.startsWith(tells.MARKDOWN_BOUNDARY);
   raw.forEach((line, i) => {
-    if (line.startsWith(tells.MARKDOWN_BOUNDARY)) {
+    if (hidden(line)) {
       // A hidden line with visible text directly above and below it, such as
       // a comment on its own line inside a paragraph, is dropped rather than
       // read as a blank: a blank would split the paragraph in two and hand
       // the paragraph checks a boundary the reader never sees.
-      const above = i > 0 && raw[i - 1].trim() && !raw[i - 1].startsWith(tells.MARKDOWN_BOUNDARY);
+      // Looking past a run of hidden lines, so two comments in a row inside
+      // a paragraph behave like one.
+      let a = i - 1;
+      while (a >= 0 && hidden(raw[a])) a -= 1;
+      let b = i + 1;
+      while (b < raw.length && hidden(raw[b])) b += 1;
+      const above = a >= 0 && raw[a].trim();
       // Not when the line below is a rule or a setext underline: dropping
       // the comment would put the rule directly under the prose and turn
       // the prose into a heading.
-      const below = i + 1 < raw.length && raw[i + 1].trim() && !raw[i + 1].startsWith(tells.MARKDOWN_BOUNDARY)
-        && !/^\s*(?:=+|-+|\*\s*\*\s*\*[\s*]*|_\s*_\s*_[\s_]*)\s*$/.test(raw[i + 1]);
+      const below = b < raw.length && raw[b].trim()
+        && !/^\s*(?:=+|-+|\*\s*\*\s*\*[\s*]*|_\s*_\s*_[\s_]*)\s*$/.test(raw[b]);
       if (!(above && below)) out.push('');
       return;
     }
+    // The continuation marker is kept: the text after an inline comment
+    // closed mid-line is still mid-paragraph and must not open a block,
+    // however it is shaped, as tells.js reads it.
     if (line.startsWith(tells.MARKDOWN_PARAGRAPH_CONTINUATION)) {
-      out.push(line.slice(1));
+      out.push(line.slice(1).trim() ? line : '');
       return;
     }
     out.push(line);
@@ -81,6 +96,7 @@ function visibleLines(text) {
 
 
 function lineKind(raw) {
+  if (raw.startsWith('\u0001')) return 'continuation';
   const line = raw.trim();
   if (!line) return 'blank';
   if (/^#{1,6}\s/.test(line)) return 'heading';
@@ -194,7 +210,8 @@ function blocksOf(text) {
       underline.add(i);
     }
   });
-  lines.forEach((raw, index) => {
+  lines.forEach((rawLine, index) => {
+    let raw = rawLine;
     if (underline.has(index)) return;
     let kind = setext.has(index) ? 'heading' : unpiped.has(index) ? 'table' : lineKind(raw);
     // Four columns of indent at the start of a block is indented code, and
@@ -202,6 +219,7 @@ function blocksOf(text) {
     // open block it is a wrapped line, a nested item or a continuation, and
     // stays with the block it continues.
     if (!current && kind !== 'blank' && /^(?: {4}|\t)/.test(raw)) kind = 'blank';
+    if (kind === 'continuation' && raw.startsWith('\u0001')) raw = raw.slice(1);
     if (kind === 'continuation') {
       if (current && current.kind === 'list') {
         // The wrapped line is kept apart from the item's first line with a
@@ -240,6 +258,9 @@ function blocksOf(text) {
     }
     // Headings and subtitles are one line each. Everything else runs until
     // the kind changes or a blank line closes it.
+    // A short italic line inside an open paragraph is the paragraph, not a
+    // subtitle; a subtitle stands at a block boundary.
+    if (kind === 'subtitle' && current && current.kind === 'text') kind = 'text';
     if (kind === 'heading' || kind === 'subtitle') {
       close();
       blocks.push({ kind, lines: [raw.trim()], text: headingText(raw) });
@@ -328,7 +349,7 @@ function contentWords(s) {
 // was on the list and is not: its object is the answer ("It comes down to
 // trust."), so it names the content rather than deferring it.
 const FORWARD_TAIL = new RegExp([
-  "\\b(?:is|was|are|were|'s|seems?|sounds?)\\s+(?:also\\s+|very\\s+|quite\\s+)?(?:(?:a|an|the|some)\\s+)?(?:(?:simple|clear|obvious|straightforward|easy|plain|subtle|telling)(?:\\s+(?:fix|one|problem|point|reason|case|thing|part))?|point|reason|key|hard part|catch|problem|difference|thing|answer|question|deal|already there|worth \\w+ing(?: here| now| briefly)?|where (?:\\w+ ){1,3}(?:starts?|begins?|comes? in))[.!?]*$",
+  "\\b(?:is|was|are|were|'s|seems?|sounds?)\\s+(?:also\\s+|very\\s+|quite\\s+)?(?:(?:a|an|the|some)\\s+)?(?:(?:simple|clear|obvious|straightforward|easy|plain|subtle|telling)(?:\\s+(?:fix|one|problem|point|reason|case|thing|part))?|points?|reasons?|key|hard part|catch|problems?|differences?|things?|answers?|questions?|deal|already there|worth \\w+ing(?: here| now| briefly)?|where (?:\\w+ ){1,3}(?:starts?|begins?|comes? in))[.!?]*$",
   "\\bbecause of (?:what|how|who|where|when)\\b[^.!?]*[.!?]*$",
   "\\bmakes? (?:it|this|that|them|the \\w+(?: \\w+)?) (?:concrete|clear|simple|obvious|real|plain|visible)[.!?]*$",
   "\\b(?:changes?|decides?|explains?|shows?|answers?|tells? (?:you|us)) (?:who|what|how|why|where|when)\\b[^.!?]*[.!?]*$",
@@ -356,7 +377,7 @@ function announceThenExplain(paragraphs) {
       const next = i + 1 < sentences.length ? sentences[i + 1] : following;
       if (!next) continue;
       const n = wordsOf(s).length;
-      if (n < 3 || n > 12) continue;
+      if (n < 2 || n > 12) continue;
       if (/[:;]/.test(s)) continue;
       if (/\?$/.test(s)) continue;
       if (wordsOf(next).length < Math.ceil(n * 1.5)) continue;
@@ -407,7 +428,8 @@ function hasVerb(s) {
   // "Here we go." and "There it goes." are clauses; "Here tomorrow." is not.
   // A locative opener needs a pronoun or a verb right after it.
   if (/^(?:so |and |but |then |now )?(?:here|there)\s+(?:i|we|you|they|he|she|it|goes|comes|lies|sits|stands|begins|ends)\b/i.test(flat)) return true;
-  if (/\b\w{3,}ed\b/i.test(flat)) return true;
+  if (/\b\w{3,}ed\b/i.test(flat)
+    && !/^(?:so |and |but |then |now )?(?:i|we|you|they|he|she|it|that|this|who)\s+(?:indeed|unaffected|unchanged)[.!?]?$/i.test(flat)) return true;
   return false;
 }
 
@@ -507,13 +529,13 @@ function labelRuns(blocks) {
 // again in one sentence about system audit logs that reviews, archives and
 // scans nothing.
 function reappearsAt(item, sentences, used, common) {
-  const words = [...new Set(contentWords(item))];
+  const words = itemWords(item);
   if (words.length < 2) return -1;
   const need = Math.ceil(words.length * 0.7);
   const distinct = words.filter((w) => !common.has(w));
   for (let i = 0; i < sentences.length; i += 1) {
     if (used && used.has(i)) continue;
-    const have = new Set(sentences[i].words);
+    const have = sentences[i].set || (sentences[i].set = new Set(sentences[i].words));
     let shared = 0;
     for (const w of words) if (have.has(w)) shared += 1;
     if (shared < need) continue;
@@ -521,6 +543,12 @@ function reappearsAt(item, sentences, used, common) {
     return i;
   }
   return -1;
+}
+
+const wordCache = new Map();
+function itemWords(item) {
+  if (!wordCache.has(item)) wordCache.set(item, [...new Set(contentWords(item))]);
+  return wordCache.get(item);
 }
 
 function commonWords(items) {
