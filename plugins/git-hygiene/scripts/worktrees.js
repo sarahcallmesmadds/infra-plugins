@@ -207,7 +207,7 @@ function remoteIdentity(repo, deadline) {
   if (!url) return null;
 
   // Local or network is settled first, by Git's own rule: an address with no
-  // scheme is a local path unless a colon comes before any slash (a Windows
+  // scheme is a local path unless a colon comes before any slash (on Windows a
   // drive letter is still local). A local remote has no pull requests. A
   // network remote either resolves to a plain host, owner and repository, or
   // is unreadable: never "no pull requests", or cleanup would remove its
@@ -225,14 +225,20 @@ function remoteIdentity(repo, deadline) {
   } else {
     const colon = url.indexOf(':');
     const slash = url.indexOf('/');
-    if (colon === -1 || (slash !== -1 && slash < colon) || /^[A-Za-z]:[\\/]/.test(url)) return null;
+    // Git's has_dos_drive_prefix applies on Windows only (C:repo is local
+    // there); on macOS and Linux x:/repo is an ssh host, as Git reads it.
+    const drive = process.platform === 'win32' && /^[A-Za-z]:/.test(url);
+    if (colon === -1 || (slash !== -1 && slash < colon) || drive) return null;
     const scp = /^(?:[^@]+@)?([^:]+):(.*)$/.exec(url);
     if (!scp) return UNREADABLE_REMOTE;
     host = scp[1];
     pathname = scp[2];
   }
   const plainName = /^[A-Za-z0-9._-]+$/;
-  if (!plainName.test(String(host || ''))) return UNREADABLE_REMOTE;
+  // A trailing DNS dot (github.com.) reaches the same host; without trimming
+  // it the GitHub check fails and pull requests are never asked about.
+  host = String(host || '').replace(/\.$/, '');
+  if (!plainName.test(host)) return UNREADABLE_REMOTE;
   const parts = String(pathname || '').replace(/\.git$/, '').split('/').filter(Boolean);
   if (parts.length < 2 || !parts.every((part) => plainName.test(part))) return UNREADABLE_REMOTE;
   return {

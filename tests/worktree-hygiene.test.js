@@ -928,19 +928,22 @@ check('system errors, remote names and config errors print only our own words', 
     assert.strictEqual(held.removable, false);
     // Local remotes have no pull requests to ask about, including a path with
     // a colon after a slash, which Git itself treats as local.
-    for (const local of ['file:///srv/example.git', '/srv/git/cache:mirror.git', './sibling', 'C:/repos/x.git']) {
+    const drive = process.platform === 'win32' ? ['C:/repos/x.git', 'C:repo.git'] : [];
+    for (const local of ['file:///srv/example.git', '/srv/git/cache:mirror.git', './sibling', ...drive]) {
       git(f.repo, 'remote', 'set-url', 'origin', local);
       assert.strictEqual(worktrees.auditRepository(f.repo, { config: f.config, skipRemote: true }).identity, null, local);
     }
     // A network remote that does not resolve to owner and repository is
     // unreadable, never "no pull requests".
-    for (const network of ['git@github.com:Bearer:token', 'git@github.com:only-one', 'https://github.com/only-one']) {
+    // On macOS and Linux Git reads x:/only-one as an ssh host, not a drive.
+    const posixOnly = process.platform === 'win32' ? [] : ['x:/only-one'];
+    for (const network of ['git@github.com:Bearer:token', 'git@github.com:only-one', 'https://github.com/only-one', ...posixOnly]) {
       git(f.repo, 'remote', 'set-url', 'origin', network);
       assert.deepStrictEqual(worktrees.auditRepository(f.repo, { config: f.config, skipRemote: true }).identity,
         { unreadable: true, github: false }, network);
     }
     // An ordinary GitHub remote in either form still resolves.
-    for (const good of ['git@github.com:owner/example.git', 'https://github.com/owner/example.git']) {
+    for (const good of ['git@github.com:owner/example.git', 'https://github.com/owner/example.git', 'git@github.com.:owner/example.git']) {
       git(f.repo, 'remote', 'set-url', 'origin', good);
       const identity = worktrees.auditRepository(f.repo, { config: f.config, skipRemote: true }).identity;
       assert.strictEqual(identity.github, true, good);
