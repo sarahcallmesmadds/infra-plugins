@@ -122,6 +122,8 @@ check('destinations are <worktreeRoot>/<repo>/<task> and the location guard acce
       assert.strictEqual(misplacedTarget(`git worktree add '${destination}' feature/new`, f.repo, policy), null, destination);
     }
     assert.throws(() => worktrees.destinationFor(f.repo, 'feature/new', f.config, 'a/b'), /unsafe task folder name/);
+    assert.throws(() => worktrees.destinationFor(f.repo, 'feature/new', f.config, '.review'), /unsafe task folder name/);
+    assert.throws(() => worktrees.destinationFor(f.repo, '.hidden', f.config), /unsafe task folder name|invalid branch name/);
   } finally { f.cleanup(); }
 });
 

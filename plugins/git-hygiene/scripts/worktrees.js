@@ -212,7 +212,9 @@ function validateBase(repo, base) {
 // than inventing a second naming scheme.
 function taskName(branch, task) {
   const name = task === undefined ? branch.split('/').join('-') : task;
-  if (!name || typeof name !== 'string' || name.includes('/') || name.includes(path.sep)) {
+  // A leading dot is refused too: `.review` or `.cache` would match the
+  // review-tool folder pattern, and the finished worktree could never be removed.
+  if (!name || typeof name !== 'string' || name.includes('/') || name.includes(path.sep) || name.startsWith('.')) {
     throw new Error(`refusing unsafe task folder name: ${name || '(empty)'}`);
   }
   return safeSegment(name);
