@@ -329,7 +329,7 @@ check('removal refuses when GitHub pull requests cannot be read', () => {
   } finally { f.cleanup(); }
 });
 
-check('a worktree changed after its check is not removed or moved', () => {
+check('a worktree changed after its check fails the final re-check', () => {
   const f = fixture();
   try {
     const target = f.add('changes-later', path.join(f.projects, 'example-changes-later'));
