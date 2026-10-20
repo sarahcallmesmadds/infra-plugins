@@ -1,6 +1,7 @@
 # git-hygiene
 
-Safe branch cleanup for branches proved safe to delete, plus a place for your project worktrees.
+Safe branch cleanup for branches proved safe to delete, plus one folder for your
+project worktrees and a careful way to clean them up.
 
 Branches pile up. Every so often you notice, feel vaguely bad about it, and
 either delete a pile of them or none of them. Both are bad options, because the
@@ -32,7 +33,11 @@ anything from the second list to the first.
 /stale-branches owner/name          a repository on GitHub
 /stale-branches all                 every repository you own
 /merge-strategy                     recommend how to merge the current change
-/git-hygiene:setup                  configure the optional worktree guard
+/git-hygiene:worktree-hygiene status   inspect linked worktrees
+/git-hygiene:worktree-hygiene create   create an isolated checkout
+/git-hygiene:worktree-hygiene activate lock an existing checkout as active work
+/git-hygiene:worktree-hygiene cleanup  remove approved finished worktrees
+/git-hygiene:setup                  choose the project and worktree folders
 ```
 
 You get something like this:
@@ -62,6 +67,61 @@ for private branches with a small number of meaningful commits, and a merge
 commit for shared/public history or meaningful merge topology. It says “not
 ready” when the change is a draft, uncommitted, or cannot be compared safely.
 It never merges, rebases, pushes, or deletes.
+
+## Linked worktrees
+
+`worktree-hygiene` uses Git's registered worktree list as its source of truth.
+It does not infer ownership from a directory name. One deterministic script
+classifies every linked checkout in this order:
+
+1. primary checkout;
+2. locked;
+3. missing registration;
+4. dirty, including staged, untracked, and ignored files;
+5. detached or owned by a recognized review tool;
+6. attached to an open pull request;
+7. positively proved merged;
+8. carrying work not proved present in the default branch; or
+9. unknown because required evidence could not be read.
+
+Only `merged` reaches ordinary removal. For a GitHub repository the open pull
+request check needs the `gh` CLI; if it cannot read the list, the worktree is
+`unknown` and kept. Only the `origin` remote is looked up. The script checks the
+exact path again immediately before `git worktree remove` runs, and re-reads that
+one worktree's branch, commit, lock and status just before Git acts, so a change
+made by another session in between stops the removal or move. It refuses the primary checkout,
+the caller's current directory, a changed registration, a lock, any working-tree
+change, ignored local data, an open review, unique work, and incomplete evidence. It never uses
+`--force`, never removes more than one approved path at a time, and never deletes
+the branch.
+
+Creating a worktree uses the folder set by `/git-hygiene:setup`, the same one
+the guard below enforces:
+
+```text
+<worktreeRoot>/<repo>/<task>/
+```
+
+`<repo>` is the primary checkout's folder name. `<task>` is the branch name with
+slashes turned into dashes, or a name you give with `--task`. If two branches
+flatten to the same folder (`fix/a` and `fix-a`), creation refuses rather than
+picking another name.
+Created worktrees are locked as active agent work. `finish` unlocks one only
+after the user confirms no session is using it and the script proves it clean.
+Unlocking makes it reviewable; it does not remove it.
+
+`activate` adds the same protective lock to an existing linked checkout after
+exact-path approval. It refuses a worktree in a review tool's own folder,
+because the lock would stop that tool from cleaning it up. A locked registration whose directory is absent remains
+locked until `finish` clears it with the primary checkout named explicitly;
+only then can the separate missing-registration prune flow consider it.
+
+`relocate` moves only an exact clean, unlocked, attached worktree to its computed
+path in the worktree folder.
+
+Every command takes exact absolute paths. A path containing `$`, `*`, `?`, `[`,
+`]` or a backtick is refused as a possible unexpanded shell pattern, so a
+worktree in such a folder has to be handled with Git directly. Existing review-tool worktrees stay in their owner-specific cache.
 
 ## What it will not do
 
@@ -117,6 +177,10 @@ necessarily accurate when you answer it.
 
 In a git repository, it mentions once when a session starts that three or more
 branches have been proved safe to delete **and** have been sitting there a while.
+When `worktreeLocation` is set, the same bounded notice also reports linked
+worktrees sitting in the project folder instead of its worktree folder, and
+missing registrations.
+It does not access GitHub, move anything, or claim a partial count.
 
 Three separate things keep it quiet, and all three matter:
 
@@ -133,7 +197,7 @@ Three separate things keep it quiet, and all three matter:
 If it cannot finish counting inside its time budget it says nothing at all,
 rather than reporting a number that is only partly true.
 
-It never blocks anything.
+The session notice never blocks anything.
 
 ## Install
 
@@ -141,6 +205,12 @@ It never blocks anything.
 /plugin marketplace add sarahcallmesmadds/infra-plugins
 /plugin install git-hygiene@infra-plugins
 ```
+
+Run `/git-hygiene:setup` once after installation to choose the project folder
+and the worktree folder inside it. Branch hygiene and current-repository
+worktree status work without setup; scanning every project, creating worktrees
+in the right place, the session notice for worktrees, and the guard stay off
+until it runs.
 
 Add the marketplace **by repository**, as above. Pasting a direct URL to
 `marketplace.json` downloads only that one file, the plugin folders never
@@ -234,6 +304,11 @@ hook does not block worktree commands. Claude Code and
 Codex read the same file. Codex asks you to review and trust the hook before its
 first use.
 
+This guard covers commands an agent runs in a host with the plugin enabled. Git
+has no hook for worktree creation, so a worktree made in Terminal or another app
+is not stopped. The next `worktree-hygiene` status run, or the session notice,
+finds it instead.
+
 ## Branch cleanup settings
 
 Branch cleanup needs no configuration. Its defaults are at the top of
@@ -259,8 +334,8 @@ for that and there is not meant to be.
 
 ## Codex
 
-Both `/stale-branches` and the session notice work in Codex. The command is the
-same code either way.
+`/stale-branches`, `/git-hygiene:worktree-hygiene`, setup, and both hooks use
+the same code in Codex and Claude Code.
 
 The one thing to know is that Codex replaces a plugin's version folder when it
 updates, so a session already open when that happens loses its hooks until you
