@@ -1297,7 +1297,14 @@ const LABEL_LIKE = /^\s*\*\*([^*]+?):\*\*/;
 // the bold, spaces anywhere. A header line like this that is not the exact
 // form is a shape problem, because the exact readers would silently miss it.
 const LOOSE_LABEL = /^[\s*_]*(date|working\s+directory|last\s+session|format|project\s+rules|check\s+accepted)[\s*_]*:/i;
-function threadShapeProblems(text, home = os.homedir()) {
+// Line breaks other than \n and \r\n. A bare \r or a Unicode line or
+// paragraph separator is a line end to some readers and not to others, so a
+// heading or bullet could be seen by one and missed by the next.
+const ODD_BREAK = /[\r\u2028\u2029]/;
+// The two rule sections, each with one spelling.
+const RULE_SECTIONS = ['Constraints still in force', 'Standing rules'];
+const squash = (s) => s.trim().replace(/\s+/g, ' ').toLowerCase();
+function threadShapeProblems(text) {
   const lines = String(text || '').replace(/\r\n/g, '\n').split('\n');
   const out = [];
   const add = (kind, n, detail) => out.push({ kind, line: n, detail: `line ${n} ${detail}` });
@@ -1308,6 +1315,7 @@ function threadShapeProblems(text, home = os.homedir()) {
   const labelsSeen = new Set();
   lines.forEach((line, i) => {
     const n = i + 1;
+    if (ODD_BREAK.test(line)) { add('line-break', n, 'holds a carriage return or a Unicode line separator; end lines with a plain newline'); return; }
     if (FENCE_LINE.test(line)) { add('fence', n, 'is a code fence; a thread\'s handoff carries none, because a fenced example heading or rule reads as a real one'); return; }
     if (/^[ \t]+#{1,6}\s/.test(line)) { add('indented-heading', n, 'is a heading with spaces before it; start headings at the beginning of the line'); return; }
     // Any line starting with # is a heading written exactly: hashes, one
@@ -1323,7 +1331,9 @@ function threadShapeProblems(text, home = os.homedir()) {
       const h = /^## (.+?)\s*$/.exec(line);
       if (h) {
         inHeader = false;
-        section = h[1].toLowerCase();
+        section = squash(h[1]);
+        const rule = RULE_SECTIONS.find((r) => r.toLowerCase() === section);
+        if (rule && h[1] !== rule) add('malformed-heading', n, `is "## ${h[1]}"; write the section name exactly as "## ${rule}"`);
         // Any section twice, not only the standing one: every reader takes
         // the first and drops the rest.
         if (sectionsSeen.has(section)) add('section-repeated', n, `is a second "## ${h[1]}" heading; keep one section of each name`);
@@ -1333,11 +1343,16 @@ function threadShapeProblems(text, home = os.homedir()) {
       // The two rule section names belong to level two only. A `###` with
       // either name is read by the constraints parser as its section, so its
       // bullets would bind twice.
-      if (/^#{3,6} (constraints still in force|standing rules)\s*$/i.test(line)) {
+      if (/^#{3,6}\s+(constraints\s+still\s+in\s+force|standing\s+rules)\s*$/i.test(line)) {
         add('rule-line', n, 'reuses a rule section name below level two; use it only as a "## " heading');
         return;
       }
-      if (section === 'standing rules' && /^### /.test(line)) return;
+      if (section === 'standing rules') {
+        // One level of area only. A deeper heading reads as an area to the
+        // parser but looks nested to a person, so the two disagree.
+        if (!/^### /.test(line)) add('rule-line', n, 'is a heading deeper than ### inside "## Standing rules"; areas are "### " headings only');
+        return;
+      }
       if (section === 'constraints still in force') {
         add('rule-line', n, 'is a subheading inside "## Constraints still in force", which ends that section and drops the rules after it; areas belong in Standing rules');
       }
@@ -1360,7 +1375,9 @@ function threadShapeProblems(text, home = os.homedir()) {
       return;
     }
     const name = lab[1].trim();
-    const known = HEADER_LABELS.find((l) => l.toLowerCase() === name.toLowerCase());
+    // Case and spacing are ignored here only to recognise a reserved label
+    // written wrongly, which is then refused below; it is never read.
+    const known = HEADER_LABELS.find((l) => l.toLowerCase() === squash(name));
     if (!known) {
       if (/^(repository|repo)$/i.test(name)) add('header-line', n, `uses **${name}:**; a thread names its folder on a **Working directory:** line`);
       return;

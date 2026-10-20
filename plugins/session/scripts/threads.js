@@ -499,7 +499,7 @@ function threadConstraints({ slug, home = os.homedir() }) {
     // A shape save would refuse, in the file as it stands. Possible only by
     // hand editing, and reported rather than read around, so a pickup says
     // the lists below may be incomplete instead of presenting them as whole.
-    shapeProblems: handoffs.threadShapeProblems(text, home),
+    shapeProblems: handoffs.threadShapeProblems(text),
     constraints,
     standing,
     projectRules,
@@ -619,7 +619,7 @@ function saveThread({
   }
   // Shapes first, on the draft as written: a Check accepted line in any form
   // but the exact one is a shape problem, not something to strip.
-  const shape = handoffs.threadShapeProblems(draft, home);
+  const shape = handoffs.threadShapeProblems(draft);
   if (shape.length) {
     return refuse('bad-shape', shape.map((p) => p.detail).join('; '), { draft: from, problems: shape });
   }
@@ -733,7 +733,13 @@ function saveThread({
       const retired = new Set(handoffs.retiredAnywhere(draft));
       const vanished = handoffs.standingIn(currentText)
         .filter((r) => !retired.has(handoffs.normalizeConstraint(r.text)));
-      if (vanished.length && !handoffs.standingIn(draft).length && !movedTo.length) {
+      // A file already on disk with the section heading written some other
+      // way (a hand edit; save never writes one) cannot be read exactly, so
+      // it counts as holding standing rules. Fails closed, like the format
+      // guard: the draft must carry a standing section or name the file.
+      const unreadable = /^#{1,6}[ \t]*standing[ \t]+rules[ \t]*$/im.test(currentText)
+        && !/^## Standing rules[ \t]*$/m.test(currentText);
+      if ((vanished.length || unreadable) && !handoffs.standingIn(draft).length && !movedTo.length) {
         return refuse('standing-dropped',
           `${target} holds standing rules and the draft has none and names no project rules file that is there; carry them, or name the file they went to`,
           { draft: from });

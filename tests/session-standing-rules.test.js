@@ -209,7 +209,23 @@ const SHAPES = [
   ['Check accepted not in its exact form', 'header-line', (h) => doc(h, { rules: ['R.'], format: 2 }).replace(/(\*\*Working directory:\*\*.*)/, '$1\n **Check accepted:** old')],
   ['placeholder on the project rules line', 'project-rules-entry', (h) => doc(h, { rules: ['R.'], format: 2, projectRules: '[for a thread: the files]' })],
   ['relative project rules entry', 'project-rules-entry', (h) => doc(h, { rules: ['R.'], format: 2, projectRules: 'repo/CLAUDE.md' })],
+  // One spelling for each rule section: the readers match it exactly.
+  ['Standing rules in lower case', 'malformed-heading', (h) => doc(h, { rules: ['R.'], format: 2, standing: { A: ['S.'] } }).replace('## Standing rules', '## standing rules')],
+  ['Standing rules in capitals', 'malformed-heading', (h) => doc(h, { rules: ['R.'], format: 2, standing: { A: ['S.'] } }).replace('## Standing rules', '## STANDING RULES')],
+  ['Standing rules with two spaces', 'malformed-heading', (h) => doc(h, { rules: ['R.'], format: 2, standing: { A: ['S.'] } }).replace('## Standing rules', '## Standing  rules')],
+  ['constraints section in lower case', 'malformed-heading', (h) => doc(h, { rules: ['R.'], format: 2 }).replace('## Constraints still in force', '## constraints still in force')],
+  ['area heading deeper than ###', 'rule-line', (h) => doc(h, { rules: ['R.'], format: 2, standing: { A: ['S.'] } }).replace('- S.', '- S.\n#### Deeper\n- T.')],
+  ['label with two spaces in its name', 'header-line', (h) => doc(h, { rules: ['R.'], format: 2 }).replace(/(\*\*Working directory:\*\*.*)/, '$1\n**Project  rules:** /r/CLAUDE.md')],
+  ['Last session with two spaces', 'header-line', (h) => doc(h, { rules: ['R.'], format: 2 }).replace(/(\*\*Working directory:\*\*.*)/, '$1\n**Last  session:** 2026-10-01')],
+  ['bare carriage return', 'line-break', (h) => doc(h, { rules: ['R.'], format: 2, standing: { A: ['S.'] } }).replace('- S.', '- S.\r## Notes')],
+  ['Unicode line separator', 'line-break', (h) => doc(h, { rules: ['R.'], format: 2, standing: { A: ['S.'] } }).replace('- S.', `- S.${String.fromCharCode(0x2028)}### B`)],
+  ['Unicode paragraph separator', 'line-break', (h) => doc(h, { rules: ['R.'], format: 2 }).replace('- R.', `- R.${String.fromCharCode(0x2029)}- Q.`)],
 ];
+
+check('a Windows line ending is not a shape problem', () => {
+  const text = doc('/x', { rules: ['R.'], format: 2, standing: { A: ['S.'] } }).replace(/\n/g, '\r\n');
+  assert.deepStrictEqual(handoffs.threadShapeProblems(text), []);
+});
 
 check('save refuses each shape a plain reading gets wrong, names the line, and keeps the draft', () => {
   const home = migrated((h) => [['site-thread', doc(h)]]);
@@ -246,6 +262,44 @@ check('a thread file edited into an odd shape is reported at pickup, not read as
   const warn = text.indexOf('may be incomplete');
   const list = text.indexOf('in force this week');
   assert.ok(warn !== -1 && list !== -1 && warn < list, `the warning is missing or printed below the lists it qualifies:\n${text}`);
+});
+
+check('a thread hand-edited to a miscased Standing rules heading still guards its rules', () => {
+  // The heading cannot be read exactly, so the guard counts it as holding rules.
+  const home = migrated((h) => [['site-thread', doc(h)]]);
+  fs.writeFileSync(docPath(home, 'site-thread'), doc(home, { rules: ['R.'], format: 2, standing: { Deploy: ['Obtain approval.'] } })
+    .replace('## Standing rules', '## standing rules'));
+  const before = snapshot(docPath(home, 'site-thread'));
+  const r = save(home, 'site-thread', doc(home, { rules: ['R.'], format: 2 }));
+  assert.strictEqual(r.body.reason, 'standing-dropped', JSON.stringify(r.body));
+  assert.deepStrictEqual(snapshot(docPath(home, 'site-thread')), before);
+  const ok = save(home, 'site-thread', doc(home, { rules: ['R.'], format: 2, standing: { Deploy: ['Obtain approval.'] } }));
+  assert.strictEqual(ok.body.saved, true, JSON.stringify(ok.body));
+});
+
+check('the shape warning comes before everything else at pickup, near-duplicate notes included', () => {
+  const home = migrated((h) => [['site-thread', doc(h)]]);
+  const rule = 'Handoffs file centrally in `~/.planning/handoffs/`, never at a repo root, whatever `cli.js target` proposes.';
+  const body = doc(home, { rules: [`${rule} Seventh session running.`, `${rule} Tenth session running.`], format: 2 });
+  fs.writeFileSync(docPath(home, 'site-thread'), `${body}\n## Next actions\n2. Again.\n`);
+  const text = run(home, ['constraints', '--thread', 'site-thread']).stdout;
+  const warn = text.indexOf('may be incomplete');
+  const dup = text.indexOf('look like one rule');
+  assert.ok(warn !== -1 && dup !== -1, `the fixture does not raise both:\n${text}`);
+  assert.ok(warn < dup, `the shape warning prints after the near-duplicate note:\n${text}`);
+});
+
+check('save lists budget counts and advice apart in its plain output', () => {
+  const home = migrated((h) => [['site-thread', doc(h)]]);
+  fs.writeFileSync(docPath(home, 'site-thread'), doc(home, { rules: ['R.'], format: 2 }));
+  const worked = 'Round one, 2026-09-01.\n\nRound two, 2026-09-08.';
+  const text = doc(home, { rules: ['R.'], format: 2, worked });
+  const f = json(home, ['find', 'site-thread']).body;
+  const r = run(home, ['save', '--thread', 'site-thread', '--from', draft(home, text),
+    '--base', f.thread.rev, '--generation', String(registry(home).generation)]);
+  assert.strictEqual(r.status, 0, r.stdout + r.stderr);
+  assert.doesNotMatch(r.stdout, /Over budget/, `advice alone is labelled over budget:\n${r.stdout}`);
+  assert.match(r.stdout, /Advice, not a budget:/, r.stdout);
 });
 
 check('advice flags never refuse a save, even with enforcement on', () => {

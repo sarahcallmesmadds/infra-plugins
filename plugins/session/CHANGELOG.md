@@ -22,8 +22,10 @@ A thread's handoff stays the current state of its subject instead of growing.
   unless given `--accept-check "<reason>"`, which is written into the header.
   Off by default.
 - `save` refuses odd shapes outright (`bad-shape`): any code fence, an indented
-  or malformed heading, any `## ` section twice, a rule continued onto a second
-  line, a second `# ` title, a header
+  or malformed heading, a rule section name in any spelling but its own, any
+  `## ` section twice, a heading deeper than `###` inside Standing rules, a
+  rule continued onto a second line, a second `# ` title, a line break other
+  than a plain newline (a bare carriage return or a Unicode separator), a header
   line not in its exact `**Label:** value` form, a project rules entry that is
   not an absolute or `~/` path. The parsers read plain text and exact header lines; `constraints --thread` reports a
   hand-edited file in one of these shapes as `shapeProblems`. Only word counts

@@ -572,8 +572,11 @@ section is for thread handoffs only.
 
 **Shapes are refused at save (`bad-shape`), whatever the budget says:** a code
 fence anywhere in the document, a heading with spaces before it or not written
-as hashes, one space and text, any `## ` section twice, a rule continued onto
-a second line or a subheading inside the constraints, a second `# ` title, a
+as hashes, one space and text, `## Standing rules` or `## Constraints still in
+force` in any other spelling or case, any `## ` section twice, a heading deeper
+than `###` inside Standing rules, a rule continued onto a second line or a
+subheading inside the constraints, a second `# ` title, a line break other
+than a plain newline (a bare carriage return or a Unicode separator), a
 header line not written
 exactly as `**Label:** value` (one spelling per label, at the start of the line,
 with a value on that line, once), and a `**Project rules:**` entry that is not

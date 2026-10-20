@@ -436,8 +436,10 @@ Read what comes back:
   document's header.
 - `reason: "bad-shape"`: the draft has a shape every reader would get wrong: a
   code fence anywhere, a heading with spaces before it or not written as
-  hashes, one space and text, any `## ` section twice, a rule continued onto a
-  second line or a subheading inside the constraints, a second `# ` title, a
+  hashes, one space and text, a rule section name in another spelling or case,
+  any `## ` section twice, a heading deeper than `###` inside Standing rules, a
+  rule continued onto a second line or a subheading inside the constraints, a
+  second `# ` title, a line break other than a plain newline, a
   header line not written
   exactly as `**Label:** value`, or a project rules entry that is not an
   absolute path or a path starting with `~/`. `problems` names each line. Fix them in the draft and save

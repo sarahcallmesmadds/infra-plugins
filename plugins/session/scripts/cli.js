@@ -151,6 +151,12 @@ function printThreadConstraints(opts, t) {
     ]);
   }
   const lines = [];
+  // First, before anything else: a shape that makes everything below
+  // unreliable, the near-duplicate notes included.
+  if ((t.shapeProblems || []).length) {
+    lines.push(`${t.path} has a shape the rule lists below may be read wrongly from, so they may be incomplete:`,
+      ...t.shapeProblems.map((p) => `  ${p.detail}`), '  The next wrap fixes it; save refuses this shape.', '');
+  }
   for (const p of t.nearDuplicates || []) {
     lines.push('Two constraints look like one rule in two wordings, differing only here:',
       `  "${p.a.differs}"`, `  "${p.b.differs}"`,
@@ -158,11 +164,6 @@ function printThreadConstraints(opts, t) {
   }
   const standing = t.standing || [];
   const projectRules = t.projectRules || [];
-  // First, before any list: a shape that makes the lists below unreliable.
-  if ((t.shapeProblems || []).length) {
-    lines.push(`${t.path} has a shape the rule lists below may be read wrongly from, so they may be incomplete:`,
-      ...t.shapeProblems.map((p) => `  ${p.detail}`), '  The next wrap fixes it; save refuses this shape.', '');
-  }
   // This week's constraints first, then the standing rules, then the project
   // files that hold the rest. All three bind, so none is shortened or left
   // out because another one is long.
@@ -1102,9 +1103,16 @@ const COMMANDS = {
     }
     if (opts.create && !result.declared) lines.push(`  Not yet declared as a thread: run cli.js declare ${result.slug}`);
     // Saved over budget is said, enforced or not: the numbers are the point.
-    if (result.check && result.check.flags.length) {
-      lines.push(`  Over budget${result.check.accepted ? `, accepted: ${result.check.accepted}` : ''}:`,
-        ...result.check.flags.map((f) => `    ${f.detail}`));
+    // Budget counts and advice are listed apart: only the counts are over a
+    // budget, and only they can be accepted.
+    if (result.check) {
+      const counts = result.check.flags.filter((f) => f.enforceable);
+      const advice = result.check.flags.filter((f) => !f.enforceable);
+      if (counts.length) {
+        lines.push(`  Over budget${result.check.accepted ? `, accepted: ${result.check.accepted}` : ''}:`,
+          ...counts.map((f) => `    ${f.detail}`));
+      }
+      if (advice.length) lines.push('  Advice, not a budget:', ...advice.map((f) => `    ${f.detail}`));
     }
     emit(opts, {}, lines);
   },
