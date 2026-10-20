@@ -72,6 +72,9 @@ function parseArgs(argv) {
 
 // `expected` is the file text this run read. Another session can rewrite the
 // file between that read and the rename; without this re-read, its keys vanish.
+// A window remains between the re-read and the rename. POSIX has no
+// compare-and-rename, and a lock file only protects writers that take it, which
+// a person editing the file by hand does not. Do not describe this as closed.
 function atomicWrite(config, expected) {
   let destination = CONFIG_FILE;
   try {
