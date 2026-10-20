@@ -1,6 +1,6 @@
 # git-hygiene
 
-Which branches are proved safe to delete, and which are not.
+Safe branch cleanup for branches proved safe to delete, plus a place for your project worktrees.
 
 Branches pile up. Every so often you notice, feel vaguely bad about it, and
 either delete a pile of them or none of them. Both are bad options, because the
@@ -32,6 +32,7 @@ anything from the second list to the first.
 /stale-branches owner/name          a repository on GitHub
 /stale-branches all                 every repository you own
 /merge-strategy                     recommend how to merge the current change
+/git-hygiene:setup                  configure the optional worktree guard
 ```
 
 You get something like this:
@@ -187,9 +188,56 @@ file is an error rather than a reason to look elsewhere. Naming an interpreter
 and silently getting a different one hides the mistake, and a directory passes
 an executable check while starting nothing.
 
-## Configuration
+## Keep project worktrees together
 
-None needed. The defaults are at the top of `scripts/classify.js`:
+The Bash hook checks a single standalone, literal Git command, including a
+Git binary name in any letter case and literal leading environment assignments. For
+`git worktree add` and `git worktree move`, the destination must be exactly
+`<worktreeRoot>/<repo>/<task>`. It blocks `git worktree repair` and standalone
+worktree commands whose destination it cannot check safely. Use explicit paths
+and run the Git command by itself.
+
+If a command starts with `git worktree add` or `move` but also contains shell
+syntax, the hook denies it because it cannot safely check the destination. It
+does not split compound input into separate commands or search later clauses
+for Git. For example, `echo ready; git worktree add ...` is outside the check,
+while `git worktree add ... && echo ready` is denied.
+
+The hook does not parse shell syntax. It cannot inspect commands hidden behind
+redirections, substitutions, wrappers such as `command`, `env` or `timeout`,
+Git or shell aliases (including aliases set with `git -c` or `GIT_CONFIG_*`),
+shell functions, `eval`, sourced or executed script files, heredocs, or other
+shell interpreters. It also cannot see functions defined before the command,
+or programs that construct and launch Git commands. A command can change a
+path after the hook checks it and before Git uses it. This is a convenience
+check, not a sandbox. Use a controlled Git wrapper or filesystem policy if
+those cases must be prevented.
+
+Before using the guard, run `/git-hygiene:setup`. It proposes paths from the
+current repository, asks you to confirm or correct them, and stores the result
+in your user-owned configuration. You can also add `worktreeLocation` to
+`~/.claude/git-hygiene.config.json` yourself:
+
+```json
+{
+  "worktreeLocation": {
+    "projectRoot": "~/Code",
+    "worktreeRoot": "~/Code/Worktrees"
+  }
+}
+```
+
+The project folder must already exist, and the worktree folder must be inside
+it. The hook applies the same checks as setup, so a hand-written setting setup
+would refuse is treated as invalid. If the setting is missing or invalid, the
+hook does not block worktree commands. Claude Code and
+Codex read the same file. Codex asks you to review and trust the hook before its
+first use.
+
+## Branch cleanup settings
+
+Branch cleanup needs no configuration. Its defaults are at the top of
+`scripts/classify.js`:
 
 ```js
 protectedBranches: ['main', 'master', 'develop', 'release'],
