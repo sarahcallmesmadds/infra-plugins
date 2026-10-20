@@ -1303,6 +1303,12 @@ const LOOSE_LABEL = /^[\s*_]*(date|working\s+directory|last\s+session|format|pro
 const ODD_BREAK = /[\r\u2028\u2029]/;
 // The two rule sections, each with one spelling.
 const RULE_SECTIONS = ['Constraints still in force', 'Standing rules'];
+// A retirement line in any form, and the one form that counts.
+const RETIRED_LIKE = /retired\s+this\s+session\s*:/i;
+const RETIRED_EXACT = /^- Retired this session: \S/;
+// A header label below the header, the two folder spellings included: the
+// pooled reader takes **Repository:** and **Repo:** as the working directory.
+const BODY_LABEL = /^[\s*_]*(date|working\s+directory|last\s+session|format|project\s+rules|check\s+accepted|repository|repo)[\s*_]*:/i;
 const squash = (s) => s.trim().replace(/\s+/g, ' ').toLowerCase();
 // The only level-two sections a thread's handoff has: the wrap template's.
 // Allowing any name and then catching near-misses of the reserved ones drew
@@ -1333,6 +1339,10 @@ function threadShapeProblems(text) {
     const first = !seenText && line.trim() !== '';
     if (line.trim()) seenText = true;
     if (ODD_BREAK.test(line)) { add('line-break', n, 'holds a carriage return or a Unicode line separator; end lines with a plain newline'); return; }
+    if (RETIRED_LIKE.test(line) && !RETIRED_EXACT.test(line)) {
+      add('rule-line', n, 'is a retirement line not written exactly as "- Retired this session: <rule>, because <reason>" at the start of the line; an indented or reworded one is an example and does not retire anything');
+      return;
+    }
     if (FENCE_LINE.test(line)) { add('fence', n, 'is a code fence; a thread\'s handoff carries none, because a fenced example heading or rule reads as a real one'); return; }
     if (/^[ \t]+#{1,6}\s/.test(line)) { add('indented-heading', n, 'is a heading with spaces before it; start headings at the beginning of the line'); return; }
     // Any line starting with # is a heading written exactly: hashes, one
@@ -1376,6 +1386,7 @@ function threadShapeProblems(text) {
         return;
       }
       if (section === 'standing rules') {
+        if (/^### \[.*\]\s*$/.test(line)) { add('rule-line', n, 'is a bracketed area, which reads as the template placeholder; name the area without brackets or delete the line'); return; }
         // One level of area only. A deeper heading reads as an area to the
         // parser but looks nested to a person, so the two disagree.
         if (!/^### /.test(line)) add('rule-line', n, 'is a heading deeper than ### inside "## Standing rules"; areas are "### " headings only');
@@ -1390,6 +1401,12 @@ function threadShapeProblems(text) {
     // continued onto the next line is read without its continuation, which
     // can turn a conditional rule into an unconditional one.
     if (section === 'constraints still in force' || section === 'standing rules') {
+      // A bullet wholly in brackets is the template placeholder to every
+      // reader, so a real rule written that way (a reference link) is skipped.
+      if (/^- \[.*\]\s*$/.test(line)) {
+        add('rule-line', n, 'is a bullet wholly in brackets, which reads as the template placeholder; write the rule so it does not start and end with a bracket, or delete the placeholder');
+        return;
+      }
       if (line.trim() && !/^- \S/.test(line)) {
         add('rule-line', n, `is neither a "- " bullet nor blank inside "## ${section === 'standing rules' ? 'Standing rules' : 'Constraints still in force'}"; write each rule on one line`);
       }
@@ -1398,7 +1415,7 @@ function threadShapeProblems(text) {
     if (!inHeader) {
       // Header labels live in the header only. A pooled reader searches the
       // whole document, so one in the body can stand in for a missing one.
-      const loose = LOOSE_LABEL.exec(line);
+      const loose = BODY_LABEL.exec(line);
       if (loose) add('header-line', n, `is a **${loose[1]}:** line below the header; header lines go above the first "## " heading only`);
       return;
     }
@@ -1454,8 +1471,11 @@ function looseFormat(text) {
 // retired on purpose from one that was dropped. A thread's handoff carries no
 // code fences, so no line here can be an example.
 function retiredAnywhere(text) {
+  // Exact form at the start of the line only. An indented one is a code
+  // example, and an example must not excuse dropping a real rule; any other
+  // form is a shape save refuses.
   return String(text || '').replace(/\r\n/g, '\n').split('\n')
-    .map((l) => /^\s*-\s+retired this session\s*:\s*(.+)$/i.exec(l))
+    .map((l) => /^- Retired this session: (\S.*)$/.exec(l))
     .filter(Boolean)
     .map((m) => retiredTarget(m[1]));
 }

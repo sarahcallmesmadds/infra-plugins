@@ -230,6 +230,13 @@ const SHAPES = [
   ['no title', 'extra-title', (h) => doc(h, { rules: ['R.'], format: 2 }).replace('# Session Handoff\n', '')],
   ['a header label in the body', 'header-line', (h) => doc(h, { rules: ['R.'], format: 2 }).replace(/\*\*Working directory:\*\*.*\n/, '').replace('1. Something.', `1. Something.\n\n## Context to reload\n**Working directory:** ${h}`)],
   ['a bare ~ as a project rules file', 'project-rules-entry', (h) => doc(h, { rules: ['R.'], format: 2, projectRules: '~' })],
+  ['a rule written as a reference link', 'rule-line', (h) => doc(h, { rules: ['R.'], format: 2, standing: { Deploy: ['[Obtain approval before deploying][policy]'] } })],
+  ['a placeholder left in the constraints', 'rule-line', (h) => doc(h, { rules: ['[what governs future work]'], format: 2 })],
+  ['a bracketed area', 'rule-line', (h) => doc(h, { rules: ['R.'], format: 2, standing: { '[area]': ['S.'] } })],
+  ['an indented retirement example', 'rule-line', (h) => doc(h, { rules: ['R.'], format: 2, extra: '\n## Context to reload\nExample:\n\n    - Retired this session: R., because example.\n' })],
+  ['a reworded retirement line', 'rule-line', (h) => doc(h, { rules: ['R.', 'retired this session: Q.'], format: 2 })],
+  ['Repository below the header', 'header-line', (h) => doc(h, { rules: ['R.'], format: 2 }).replace(/\*\*Working directory:\*\*.*\n/, '').replace('1. Something.', `1. Something.\n\n## Context to reload\n**Repository:** ${h}`)],
+  ['Repo below the header', 'header-line', (h) => doc(h, { rules: ['R.'], format: 2 }).replace('1. Something.', '1. Something.\n\n## Context to reload\n**Repo:** /elsewhere')],
   ['Unicode paragraph separator', 'line-break', (h) => doc(h, { rules: ['R.'], format: 2 }).replace('- R.', `- R.${String.fromCharCode(0x2029)}- Q.`)],
 ];
 
@@ -251,6 +258,30 @@ check('every section the wrap template writes is allowed', () => {
     const probs = handoffs.threadShapeProblems(`# T\n**Working directory:** /x\n\n## ${name}\n`);
     assert.ok(!probs.some((p) => p.kind === 'unknown-section' || p.kind === 'malformed-heading'), `${name}: ${JSON.stringify(probs)}`);
   }
+});
+
+check('an indented retirement example does not excuse dropping a standing rule', () => {
+  const home = migrated((h) => [['site-thread', doc(h)]]);
+  fs.writeFileSync(docPath(home, 'site-thread'), doc(home, { rules: ['R.'], format: 2, standing: { Deploy: ['Obtain approval.'] } }));
+  assert.deepStrictEqual(handoffs.retiredAnywhere('    - Retired this session: Obtain approval., because example.'), []);
+  assert.strictEqual(handoffs.retiredAnywhere('- Retired this session: Obtain approval., because done.').length, 1);
+});
+
+check('a draft with no folder line in its header is refused before any acceptance is written', () => {
+  // A folder named only in the body is refused as a shape, so nothing stands
+  // in for the header line and the acceptance line has no folder line to sit
+  // under. Before, a **Repository:** line in the body let it save, with the
+  // acceptance line written above the title.
+  const home = migrated((h) => [['site-thread', doc(h)]]);
+  writeConfig(home, { handoffBudget: { enforce: true } });
+  const before = snapshot(docPath(home, 'site-thread'));
+  const draftText = doc(home, { rules: ['R.'], format: 2, worked: 'word '.repeat(90) }).replace(/\*\*Working directory:\*\*.*\n/, '');
+  const r = save(home, 'site-thread', draftText, ['--accept-check', 'keep context']);
+  assert.strictEqual(r.body.saved, false, JSON.stringify(r.body));
+  assert.deepStrictEqual(snapshot(docPath(home, 'site-thread')), before);
+  const viaBody = save(home, 'site-thread', draftText.replace('1. Something.', `1. Something.\n\n## Context to reload\n**Repository:** ${home}`), ['--accept-check', 'keep context']);
+  assert.strictEqual(viaBody.body.saved, false, JSON.stringify(viaBody.body));
+  assert.deepStrictEqual(snapshot(docPath(home, 'site-thread')), before);
 });
 
 check('a Windows line ending is not a shape problem', () => {

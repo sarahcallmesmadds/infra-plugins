@@ -23,7 +23,10 @@ A thread's handoff stays the current state of its subject instead of growing.
   Off by default.
 - `save` refuses odd shapes outright (`bad-shape`): a `## ` section that is not
   one of the template's nine (the reason names the one to fold it under), a
-  title that is not the first line, a header label below the header, any code
+  title that is not the first line, a header label below the header (the
+  `**Repository:**` and `**Repo:**` spellings included), a rule or area
+  wholly in brackets (it reads as the template placeholder), a retirement line
+  not in its exact `- Retired this session:` form at the start of a line, any code
   fence, an indented
   or malformed heading, a rule section name in any spelling but its own, any
   `## ` section twice, a heading deeper than `###` inside Standing rules, a

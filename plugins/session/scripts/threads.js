@@ -545,7 +545,9 @@ function withAcceptance(draft, reason) {
   // any other spelling of either line is a shape save has already refused.
   if (/^\*\*Check accepted:\*\* \S.*$/m.test(lf)) out = lf.replace(/^\*\*Check accepted:\*\* \S.*$/m, () => line);
   else if (/^\*\*Working directory:\*\* \S.*$/m.test(lf)) out = lf.replace(/^(\*\*Working directory:\*\* \S.*)$/m, (m) => `${m}\n${line}`);
-  else out = `${line}\n${lf}`;
+  // No folder line: after the title, which save holds to the first line with
+  // text. Above it, the saved document would fail its own shape check.
+  else out = lf.replace(/^# .*$/m, (m) => `${m}\n${line}`);
   out += rest;
   return crlf ? out.replace(/\n/g, '\r\n') : out;
 }

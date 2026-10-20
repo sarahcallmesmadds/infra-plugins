@@ -388,6 +388,12 @@ this session. Rewrite it from the version read in Step 1:
 - set `**Format:** 2` in the header;
 - use the template's `## ` sections and no others; anything else, a dated
   session section included, folds into one of them under a `### ` heading;
+- replace or delete every bracketed placeholder; save refuses one left in a
+  rule section, and a rule written wholly in brackets, because both read as
+  the template's placeholder;
+- write a retirement exactly as `- Retired this session: <rule>, because
+  <reason>` at the start of the line; save refuses any other form, because an
+  indented or reworded one is an example, not a retirement;
 - carry the rules as Step 1 sorted them: this week's under
   `## Constraints still in force`, standing ones under `## Standing rules`.
 
@@ -440,7 +446,8 @@ Read what comes back:
   `## ` section that is not one of the template's (fold it under the section
   the reason names, as a `### ` heading or as text), a section name reused
   below level two, a title that is not the first line, a header label below
-  the header, a code fence anywhere, a heading with spaces before it or not written as
+  the header, a rule or area wholly in brackets, a retirement line in any
+  form but the exact one, a code fence anywhere, a heading with spaces before it or not written as
   hashes, one space and text, a rule section name in another spelling or case,
   any `## ` section twice, a heading deeper than `###` inside Standing rules, a
   rule continued onto a second line or a subheading inside the constraints, a
