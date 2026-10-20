@@ -1285,6 +1285,36 @@ check('folding the prose does not blind the smart-quote signal',
 check('a bare negative clause is not antithesis',
   softNames('The skill does not touch the warehouse.').includes('antithesis'), false);
 
+console.log('\nhidden HTML comments are not prose');
+
+const COMMENT_COPY = 'Let us delve into this rich tapestry. It is crucial, pivotal and vibrant.';
+
+check('copy inside a whole-line comment raises nothing',
+  softNames(`A plain note about the release.\n\n<!-- ${COMMENT_COPY} -->\n\nThe build passed.`).length, 0);
+
+check('the same copy left visible is still read',
+  softNames(`A plain note about the release.\n\n${COMMENT_COPY}\n\nThe build passed.`)
+    .includes('generic-vocabulary'), true);
+
+check('copy inside an inline comment raises nothing',
+  softNames(`The build passed <!-- ${COMMENT_COPY} --> on Tuesday.`).length, 0);
+
+check('copy inside a comment spanning lines raises nothing',
+  softNames(`The build passed.\n<!--\n${COMMENT_COPY}\n-->\nIt shipped on Tuesday.`).length, 0);
+
+check('text after an inline comment closes on a later line is still read',
+  softNames(`The build passed <!-- a note\nends here --> and ${COMMENT_COPY}`)
+    .includes('generic-vocabulary'), true);
+
+check('a comment does not count toward the choppy-run hard rule',
+  checkHard('The build passed today without trouble.\n\n<!-- Go. Now. Fast. Done. -->\n\nIt shipped on Tuesday afternoon.').violations.some((v) => v.name === 'choppy-run'), false);
+
+check('a choppy run left visible still breaks the hard rule',
+  checkHard('The build passed today without trouble.\n\nGo. Now. Fast. Done.\n\nIt shipped on Tuesday afternoon.').violations.some((v) => v.name === 'choppy-run'), true);
+
+check('copy inside a tilde fence raises nothing',
+  softNames(`The build passed.\n\n~~~\n${COMMENT_COPY}\n~~~\n\nIt shipped.`).length, 0);
+
 console.log('\nstructural prose tells from rejected application drafts');
 
 check('an empty bridge sentence is reported',

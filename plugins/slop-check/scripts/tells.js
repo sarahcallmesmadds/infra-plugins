@@ -16,9 +16,26 @@ const EM_DASH = String.fromCharCode(0x2014);
 
 // Strip anything that is not prose: code, quotes, headings, lists, tables.
 // A style rule about sentence rhythm has no business judging a bullet list.
+// The document as a reader sees it: fenced and indented code, raw HTML
+// blocks and HTML comments, whole-line, inline or spanning lines, are gone.
+// The visibility pass is the one the brochure check and structure.js use.
+// proseOf used to strip only fenced code with a regex of its own, so a draft
+// note left in a comment ("<!-- delve into the tapestry here -->") was read
+// as prose by every lexical check and could raise the reading of a document
+// whose visible text was clean. A hidden line becomes a blank line, which
+// ends the paragraph it sat in, the miss direction for the paragraph checks.
+function visibleText(text) {
+  return withoutFencedBlocks(String(text || '').replace(/\r\n?/g, '\n'))
+    .map((line) => {
+      if (line.startsWith(MARKDOWN_BOUNDARY)) return '';
+      if (line.startsWith(MARKDOWN_PARAGRAPH_CONTINUATION)) return line.slice(1);
+      return line;
+    })
+    .join('\n');
+}
+
 function proseOf(text) {
-  return String(text || '')
-    .replace(/```[\s\S]*?```/g, '')
+  return visibleText(text)
     .replace(/`[^`]*`/g, '')
     .split('\n')
     .filter((line) => {
@@ -343,8 +360,7 @@ function fragmentBeats(prose) {
 }
 
 function proseParagraphs(text) {
-  return String(text || '')
-    .replace(/```[\s\S]*?```/g, '')
+  return visibleText(text)
     .split(/\n\s*\n/)
     .map((paragraph) => paragraph
       .split(/\r?\n/)

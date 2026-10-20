@@ -146,7 +146,17 @@ plain "is" and "has" in favour of "serves as", participles bolted onto sentence
 ends, claims sourced to nobody, hedging with no position, "not X but Y"
 antithesis, lists of three, forced enthusiasm, melodrama, brochure-style lists
 that repeat a bold "that" or "where" headline followed by explanatory copy,
-and sentences that are all suspiciously similar lengths.
+and sentences that are all suspiciously similar lengths. Four more come from
+drafts rejected with every check clean: a bridge sentence that asserts a link
+and adds no new word ("This agenda is built around that same question."), a
+"One is... The other is..." pair with mirrored ends, a fragment beat ("And the
+people."), and three paragraphs in a row that open on a name and "on X,
+because". The "not X but Y" check also reads the version split over two
+sentences.
+
+Nothing inside an HTML comment or a fenced block is read. Text in a comment is
+invisible to the reader, so it counts toward nothing, the hook's choppy-run
+rule included.
 
 Two of the soft categories sit above the sentence, because a document was
 rejected on sight with every sentence-level check clean. A sentence that
@@ -162,7 +172,8 @@ and counted against nothing: paragraphs opening on a very short pronoun
 sentence ("So we talk."), consecutive paragraphs opening with a bold label
 that shares its first two words ("**How things connect.** ... **How things
 behave.** ..."), and an opening that is about the event rather than the
-subject under a title that names a subject. Each of those is also how a sound
+subject under a title that names a subject, and a run of three or more
+sentences of near-equal length inside one paragraph. Each of those is also how a sound
 document can be organised, which is why they ask rather than count. Two others
 were tried and left out after measurement, and `scripts/structure.js` says
 which and why.
