@@ -76,7 +76,12 @@ softer habits: filler, machine vocabulary, avoiding plain "is" and "has",
 participles bolted onto sentence ends, claims sourced to nobody, hedging with
 no position, antithesis, lists of three, forced enthusiasm, melodrama,
 brochure-style lists that repeat a bold "that" or "where" headline followed
-by explanatory copy, and sentences that are all the same length.
+by explanatory copy, and sentences that are all the same length. Also a
+bridge sentence that asserts a link and adds no new word, a mirrored "One
+is... The other is..." pair, a fragment beat ("And the people."), and three
+paragraphs in a row opening on a name and "on X, because". Text inside an
+HTML comment is not read by the soft checks or the choppy-run rule; the other
+hard rules still see it.
 
 **Structure.** Two more soft categories sit above the sentence: a short
 sentence that announces a point the next sentence then makes ("It matters now
@@ -85,8 +90,8 @@ of bold paragraph labels said again in a paragraph, list or column of another
 section. Three structural questions print under
 "Worth asking about the structure" and count toward nothing: paragraphs that
 open on a very short pronoun sentence, consecutive paragraphs opening with a
-bold label sharing its first two words, and an opening about the event rather
-than the subject. A question is for you to answer with the document in front
+bold label sharing its first two words, an opening about the event rather
+than the subject, and a run of near-equal sentences in one paragraph. A question is for you to answer with the document in front
 of you, not a finding to repeat.
 
 **Code.** Placeholders that shipped (`your-api-key`, `TODO: implement`), broad

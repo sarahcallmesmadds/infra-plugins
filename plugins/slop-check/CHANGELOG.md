@@ -3,6 +3,45 @@
 Upgrade notes for past versions. Nothing here is needed to install or run the
 plugin.
 
+## Upgrading to 0.11.0
+
+**Four more soft categories, one more question, and HTML comments are no longer
+read as prose.** Nothing to change on your side.
+
+The new categories come from drafts that were rejected while every check
+passed. An empty bridge sentence asserts a link the reader can already see and
+adds no word the two sentences before it did not have ("This agenda is built
+around that same question."). The negating reversal now also catches the
+version split over two sentences ("It isn't a skills day. It's about deciding
+when nobody's certain."). A mirrored closer pairs "One is..." with "The other
+is..." on the same opening and closing words. A fragment beat is a two to five
+word sentence such as "And the people." A run of three paragraphs that each
+open on a name and "on X, because" counts as one more.
+
+Three or more sentences of eight to fourteen words, within three words of each
+other in one paragraph, print as a question with the sentences quoted. As a
+counted category that shape fired on 56 of 697 documents and moved 17 readings
+on its own, because plain instruction prose reads that way.
+
+Text inside an HTML comment, whole-line, inline or spanning lines, and inside a
+tilde fence is now hidden from the soft checks and from the choppy-run rule the
+hook enforces. A draft note left in a comment could raise a reading, or block a
+reply, on a document whose visible text was clean. The other hard rules still
+read comments, as before: an em dash, a banned phrase or a generation artefact
+inside a comment is still reported.
+
+The prose pass now reads paragraph boundaries the way the CommonMark reference
+parser renders them: a comment or raw HTML block on its own line ends the
+paragraph above it, a heading, rule or quote ends a code span, and a line that
+starts with inline code is not a list item. Known misses, all in the direction
+of reporting less: a comment that opens on one line and closes on the next
+leaves a word it splits as two words; the interior lines of such a comment end
+the paragraph; a table-shaped or "3." line inside a paragraph is not read.
+
+Measured over 697 Markdown documents in five repositories, two readings moved
+from "little" to "some", each on a sentence checked by hand, and none to
+"strong". The hard rules give the same answer as 0.10.0 on all 697.
+
 ## Upgrading to 0.10.0
 
 **Two structural tells join the soft categories, and three structural questions

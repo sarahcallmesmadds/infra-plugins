@@ -1285,6 +1285,309 @@ check('folding the prose does not blind the smart-quote signal',
 check('a bare negative clause is not antithesis',
   softNames('The skill does not touch the warehouse.').includes('antithesis'), false);
 
+console.log('\nhidden HTML comments are not prose');
+
+const COMMENT_COPY = 'Let us delve into this rich tapestry. It is crucial, pivotal and vibrant.';
+
+check('copy inside a whole-line comment raises nothing',
+  softNames(`A plain note about the release.\n\n<!-- ${COMMENT_COPY} -->\n\nThe build passed.`).length, 0);
+
+check('the same copy left visible is still read',
+  softNames(`A plain note about the release.\n\n${COMMENT_COPY}\n\nThe build passed.`)
+    .includes('generic-vocabulary'), true);
+
+check('copy inside an inline comment raises nothing',
+  softNames(`The build passed <!-- ${COMMENT_COPY} --> on Tuesday.`).length, 0);
+
+check('copy inside a comment spanning lines raises nothing',
+  softNames(`The build passed.\n<!--\n${COMMENT_COPY}\n-->\nIt shipped on Tuesday.`).length, 0);
+
+check('text after an inline comment closes on a later line is still read',
+  softNames(`The build passed <!-- a note\nends here --> and ${COMMENT_COPY}`)
+    .includes('generic-vocabulary'), true);
+
+check('a comment does not count toward the choppy-run hard rule',
+  checkHard('The build passed today without trouble.\n\n<!-- Go. Now. Fast. Done. -->\n\nIt shipped on Tuesday afternoon.').violations.some((v) => v.name === 'choppy-run'), false);
+
+check('a choppy run left visible still breaks the hard rule',
+  checkHard('The build passed today without trouble.\n\nGo. Now. Fast. Done.\n\nIt shipped on Tuesday afternoon.').violations.some((v) => v.name === 'choppy-run'), true);
+
+check('copy inside a tilde fence raises nothing',
+  softNames(`The build passed.\n\n~~~\n${COMMENT_COPY}\n~~~\n\nIt shipped.`).length, 0);
+
+const askedNamesEarly = (t) => (checkAll(t).questions || []).map((q) => q.name);
+
+console.log('\nhidden spans: visible prose and the choppy-run rule are unchanged');
+
+const choppy = (t) => checkHard(t).violations.some((v) => v.name === 'choppy-run');
+
+check('text after a closed comment is prose even when it starts like a list item',
+  choppy('Go. Now. <!-- keep this private note\n-->- wait here for confirmation.\nDone.'), false);
+
+check('the same with CRLF line endings',
+  choppy('Go. Now. <!-- keep this private note\r\n-->- wait here for confirmation.\r\nDone.'), false);
+
+check('an empty comment inside a word leaves the word whole',
+  choppy('Wait for re<!---->try. Go. Now.'), true);
+
+check('a backtick hidden in a comment does not pair visible backticks across paragraphs',
+  choppy('Use ` literally.\n\n<!-- ` -->\n\nGo. Now. Done.\n\nAnother ` follows.'), true);
+
+check('a code span cannot cross a blank line',
+  choppy('First `half stays.\n\nGo. Now. Done.\n\nSecond `half stays too.'), true);
+
+check('a code span on one line is still removed',
+  choppy('Run `Go. Now. Done.` before you push the branch today.'), false);
+
+const SPEAKERS = (wrap) => [
+  `Shensi Ding on ${wrap('the rate')}, because judgment compounds.`,
+  `Amanda Davenport on ${wrap('the wait')}, because timing matters.`,
+  `Emily Man on ${wrap('the stack')}, because adoption is practical.`,
+].join('\n\n');
+
+check('the speaker check does not read inside code spans',
+  softNames('Alex Reed on `timing, because` that is the example.\n\nBlair Lane on `timing, because` that is the example.\n\nCasey Moss on `timing, because` that is the example.')
+    .includes('speaker-paragraph-tricolon'), false);
+
+check('the speaker check still fires on the same paragraphs without code',
+  softNames(SPEAKERS((x) => x)).includes('speaker-paragraph-tricolon'), true);
+
+check('a comment closing on its own line does not split the paragraph',
+  askedNamesEarly('Leaders make careful choices when the evidence remains incomplete. <!--\ndraft note -->\nTeams learn sound judgment by seeing those choices repeated. Good operators explain their reasoning before the outcome is known.')
+    .includes('near-equal-declarative-run'), true);
+
+check('a continuation that starts with > is still read',
+  softNames('Alpha text. <!--\nnote -->> Let us delve into this rich tapestry. It is crucial, pivotal and vibrant.')
+    .includes('generic-vocabulary'), true);
+
+check('a scaffolding-only reply is not a bridge',
+  softNames('The schedule moved twice. Reviews slipped a week. That works for me.')
+    .includes('empty-bridge-sentence'), false);
+
+check('a negative followed by a past fact is not a reversal',
+  softNames("It wasn't fixed yet. It was merged anyway.").includes('antithesis-copular'), false);
+
+check('a negative followed by a participle is not a reversal',
+  softNames("It isn't ready. It is merged now.").includes('antithesis-copular'), false);
+
+check('the two-sentence reversal in the present still reports',
+  softNames('It is not a leaving move. It is a way to keep the work.').includes('antithesis-copular'), true);
+
+console.log('\nhidden spans, paragraph and section boundaries');
+
+check('a spaced comment inside a word leaves the word whole',
+  choppy('We can re<!-- hidden -->try. Go now. Try again.'), true);
+
+check('a spaced comment inside a word cannot hide a choppy run',
+  choppy('Go. Now. Re<!-- -->try this tomorrow.'), true);
+
+check('a fence opened inside a list item does not shift the lines after it',
+  choppy('- ```\n  code\n  ```\nGo now.\nWe win.\nTry it.'), true);
+
+check('a raw HTML block opened inside a list item does not shift the lines after it',
+  choppy('- <pre>\nx\n</pre>\nGo now.\nIt ran.\nDo so.'), true);
+
+check('a code span wrapping onto a line that starts with - still closes there',
+  choppy('Example `Go now. Try again. Stop here.\n-beta` ends.'), false);
+
+check('a code span over a non-1 ordered line inside a paragraph is still code',
+  softNames('Run `delve\n3. into this rich tapestry, crucial and pivotal\nand vibrant` now.')
+    .includes('generic-vocabulary'), false);
+
+// The CommonMark reference parser renders "A.\n<!-- x -->\nB." as two
+// paragraphs: a comment on its own line interrupts the paragraph above it.
+check('a whole-line comment between sentences ends the paragraph, as CommonMark renders it',
+  askedNamesEarly('Leaders make careful choices when the evidence remains incomplete.\n<!-- hidden -->\nTeams learn sound judgment by seeing those choices repeated. Good operators explain their reasoning before the outcome is known.')
+    .includes('near-equal-declarative-run'), false);
+
+check('a heading between sentences ends the paragraph for the run',
+  askedNamesEarly('Leaders make careful choices when the evidence remains incomplete.\n## Notes\nTeams learn sound judgment by seeing those choices repeated. Good operators explain their reasoning before the outcome is known.')
+    .includes('near-equal-declarative-run'), false);
+
+check('a bridge opening a section is not judged against the section above',
+  softNames('The deployment date is Friday. The process has two reviewers.\n\n# Proposal\n\nThis is the same question.')
+    .includes('empty-bridge-sentence'), false);
+
+for (const [label, text] of [
+  ['a present participle', "It isn't ready. It is failing."],
+  ['an adjective', "It isn't fixed. It is broken."],
+  ['a confirmation with that', "It isn't a drill. That's normal."],
+  ['an unrelated present fact', "It isn't ready. It's raining outside."],
+  ['an exclamation in between', "It isn't ready! Honestly. It is fine."],
+]) {
+  check(`a negative followed by ${label} is not a reversal`,
+    softNames(text).includes('antithesis-copular'), false);
+}
+
+check('the reversal the check was written for still reports',
+  softNames("It isn't a skills day. It's about deciding when nobody's certain.")
+    .includes('antithesis-copular'), true);
+
+console.log('\ncode spans, rules and raw HTML as block boundaries');
+
+check('text after a code span that closes on a later line is still prose',
+  choppy('Go. Now. `example\ncode` - wait here for confirmation.\nDone.'), false);
+
+check('a line that starts with inline code is not a list item',
+  choppy('`x` - Go. Now. Try it.'), true);
+
+check('a raw HTML block between lines ends the paragraph',
+  askedNamesEarly('Readers review the draft before sending it for approval.\n<script></script>\nEditors check the final wording before publishing the announcement. Writers explain the changes before asking colleagues for feedback.')
+    .includes('near-equal-declarative-run'), false);
+
+check('a rule starts a new section for the bridge check',
+  softNames('The deployment date is Friday. The process has two reviewers.\n\n---\n\nThis is the same question.')
+    .includes('empty-bridge-sentence'), false);
+
+check('a stray backtick pair cannot swallow a heading',
+  softNames('The deployment date is Friday. The process has two reviewers.\n\n`x\n## Proposal\ny`\n\nThis is the same question.')
+    .includes('empty-bridge-sentence'), false);
+
+check('marker characters typed into the source are not read as structure',
+  choppy('A test.\n\u0001- Go.\n\u0001- Now.\n\u0001- Done.'), false);
+
+console.log('\ncode spans inside list items and quotes, double backticks, running time');
+
+check('a code span in a list item closing on the lazy line under it stays in the item',
+  choppy('- Example `Run this.\nGo. Now. Done.`'), false);
+
+for (const marker of ['- ', '> ', '2. ']) {
+  check(`the tail of a span opened on a "${marker.trim()}" line belongs to that block`,
+    choppy(`${marker}\`a\nb\` Go. Now. Done.`), false);
+}
+
+check('a code span cannot swallow a setext underline',
+  softNames('The deployment date is Friday. The process has two reviewers. `x\n===\ny` This is the same question.')
+    .includes('empty-bridge-sentence'), false);
+
+check('a double-backtick span is code',
+  choppy('Wait. ``Go. Now. Done.`` End of the note for today.'), false);
+
+check('two single spans on one line are each code',
+  softNames('Use `a` and `b` then delve into this rich tapestry, crucial and pivotal and vibrant.')
+    .includes('generic-vocabulary'), true);
+
+check('a setext heading is not part of the paragraph under it',
+  askedNamesEarly('Leaders make careful choices when the evidence remains incomplete.\n===\nTeams learn sound judgment by seeing those choices repeated. Good operators explain their reasoning before the outcome is known.')
+    .includes('near-equal-declarative-run'), false);
+
+check('a conjunction before a pronoun and a verb is a sentence, not a fragment',
+  softNames('But this works.').includes('fragment-beat'), false);
+
+{
+  const started = Date.now();
+  checkHard(Array(16000).fill('Use `x` for the next example.').join('\n'));
+  checkAll(Array(16000).fill('Readers review the draft before sending it for approval.').join(' '));
+  check('code spans on every line and one long run of declaratives stay linear',
+    Date.now() - started < 3000, true);
+}
+
+console.log('\nstructural prose tells from rejected application drafts');
+
+check('an empty bridge sentence is reported',
+  softNames(
+    'People learn judgment through repeated decisions. '
+    + 'Those decisions expose what matters. '
+    + 'This agenda is built around that same question.'
+  ).includes('empty-bridge-sentence'), true);
+
+check('the second observed bridge shape is reported',
+  softNames(
+    'Judgment comes from making calls without certainty. '
+    + 'The event focuses on that work. '
+    + 'That’s why this agenda works for me.'
+  ).includes('empty-bridge-sentence'), true);
+
+check('the accepted subordinated replacement is not a bridge',
+  softNames(
+    'Most of what I know about judging that came from inside companies where '
+    + 'every decision had consequences for customers and the team.'
+  ).includes('empty-bridge-sentence'), false);
+
+check('a bridge-shaped sentence with a new content word is not empty',
+  softNames(
+    'The team debated the schedule. The event covers judgment. '
+    + 'This agenda is built around a pricing question.'
+  ).includes('empty-bridge-sentence'), false);
+
+check('a bridge-shaped sentence naming a person is not empty',
+  softNames(
+    'The team debated the schedule. The event covers judgment. '
+    + "This agenda is built around Sarah's question."
+  ).includes('empty-bridge-sentence'), false);
+
+const NEAR_EQUAL_DECLARATIVES =
+  'Leaders make careful choices when the evidence remains incomplete. '
+  + 'Teams learn sound judgment by seeing those choices repeated. '
+  + 'Good operators explain their reasoning before the outcome is known.';
+
+const askedNames = (t) => (checkAll(t).questions || []).map((q) => q.name);
+
+check('three near-equal declaratives in one paragraph are asked about',
+  askedNames(NEAR_EQUAL_DECLARATIVES)
+    .includes('near-equal-declarative-run'), true);
+
+check('a near-equal declarative run is a question and never counts',
+  `${softNames(NEAR_EQUAL_DECLARATIVES).includes('near-equal-declarative-run')} ${checkAll(NEAR_EQUAL_DECLARATIVES).reading}`,
+  'false little');
+
+check('the question quotes the sentences of the run',
+  (checkAll(NEAR_EQUAL_DECLARATIVES).questions.find((q) => q.name === 'near-equal-declarative-run') || { hits: [] }).hits.length, 3);
+
+check('paragraph breaks stop a declarative run',
+  askedNames(NEAR_EQUAL_DECLARATIVES.replaceAll('. ', '.\n\n'))
+    .includes('near-equal-declarative-run'), false);
+
+check('technical prose with inline code is not treated as a declarative run',
+  askedNames(
+    'This document is the single source of truth for the bug queue entry format. '
+    + 'Every skill in the build loop reads from and writes to this schema. '
+    + 'When adding fields, bump `$schema_version` and update this document in the same commit.'
+  ).includes('near-equal-declarative-run'), false);
+
+check('a negating reversal split across sentences is reported',
+  softNames("It isn't a skills day. It's about deciding when nobody's certain.")
+    .includes('antithesis-copular'), true);
+
+check('an ordinary negative followed by a new action is not a reversal',
+  softNames("It isn't ready. It stopped during validation.")
+    .includes('antithesis-copular'), false);
+
+check('a mirrored parallel closer is reported',
+  softNames(
+    "One is how to tell who's worth betting on. "
+    + 'The other is how to be worth betting on.'
+  ).includes('mirrored-parallel-closer'), true);
+
+check('an ordinary parallel pair is not a mirrored closer',
+  softNames('One is how teams work. The other is how systems fail.')
+    .includes('mirrored-parallel-closer'), false);
+
+const fragmentFinding = checkAll(
+  'The work includes the plans. And the people. Three sessions in particular.'
+).soft.find((finding) => finding.name === 'fragment-beat');
+
+check('both observed fragment beats are reported',
+  fragmentFinding ? fragmentFinding.count : 0, 2);
+
+check('a complete sentence beginning with and is not a fragment beat',
+  softNames('And the people joined the discussion after lunch.')
+    .includes('fragment-beat'), false);
+
+check('three matching speaker paragraphs are reported',
+  softNames(
+    'Shensi Ding on learning rate, because judgment compounds.\n\n'
+    + 'Amanda Davenport on not waiting, because timing matters.\n\n'
+    + 'Emily Man on enterprise AI, because adoption is practical.'
+  ).includes('speaker-paragraph-tricolon'), true);
+
+check('a different middle paragraph breaks the speaker tricolon',
+  softNames(
+    'Shensi Ding on learning rate, because judgment compounds.\n\n'
+    + 'The next session covers timing and tradeoffs.\n\n'
+    + 'Emily Man on enterprise AI, because adoption is practical.'
+  ).includes('speaker-paragraph-tricolon'), false);
+
 // Found by review. Two patterns can read the same construction, and summing
 // their counts scored one sentence as two, reaching a threshold written to
 // require two separate ones. "not less noisy and more useful, but" contains

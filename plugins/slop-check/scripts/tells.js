@@ -16,19 +16,141 @@ const EM_DASH = String.fromCharCode(0x2014);
 
 // Strip anything that is not prose: code, quotes, headings, lists, tables.
 // A style rule about sentence rhythm has no business judging a bullet list.
+// Filled into the columns of an inline comment instead of spaces, so the
+// prose pass can delete the span outright: "re<!-- x -->try" is one word on
+// the page. Every other caller keeps the default space and its columns.
+const HIDDEN_SPAN = '\u0003';
+
+// The document as a reader sees it: fenced code, raw HTML blocks and HTML
+// comments, whole-line, inline or spanning lines, are gone. Indented code is
+// still read, as it was before this pass was used here. The visibility pass
+// is the one the brochure check and structure.js use. proseOf used to strip
+// only fenced code with a regex of its own, so a draft note left in a comment
+// ("<!-- delve into the tapestry here -->") was read as prose by every soft
+// check and could raise the reading of a document whose visible text was
+// clean, or break the choppy-run rule the hook enforces.
+//
+// Each line comes back with a flag saying it continues a paragraph after an
+// inline comment closed: its text is prose however it starts, so "-->- wait
+// here" is not a list item. An inline comment is deleted from its line, so
+// "re<!-- x -->try" reads as one word. A comment that opens on one line and
+// closes on the next still leaves the two halves as separate words.
+function visibleLines(text) {
+  // A hidden row is a blank here. A comment or raw HTML block on its own line
+  // ends the paragraph above it, as the CommonMark reference parser renders
+  // it ("A.\n<!-- x -->\nB." is two paragraphs), so it is read as a boundary.
+  // The three characters the pass uses as markers are removed from the
+  // source first, so a document cannot spell one and be read as structure.
+  const source = String(text || '').replace(/\r\n?/g, '\n').replace(/[\0\u0001\u0003]/g, '');
+  return withoutFencedBlocks(source, { hiddenFill: HIDDEN_SPAN })
+    .map((row) => {
+      if (row.startsWith(MARKDOWN_BOUNDARY)) return { text: '', continues: false };
+      const continues = row.startsWith(MARKDOWN_PARAGRAPH_CONTINUATION);
+      const shown = continues ? row.slice(1) : row;
+      return { text: shown.split(HIDDEN_SPAN).join(''), continues };
+    });
+}
+
+// A code span is a run of backticks closed by the next run of the same
+// length: ``x`` is a span holding x, not two empty ones. It never crosses the
+// blank line or block boundary that ends its paragraph, because the regex
+// only ever sees one paragraph's rows (withoutCodeSpans). Without that limit
+// a stray backtick in one paragraph paired with one several paragraphs on and
+// hid everything between them.
+const CODE_SPAN = /(?<!`)(`+)(?!`)[\s\S]*?(?<!`)\1(?!`)/g;
+
+// Whether a row is a block of its own (a heading, list item, quote, table
+// row, rule) is judged on the row as written, before code spans come out:
+// "`x` - Go. Now." starts with code, not a list marker. Rows a span runs onto
+// are inside its paragraph and continue it whatever they start with, so
+// "code` - wait here" is not a list item either.
+const BLOCK_LINE = /^(?:[-*>#|]|\d+\.\s)/;
+// A span cannot cross a blank row or a row that opens a block CommonMark lets
+// interrupt a paragraph: a heading, a quote, a bullet, "1." and a rule.
+// A setext underline (=== or ---) ends the heading above it the same way.
+const INTERRUPTS = /^\s{0,3}(?:#{1,6}(?:\s|$)|>|[-*+]\s|1[.)]\s|(?:-[ \t]*){3,}$|(?:\*[ \t]*){3,}$|(?:_[ \t]*){3,}$|=+[ \t]*$|-+[ \t]*$)/;
+
+// `fill` is what a span leaves behind on its first row. The newlines inside a
+// span are kept, so every row keeps its index and its flags.
+function withoutCodeSpans(lines, fill) {
+  const rows = lines.map((l) => ({
+    text: l.text,
+    continues: l.continues,
+    block: !l.continues && BLOCK_LINE.test(l.text.trim()),
+  }));
+  let start = 0;
+  const flush = (end) => {
+    if (end <= start) return;
+    const joined = rows.slice(start, end).map((r) => r.text).join('\n');
+    const inside = new Map();
+    // Matches arrive in order, so the row a span starts on is counted from
+    // the previous match rather than from the top: linear in the segment.
+    let seen = 0;
+    let row = 0;
+    const stripped = joined.replace(CODE_SPAN, (span, _run, offset) => {
+      for (let c = seen; c < offset; c += 1) if (joined[c] === '\n') row += 1;
+      const count = span.split('\n').length - 1;
+      for (let r = 1; r <= count; r += 1) inside.set(row + r, row);
+      row += count;
+      seen = offset + span.length;
+      return fill + span.replace(/[^\n]/g, '');
+    }).split('\n');
+    stripped.forEach((text, k) => {
+      const row = rows[start + k];
+      row.text = text;
+      // A row a span runs onto belongs to the block the span opened in: a
+      // list item's or a quote's, which the prose pass leaves out, or a
+      // paragraph's, which it reads whatever the row starts with.
+      if (inside.has(k)) {
+        const opener = rows[start + inside.get(k)];
+        row.continues = !opener.block;
+        row.block = opener.block;
+      }
+    });
+  };
+  // A blank row ends a segment. A row that interrupts a paragraph ends the
+  // one above it and opens its own, so a list item's span can still close on
+  // the lazy line under it, while a heading cannot sit inside a span begun
+  // above it.
+  rows.forEach((row, i) => {
+    if (!row.text.trim()) {
+      flush(i);
+      start = i + 1;
+    } else if (!row.continues && INTERRUPTS.test(row.text)) {
+      flush(i);
+      start = i;
+    }
+  });
+  flush(rows.length);
+  return rows;
+}
+
+function isProseLine({ text: line, block }) {
+  return Boolean(line.trim()) && !block;
+}
+
 function proseOf(text) {
-  return String(text || '')
-    .replace(/```[\s\S]*?```/g, '')
-    .replace(/`[^`]*`/g, '')
-    .split('\n')
-    .filter((line) => {
-      const t = line.trim();
-      if (!t) return false;
-      if (/^[-*>#|]/.test(t)) return false;
-      if (/^\d+\.\s/.test(t)) return false;
-      return true;
-    })
+  return withoutCodeSpans(visibleLines(text), '')
+    .filter(isProseLine)
+    .map(({ text: line }) => line)
     .join(' ');
+}
+
+// The same prose, one string per section: a heading, a rule or a setext
+// underline starts a new one. The
+// bridge check compares a sentence with the two before it, and those have to
+// be in the same section, or a section that opens "This is the same
+// question." is judged against the end of the section above.
+function proseSections(text) {
+  const sections = [[]];
+  for (const row of withoutCodeSpans(visibleLines(text), '')) {
+    if (!row.continues && /^\s{0,3}(?:#{1,6}(?:\s|$)|(?:[-=*_][ \t]*){3,}$)/.test(row.text)) {
+      sections.push([]);
+      continue;
+    }
+    if (isProseLine(row)) sections[sections.length - 1].push(row.text);
+  }
+  return sections.map((lines) => lines.join(' ')).filter((t) => t.trim());
 }
 
 function sentencesOf(prose) {
@@ -212,8 +334,16 @@ function antithesis(prose) {
 // real hits in this repository's own documents, both "is not X, it is Y", are
 // unaffected.
 function copularAntithesis(prose) {
+  // The reversal split over two sentences ("It isn't a skills day. It's about
+  // deciding...") is read in its spelled-out forms only when the second
+  // sentence restates what the thing is: "it is" or "it's" followed by
+  // "about", an article or a wh-word. "It wasn't fixed yet. It was merged
+  // anyway.", "It isn't ready. It is failing." and "It isn't ready. It's
+  // raining outside." are a negative followed by a fact, not a reversal. The
+  // first pattern is the 0.10.0 one, unchanged.
   const patterns = [
     /\bit'?s not (about )?[^.]{3,50}\. it'?s\b/gi,
+    /\b(?:it (?:is|was) not|it (?:is|was)n'?t) (about )?[^.!?]{3,50}\. (?:it'?s|it is) (?:about|a|an|the|what|how|who|why|really|actually|more|less)\b/gi,
     /\b(is|are|was|were)n'?t (just |merely |only )?[^.,;]{3,50}, (?:it(?:'s| is)|they(?:'re| are)|that's)\b/gi,
     /\b(is|are) not (just |merely |only )?[^.,;]{3,50}, (?:it|they) (?:is|are)\b/gi,
   ];
@@ -226,6 +356,197 @@ function copularAntithesis(prose) {
 function ruleOfThree(prose) {
   const re = /\b[\w'-]+, [\w'-]+,? and [\w'-]+\b/gi;
   return (prose.match(re) || []).length;
+}
+
+function lexicalWords(text) {
+  return flattenQuotes(text).match(/[a-z]+(?:'[a-z]+)?/g) || [];
+}
+
+const BRIDGE_SCAFFOLDING = new Set([
+  'a', 'an', 'and', 'around', 'as', 'at', 'be', 'because', 'been', 'being',
+  'built', 'connection', 'for', 'from', 'gets', 'idea', 'is', 'it', "it's",
+  'link', 'me', 'of', 'on', 'point', 'question', 'reason', 'same', 'that',
+  "that's", 'the', 'theme', 'thing', 'this', 'thread', 'throughline', 'to',
+  'was', 'what', 'why', 'with', 'works', 'agenda',
+]);
+
+function emptyBridgeSentences(prose) {
+  const sentences = sentencesOf(prose);
+  const hits = [];
+
+  for (let index = 2; index < sentences.length; index += 1) {
+    const sentence = sentences[index];
+    const normalized = flattenQuotes(sentence);
+    const words = lexicalWords(sentence);
+
+    if (words.length < 4 || words.length > 14) continue;
+    if (/\d/.test(sentence)) continue;
+
+    const afterFirstWord = sentence.replace(/^[^A-Za-z]*[A-Za-z'’-]+/, '');
+    if (/\b(?:[A-Z][a-z'’-]+|[A-Z]{2,})\b/.test(afterFirstWord)) continue;
+
+    const bridgeShape =
+      /^(?:(?:this|that)(?:\s+[a-z][a-z'-]*){0,2}|it)\s+(?:is|was|works|connects|comes|gets|stays|fits)\b/.test(normalized)
+      || /^that'?s\b/.test(normalized);
+    const relational =
+      /\b(?:agenda|connection|idea|link|point|question|reason|same|theme|thread|throughline|what|why|works)\b/.test(normalized);
+
+    if (!bridgeShape || !relational) continue;
+
+    const previous = new Set(
+      lexicalWords(`${sentences[index - 2]} ${sentences[index - 1]}`)
+    );
+    const content = words.filter((word) => !BRIDGE_SCAFFOLDING.has(word));
+
+    // A sentence made only of scaffolding passes the overlap test by having
+    // nothing to test, so it needs one of the abstract nouns that name a link
+    // without saying it. "That's why this agenda works for me." has "why";
+    // "That works for me." has none and is an ordinary reply.
+    if (!content.length && !/\b(?:connection|idea|link|point|question|reason|same|theme|thread|throughline|why)\b/.test(normalized)) continue;
+    if (content.every((word) => previous.has(word))) hits.push(sentence);
+  }
+
+  return hits;
+}
+
+// Three or more declaratives of 8 to 14 words, within three words of each
+// other, in one paragraph. A question, not a category: over 697 documents
+// from five of the author's repositories it fired on 56, her brand voice
+// guide among them, and moved 17 readings on its own. Even sentence lengths
+// in a short run are how plain instruction prose reads; the shape is worth
+// pointing at, never worth counting. The whole-document version of the same
+// signal is uniform-rhythm, which does count.
+function nearEqualDeclarativeRun(text) {
+  let worst = null;
+
+  for (const paragraph of proseParagraphs(text)) {
+    if (paragraph.includes('`')) continue;
+    const sentences = sentencesOf(paragraph);
+    // Lengths in a run are 8 to 14, so the spread is read off a count per
+    // length rather than by scanning the run: linear in the paragraph.
+    const counts = new Array(15).fill(0);
+    let from = 0;
+    const spread = () => {
+      let lo = 8;
+      let hi = 14;
+      while (lo <= 14 && !counts[lo]) lo += 1;
+      while (hi >= 8 && !counts[hi]) hi -= 1;
+      return hi - lo;
+    };
+    for (let i = 0; i < sentences.length; i += 1) {
+      const length = wordsIn(sentences[i]).length;
+      if (sentences[i].endsWith('.') && length >= 8 && length <= 14) {
+        counts[length] += 1;
+        while (spread() > 3) {
+          counts[wordsIn(sentences[from]).length] -= 1;
+          from += 1;
+        }
+        if (!worst || i + 1 - from > worst.length) worst = { sentences, from, length: i + 1 - from };
+      } else {
+        counts.fill(0);
+        from = i + 1;
+      }
+    }
+  }
+
+  return worst && worst.length >= 3
+    ? {
+      name: 'near-equal-declarative-run',
+      question: true,
+      count: worst.length,
+      hits: worst.sentences.slice(worst.from, worst.from + worst.length).map((s) => `"${s}"`),
+    }
+    : null;
+}
+
+function mirroredParallelClosers(prose) {
+  const sentences = sentencesOf(prose);
+  let count = 0;
+
+  for (let index = 0; index < sentences.length - 1; index += 1) {
+    const first = flattenQuotes(sentences[index])
+      .match(/^one (?:is|was) (.+?)[.!?]$/);
+    const second = flattenQuotes(sentences[index + 1])
+      .match(/^the other (?:is|was) (.+?)[.!?]$/);
+
+    if (!first || !second) continue;
+
+    const left = lexicalWords(first[1]);
+    const right = lexicalWords(second[1]);
+    if (left.length < 5 || right.length < 5) continue;
+
+    const sameOpening = left[0] === right[0] && left[1] === right[1];
+    const sameClosing =
+      left[left.length - 2] === right[right.length - 2]
+      && left[left.length - 1] === right[right.length - 1];
+
+    if (sameOpening && sameClosing) count += 1;
+  }
+
+  return count;
+}
+
+function fragmentBeats(prose) {
+  return sentencesOf(prose).filter((sentence) => {
+    const length = wordsIn(sentence).length;
+    if (length < 2 || length > 5) return false;
+
+    return /^(?:and|but|or|yet|so) (?:a|an|the|my|our|your|their) [a-z][a-z'-]*[.!?]$/i.test(sentence)
+      || /^(?:one|two|three|four|five|six|seven|eight|nine|ten) [a-z][a-z'-]*(?: [a-z][a-z'-]*)? (?:in particular|especially)[.!?]$/i.test(sentence);
+  }).length;
+}
+
+function proseParagraphs(text) {
+  const paragraphs = [];
+  let current = [];
+  // A code span leaves one backtick behind: its words are not prose, and the
+  // declarative-run check still needs to know the paragraph held code.
+  for (const { text: line, continues, block } of withoutCodeSpans(visibleLines(text), ' ` ')) {
+    const t = line.trim();
+    if (!t) {
+      if (!continues) {
+        if (current.length) paragraphs.push(current.join(' '));
+        current = [];
+      }
+      continue;
+    }
+    // A setext underline makes the line above it a heading, not prose.
+    if (!continues && /^\s{0,3}(?:=+|-+)\s*$/.test(line) && current.length) {
+      current.pop();
+      if (current.length) paragraphs.push(current.join(' '));
+      current = [];
+      continue;
+    }
+    // A heading, list item, quote or table row is a block of its own: it
+    // ends the paragraph above it rather than vanishing from the middle of it.
+    if (block) {
+      if (current.length) paragraphs.push(current.join(' '));
+      current = [];
+      continue;
+    }
+    current.push(t);
+  }
+  if (current.length) paragraphs.push(current.join(' '));
+  return paragraphs;
+}
+
+function speakerParagraphTricolon(text) {
+  const speakerShape =
+    /^[A-Z][A-Za-z'’-]+(?:\s+[A-Z][A-Za-z'’-]+){0,2}\s+on\s+[^.?!]{3,100},\s+because\b/;
+
+  let run = 0;
+  let worst = 0;
+
+  for (const paragraph of proseParagraphs(text)) {
+    if (speakerShape.test(paragraph)) {
+      run += 1;
+      if (run > worst) worst = run;
+    } else {
+      run = 0;
+    }
+  }
+
+  return worst >= 3 ? { count: worst } : null;
 }
 
 // A repeated list of sentence-shaped bold labels followed by explanatory copy.
@@ -327,7 +648,7 @@ function linesWithCommentCloseOutsideCode(lines, withLaterClose) {
 }
 
 function stripInlineComments(
-  line, lineIndex, codeDelimiter, withLaterClose, commentClosesLater
+  line, lineIndex, codeDelimiter, withLaterClose, commentClosesLater, hiddenFill = ' '
 ) {
   let linkDepth = 0;
   let bracketDepth = 0;
@@ -434,7 +755,7 @@ function stripInlineComments(
           opensComment: true, codeDelimiter,
         };
       }
-      pieces.push(' '.repeat(close + 3 - index));
+      pieces.push(hiddenFill.repeat(close + 3 - index));
       cursor = close + 3;
       index = close + 2;
       continue;
@@ -506,7 +827,7 @@ function startsInlineBlock(line) {
   return Boolean(html && html.interruptsParagraph);
 }
 
-function withoutFencedBlocks(text) {
+function withoutFencedBlocks(text, { hiddenFill = ' ' } = {}) {
   let fence = null;
   let htmlComment = null;
   let rawHtml = null;
@@ -711,7 +1032,7 @@ function withoutFencedBlocks(text) {
     const commentScan = lineIndent - commentParent.base <= 3
       ? stripInlineComments(
         blockLine, lineIndex, inlineCodeDelimiter, withLaterClose,
-        commentCloseOnLaterLine.has(lineIndex)
+        commentCloseOnLaterLine.has(lineIndex), hiddenFill
       )
       : {
         remaining: blockLine, foundComment: false, blockCommentLine: false,
@@ -1473,7 +1794,8 @@ function checkAll(text, config = {}) {
   //
   // The typographic-quotes signal further down deliberately reads the raw text
   // instead, since folding is exactly what would hide it from itself.
-  const prose = flattenQuotes(proseOf(text));
+  const rawProse = proseOf(text);
+  const prose = flattenQuotes(rawProse);
 
   const soft = [];
   const band = (name, list, threshold) => {
@@ -1491,6 +1813,13 @@ function checkAll(text, config = {}) {
   band('forced-enthusiasm', P.FAKE_ENTHUSIASM, 1);
   band('melodramatic-pivot', P.MELODRAMA, 1);
 
+  const bridges = proseSections(text).flatMap((section) => emptyBridgeSentences(section));
+  if (bridges.length) {
+    soft.push({ name: 'empty-bridge-sentence', count: bridges.length });
+  }
+
+  const declaratives = nearEqualDeclarativeRun(text);
+
   const anti = antithesis(prose);
   if (anti >= 2) soft.push({ name: 'antithesis', count: anti });
 
@@ -1499,6 +1828,21 @@ function checkAll(text, config = {}) {
 
   const three = ruleOfThree(prose);
   if (three >= 3) soft.push({ name: 'rule-of-three', count: three });
+
+  const mirrored = mirroredParallelClosers(prose);
+  if (mirrored) {
+    soft.push({ name: 'mirrored-parallel-closer', count: mirrored });
+  }
+
+  const fragments = fragmentBeats(prose);
+  if (fragments) {
+    soft.push({ name: 'fragment-beat', count: fragments });
+  }
+
+  const paragraphTricolon = speakerParagraphTricolon(text);
+  if (paragraphTricolon) {
+    soft.push({ name: 'speaker-paragraph-tricolon', ...paragraphTricolon });
+  }
 
   const brochureBullets = brochureBulletHeadlines(text);
   if (brochureBullets) {
@@ -1532,7 +1876,8 @@ function checkAll(text, config = {}) {
   const reading =
     categories >= 4 ? 'strong' : categories >= 2 || standalone ? 'some' : 'little';
 
-  return { hard: hard.violations, soft, questions: structure.questions, categories, reading };
+  const questions = declaratives ? [...structure.questions, declaratives] : structure.questions;
+  return { hard: hard.violations, soft, questions, categories, reading };
 }
 
 // withoutFencedBlocks and the two markers are shared with structure.js, which
