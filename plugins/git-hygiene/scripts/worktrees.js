@@ -206,36 +206,35 @@ function remoteIdentity(repo, deadline) {
   });
   if (!url) return null;
 
+  // Local or network is settled first, by Git's own rule: an address with no
+  // scheme is a local path unless a colon comes before any slash (a Windows
+  // drive letter is still local). A local remote has no pull requests. A
+  // network remote either resolves to a plain host, owner and repository, or
+  // is unreadable: never "no pull requests", or cleanup would remove its
+  // worktrees without asking GitHub. Every part must be a plain name because
+  // the identity is printed; a malformed remote otherwise splits a token into
+  // a "host" or "owner" no URL mask recognises.
   let host = null;
   let pathname = null;
   if (/^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(url)) {
-    try {
-      const parsed = new URL(url);
-      host = parsed.hostname;
-      pathname = parsed.pathname.replace(/^\//, '');
-    } catch (_) {
-      return UNREADABLE_REMOTE;
-    }
-    // file:// and other host-less remotes are local folders: no pull requests.
-    if (!host) return null;
+    let parsed;
+    try { parsed = new URL(url); } catch (_) { return UNREADABLE_REMOTE; }
+    if (parsed.protocol === 'file:') return null;
+    host = parsed.hostname;
+    pathname = parsed.pathname.replace(/^\//, '');
   } else {
-    const scp = /^([^@]+@)?([^:]+):(.+)$/.exec(url);
-    if (!scp || /^[A-Za-z]:[\\/]/.test(url)) return null;
-    host = scp[2];
-    pathname = scp[3];
+    const colon = url.indexOf(':');
+    const slash = url.indexOf('/');
+    if (colon === -1 || (slash !== -1 && slash < colon) || /^[A-Za-z]:[\\/]/.test(url)) return null;
+    const scp = /^(?:[^@]+@)?([^:]+):(.*)$/.exec(url);
+    if (!scp) return UNREADABLE_REMOTE;
+    host = scp[1];
+    pathname = scp[2];
   }
-  // The identity is printed, so every part must be a plain name. A malformed
-  // remote such as user:token@host/o/r, or git@host:Bearer:token/r, otherwise
-  // splits a token into a "host" or "owner" no URL mask recognises.
-  // Rejected is not the same as "no pull requests": the remote may well be
-  // GitHub, so it comes back unreadable and cleanup holds its worktrees as
-  // unknown instead of calling them removable without asking GitHub.
   const plainName = /^[A-Za-z0-9._-]+$/;
-  if (!plainName.test(String(host))) return UNREADABLE_REMOTE;
-
+  if (!plainName.test(String(host || ''))) return UNREADABLE_REMOTE;
   const parts = String(pathname || '').replace(/\.git$/, '').split('/').filter(Boolean);
-  if (parts.length < 2) return null;
-  if (!parts.every((part) => plainName.test(part))) return UNREADABLE_REMOTE;
+  if (parts.length < 2 || !parts.every((part) => plainName.test(part))) return UNREADABLE_REMOTE;
   return {
     host: String(host).toLowerCase(),
     namespace: parts.slice(0, -1),
@@ -420,7 +419,12 @@ function branchEvidence(primary, entry, options = {}) {
   // An unreadable pull-request list must not read as an empty one. Removal
   // promises the branch has no open pull request, and that was not checked.
   if (!prs.available) {
-    return { state: STATES.UNKNOWN, reason: 'open pull requests could not be read from GitHub' };
+    return {
+      state: STATES.UNKNOWN,
+      reason: options.identity && options.identity.unreadable
+        ? "the remote's address could not be read, so open pull requests were not checked"
+        : 'open pull requests could not be read from GitHub',
+    };
   }
   if (branch.aheadBy === 0 || branch.merged || prs.merged) {
     return {

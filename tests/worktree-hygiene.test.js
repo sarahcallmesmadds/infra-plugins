@@ -924,10 +924,29 @@ check('system errors, remote names and config errors print only our own words', 
     assert.ok(!JSON.stringify(audited).includes('id_secret'));
     const held = audited.worktrees.find((entry) => entry.path === fs.realpathSync.native(merged));
     assert.strictEqual(held.state, 'unknown', JSON.stringify(held));
+    assert.match(held.reason, /remote's address could not be read/);
     assert.strictEqual(held.removable, false);
-    // A local remote still has no pull requests to ask about.
-    git(f.repo, 'remote', 'set-url', 'origin', 'file:///srv/example.git');
-    assert.strictEqual(worktrees.auditRepository(f.repo, { config: f.config }).identity, null);
+    // Local remotes have no pull requests to ask about, including a path with
+    // a colon after a slash, which Git itself treats as local.
+    for (const local of ['file:///srv/example.git', '/srv/git/cache:mirror.git', './sibling', 'C:/repos/x.git']) {
+      git(f.repo, 'remote', 'set-url', 'origin', local);
+      assert.strictEqual(worktrees.auditRepository(f.repo, { config: f.config, skipRemote: true }).identity, null, local);
+    }
+    // A network remote that does not resolve to owner and repository is
+    // unreadable, never "no pull requests".
+    for (const network of ['git@github.com:Bearer:token', 'git@github.com:only-one', 'https://github.com/only-one']) {
+      git(f.repo, 'remote', 'set-url', 'origin', network);
+      assert.deepStrictEqual(worktrees.auditRepository(f.repo, { config: f.config, skipRemote: true }).identity,
+        { unreadable: true, github: false }, network);
+    }
+    // An ordinary GitHub remote in either form still resolves.
+    for (const good of ['git@github.com:owner/example.git', 'https://github.com/owner/example.git']) {
+      git(f.repo, 'remote', 'set-url', 'origin', good);
+      const identity = worktrees.auditRepository(f.repo, { config: f.config, skipRemote: true }).identity;
+      assert.strictEqual(identity.github, true, good);
+      assert.strictEqual(identity.owner, 'owner', good);
+      assert.strictEqual(identity.repository, 'example', good);
+    }
     // A config file that is not JSON is named, not quoted.
     fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
     fs.writeFileSync(path.join(home, '.claude', 'git-hygiene.config.json'), '{"worktreeLocation": cfg_secret');
@@ -942,7 +961,7 @@ check('system errors, remote names and config errors print only our own words', 
     const invalid = spawnSync(process.execPath, ['-e',
       `console.log(JSON.stringify(require(${JSON.stringify(path.join(ROOT, 'scripts', 'worktree-config'))}).loadConfig().errors))`,
     ], { encoding: 'utf8', env: { ...process.env, HOME: home } });
-    assert.ok(invalid.stdout.includes('/git-hygiene:setup'), invalid.stdout + invalid.stderr);
+    assert.ok(invalid.stdout.includes('is not valid'), invalid.stdout + invalid.stderr);
     assert.ok(!invalid.stdout.includes('root_secret'), invalid.stdout);
   } finally {
     f.cleanup();

@@ -52,9 +52,9 @@ function loadConfig() {
     return { ...base, exists: true, projectRoots: [roots.projectRoot], worktreeRoot: roots.worktreeRoot };
   } catch (_) {
     // The check's own message quotes the configured value, which may be any
-    // text typed into the file, and the audit prints these errors. Setup
-    // explains what is wrong when it is run.
-    return { ...base, exists: true, valid: false, errors: [`worktreeLocation in ${CONFIG_FILE} is not valid; run /git-hygiene:setup to fix it`] };
+    // text typed into the file, and the audit prints these errors. The audit
+    // already points at /git-hygiene:setup, which explains what is wrong.
+    return { ...base, exists: true, valid: false, errors: [`worktreeLocation in ${CONFIG_FILE} is not valid`] };
   }
 }
 
