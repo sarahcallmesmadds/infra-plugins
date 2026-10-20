@@ -575,33 +575,38 @@ function auditRepository(repo, options = {}) {
 
 function discoverRepositories(projectRoots, deadline) {
   const repositories = [];
+  // A repository Git finds but cannot fully read is returned here, not
+  // dropped, so a total never reads as complete without it.
+  const unreadable = [];
   const seen = new Set();
   for (const root of projectRoots) {
-    if (deadline && Date.now() >= deadline) return { repositories, truncated: true };
+    if (deadline && Date.now() >= deadline) return { repositories, unreadable, truncated: true };
     // Same rule as for children below, for a review tool's repository named
     // directly as a root.
     if (REVIEW_LOCATION.test(canonical(root).replace(/\\/g, '/'))) continue;
-    try {
-      const top = topLevel(root, deadline);
-      if (top === canonical(root)) {
-        const identity = commonDir(root, deadline);
-        if (!seen.has(identity)) {
-          seen.add(identity);
-          repositories.push(root);
-        }
-        // A configured repository is itself the unit of discovery. Do not
-        // descend into its working tree and mistake nested repositories for
-        // sibling projects.
-        continue;
-      }
-    } catch (_) {
+    let rootTop = null;
+    try { rootTop = topLevel(root, deadline); }
+    catch (_) {
       // Container roots are the ordinary case and are scanned one level below.
+    }
+    if (rootTop === canonical(root)) {
+      // A configured repository is itself the unit of discovery. Do not
+      // descend into its working tree and mistake nested repositories for
+      // sibling projects.
+      let identity;
+      try { identity = commonDir(root, deadline); }
+      catch (_) { unreadable.push(root); continue; }
+      if (!seen.has(identity)) {
+        seen.add(identity);
+        repositories.push(root);
+      }
+      continue;
     }
     let entries;
     try { entries = fs.readdirSync(root, { withFileTypes: true }); }
     catch (_) { continue; }
     for (const entry of entries) {
-      if (deadline && Date.now() >= deadline) return { repositories, truncated: true };
+      if (deadline && Date.now() >= deadline) return { repositories, unreadable, truncated: true };
       // Dot-named folders are probed too: a project at Projects/.website is a
       // real repository, and skipping it by name hides all its worktrees.
       // Folders that are not repositories fail the top-level check below.
@@ -616,13 +621,13 @@ function discoverRepositories(projectRoots, deadline) {
       if (top !== canonical(candidate)) continue;
       let identity;
       try { identity = commonDir(candidate, deadline); }
-      catch (_) { continue; }
+      catch (_) { unreadable.push(candidate); continue; }
       if (seen.has(identity)) continue;
       seen.add(identity);
       repositories.push(candidate);
     }
   }
-  return { repositories, truncated: false };
+  return { repositories, unreadable, truncated: false };
 }
 
 function summarize(repositories) {
@@ -653,7 +658,9 @@ function placementCounts(options = {}) {
   const config = options.config || loadConfig();
   const roots = config.exists && config.valid ? config.projectRoots : [];
   const discovered = discoverRepositories(roots, options.deadline);
-  if (discovered.truncated) return { truncated: true, visible: 0, missing: 0 };
+  // A repository that could not be read leaves the counts incomplete, so the
+  // notice stays silent, as it does when it runs out of time.
+  if (discovered.truncated || discovered.unreadable.length) return { truncated: true, visible: 0, missing: 0 };
   let visible = 0;
   let missing = 0;
   for (const repo of discovered.repositories) {
@@ -678,7 +685,7 @@ function auditConfigured(options = {}) {
   const discovered = discoverRepositories(roots, options.deadline);
   const repositories = [];
   let truncated = discovered.truncated;
-  const errors = [];
+  const errors = discovered.unreadable.map((repo) => ({ repository: repo, error: 'the repository could not be read' }));
   for (const repo of discovered.repositories) {
     if (options.deadline && Date.now() >= options.deadline) { truncated = true; break; }
     // One repository Git cannot read must not discard the others. It is

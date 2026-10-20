@@ -36,6 +36,8 @@ anything from the second list to the first.
 /git-hygiene:worktree-hygiene status   inspect linked worktrees
 /git-hygiene:worktree-hygiene create   create an isolated checkout
 /git-hygiene:worktree-hygiene activate lock an existing checkout as active work
+/git-hygiene:worktree-hygiene relocate move a checkout into the worktree folder
+/git-hygiene:worktree-hygiene finish   unlock a worktree once its work is done
 /git-hygiene:worktree-hygiene cleanup  remove approved finished worktrees
 /git-hygiene:setup                  choose the project and worktree folders
 ```
@@ -103,7 +105,9 @@ the guard below enforces:
 ```
 
 `<repo>` is the primary checkout's folder name. `<task>` is the branch name with
-slashes turned into dashes, or a name you give with `--task`. If two branches
+slashes turned into dashes and any other character outside letters, digits,
+`-`, `_`, `.` and `~` percent-encoded (`fix/a+b` becomes `fix-a%2Bb`), or a
+name you give with `--task`. If two branches
 flatten to the same folder (`fix/a` and `fix-a`), creation refuses rather than
 picking another name.
 Created worktrees are locked as active agent work. `finish` unlocks one only

@@ -70,7 +70,9 @@ Show the computed destination before creating anything:
 node "${CLAUDE_PLUGIN_ROOT}"/scripts/worktrees.js destination --repo "<repository>" --branch "<branch>"
 ```
 
-The task folder defaults to the branch name with slashes turned into dashes. If
+The task folder defaults to the branch name with slashes turned into dashes and
+any other character outside letters, digits, `-`, `_`, `.` and `~`
+percent-encoded, so `fix/a+b` becomes `fix-a%2Bb`. If
 the user names the task differently, add `--task "<name>"` to this command and to
 `create`, and use the same name in both. The script refuses a destination that
 already exists rather than picking another name.

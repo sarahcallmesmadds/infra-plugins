@@ -861,6 +861,38 @@ check('configured discovery finds primary repositories without descending into w
   } finally { f.cleanup(); }
 });
 
+check('a repository Git finds but cannot read is reported, not dropped', () => {
+  const f = fixture();
+  const realGit = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+  const bin = fs.mkdtempSync(path.join(os.tmpdir(), 'git-hygiene-common-dir-git-'));
+  // The stand-in fails only the common-directory read, after the top-level
+  // read has already placed the repository.
+  fs.writeFileSync(path.join(bin, 'git'), [
+    '#!/bin/sh',
+    'case " $* " in *" --git-common-dir "*) exit 128 ;; esac',
+    `exec '${realGit}' "$@"`,
+  ].join('\n') + '\n');
+  fs.chmodSync(path.join(bin, 'git'), 0o755);
+  const savedPath = process.env.PATH;
+  try {
+    process.env.PATH = `${bin}${path.delimiter}${savedPath}`;
+    const container = worktrees.discoverRepositories([f.projects]);
+    assert.deepStrictEqual(container.repositories, []);
+    assert.deepStrictEqual(container.unreadable.map((repo) => path.resolve(repo)), [path.resolve(f.repo)]);
+    const exact = worktrees.discoverRepositories([f.repo]);
+    assert.deepStrictEqual(exact.unreadable.map((repo) => path.resolve(repo)), [path.resolve(f.repo)]);
+    const audit = worktrees.auditConfigured({ config: f.config, skipRemote: true });
+    assert.strictEqual(audit.summary.unreadable, 1);
+    assert.strictEqual(audit.errors[0].error, 'the repository could not be read');
+    // The session notice cannot give complete counts, so it says nothing.
+    assert.strictEqual(worktrees.placementCounts({ config: f.config }).truncated, true);
+  } finally {
+    process.env.PATH = savedPath;
+    fs.rmSync(bin, { recursive: true, force: true });
+    f.cleanup();
+  }
+});
+
 check('a full page of closed pull requests cannot prove none is open', () => {
   const identity = { github: true, owner: 'owner', repository: 'example' };
   const closed = Array.from({ length: 100 }, (_, i) => ({
