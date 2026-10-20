@@ -573,58 +573,75 @@ function auditRepository(repo, options = {}) {
   };
 }
 
+// Whether a folder is a repository of its own, and whether Git could read it.
+// A Git failure alone does not mean "not a repository": a repository Git
+// refuses (unsafe ownership, damaged metadata) fails the same probe, and
+// treating it as a plain folder drops its worktrees from every total. The
+// folder's own `.git` entry is what tells the two apart.
+function probeRepository(candidate, deadline) {
+  let hasGitEntry = false;
+  try { fs.lstatSync(path.join(candidate, '.git')); hasGitEntry = true; }
+  catch (_) { /* no .git entry: not a repository of its own unless Git says so */ }
+  const failed = hasGitEntry ? { kind: 'unreadable' } : { kind: 'none' };
+  let top;
+  try { top = topLevel(candidate, deadline); }
+  catch (_) { return failed; }
+  if (top !== canonical(candidate)) return failed;
+  try { return { kind: 'repository', identity: commonDir(candidate, deadline) }; }
+  catch (_) { return { kind: 'unreadable' }; }
+}
+
 function discoverRepositories(projectRoots, deadline) {
   const repositories = [];
-  // A repository Git finds but cannot fully read is returned here, not
-  // dropped, so a total never reads as complete without it.
+  // A repository that could not be read is returned here, not dropped, so a
+  // total never reads as complete without it.
   const unreadable = [];
   const seen = new Set();
+  const expired = () => !!(deadline && Date.now() >= deadline);
+  // Its identity could not be read, so an unreadable repository is matched by
+  // path instead; overlapping roots would otherwise count it twice.
+  const unreadableSeen = new Set();
+  const add = (candidate, probe) => {
+    if (probe.kind === 'unreadable') {
+      const key = canonical(candidate);
+      if (!unreadableSeen.has(key)) { unreadableSeen.add(key); unreadable.push(candidate); }
+    }
+    else if (probe.kind === 'repository' && !seen.has(probe.identity)) {
+      seen.add(probe.identity);
+      repositories.push(candidate);
+    }
+  };
   for (const root of projectRoots) {
-    if (deadline && Date.now() >= deadline) return { repositories, unreadable, truncated: true };
+    if (expired()) return { repositories, unreadable, truncated: true };
     // Same rule as for children below, for a review tool's repository named
     // directly as a root.
     if (REVIEW_LOCATION.test(canonical(root).replace(/\\/g, '/'))) continue;
-    let rootTop = null;
-    try { rootTop = topLevel(root, deadline); }
-    catch (_) {
-      // Container roots are the ordinary case and are scanned one level below.
-    }
-    if (rootTop === canonical(root)) {
+    const rootProbe = probeRepository(root, deadline);
+    // A probe cut short by the deadline is a truncated scan, not a bad repository.
+    if (expired()) return { repositories, unreadable, truncated: true };
+    if (rootProbe.kind !== 'none') {
       // A configured repository is itself the unit of discovery. Do not
       // descend into its working tree and mistake nested repositories for
       // sibling projects.
-      let identity;
-      try { identity = commonDir(root, deadline); }
-      catch (_) { unreadable.push(root); continue; }
-      if (!seen.has(identity)) {
-        seen.add(identity);
-        repositories.push(root);
-      }
+      add(root, rootProbe);
       continue;
     }
     let entries;
     try { entries = fs.readdirSync(root, { withFileTypes: true }); }
-    catch (_) { continue; }
+    catch (_) { add(root, { kind: 'unreadable' }); continue; }
     for (const entry of entries) {
-      if (deadline && Date.now() >= deadline) return { repositories, unreadable, truncated: true };
+      if (expired()) return { repositories, unreadable, truncated: true };
       // Dot-named folders are probed too: a project at Projects/.website is a
       // real repository, and skipping it by name hides all its worktrees.
-      // Folders that are not repositories fail the top-level check below.
+      // Folders that are not repositories fail the probe below.
       if (!entry.isDirectory()) continue;
       const candidate = path.join(root, entry.name);
       // A review tool's own repository (Projects/.review) is not a project:
       // auditing it would count the tool's internal registrations as missing.
       if (REVIEW_LOCATION.test(canonical(candidate).replace(/\\/g, '/'))) continue;
-      let top;
-      try { top = topLevel(candidate, deadline); }
-      catch (_) { continue; }
-      if (top !== canonical(candidate)) continue;
-      let identity;
-      try { identity = commonDir(candidate, deadline); }
-      catch (_) { unreadable.push(candidate); continue; }
-      if (seen.has(identity)) continue;
-      seen.add(identity);
-      repositories.push(candidate);
+      const probe = probeRepository(candidate, deadline);
+      if (expired()) return { repositories, unreadable, truncated: true };
+      add(candidate, probe);
     }
   }
   return { repositories, unreadable, truncated: false };
@@ -1039,7 +1056,7 @@ function renderAudit(audit) {
       lines.push(`                  ${entry.reason}`);
     }
   }
-  if (!audit.repositories.length && !audit.truncated) lines.push('No configured repositories were found.');
+  if (!audit.repositories.length && !audit.truncated && !(audit.errors || []).length) lines.push('No configured repositories were found.');
   return lines.join('\n');
 }
 

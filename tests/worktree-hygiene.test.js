@@ -865,17 +865,31 @@ check('a repository Git finds but cannot read is reported, not dropped', () => {
   const f = fixture();
   const realGit = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
   const bin = fs.mkdtempSync(path.join(os.tmpdir(), 'git-hygiene-common-dir-git-'));
-  // The stand-in fails only the common-directory read, after the top-level
-  // read has already placed the repository.
-  fs.writeFileSync(path.join(bin, 'git'), [
-    '#!/bin/sh',
-    'case " $* " in *" --git-common-dir "*) exit 128 ;; esac',
-    `exec '${realGit}' "$@"`,
-  ].join('\n') + '\n');
-  fs.chmodSync(path.join(bin, 'git'), 0o755);
+  const fakeGit = (failing) => {
+    fs.writeFileSync(path.join(bin, 'git'), [
+      '#!/bin/sh',
+      `case " $* " in *" ${failing} "*) exit 128 ;; esac`,
+      `exec '${realGit}' "$@"`,
+    ].join('\n') + '\n');
+    fs.chmodSync(path.join(bin, 'git'), 0o755);
+  };
+  // A plain folder fails every probe too, and must stay out of both lists.
+  fs.mkdirSync(path.join(f.projects, 'notes'));
   const savedPath = process.env.PATH;
   try {
     process.env.PATH = `${bin}${path.delimiter}${savedPath}`;
+    // Refused at the first probe, as Git does for a repository with unsafe
+    // ownership: the .git entry still marks it as a repository.
+    fakeGit('--show-toplevel');
+    const refused = worktrees.discoverRepositories([f.projects]);
+    assert.deepStrictEqual(refused.repositories, []);
+    assert.deepStrictEqual(refused.unreadable.map((repo) => path.resolve(repo)), [path.resolve(f.repo)]);
+    assert.deepStrictEqual(
+      worktrees.discoverRepositories([f.repo]).unreadable.map((repo) => path.resolve(repo)),
+      [path.resolve(f.repo)]
+    );
+    // Placed by the first probe, then refused at the common-directory read.
+    fakeGit('--git-common-dir');
     const container = worktrees.discoverRepositories([f.projects]);
     assert.deepStrictEqual(container.repositories, []);
     assert.deepStrictEqual(container.unreadable.map((repo) => path.resolve(repo)), [path.resolve(f.repo)]);
@@ -884,6 +898,11 @@ check('a repository Git finds but cannot read is reported, not dropped', () => {
     const audit = worktrees.auditConfigured({ config: f.config, skipRemote: true });
     assert.strictEqual(audit.summary.unreadable, 1);
     assert.strictEqual(audit.errors[0].error, 'the repository could not be read');
+    // Overlapping roots name the same repository twice; it is counted once.
+    const overlap = worktrees.auditConfigured({ config: { ...f.config, projectRoots: [f.projects, f.repo] }, skipRemote: true });
+    assert.strictEqual(overlap.summary.unreadable, 1);
+    // The report never says nothing was found right after listing what it could not read.
+    assert.doesNotMatch(worktrees.renderAudit(audit), /No configured repositories were found/);
     // The session notice cannot give complete counts, so it says nothing.
     assert.strictEqual(worktrees.placementCounts({ config: f.config }).truncated, true);
   } finally {
