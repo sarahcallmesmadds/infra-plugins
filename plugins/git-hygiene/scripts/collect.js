@@ -57,8 +57,18 @@ function tryRun(cmd, args, opts) {
 
 // ---------------------------------------------------------------- local ----
 
-function isGitRepo(cwd) {
-  return tryRun('git', ['-C', cwd, 'rev-parse', '--is-inside-work-tree']) === 'true';
+function withDeadline(deadline, opts) {
+  if (!deadline) return opts || {};
+  const requested = (opts && opts.timeout) || PER_COMMAND_TIMEOUT_MS;
+  return Object.assign({}, opts || {}, {
+    timeout: Math.max(1, Math.min(requested, deadline - Date.now())),
+  });
+}
+
+function isGitRepo(cwd, opts) {
+  const deadline = opts && opts.deadline;
+  if (deadline && Date.now() >= deadline) return false;
+  return tryRun('git', ['-C', cwd, 'rev-parse', '--is-inside-work-tree'], withDeadline(deadline)) === 'true';
 }
 
 // `merge-tree --write-tree` arrived in git 2.38. Older installations, Ubuntu
@@ -76,8 +86,8 @@ function isGitRepo(cwd) {
 // then the probe fails for a reason that has nothing to do with the version and
 // the run reports a modern git as too old. The default branch is a ref this
 // caller has already resolved.
-function supportsWriteTree(cwd, ref) {
-  return tryRun('git', ['-C', cwd, 'merge-tree', '--write-tree', ref, ref]) !== null;
+function supportsWriteTree(cwd, ref, opts) {
+  return tryRun('git', ['-C', cwd, 'merge-tree', '--write-tree', ref, ref], opts) !== null;
 }
 
 // Whether `origin/<def>` still matches the branch it is a copy of.
@@ -199,23 +209,39 @@ function remoteMoved(cwd, def, cachedSha) {
 function localBranches(cwd, opts) {
   const deadline = (opts && opts.deadline) || null;
   const only = (opts && opts.only) || null;
-  let truncated = false;
-  const current = tryRun('git', ['-C', cwd, 'branch', '--show-current']) || '';
+  // A direct caller may deliberately pass an already-expired deadline to ask
+  // for the batched facts while skipping all per-branch work. Preserve that
+  // long-standing contract. Session startup never enters here already expired:
+  // session-notice checks its deadline first, then passes the remaining time so
+  // every child spawned for that live request receives a real timeout.
+  const startedExpired = deadline !== null && Date.now() >= deadline;
+  const childDeadline = startedExpired ? null : deadline;
+  let truncated = startedExpired;
+  const boundedTryRun = (cmd, args, runOpts) => {
+    if (!startedExpired && deadline !== null && Date.now() >= deadline) {
+      truncated = true;
+      return null;
+    }
+    const result = tryRun(cmd, args, withDeadline(childDeadline, runOpts));
+    if (!startedExpired && deadline !== null && Date.now() >= deadline) truncated = true;
+    return result;
+  };
+  const current = boundedTryRun('git', ['-C', cwd, 'branch', '--show-current']) || '';
 
   // Prefer the remote's idea of the default branch, then fall back to whatever
   // exists. Assuming "main" outright is how a repo on "master" ends up with its
   // trunk in the deletable list.
-  let def = tryRun('git', ['-C', cwd, 'symbolic-ref', '--short', 'refs/remotes/origin/HEAD']);
+  let def = boundedTryRun('git', ['-C', cwd, 'symbolic-ref', '--short', 'refs/remotes/origin/HEAD']);
   if (def) def = def.replace(/^origin\//, '');
   if (!def) {
     for (const candidate of ['main', 'master']) {
-      if (tryRun('git', ['-C', cwd, 'rev-parse', '--verify', `refs/heads/${candidate}`])) {
+      if (boundedTryRun('git', ['-C', cwd, 'rev-parse', '--verify', `refs/heads/${candidate}`])) {
         def = candidate;
         break;
       }
     }
   }
-  if (!def) return { defaultBranch: null, branches: [] };
+  if (!def) return { defaultBranch: null, branches: [], truncated };
   const defRef = `refs/heads/${def}`;
 
   // `unreadable` rather than an empty list, because a caller asking about one
@@ -236,19 +262,19 @@ function localBranches(cwd, opts) {
   // `heads/feature` when a tag named `feature` exists, which makes an `only`
   // check fail to find the branch at all.
   const FIELDS = '%(refname:lstrip=2)%09%(committerdate:iso-strict)';
-  let listed = tryRun('git', ['-C', cwd, 'for-each-ref', `--format=${FIELDS}%09%(ahead-behind:${defRef})`, 'refs/heads/']);
+  let listed = boundedTryRun('git', ['-C', cwd, 'for-each-ref', `--format=${FIELDS}%09%(ahead-behind:${defRef})`, 'refs/heads/']);
   const listedHasAhead = listed !== null;
   if (!listedHasAhead) {
-    listed = tryRun('git', ['-C', cwd, 'for-each-ref', `--format=${FIELDS}`, 'refs/heads/']);
+    listed = boundedTryRun('git', ['-C', cwd, 'for-each-ref', `--format=${FIELDS}`, 'refs/heads/']);
   }
-  if (listed === null) return { defaultBranch: def, branches: [], unreadable: true };
-  if (!listed) return { defaultBranch: def, branches: [] };
+  if (listed === null) return { defaultBranch: def, branches: [], unreadable: true, truncated };
+  if (!listed) return { defaultBranch: def, branches: [], truncated };
 
   // The default branch's own tree, read once. A branch whose merge into `def`
   // produces this exact tree adds nothing `def` does not already have. If this
   // cannot be read the comparison is simply not attempted, and every branch
   // falls back to ancestry alone.
-  const defTree = tryRun('git', ['-C', cwd, 'rev-parse', `${defRef}^{tree}`]);
+  const defTree = boundedTryRun('git', ['-C', cwd, 'rev-parse', `${defRef}^{tree}`]);
 
   // And the remote-tracking copy, when it exists and has moved on from the
   // local one. `def` above is a local branch name, stripped of its `origin/`
@@ -262,9 +288,9 @@ function localBranches(cwd, opts) {
   // agree, which is the steady state, so it costs nothing in the common case.
   const remoteDef = `origin/${def}`;
   const remoteDefRef = `refs/remotes/${remoteDef}`;
-  const remoteDefSha = tryRun('git', ['-C', cwd, 'rev-parse', remoteDefRef]);
-  const defSha = tryRun('git', ['-C', cwd, 'rev-parse', defRef]);
-  const remoteDefTree = tryRun('git', ['-C', cwd, 'rev-parse', `${remoteDefRef}^{tree}`]);
+  const remoteDefSha = boundedTryRun('git', ['-C', cwd, 'rev-parse', remoteDefRef]);
+  const defSha = boundedTryRun('git', ['-C', cwd, 'rev-parse', defRef]);
+  const remoteDefTree = boundedTryRun('git', ['-C', cwd, 'rev-parse', `${remoteDefRef}^{tree}`]);
   const compareAgainst = [{ ref: defRef, tree: defTree, label: 'already in the default branch' }];
   if (remoteDefTree && remoteDefTree !== defTree) {
     compareAgainst.push({ ref: remoteDefRef, tree: remoteDefTree, label: `already in ${remoteDef}` });
@@ -280,7 +306,10 @@ function localBranches(cwd, opts) {
   // Only asked when there is something to compare against. With no readable
   // default tree the comparison cannot run either way, and reporting that as a
   // git version problem would send someone to upgrade a git that is fine.
-  const versionOk = defTree ? supportsWriteTree(cwd, defRef) : null;
+  const versionOk = defTree
+    ? supportsWriteTree(cwd, defRef, withDeadline(childDeadline))
+    : null;
+  if (deadline !== null && Date.now() >= deadline) truncated = true;
   const canCompare = !!defTree && versionOk === true;
 
   // Asked for the listing and not for `only`, the re-check that runs immediately
@@ -339,7 +368,7 @@ function localBranches(cwd, opts) {
         truncated = true;
       } else {
         const branchRef = `refs/heads/${name}`;
-        const n = tryRun('git', ['-C', cwd, 'rev-list', '--count', `${defRef}..${branchRef}`]);
+        const n = boundedTryRun('git', ['-C', cwd, 'rev-list', '--count', `${defRef}..${branchRef}`]);
         if (n !== null && /^\d+$/.test(n)) aheadBy = parseInt(n, 10);
       }
 
@@ -361,7 +390,7 @@ function localBranches(cwd, opts) {
           for (const target of compareAgainst) {
             if (!target.tree) continue;
             const branchRef = `refs/heads/${name}`;
-            const t = tryRun('git', ['-C', cwd, 'merge-tree', '--write-tree', target.ref, branchRef]);
+            const t = boundedTryRun('git', ['-C', cwd, 'merge-tree', '--write-tree', target.ref, branchRef]);
             if (t !== null && t.split('\n')[0] === target.tree) {
               merged = true;
               mergedVia = target.label;

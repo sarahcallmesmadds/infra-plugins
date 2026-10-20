@@ -2,7 +2,7 @@
 name: setup
 type: human
 description: Sets up Git Hygiene's optional project worktree location guard by choosing the project and worktree folders and writing them to user-owned configuration. Use when the user asks to configure or enable the worktree location guard, or invokes /git-hygiene:setup.
-allowed-tools: Read, Bash(git rev-parse:*), Bash(node:*)
+allowed-tools: Read, Bash(git worktree list:*), Bash(node:*)
 ---
 
 Configure the optional worktree location guard in `~/.claude/git-hygiene.config.json`.
@@ -18,13 +18,18 @@ If a setting already exists, show its two paths and include them in the confirma
 
 ## 2. Propose the folders
 
-If the current directory is inside a Git repository, get its root:
+If the current directory is inside a Git repository, find its primary checkout.
+Git lists it first:
 
 ```bash
-git rev-parse --show-toplevel
+git worktree list --porcelain
 ```
 
-By default, propose the repository's parent as `projectRoot` and `<projectRoot>/Worktrees` as `worktreeRoot`. If the surrounding folder layout clearly indicates a different shared project folder, propose that instead. If there is no current repository, ask for both paths together. Both must be absolute paths, or start with `~/`.
+Use the path on the first `worktree` line. Do not use `git rev-parse
+--show-toplevel`: inside a linked worktree it names that worktree, and proposing
+its parent would put future worktrees inside an existing one.
+
+By default, propose the primary checkout's parent as `projectRoot` and `<projectRoot>/Worktrees` as `worktreeRoot`. If the surrounding folder layout clearly indicates a different shared project folder, propose that instead. If there is no current repository, ask for both paths together. Both must be absolute paths, or start with `~/`.
 
 Show both proposed paths and ask once:
 
