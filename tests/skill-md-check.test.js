@@ -6,9 +6,10 @@
 // The hook was adapted from an earlier implementation. Two deliberate changes
 // define this repository's contract.
 //
-// 1. The original required `type: human|agent`. Eight of the twenty-one skills
-//    in this repository do not set it, so requiring it would report eight files
-//    that are fine. Here it is validated when present and never required.
+// 1. The original required `type: human|agent`. Valid skills in this
+//    repository do not all set it, so requiring it would report files that are
+//    fine. Here it is validated when present and never required. No count is
+//    quoted, because any count goes stale the next time a skill is added.
 //
 // 2. The original did not compare the frontmatter name against the directory.
 //    That is the fault this repository keeps hitting: /audit-deps carries a
