@@ -27,7 +27,8 @@ A thread's handoff stays the current state of its subject instead of growing.
   `**Repository:**` and `**Repo:**` spellings included), a rule or area
   wholly in brackets (it reads as the template placeholder), a retirement line
   not in its exact `- Retired this session:` form at the start of a line, an
-  HTML comment, a subheading inside What was worked on, a `**Format:**` value
+  HTML comment or HTML block tag such as `<pre>`, a heading underlined with
+  `---` or `===`, a header label behind a bullet or quote mark, a subheading inside What was worked on, a `**Format:**` value
   that is not a whole number from 1 to 999, any code
   fence, an indented
   or malformed heading, a rule section name in any spelling but its own, any

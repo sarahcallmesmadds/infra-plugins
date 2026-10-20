@@ -447,7 +447,8 @@ Read what comes back:
   the reason names, as a `### ` heading or as text), a section name reused
   below level two, a title that is not the first line, a header label below
   the header, a rule or area wholly in brackets, a retirement line in any
-  form but the exact one, an HTML comment, a subheading inside What was worked
+  form but the exact one, an HTML comment or block tag such as `<pre>`, a
+  heading underlined with `---` or `===`, a subheading inside What was worked
   on, a code fence anywhere, a heading with spaces before it or not written as
   hashes, one space and text, a rule section name in another spelling or case,
   any `## ` section twice, a heading deeper than `###` inside Standing rules, a

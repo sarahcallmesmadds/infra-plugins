@@ -242,6 +242,10 @@ const SHAPES = [
   ['a Format number too long to read exactly', 'header-line', (h) => doc(h, { rules: ['R.'], format: '9007199254740993' })],
   ['a subheading inside What was worked on', 'rule-line', (h) => doc(h, { rules: ['R.'], format: 2, worked: '### Rebuild\nThe homepage rebuild is three pages in.' })],
   ['a checkbox retirement line', 'rule-line', (h) => doc(h, { rules: ['R.', '[x] Retired this session: Q., because done.'], format: 2 })],
+  ['a retirement example in a pre block', 'fence', (h) => doc(h, { rules: ['R.'], format: 2, extra: '\n## Context to reload\n<pre>\n- Retired this session: R., because example only.\n</pre>\n' })],
+  ['a bulleted header label', 'header-line', (h) => doc(h, { rules: ['R.'], format: 2 }).replace(/(\*\*Working directory:\*\*.*)/, '$1\n- **Project rules:** /repo/CLAUDE.md')],
+  ['a quoted Format label', 'header-line', (h) => doc(h, { rules: ['R.'] }).replace(/(\*\*Working directory:\*\*.*)/, '$1\n> **Format:** 2')],
+  ['an underlined heading', 'malformed-heading', (h) => doc(h, { rules: ['R.'], format: 2 }).replace('\n## What was worked on', '\nStanding rules\n--------------\n- Obtain approval.\n\n## What was worked on')],
   ['Unicode paragraph separator', 'line-break', (h) => doc(h, { rules: ['R.'], format: 2 }).replace('- R.', `- R.${String.fromCharCode(0x2029)}- Q.`)],
 ];
 
@@ -360,6 +364,11 @@ check('a thread hand-edited to a # or ### Standing rules heading still guards it
     assert.strictEqual(r.body.reason, 'standing-dropped', `${heading}: ${JSON.stringify(r.body)}`);
     assert.deepStrictEqual(snapshot(docPath(home, 'site-thread')), before);
   }
+});
+
+check('a --- rule after a blank line is not an underlined heading', () => {
+  const text = doc('/x', { rules: ['R.'], format: 2, extra: '\n## Context to reload\nSome text.\n\n---\n\nMore text.\n' });
+  assert.deepStrictEqual(handoffs.threadShapeProblems(text), []);
 });
 
 check('a Windows line ending is not a shape problem', () => {

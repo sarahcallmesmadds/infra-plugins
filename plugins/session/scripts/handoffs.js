@@ -1296,7 +1296,7 @@ const LABEL_LIKE = /^\s*\*\*([^*]+?):\*\*/;
 // Any spelling of a reserved label: bold or not, a colon inside or outside
 // the bold, spaces anywhere. A header line like this that is not the exact
 // form is a shape problem, because the exact readers would silently miss it.
-const LOOSE_LABEL = /^[\s*_]*(date|working\s+directory|last\s+session|format|project\s+rules|check\s+accepted)[\s*_]*:/i;
+const LOOSE_LABEL = /^[\s*_>\-+]*(date|working\s+directory|last\s+session|format|project\s+rules|check\s+accepted)[\s*_]*:/i;
 // Line breaks other than \n and \r\n. A bare \r or a Unicode line or
 // paragraph separator is a line end to some readers and not to others, so a
 // heading or bullet could be seen by one and missed by the next.
@@ -1310,6 +1310,8 @@ const RETIRED_LIKE = /^[\s>*_\-+\[]*(\d+[.)]\s*)?(\[[ xX]?\]\s*)?\[?\s*retired\s
 const RETIRED_EXACT = /^- Retired this session: \S/;
 // A header label below the header, the two folder spellings included: the
 // pooled reader takes **Repository:** and **Repo:** as the working directory.
+// Bold or bare at the start of the line only: a prose bullet such as
+// "- Repo: ..." is not read by any reader, and real handoffs carry them.
 const BODY_LABEL = /^[\s*_]*(date|working\s+directory|last\s+session|format|project\s+rules|check\s+accepted|repository|repo)[\s*_]*:/i;
 const squash = (s) => s.trim().replace(/\s+/g, ' ').toLowerCase();
 // The only level-two sections a thread's handoff has: the wrap template's.
@@ -1357,10 +1359,18 @@ function threadShapeProblems(text) {
     }
     // An HTML comment hides text from a person reading the rendered page and
     // from no reader here, so a commented example retires or binds for real.
+    // The HTML blocks that show their text as an example do the same.
+    if (/<\/?(pre|code|textarea|script|style|xmp|details)\b/i.test(line)) { add('fence', n, 'holds an HTML block tag; a thread\'s handoff carries none, because an example rule or retirement inside one is still read'); return; }
     if (/<!--|-->/.test(line)) { add('fence', n, 'holds an HTML comment; a thread\'s handoff carries none, because a commented-out rule or retirement is still read'); return; }
     if (FENCE_LINE.test(line)) { add('fence', n, 'is a code fence; a thread\'s handoff carries none, because a fenced example heading or rule reads as a real one'); return; }
     // Any leading space, a no-break space included: the readers want a
     // heading at the start of the line, so an indented one is read by none.
+    // A line of only - or = under a line of text underlines it into a
+    // heading, which no reader here sees as one, so the boundary moves.
+    if (i > 0 && /^\s*(=+|-+)\s*$/.test(line) && lines[i - 1].trim() !== '') {
+      add('malformed-heading', n, 'underlines the line above into a heading; write headings as hashes, one space, then text, and leave a blank line before a "---" rule');
+      return;
+    }
     if (/^\s+#/.test(line)) { add('indented-heading', n, 'is a heading with spaces before it; start headings at the beginning of the line'); return; }
     // Any line starting with # is a heading written exactly: hashes, one
     // space, then text. `##Standing rules` or a bare `##` read as a heading to
