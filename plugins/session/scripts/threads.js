@@ -643,7 +643,15 @@ function saveThread({
   // dropped, so the header never shows a reason for a problem the document no
   // longer has.
   const accepted = Boolean(accept && blocking.length);
-  if (accepted) draft = withAcceptance(draft, accept);
+  if (accepted) {
+    draft = withAcceptance(draft, accept);
+    // The reason is free text written into the header, so the document it
+    // makes is checked again: saved, it must pass the check it passed here.
+    const after = handoffs.threadShapeProblems(draft);
+    if (after.length) {
+      return refuse('bad-input', `the --accept-check reason would write a line save refuses: ${after.map((p) => p.detail).join('; ')}`, { draft: from, problems: after });
+    }
+  }
 
   return handoffs.mutateIndex(home, (index, saveIndex) => {
     // Everything checked again under the lock, because every answer above was
@@ -741,9 +749,15 @@ function saveThread({
       // guard. Decided from the lines the shape check already flags, not by
       // a second pattern: a separate regex here missed a no-break space and
       // caught a `# Standing rules` title.
+      // Only heading problems on a heading line count, and only one that
+      // starts with the section's name: a missing title reported at line 1,
+      // or a "## Notes on standing rules" section, is not a hidden section.
       const curLines = String(currentText).replace(/\r\n/g, '\n').split('\n');
+      const HEADING_KINDS = new Set(['malformed-heading', 'unknown-section', 'indented-heading', 'line-break']);
       const unreadable = handoffs.threadShapeProblems(currentText)
-        .some((p) => (curLines[p.line - 1] || '').replace(/[^a-z]/gi, '').toLowerCase().includes('standingrules'));
+        .filter((p) => HEADING_KINDS.has(p.kind))
+        .map((p) => curLines[p.line - 1] || '')
+        .some((l) => /^\s*#/.test(l) && l.replace(/[^a-z]/gi, '').toLowerCase().startsWith('standingrules'));
       if ((vanished.length || unreadable) && !handoffs.standingIn(draft).length && !movedTo.length) {
         return refuse('standing-dropped',
           `${target} holds standing rules and the draft has none and names no project rules file that is there; carry them, or name the file they went to`,

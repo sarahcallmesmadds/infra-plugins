@@ -1304,7 +1304,9 @@ const ODD_BREAK = /[\r\u2028\u2029]/;
 // The two rule sections, each with one spelling.
 const RULE_SECTIONS = ['Constraints still in force', 'Standing rules'];
 // A retirement line in any form, and the one form that counts.
-const RETIRED_LIKE = /retired\s+this\s+session\s*:/i;
+// Only a line that starts like one: after any spacing, bullet, number or
+// bracket. A sentence that mentions the phrase is prose, not a retirement.
+const RETIRED_LIKE = /^[\s>*_\-+\[]*(\d+[.)]\s*)?\[?\s*retired\s+this\s+session\s*:/i;
 const RETIRED_EXACT = /^- Retired this session: \S/;
 // A header label below the header, the two folder spellings included: the
 // pooled reader takes **Repository:** and **Repo:** as the working directory.
@@ -1318,11 +1320,16 @@ const squash = (s) => s.trim().replace(/\s+/g, ' ').toLowerCase();
 const TEMPLATE_SECTIONS = ['What was worked on', 'Constraints still in force', 'Standing rules', 'Decisions made',
   'Files created or changed', 'Verified vs assumed', 'Open loops', 'Next actions', 'Context to reload'];
 const letters = (s) => String(s).replace(/[^a-z]/gi, '').toLowerCase();
-// Where a heading that is not a template section belongs: the section whose
-// name it starts with, and otherwise Context to reload.
-function foldInto(name) {
+// What to do with a heading that is not a template section. One that starts
+// with a section's name is that section misspelled, so it is renamed: a
+// `### ` inside the constraints is itself refused. Anything else is folded
+// under Context to reload.
+function foldAdvice(name) {
   const l = letters(name);
-  return TEMPLATE_SECTIONS.find((t) => l.startsWith(letters(t))) || 'Context to reload';
+  const near = TEMPLATE_SECTIONS.find((t) => l.startsWith(letters(t)));
+  return near
+    ? `rename it to exactly "## ${near}"`
+    : 'fold it under "## Context to reload" as a "### " heading or as text';
 }
 function threadShapeProblems(text) {
   const lines = String(text || '').replace(/\r\n/g, '\n').split('\n');
@@ -1344,7 +1351,9 @@ function threadShapeProblems(text) {
       return;
     }
     if (FENCE_LINE.test(line)) { add('fence', n, 'is a code fence; a thread\'s handoff carries none, because a fenced example heading or rule reads as a real one'); return; }
-    if (/^[ \t]+#{1,6}\s/.test(line)) { add('indented-heading', n, 'is a heading with spaces before it; start headings at the beginning of the line'); return; }
+    // Any leading space, a no-break space included: the readers want a
+    // heading at the start of the line, so an indented one is read by none.
+    if (/^\s+#/.test(line)) { add('indented-heading', n, 'is a heading with spaces before it; start headings at the beginning of the line'); return; }
     // Any line starting with # is a heading written exactly: hashes, one
     // space, then text. `##Standing rules` or a bare `##` read as a heading to
     // one reader and as text to another.
@@ -1365,7 +1374,7 @@ function threadShapeProblems(text) {
         const named = TEMPLATE_SECTIONS.find((r) => r.toLowerCase() === section);
         if (named && h[1] !== named) add('malformed-heading', n, `is "## ${h[1]}"; write the section name exactly as "## ${named}"`);
         else if (!named) {
-          add('unknown-section', n, `is "## ${h[1]}", which is not a section of a thread's handoff; fold it under "## ${foldInto(h[1])}" as a "### " heading or as text. The sections are: ${TEMPLATE_SECTIONS.join(', ')}`);
+          add('unknown-section', n, `is "## ${h[1]}", which is not a section of a thread's handoff; ${foldAdvice(h[1])}. The sections are: ${TEMPLATE_SECTIONS.join(', ')}`);
         }
         // Any section twice, not only the standing one: every reader takes
         // the first and drops the rest.

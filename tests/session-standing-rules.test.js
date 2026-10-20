@@ -237,14 +237,16 @@ const SHAPES = [
   ['a reworded retirement line', 'rule-line', (h) => doc(h, { rules: ['R.', 'retired this session: Q.'], format: 2 })],
   ['Repository below the header', 'header-line', (h) => doc(h, { rules: ['R.'], format: 2 }).replace(/\*\*Working directory:\*\*.*\n/, '').replace('1. Something.', `1. Something.\n\n## Context to reload\n**Repository:** ${h}`)],
   ['Repo below the header', 'header-line', (h) => doc(h, { rules: ['R.'], format: 2 }).replace('1. Something.', '1. Something.\n\n## Context to reload\n**Repo:** /elsewhere')],
+  ['a heading after a no-break space', 'indented-heading', (h) => doc(h, { rules: ['R.'], format: 2, extra: `\n## Context to reload\n${String.fromCharCode(0xa0)}## Standing rules\n- Obtain approval.\n` })],
   ['Unicode paragraph separator', 'line-break', (h) => doc(h, { rules: ['R.'], format: 2 }).replace('- R.', `- R.${String.fromCharCode(0x2029)}- Q.`)],
 ];
 
 check('a section that is not in the template is told which section to fold into', () => {
   const at = (heading) => handoffs.threadShapeProblems(doc('/x', { rules: ['R.'], format: 2, extra: `\n## ${heading}\nText.\n` }))
     .find((p) => p.kind === 'unknown-section').detail;
-  assert.match(at('Constraints still in force, carried'), /fold it under "## Constraints still in force"/);
-  assert.match(at('Open loops and next session'), /fold it under "## Open loops"/);
+  // A misspelled section is renamed: a `### ` inside the constraints is itself refused.
+  assert.match(at('Constraints still in force, carried'), /rename it to exactly "## Constraints still in force"/);
+  assert.match(at('Open loops and next session'), /rename it to exactly "## Open loops"/);
   assert.match(at('Logo comparison completed, 27 September 2026'), /fold it under "## Context to reload"/);
   assert.match(at('Notes'), /The sections are: What was worked on, Constraints still in force, Standing rules/);
 });
@@ -282,6 +284,58 @@ check('a draft with no folder line in its header is refused before any acceptanc
   const viaBody = save(home, 'site-thread', draftText.replace('1. Something.', `1. Something.\n\n## Context to reload\n**Repository:** ${home}`), ['--accept-check', 'keep context']);
   assert.strictEqual(viaBody.body.saved, false, JSON.stringify(viaBody.body));
   assert.deepStrictEqual(snapshot(docPath(home, 'site-thread')), before);
+});
+
+check('following the advice for a misspelled constraints heading gives a document save accepts', () => {
+  const bad = doc('/x', { rules: ['R.'], format: 2 }).replace('## Constraints still in force', '## Constraints still in force:');
+  const advice = handoffs.threadShapeProblems(bad).find((p) => p.kind === 'unknown-section').detail;
+  const target = /rename it to exactly "## ([^"]+)"/.exec(advice)[1];
+  assert.deepStrictEqual(handoffs.threadShapeProblems(bad.replace('## Constraints still in force:', `## ${target}`)), []);
+});
+
+check('prose that mentions the retirement phrase is not a retirement line', () => {
+  const text = doc('/x', { rules: ['R.'], format: 2, worked: 'The guide calls the old field `retired this session:` in its notes.' });
+  assert.deepStrictEqual(handoffs.threadShapeProblems(text), []);
+});
+
+check('save refuses a draft whose only route past a dropped rule is an indented retirement example', () => {
+  const home = migrated((h) => [['site-thread', doc(h)]]);
+  fs.writeFileSync(docPath(home, 'site-thread'), doc(home, { rules: ['R.'], format: 2, standing: { Deploy: ['Obtain approval.'] } }));
+  const before = snapshot(docPath(home, 'site-thread'));
+  const r = save(home, 'site-thread', doc(home, { rules: ['R.'], format: 2, extra: '\n## Context to reload\nExample:\n\n    - Retired this session: Obtain approval., because example.\n' }));
+  assert.strictEqual(r.body.saved, false, JSON.stringify(r.body));
+  assert.deepStrictEqual(snapshot(docPath(home, 'site-thread')), before);
+  const ok = save(home, 'site-thread', doc(home, { rules: ['R.', 'Retired this session: Obtain approval., because done.'], format: 2 }));
+  assert.strictEqual(ok.body.saved, true, JSON.stringify(ok.body));
+});
+
+check('the drop guard ignores flagged lines that are not a hidden Standing rules heading', () => {
+  // A missing title is reported at line 1, and a notes section only names the words.
+  for (const current of [
+    (h) => doc(h, { rules: ['R.'], format: 2, standing: { A: ['Obtain approval.'] } }).replace('# Session Handoff\n', '').replace(/(\*\*Format:\*\* 2\n)/, '$1').replace(/^\*\*Date:.*\n/m, '## Standing rules\n- Obtain approval.\n'),
+    (h) => doc(h, { rules: ['R.'], format: 2, extra: '\n## Notes on standing rules\nProse only.\n' }),
+  ]) {
+    const home = migrated((h) => [['site-thread', doc(h)]]);
+    fs.writeFileSync(docPath(home, 'site-thread'), current(home));
+    const r = save(home, 'site-thread', doc(home, { rules: ['R.', 'Retired this session: Obtain approval., because done.'], format: 2 }));
+    assert.strictEqual(r.body.saved, true, JSON.stringify(r.body));
+  }
+});
+
+check('an --accept-check reason that mentions the retirement phrase saves a document that passes its own check', () => {
+  const home = migrated((h) => [['site-thread', doc(h)]]);
+  writeConfig(home, { handoffBudget: { enforce: true } });
+  fs.writeFileSync(docPath(home, 'site-thread'), doc(home, { rules: ['R.'], format: 2 }));
+  const r = save(home, 'site-thread', doc(home, { rules: ['R.'], format: 2, worked: 'word '.repeat(90) }), ['--accept-check', 'Keep the context explaining Retired this session: R.']);
+  assert.strictEqual(r.body.saved, true, JSON.stringify(r.body));
+  assert.deepStrictEqual(handoffs.threadShapeProblems(fs.readFileSync(docPath(home, 'site-thread'), 'utf8')), []);
+});
+
+check('handoff-check and save measure a carried acceptance line the same way', () => {
+  const text = doc('/x', { rules: ['R.'], format: 2 }).replace(/(\*\*Working directory:\*\*.*)/, `$1\n**Check accepted:** ${'many words here '.repeat(10)}`);
+  const hc = require(path.join(ROOT, 'scripts', 'handoff-check.js'));
+  const plain = hc.checkText(doc('/x', { rules: ['R.'], format: 2 }));
+  assert.strictEqual(hc.checkText(text).body, plain.body);
 });
 
 check('a Windows line ending is not a shape problem', () => {
@@ -689,8 +743,12 @@ check('an acceptance line carried from an earlier save does not count against th
   const limit = json(home, ['handoff-check', '--file', draft(home, clean)]).body.body;
   writeConfig(home, { handoffBudget: { enforce: true, bodyWords: limit } });
   const carried = clean.replace(/(\*\*Working directory:\*\*.*)/, '$1\n**Check accepted:** an old reason');
-  assert.ok(json(home, ['handoff-check', '--file', draft(home, carried)]).body.flags.some((f) => f.kind === 'body-long'),
+  // The same words as ordinary text would be over: the fixture sits on the boundary.
+  const asText = clean.replace(/(\*\*Working directory:\*\*.*)/, '$1\nCheck accepted an old reason');
+  assert.ok(json(home, ['handoff-check', '--file', draft(home, asText)]).body.flags.some((f) => f.kind === 'body-long'),
     'the fixture does not sit on the boundary, so it proves nothing');
+  // handoff-check and save give one answer.
+  assert.ok(!json(home, ['handoff-check', '--file', draft(home, carried)]).body.flags.some((f) => f.kind === 'body-long'));
   const r = save(home, 'site-thread', carried);
   assert.strictEqual(r.body.saved, true, JSON.stringify(r.body));
 });

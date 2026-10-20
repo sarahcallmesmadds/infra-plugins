@@ -116,7 +116,13 @@ function checkText(text, budget = DEFAULT_BUDGET) {
     flags.push({ kind: 'shape', shape: p.kind, line: p.line, enforceable: false, detail: p.detail });
   }
 
-  const rows = all.map((s) => ({ heading: s.heading, words: words(s.body) + (s.heading ? words(s.heading) : 0) }));
+  // A Check accepted line carried from an earlier save, in its exact form,
+  // is left out of the count, the same as save leaves it out, so a draft near
+  // the limit gets one answer from both.
+  const rows = all.map((s) => {
+    const b = s.heading ? s.body : s.body.replace(/^\*\*Check accepted:\*\* \S.*$/gm, '');
+    return { heading: s.heading, words: words(b) + (s.heading ? words(s.heading) : 0) };
+  });
   const total = rows.reduce((n, r) => n + r.words, 0);
   const isRules = (h) => key(h) === CONSTRAINTS || key(h) === STANDING;
   const body = rows.filter((r) => !isRules(r.heading)).reduce((n, r) => n + r.words, 0);
