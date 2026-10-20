@@ -526,7 +526,9 @@ check('prune maps a relative-paths registration to its real path', () => {
     // registration, so there is nothing to map. Probe inside the fixture
     // repository: outside one, `git worktree add -h` fails for that reason
     // alone and the check would skip silently on a Git that supports it.
-    const help = spawnSync('git', ['-C', f.repo, 'worktree', 'add', '-h'], { encoding: 'utf8' });
+    const help = spawnSync('git', ['-C', f.repo, 'worktree', 'add', '-h'], {
+      encoding: 'utf8', env: { ...process.env, LC_ALL: 'C' },
+    });
     if (!`${help.stdout}${help.stderr}`.includes('relative-paths')) {
       assert.match(`${help.stdout}${help.stderr}`, /usage: git worktree add/);
       return;
