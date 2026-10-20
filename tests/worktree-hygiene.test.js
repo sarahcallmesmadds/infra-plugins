@@ -345,11 +345,35 @@ check('a worktree changed after its check is not removed or moved', () => {
     git(f.repo, 'worktree', 'lock', target);
     assert.throws(() => worktrees.recheckTarget(verified.repository, verified.path, verified), /locked after/);
     git(f.repo, 'worktree', 'unlock', target);
-    // A refused move must not leave the destination's parent folder behind.
-    assert.throws(() => worktrees.moveWorktree(target, { config: f.config, cwd: f.base, approved: true }));
-    assert.strictEqual(fs.existsSync(path.join(f.config.worktreeRoot, 'example')), false);
   } finally { f.cleanup(); }
 });
+
+check('a move refused by its final re-check creates no destination folder', () => {
+  const f = fixture();
+  const target = f.add('late-change', path.join(f.projects, 'example-late-change'));
+  // Dirty the worktree after the first audit has passed it. check-ref-format
+  // runs only in destinationFor, which sits between that audit and the final
+  // re-check, so this reaches recheckTarget and nothing earlier.
+  const bin = fs.mkdtempSync(path.join(os.tmpdir(), 'git-hygiene-late-'));
+  const realGit = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+  fs.writeFileSync(path.join(bin, 'git'), `#!/bin/sh
+case "$*" in *check-ref-format*) printf 'late\\n' > ${JSON.stringify(path.join(target, 'late.txt'))};; esac
+exec "${realGit}" "$@"
+`);
+  fs.chmodSync(path.join(bin, 'git'), 0o755);
+  const before = process.env.PATH;
+  process.env.PATH = `${bin}${path.delimiter}${before}`;
+  try {
+    assert.throws(() => worktrees.moveWorktree(target, { config: f.config, cwd: f.base, approved: true }), /changes made after/);
+    assert.strictEqual(fs.existsSync(path.join(f.config.worktreeRoot, 'example')), false);
+    assert.strictEqual(fs.existsSync(target), true);
+  } finally {
+    process.env.PATH = before;
+    fs.rmSync(bin, { recursive: true, force: true });
+    f.cleanup();
+  }
+});
+
 
 check('removal approval never carries to a later target', () => {
   const f = fixture();

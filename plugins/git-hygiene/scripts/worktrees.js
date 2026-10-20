@@ -755,6 +755,11 @@ function moveWorktree(raw, options = {}) {
   if (fs.existsSync(destination)) throw new Error(`destination already exists: ${destination}`);
   // Re-check before creating the parent folder, so a refusal leaves nothing behind.
   recheckTarget(found.audited.repository, found.target, found.entry);
+  // Checked before mkdir so a refusal creates nothing, and again after it in
+  // case a symlink appeared in between.
+  if (canonicalProspective(destination) !== destination) {
+    throw new Error('the computed worktree path changed through a symlink before relocation');
+  }
   fs.mkdirSync(path.dirname(destination), { recursive: true });
   if (canonicalProspective(destination) !== destination) {
     throw new Error('the computed worktree path changed through a symlink before relocation');
@@ -796,6 +801,9 @@ function createWorktree(repo, branch, options = {}) {
     remoteBase = remoteRefs[0] || null;
   }
   const base = branchExists ? null : validateBase(primary, options.base === undefined ? (remoteBase || 'HEAD') : options.base);
+  if (canonicalProspective(destination) !== destination) {
+    throw new Error('the computed worktree path changed through a symlink before creation');
+  }
   fs.mkdirSync(path.dirname(destination), { recursive: true });
   if (canonicalProspective(destination) !== destination) {
     throw new Error('the computed worktree path changed through a symlink before creation');
