@@ -21,9 +21,9 @@ is passed to this skill by asking for it, for example "pick up site-thread".
 node "${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js capabilities --json
 ```
 
-It has to print a JSON object whose `threads` is 1 or higher. Anything else,
-including a list of commands or an error, means the scripts installed in this
-host are older than this skill.
+It has to print a JSON object whose `threads` is 2 or higher. Anything else,
+including a list of commands, an error or `threads: 1`, means the scripts
+installed in this host are older than this skill.
 Stop and say so: "The installed session scripts are older than this skill;
 update the session plugin in this host and start a new session." Do not carry
 on with the older scripts. They accept the commands below and answer a
@@ -138,9 +138,13 @@ What comes back depends on how the handoff is kept, and the command decides,
 not this skill:
 
 - **A declared thread** (`binding: true` and `kind: "thread"`): the rules
-  written in that thread's own file, and nothing else. That is the whole answer. Rules that apply to
-  every thread live in the user's standing instructions and memory, not in
-  other handoffs, so there is no second list to go and find.
+  written in that thread's own file, and nothing else. Three lists come back,
+  and all three bind: `constraints` (this week's), `standing` (rules that last
+  as long as the subject, each with its `area`), and `projectRules` (the
+  repository instructions files its standing rules moved into). That is the
+  whole answer. Rules that apply to every thread live in the user's standing
+  instructions and memory, not in other handoffs, so there is no second list to
+  go and find.
 - **Threads not set up yet, or a handoff outside the home directory** (a
   repository's `HANDOFF.md`, or one written from anywhere but home): the older
   pooled answer, every rule recorded by any handoff written from the same
@@ -178,7 +182,13 @@ Thread: {slug} · {path} · rev {first 12 of rev} · generation {generation}
 Resuming from: {path}
 
 **Still binding:**
-{every constraint, verbatim, with the document each one names}
+{this week's constraints, every one, verbatim, with the document each one names}
+
+**Standing rules:**
+{every standing rule, verbatim, under its area}
+
+**Project rules files:**
+{each path, and that it governs work in that repository}
 
 **Last session ({date}):**
 {two or three sentences, paraphrased, not copied}
@@ -207,7 +217,9 @@ exactly like a real one.
 
 **"Still binding" is the exception, and it goes first.** It is dropped only when
 the handoff and the project both genuinely have none, never shortened, never
-summarized, and never moved below the next actions. A constraint paraphrased
+summarized, and never moved below the next actions. The same holds for the
+standing rules and the project rules files that follow it: each is printed in
+full, and a long one is never cut down because another is long. A constraint paraphrased
 into a gist stops being checkable, and one printed under the fold is one that
 gets skimmed past on the way to the task. This section exists because an
 approved design system sat in a document nobody opened for three days while a
@@ -249,6 +261,9 @@ governs:
 
 > The design system at {path} governs anything under `site/`. I will read it
 > before touching that, not now.
+
+A project rules file named by the thread is the same kind of document: it
+governs work in its repository, and it is read before work starts there.
 
 The distinction is worth holding on to. Everything else in a handoff describes
 what happened, and can be caught up on lazily or never. A constraint describes

@@ -26,9 +26,9 @@ writes as it always has. Step 1 says which applies.
 node "${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js capabilities --json
 ```
 
-It has to print a JSON object whose `threads` is 1 or higher. Anything else,
-such as a list of commands or an error, means the scripts installed in this host
-are older than this skill. Stop and say: "The installed session
+It has to print a JSON object whose `threads` is 2 or higher. Anything else,
+such as a list of commands, an error or `threads: 1`, means the scripts installed
+in this host are older than this skill. Stop and say: "The installed session
 scripts are older than this skill; update the session plugin in this host and
 start a new session." Wrapping against older scripts writes a new document per
 session, which is the behaviour this skill was changed to end.
@@ -156,18 +156,48 @@ thread:
 node "${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js constraints --thread "<slug>"
 ```
 
-That is the thread's own rules, and it is the whole list. Carry them into the
-rewrite, add what this session decided, and remove what it retired. Nothing from
-any other handoff binds a thread, so nothing from any other handoff is carried
-into it. A new thread skips this: it starts with only the constraints this
-session set.
+That is the thread's own rules, and it is the whole list: this week's
+constraints, the standing rules, and any project rules files the thread names.
+Nothing from any other handoff binds a thread, so nothing from any other handoff
+is carried into it. A new thread starts with only what this session set.
+
+**Sort every rule, carried or new, into exactly one of three places.** This is
+the step a thread rewrite exists for. Without it every rule ever written stays
+in the constraints list for good, which is how one thread came to carry more
+than 160 of them, most of them true for as long as the project exists.
+
+- **This week.** True now and false once this piece of work ends: which branch
+  to push, what is staging only, what waits on an answer. It stays under
+  `## Constraints still in force`.
+- **Standing.** True for as long as the subject exists: how something is built,
+  words that are banned, which file is generated. It moves to
+  `## Standing rules`, under a `### <area>` heading naming what it governs.
+  Moving it there is not a retirement and needs no retirement line.
+- **Done.** No longer true. Delete it and add the one `Retired this session:`
+  line, as below.
+
+A standing rule about one repository's code belongs in that repository's own
+instructions file, where every session working there reads it. Those are
+proposed together, once per wrap, as described under "A rule that outlives the
+work" below: one question listing every such rule with the file it would go
+into. A yes moves the whole batch through a pull request in that repository, on
+a branch in its own worktree, through its usual review chain. The rules stay
+under Standing rules until that pull request has merged; the next wrap after the
+merge deletes them from the handoff and names the file on the
+`**Project rules:**` header line. No answer, or a no, leaves them where they are.
 
 If two of a thread's rules read as one rule in two wordings, keep the current
 wording, delete the other, and add one `Retired this session:` line for it. For
 a thread the check is the draft, not the command, which reads the saved file
 and keeps reporting both until the save.
 
-Everything from here to the end of this step is about handoffs outside threads:
+### Outside threads only
+
+Everything from here to the end of this step is about handoffs outside threads,
+with one exception: the rules for moving a rule into a project's instructions
+file (reachability, asking first, writing it before retiring it) also govern
+the batch a thread proposes above. Nothing else below applies to a thread.
+
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js constraints
@@ -355,9 +385,29 @@ this session. Rewrite it from the version read in Step 1:
   while it still governs work;
 - replace "Verified vs assumed" with what is true now;
 - set `**Last session:**` to today's date and one line on what changed;
-- carry the constraints as Step 1 describes.
+- set `**Format:** 2` in the header;
+- carry the rules as Step 1 sorted them: this week's under
+  `## Constraints still in force`, standing ones under `## Standing rules`.
 
-A small session must not erase the rest of the subject.
+A small session must not erase the rest of the subject, and it must not add a
+dated paragraph for itself either. "What was worked on" says what the subject is
+now in two or three sentences; it is not a list of sessions. Decisions made are
+the decisions still in force; one that settled for good becomes a standing rule
+or goes. Files created or changed are this session's files only.
+
+**Measure the draft before saving it.**
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js handoff-check --file "<draft path>" --json
+```
+
+It reports words per section and flags a session log (more than one dated
+session entry), "What was worked on" over its limit, file rows dated before this
+session, a body over its limit without the two rule sections, and any section
+over its limit except Standing rules. Fix every flag in the draft, then check
+again. The check is the enforcement of "current state, not a log": a draft it
+flags is a log, whatever it was meant to be. `save` measures the same way and
+reports what it found.
 
 Write the whole document to a draft file outside `~/.planning/handoffs` (in
 Claude Code, the session's scratchpad directory; in Codex, the system temporary
@@ -375,6 +425,14 @@ Read what comes back:
 - `saved: true` (and `declared: true` for a new thread): done. Go to Step 3.
 - `saved: true` and `declared: false`: the file is written but is not a thread
   yet. Go to Step 3 and end as Step 4 says for that case.
+- `reason: "check-failed"`: the budget is enforced on this machine and the
+  draft is over it. The draft is kept. Fix what `flags` names and save again.
+  Only when a flag cannot be fixed this session, save with
+  `--accept-check "<one-line reason>"`; the reason is written into the saved
+  document's header.
+- `reason: "format-downgrade"`: the thread is already in the new shape and this
+  draft is not. That means the skill text running here is older than the
+  document. Stop and say the session plugin needs updating and a restart.
 - `reason: "conflict"`: another session saved this thread after this one read
   it. Read it again, merge this session's changes into what is there now, and
   save once more with `--base` set to the `currentRev` the refusal gave. If that
@@ -423,6 +481,8 @@ not:
 **Date:** [today's date, from the session start note]
 **Working directory:** [path]
 **Last session:** [for a thread: today's date and one line on what changed. Drop this line outside threads.]
+**Format:** [for a thread: 2. Drop this line outside threads.]
+**Project rules:** [for a thread: the project rules files its standing rules moved into, comma separated. Drop this line when there are none.]
 
 ## What was worked on
 [Two or three sentences. The subject, not the activity.]
@@ -430,6 +490,11 @@ not:
 ## Constraints still in force
 - [what governs future work, and nothing else on the line]
 - [Retired this session: the constraint quoted exactly, because the reason. Drop this line unless something was actually retired.]
+
+## Standing rules
+[Threads only. Outside threads this section is never read, so a rule put here there stops binding. Drop the section outside threads.]
+### [area the rules govern]
+- [a rule that stays true as long as the subject does]
 
 ## Decisions made
 - [Decision, and why]
@@ -496,11 +561,19 @@ guards it:
   You are editing, not appending. Placing it has a procedure, below, because
   reading and then appending anyway is the failure this step keeps having.
 - Only touch entries related to this session's work.
-- Do not remove earlier entries unless they are now resolved or wrong.
-- Never rewrite the whole thing.
-- Prefer replacing a stale line to adding a second line beside it. Two entries
+- Edit in place. Replace a stale line rather than adding a second one beside
+  it, and remove what this session showed to be resolved or wrong. Two entries
   that disagree cost more than either one alone, and the reader cannot tell
   which is current.
+- One rule is the rule plus one line of why. No story of how it was learned,
+  no dated incident, no quote unless the quote is the rule.
+- **A correction becomes a standing rule in these notes only when the user says
+  it is a rule.** A correction given about one draft, one deck or one email
+  belongs to that thread: write it into the thread's handoff, as a this-week
+  constraint or a standing rule there. Recording every correction here as a
+  permanent rule is how these notes grow until the important rules are lost
+  among the one-off ones.
+- Never rewrite the whole thing.
 
 If it returns nothing, skip this step. Do not create the directory. It belongs
 to the harness, not to this plugin.

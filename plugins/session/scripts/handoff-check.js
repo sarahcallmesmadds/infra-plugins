@@ -1,0 +1,168 @@
+// Measures a handoff draft against what a thread's document is meant to be:
+// the current state of a subject, not a log of every session that touched it.
+//
+// The wrap skill already says "current state, not a log", and thread handoffs
+// grew anyway, one dated paragraph per session stacked under "What was worked
+// on". A rule nobody measures is advice. This is the measurement, run on the
+// draft before it is saved.
+//
+// Every flag here is structural on purpose: dated paragraphs, dated headings,
+// repeated session lines, word counts, dated rows in the files table. None of
+// them reads the prose to decide what it means. Whether a constraint is still
+// true this week is a judgement, and judging language with a pattern has failed
+// in this repository every time it was tried, so that stays in the skill.
+//
+// Read-only. It never writes the draft or anything else.
+
+'use strict';
+
+const fs = require('fs');
+
+const DEFAULT_BUDGET = {
+  // Off by default: a check that refuses most real handoffs on its first day
+  // gets switched off, and then nothing measures them at all. The numbers are
+  // reported either way, so turning this on is a decision made against them.
+  enforce: false,
+  bodyWords: 1500,
+  sectionWords: 600,
+  workedOnWords: 80,
+};
+
+// The two sections that hold rules. Excluded from the body total because
+// their size is a separate question from whether the narrative has turned
+// into a log: a thread with forty standing rules is not a long handoff in the
+// sense this check is about.
+const CONSTRAINTS = 'constraints still in force';
+const STANDING = 'standing rules';
+
+const ISO = /\b(\d{4})-(\d{2})-(\d{2})\b/;
+const ISO_ALL = /\b\d{4}-\d{2}-\d{2}\b/g;
+
+function budgetFrom(config) {
+  const raw = config && typeof config === 'object' ? config : {};
+  const out = { ...DEFAULT_BUDGET };
+  if (typeof raw.enforce === 'boolean') out.enforce = raw.enforce;
+  // A number that is not a positive integer would make every section either
+  // pass or fail regardless of its size, so it is ignored, not honoured.
+  for (const k of ['bodyWords', 'sectionWords', 'workedOnWords']) {
+    if (Number.isInteger(raw[k]) && raw[k] > 0) out[k] = raw[k];
+  }
+  return out;
+}
+
+function words(text) {
+  const t = String(text || '').trim();
+  return t ? t.split(/\s+/).length : 0;
+}
+
+// Splits on level-two headings only. A `###` inside a section belongs to it:
+// the standing rules section carries its areas that way, and splitting there
+// would report each area as a section of its own.
+function sections(text) {
+  const lines = String(text).replace(/\r\n/g, '\n').split('\n');
+  const out = [{ heading: null, lines: [] }];
+  for (const line of lines) {
+    const m = /^##\s+(.+?)\s*$/.exec(line);
+    if (m && !/^###/.test(line)) out.push({ heading: m[1], lines: [] });
+    else out[out.length - 1].lines.push(line);
+  }
+  return out.map((s) => ({ heading: s.heading, body: s.lines.join('\n') }));
+}
+
+function key(heading) {
+  return String(heading || '').trim().toLowerCase();
+}
+
+// The date the handoff describes: its Last session line when it has one,
+// otherwise its Date line. Used only to tell a dated row from an older one.
+function handoffDate(text) {
+  const last = /^\*\*Last session:\*\*\s*(.*)$/mi.exec(text);
+  const fromLast = last && ISO.exec(last[1]);
+  if (fromLast) return fromLast[0];
+  const date = /^\*\*Date:\*\*\s*(.*)$/mi.exec(text);
+  const fromDate = date && ISO.exec(date[1]);
+  return fromDate ? fromDate[0] : null;
+}
+
+function paragraphs(body) {
+  return String(body).split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
+}
+
+function checkText(text, budget = DEFAULT_BUDGET) {
+  const all = sections(text);
+  const flags = [];
+  const date = handoffDate(text);
+
+  const rows = all.map((s) => ({ heading: s.heading, words: words(s.body) + (s.heading ? words(s.heading) : 0) }));
+  const total = rows.reduce((n, r) => n + r.words, 0);
+  const isRules = (h) => key(h) === CONSTRAINTS || key(h) === STANDING;
+  const body = rows.filter((r) => !isRules(r.heading)).reduce((n, r) => n + r.words, 0);
+
+  // A log, measured three ways, each of which is what a rewrite in place does
+  // not produce: two Last session lines, two dated paragraphs describing what
+  // was worked on, or two dated headings.
+  const lastLines = (String(text).match(/^\*\*Last session:\*\*/gmi) || []).length;
+  const worked = all.find((s) => key(s.heading) === 'what was worked on');
+  const datedParas = worked ? paragraphs(worked.body).filter((p) => ISO.test(p)).length : 0;
+  const datedHeadings = String(text).split(/\r?\n/)
+    .filter((l) => /^#{2,6}\s/.test(l) && ISO.test(l)).length;
+  const entries = Math.max(lastLines, datedParas, datedHeadings);
+  if (entries > 1) {
+    flags.push({
+      kind: 'log',
+      count: entries,
+      detail: `${entries} dated session entries; a thread's handoff holds the current state, so fold them into one`,
+    });
+  }
+
+  if (worked) {
+    const w = words(worked.body);
+    if (w > budget.workedOnWords) {
+      flags.push({ kind: 'worked-on-long', section: worked.heading, words: w, limit: budget.workedOnWords, detail: `"What was worked on" is ${w} words, over ${budget.workedOnWords}` });
+    }
+  }
+
+  // Only rows that carry a date older than the handoff's own are counted. A
+  // row with no date cannot be told apart, so it is not guessed at.
+  const files = all.find((s) => key(s.heading) === 'files created or changed');
+  if (files && date) {
+    const older = files.body.split('\n')
+      .filter((l) => /^\s*\|/.test(l) && !/^\s*\|[\s:|-]+\|\s*$/.test(l))
+      .filter((l) => (l.match(ISO_ALL) || []).some((d) => d < date));
+    if (older.length) {
+      flags.push({ kind: 'old-file-rows', section: files.heading, count: older.length, detail: `${older.length} row${older.length === 1 ? '' : 's'} in "Files created or changed" dated before ${date}; list this session's files only` });
+    }
+  }
+
+  if (body > budget.bodyWords) {
+    flags.push({ kind: 'body-long', words: body, limit: budget.bodyWords, detail: `the body is ${body} words without the two rule sections, over ${budget.bodyWords}` });
+  }
+
+  // Standing rules are exempt: that section is meant to hold every rule the
+  // thread keeps, and its length is measured by reading it, not by this cap.
+  for (const r of rows) {
+    if (!r.heading || key(r.heading) === STANDING) continue;
+    if (r.words > budget.sectionWords) {
+      flags.push({ kind: 'section-long', section: r.heading, words: r.words, limit: budget.sectionWords, detail: `"${r.heading}" is ${r.words} words, over ${budget.sectionWords}` });
+    }
+  }
+
+  return {
+    date,
+    total,
+    body,
+    sections: rows.filter((r) => r.heading).map((r) => ({ heading: r.heading, words: r.words })),
+    flags,
+    budget,
+  };
+}
+
+function checkFile(file, budget) {
+  let text;
+  try { text = fs.readFileSync(file, 'utf8'); } catch (e) {
+    return { ok: false, file, error: `${file} could not be read: ${e.message}` };
+  }
+  return { ok: true, file, ...checkText(text, budget) };
+}
+
+module.exports = { DEFAULT_BUDGET, budgetFrom, checkText, checkFile, sections };

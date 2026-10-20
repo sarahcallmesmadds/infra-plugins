@@ -1,5 +1,32 @@
 # session release notes
 
+## 0.10.0 — 2026-10-20
+
+A thread's handoff stays the current state of its subject instead of growing.
+
+- A thread's document has a second rule section, `## Standing rules`, grouped
+  under `### <area>` headings, for rules that last as long as the subject.
+  `## Constraints still in force` keeps this week's only. `constraints --thread`
+  returns both, labelled, plus the project rules files the thread names on its
+  `**Project rules:**` header line.
+- `**Format:** 2` in a thread's header marks the new shape. `save` refuses to
+  replace a format 2 document with a draft that lacks it (`format-downgrade`),
+  so a session running the older skill cannot drop the standing rules.
+- `cli.js handoff-check --file <draft>` measures a draft: words per section, a
+  session log, an oversize summary or section, file rows from earlier sessions.
+  `save` measures every draft the same way and reports it. With
+  `handoffBudget.enforce` on it refuses an over-budget draft (`check-failed`)
+  unless given `--accept-check "<reason>"`, which is written into the header.
+  Off by default.
+- `/wrap` sorts every rule into this week, standing or done, proposes standing
+  rules about one repository's code for that repository's instructions file as
+  one batch per wrap, and measures the draft before saving. Its memory step
+  edits in place and records a correction as a standing rule only when the user
+  says it is one.
+- `/pickup` prints this week's constraints, the standing rules and the project
+  rules files, all in full.
+- `capabilities` reports `threads: 2`, and both skills require it.
+
 ## 0.9.0 — 2026-09-25
 
 One handoff per thread, for handoffs written from the home directory.

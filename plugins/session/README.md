@@ -522,6 +522,50 @@ Before the migration, nothing changes. `constraints --thread` gives the older
 pooled answer for the handoff's own working directory, and `/wrap` writes the
 way it always has.
 
+### Standing rules, and keeping a thread short
+
+A thread rewritten in place can still grow without limit if every rule ever
+written stays in its constraints list and every session adds a paragraph about
+itself. So a thread's document has two rule sections:
+
+- `## Constraints still in force` holds this week's: true now, false once the
+  current piece of work ends.
+- `## Standing rules` holds the rules that last as long as the subject, grouped
+  under `### <area>` headings. Area headings belong here only; the constraints
+  section ends at any heading, so one written there cuts it short.
+
+`/wrap` sorts every rule into one of the two, or retires it. A standing rule
+about one repository's code is proposed, once per wrap and as one batch, for
+that repository's own instructions file, moved by a pull request on a yes, and
+then named on the thread's `**Project rules:**` header line. `/pickup` prints
+all three in full: this week's constraints, the standing rules, and the project
+rules files.
+
+A thread in this shape carries `**Format:** 2` in its header, and `save` refuses
+to replace it with a draft that lacks the line. That is the guard against a
+session still running an older skill, which writes the older shape and would
+drop every standing rule in one save.
+
+```bash
+cli.js handoff-check --file <draft>   # words per section, and what makes a draft a log
+```
+
+The check is structural: more than one dated session entry, a "What was worked
+on" over its limit, file rows dated before the handoff, a body over its limit
+without the two rule sections, and any section over its limit except standing
+rules. It does not judge whether a constraint is still true; that stays with
+the wrap. `/wrap` runs it on the draft and fixes what it flags, and `save` runs
+it again and reports the result.
+
+The budgets are set by `handoffBudget` in `~/.claude/session.config.json`
+(`bodyWords` 1500, `sectionWords` 600, `workedOnWords` 80 by default). With
+`"enforce": true`, `save` refuses a draft that is over budget unless given
+`--accept-check "<one-line reason>"`, and writes the reason into the saved
+document's header. Enforcement is off by default.
+
+The pooled answer outside threads never reads `## Standing rules`, so the
+section is for thread handoffs only.
+
 ### A project named like a thread
 
 `/pickup <name>` opens the thread, so a project whose folder has a thread's name

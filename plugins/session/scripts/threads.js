@@ -26,6 +26,7 @@ const os = require('os');
 const path = require('path');
 
 const handoffs = require('./handoffs');
+const handoffCheck = require('./handoff-check');
 const registryMod = require('./registry');
 const config = require('./config');
 const { lockLost, refreshLock } = require('./index-lock');
@@ -481,6 +482,15 @@ function threadConstraints({ slug, home = os.homedir() }) {
   }
   const { live, retired } = handoffs.bulletsIn(text);
   const constraints = live.map((c) => ({ text: c, from: declared.slug, path: declared.path }));
+  // Both lists come from the same read of the same file, so they always
+  // describe one revision; a pickup can never pair this week's constraints
+  // with another save's standing rules.
+  const standing = handoffs.standingIn(text).map((s) => ({ ...s, from: declared.slug, path: declared.path }));
+  const projectRules = handoffs.projectRulesIn(text, home).map((p) => {
+    let exists = false;
+    try { exists = fs.statSync(p).isFile(); } catch (_) { /* not there */ }
+    return { path: p, exists };
+  });
   return {
     mode: 'threads',
     kind: 'thread',
@@ -489,9 +499,12 @@ function threadConstraints({ slug, home = os.homedir() }) {
     path: declared.path,
     rev: rev(text),
     generation: reg.registry.generation,
+    format: handoffs.handoffFormat(text),
     constraints,
+    standing,
+    projectRules,
     retiredHere: retired,
-    nearDuplicates: handoffs.nearDuplicateConstraints(constraints),
+    nearDuplicates: handoffs.nearDuplicateConstraints([...constraints, ...standing]),
   };
 }
 
@@ -512,8 +525,22 @@ function refuse(reason, detail, extra = {}) {
 // Everything that can be refused is refused before anything is written, and the
 // result reports each part on its own, because "saved" and "the index knows"
 // and "declared as a thread" can each fail without the others.
+// The header line that records why a draft was saved over its check. Written
+// into the document itself, so the reason travels with the revision it
+// excused rather than living in a transcript nobody reads again.
+function withAcceptance(draft, reason) {
+  const line = `**Check accepted:** ${reason}`;
+  const lf = draft.replace(/\r\n/g, '\n');
+  const crlf = lf !== draft;
+  let out;
+  if (/^\*\*Check accepted:\*\*.*$/mi.test(lf)) out = lf.replace(/^\*\*Check accepted:\*\*.*$/mi, line);
+  else if (/^\*\*Working directory:\*\*.*$/mi.test(lf)) out = lf.replace(/^(\*\*Working directory:\*\*.*)$/mi, `$1\n${line}`);
+  else out = `${line}\n${lf}`;
+  return crlf ? out.replace(/\n/g, '\r\n') : out;
+}
+
 function saveThread({
-  slug, from, base, generation, create = false, home = os.homedir(), now = Date.now(),
+  slug, from, base, generation, create = false, home = os.homedir(), now = Date.now(), acceptCheck = null,
 }) {
   const key = String(slug || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60);
   if (!key) return refuse('bad-input', 'no thread slug given');
@@ -529,6 +556,23 @@ function saveThread({
     return refuse('draft-missing', `the draft at ${from} could not be read: ${e.message}`);
   }
   if (!draft.trim()) return refuse('draft-missing', `the draft at ${from} is empty`);
+
+  // The draft is measured before anything else touches it. When the budget is
+  // enforced and the draft is over, it is refused and kept, unless the caller
+  // gives a reason, which goes into the saved document's header. When it is
+  // not enforced the measurement still comes back, so the wrap can act on it.
+  const accept = typeof acceptCheck === 'string' ? acceptCheck.replace(/\s+/g, ' ').trim() : '';
+  if (acceptCheck !== null && acceptCheck !== undefined && !accept) {
+    return refuse('bad-input', '--accept-check needs a one-line reason', { draft: from });
+  }
+  const budget = handoffCheck.budgetFrom(config.load(home).handoffBudget);
+  const measured = handoffCheck.checkText(draft, budget);
+  if (budget.enforce && measured.flags.length && !accept) {
+    return refuse('check-failed',
+      `the draft is over its budget: ${measured.flags.map((f) => f.detail).join('; ')}`,
+      { draft: from, flags: measured.flags });
+  }
+  if (accept) draft = withAcceptance(draft, accept);
   if (!inHomeScope(draft, home)) {
     return refuse('out-of-scope',
       handoffs.handoffDir(draft)
@@ -603,6 +647,24 @@ function saveThread({
         'the thread changed since this session read it; re-read it, merge this session into it, and save again',
         { draft: from, currentRev: current, base });
     }
+    // A session still running the older skill writes the older shape, with no
+    // standing rules section, and would put that over a thread already moved
+    // to the new one, dropping every standing rule in a single save. The
+    // marker is what tells the two apart, so a draft without it cannot replace
+    // a document that has it. Checked here, under the lock and after the rev
+    // matched, so it is judged against exactly the file about to be replaced.
+    if (exists) {
+      let currentText = '';
+      try { currentText = fs.readFileSync(target, 'utf8'); } catch (_) { /* rev above already read it */ }
+      const was = handoffs.handoffFormat(currentText);
+      const now2 = handoffs.handoffFormat(draft);
+      if (was !== null && was >= 2 && !(now2 !== null && now2 >= was)) {
+        return refuse('format-downgrade',
+          `${target} is format ${was} and the draft ${now2 === null ? 'has no **Format:** line' : `is format ${now2}`}; `
+          + 'a session running the older skill cannot write over it. Update the session plugin, restart, and wrap again',
+          { draft: from });
+      }
+    }
     if (lockLost(handoffs.indexLockPath(home))) return refuse('lock-lost', 'the handoff lock was taken over', { draft: from });
 
     let written;
@@ -657,6 +719,9 @@ function saveThread({
       // recorded against another handoff, which `find` will report as a
       // conflict. Said here, at the one moment it can still be dealt with.
       indexConflict,
+      // What the draft measured, enforced or not, so a wrap that saved over
+      // budget is told so by the save itself.
+      check: { enforced: budget.enforce, body: measured.body, flags: measured.flags, accepted: accept || null },
       ...(saved ? {} : { reason: 'verify-failed', detail: 'what is on disk is not the draft', draft: from }),
       ...(create && saved && !declaredOk
         ? { reason: 'not-declared-yet', detail: `saved, but not added to the thread list; run cli.js declare ${key}` }

@@ -1221,6 +1221,63 @@ function bulletsIn(text) {
   return { live, retired };
 }
 
+// Rules a thread keeps beyond the current piece of work, under a
+// `## Standing rules` heading, grouped by `### <area>` subheadings.
+//
+// A separate section from the constraints on purpose. The constraints section
+// ends at any heading, `###` included (see bulletsIn), so area subheadings
+// written there would cut it short and drop every rule under them. Here the
+// section runs to the next heading of level one or two, and a `###` only
+// changes the area the following bullets belong to.
+//
+// Read for declared threads only. The pooled answer outside threads never
+// reads this section, so a project handoff that happens to carry one binds
+// exactly what it did before.
+function standingIn(text) {
+  const src = String(text || '').replace(/\r\n/g, '\n');
+  const m = src.match(/^#{2}\s*Standing rules\s*$([\s\S]*?)(?=^#{1,2}\s|$(?![\s\S]))/mi);
+  if (!m) return [];
+  const out = [];
+  let area = null;
+  for (const raw of m[1].split('\n')) {
+    const line = raw.trim();
+    const h = /^#{3,6}\s+(.+?)\s*$/.exec(line);
+    if (h) {
+      // A placeholder area such as `### [area]` names no area.
+      area = /^\[.*\]$/.test(h[1]) ? null : h[1];
+      continue;
+    }
+    if (!line.startsWith('- ')) continue;
+    const b = line.slice(2).trim();
+    if (!b || /^\[.*\]$/.test(b)) continue;
+    // A retirement line is a note, not a rule, in either section.
+    if (/^retired this session\s*:/i.test(b)) continue;
+    out.push({ area, text: b });
+  }
+  return out;
+}
+
+// The format a handoff declares with `**Format:** N` in its header, or null.
+// Format 2 is the shape with a standing rules section; a document without the
+// line is the older shape, which every handoff written before 0.10 is.
+function handoffFormat(text) {
+  const m = /^\*\*Format:\*\*\s*(\d+)\s*$/mi.exec(String(text || ''));
+  return m ? parseInt(m[1], 10) : null;
+}
+
+// Project rules files a thread names on a `**Project rules:**` header line,
+// comma separated, backticks allowed. These are where standing rules went
+// once they moved into a repository's own instructions, and pickup names them
+// so a rule that left the handoff does not leave the session's view with it.
+function projectRulesIn(text, home = os.homedir()) {
+  const m = /^\*\*Project rules:\*\*\s*(.+)$/mi.exec(String(text || ''));
+  if (!m) return [];
+  return m[1].split(',')
+    .map((p) => p.trim().replace(/^`+|`+$/g, '').trim())
+    .filter(Boolean)
+    .map((p) => (p === '~' ? home : (p.startsWith('~/') ? path.join(home, p.slice(2)) : p)));
+}
+
 // Bullets under the heading that are live constraints. Retirements are not
 // constraints, so they do not appear here.
 function constraintsIn(text) {
@@ -1493,6 +1550,9 @@ module.exports = {
   scopeKey,
   handoffDir,
   bulletsIn,
+  standingIn,
+  handoffFormat,
+  projectRulesIn,
   constraintsIn,
   retiredIn,
   carriedConstraints,
