@@ -274,8 +274,15 @@ function emptyBridgeSentences(prose) {
   return hits;
 }
 
+// Three or more declaratives of 8 to 14 words, within three words of each
+// other, in one paragraph. A question, not a category: over 697 documents
+// from five of the author's repositories it fired on 56, her brand voice
+// guide among them, and moved 17 readings on its own. Even sentence lengths
+// in a short run are how plain instruction prose reads; the shape is worth
+// pointing at, never worth counting. The whole-document version of the same
+// signal is uniform-rhythm, which does count.
 function nearEqualDeclarativeRun(text) {
-  let worst = 0;
+  let worst = [];
 
   for (const paragraph of proseParagraphs(text)) {
     if (paragraph.includes('`')) continue;
@@ -284,16 +291,18 @@ function nearEqualDeclarativeRun(text) {
     for (const sentence of sentencesOf(paragraph)) {
       const length = wordsIn(sentence).length;
       if (sentence.endsWith('.') && length >= 8 && length <= 14) {
-        run.push(length);
-        while (Math.max(...run) - Math.min(...run) > 3) run.shift();
-        if (run.length > worst) worst = run.length;
+        run.push({ sentence, length });
+        while (Math.max(...run.map((r) => r.length)) - Math.min(...run.map((r) => r.length)) > 3) run.shift();
+        if (run.length > worst.length) worst = run.slice();
       } else {
         run.length = 0;
       }
     }
   }
 
-  return worst >= 3 ? { count: worst } : null;
+  return worst.length >= 3
+    ? { name: 'near-equal-declarative-run', question: true, count: worst.length, hits: worst.map((r) => `"${r.sentence}"`) }
+    : null;
 }
 
 function mirroredParallelClosers(prose) {
@@ -1634,9 +1643,6 @@ function checkAll(text, config = {}) {
   }
 
   const declaratives = nearEqualDeclarativeRun(text);
-  if (declaratives) {
-    soft.push({ name: 'near-equal-declarative-run', ...declaratives });
-  }
 
   const anti = antithesis(prose);
   if (anti >= 2) soft.push({ name: 'antithesis', count: anti });
@@ -1694,7 +1700,8 @@ function checkAll(text, config = {}) {
   const reading =
     categories >= 4 ? 'strong' : categories >= 2 || standalone ? 'some' : 'little';
 
-  return { hard: hard.violations, soft, questions: structure.questions, categories, reading };
+  const questions = declaratives ? [...structure.questions, declaratives] : structure.questions;
+  return { hard: hard.violations, soft, questions, categories, reading };
 }
 
 // withoutFencedBlocks and the two markers are shared with structure.js, which

@@ -1324,16 +1324,25 @@ const NEAR_EQUAL_DECLARATIVES =
   + 'Teams learn sound judgment by seeing those choices repeated. '
   + 'Good operators explain their reasoning before the outcome is known.';
 
-check('three near-equal declaratives in one paragraph are reported',
-  softNames(NEAR_EQUAL_DECLARATIVES)
+const askedNames = (t) => (checkAll(t).questions || []).map((q) => q.name);
+
+check('three near-equal declaratives in one paragraph are asked about',
+  askedNames(NEAR_EQUAL_DECLARATIVES)
     .includes('near-equal-declarative-run'), true);
 
+check('a near-equal declarative run is a question and never counts',
+  `${softNames(NEAR_EQUAL_DECLARATIVES).includes('near-equal-declarative-run')} ${checkAll(NEAR_EQUAL_DECLARATIVES).reading}`,
+  'false little');
+
+check('the question quotes the sentences of the run',
+  (checkAll(NEAR_EQUAL_DECLARATIVES).questions.find((q) => q.name === 'near-equal-declarative-run') || { hits: [] }).hits.length, 3);
+
 check('paragraph breaks stop a declarative run',
-  softNames(NEAR_EQUAL_DECLARATIVES.replaceAll('. ', '.\n\n'))
+  askedNames(NEAR_EQUAL_DECLARATIVES.replaceAll('. ', '.\n\n'))
     .includes('near-equal-declarative-run'), false);
 
 check('technical prose with inline code is not treated as a declarative run',
-  softNames(
+  askedNames(
     'This document is the single source of truth for the bug queue entry format. '
     + 'Every skill in the build loop reads from and writes to this schema. '
     + 'When adding fields, bump `$schema_version` and update this document in the same commit.'
