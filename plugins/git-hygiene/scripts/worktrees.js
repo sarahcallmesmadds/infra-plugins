@@ -579,9 +579,11 @@ function auditRepository(repo, options = {}) {
 // treating it as a plain folder drops its worktrees from every total. The
 // folder's own `.git` entry is what tells the two apart.
 function probeRepository(candidate, deadline) {
-  let hasGitEntry = false;
-  try { fs.lstatSync(path.join(candidate, '.git')); hasGitEntry = true; }
-  catch (_) { /* no .git entry: not a repository of its own unless Git says so */ }
+  // Only a confirmed absence means no .git entry. A folder that cannot be
+  // searched (EACCES) may hide a repository, so it counts as unreadable.
+  let hasGitEntry = true;
+  try { fs.lstatSync(path.join(candidate, '.git')); }
+  catch (error) { if (error && (error.code === 'ENOENT' || error.code === 'ENOTDIR')) hasGitEntry = false; }
   const failed = hasGitEntry ? { kind: 'unreadable' } : { kind: 'none' };
   let top;
   try { top = topLevel(candidate, deadline); }

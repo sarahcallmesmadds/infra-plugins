@@ -861,6 +861,24 @@ check('configured discovery finds primary repositories without descending into w
   } finally { f.cleanup(); }
 });
 
+check('a project folder that cannot be searched is reported, not dropped', () => {
+  // Root ignores folder permissions, so the check has nothing to measure there.
+  if (typeof process.getuid === 'function' && process.getuid() === 0) return;
+  if (process.platform === 'win32') return;
+  const f = fixture();
+  const closed = path.join(f.projects, 'closed');
+  try {
+    execFileSync('git', ['init', '-q', '-b', 'main', closed]);
+    fs.chmodSync(closed, 0o000);
+    const found = worktrees.discoverRepositories([f.projects]);
+    assert.deepStrictEqual(found.repositories.map((repo) => path.resolve(repo)), [path.resolve(f.repo)]);
+    assert.deepStrictEqual(found.unreadable.map((repo) => path.resolve(repo)), [path.resolve(closed)]);
+  } finally {
+    fs.chmodSync(closed, 0o755);
+    f.cleanup();
+  }
+});
+
 check('a repository Git finds but cannot read is reported, not dropped', () => {
   const f = fixture();
   const realGit = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
