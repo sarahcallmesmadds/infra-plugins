@@ -108,7 +108,11 @@ function lineKind(raw) {
   if (/^(?:---+|\*\*\*+|___+)\s*$/.test(line)) return 'rule';
   if (/^\[\^[^\]]+\]:/.test(line)) return 'note';
   if (/^>/.test(line)) return 'quote';
-  if (BOLD_ONLY.test(line)) return 'heading';
+  // A bold line is a heading only when it is a phrase: a bold sentence,
+  // ending in sentence punctuation, is prose whether or not a blank line
+  // follows it, because a heading does not end in a period and a sentence
+  // set in bold is still a sentence the checks have to read.
+  if (BOLD_ONLY.test(line) && !/[.!?](?:\*\*|__):?\s*$/.test(line)) return 'heading';
   // A short italic line under a title is a subtitle. An italic sentence is a
   // paragraph: draft 1 of the brief that prompted this file set its event
   // logistics in italics, and reading that as a subtitle would have hidden the
@@ -220,36 +224,24 @@ function blocksOf(text) {
     // stays with the block it continues.
     if (!current && kind !== 'blank' && /^(?: {4}|\t)/.test(raw)) kind = 'blank';
     if (kind === 'continuation' && raw.startsWith('\u0001')) raw = raw.slice(1);
+    // An unindented prose line directly under a list item, no blank between,
+    // is the item wrapping (a lazy continuation), not a new paragraph.
+    if (kind === 'text' && current && current.kind === 'list') kind = 'continuation';
     if (kind === 'continuation') {
       if (current && current.kind === 'list') {
-        // The wrapped line is kept apart from the item's first line with a
-        // marker, so the item's words for matching come from the line the
-        // author wrote as the item and a long continuation cannot lift the
-        // match bar out of reach. The reviewers split on this: one that the
-        // continuation must not raise the bar, the other that two lists with
-        // the same first lines and different continuations are not the same
-        // list. The item is the line the author wrote as the item, and a
-        // list repeated with different footnotes is still the list repeated.
-        current.lines[current.lines.length - 1] += ` \u0002${raw.trim()}`;
+        // The wrapped line joins the item: a soft wrap cannot tell an
+        // item's name from its copy, so the item is its text up to the first
+        // sentence end, however many lines that takes. Three reviewers read
+        // this three ways before two of them agreed on this one.
+        current.lines[current.lines.length - 1] += ` ${raw.trim()}`;
         return;
       }
       kind = current && current.kind === 'text' ? 'text'
         : /^(?: {4}|\t)/.test(raw) ? 'blank' : 'text';
     }
-    // A bold-only line ending in sentence punctuation with prose directly
-    // under it, no blank line between, is a run-in label and its paragraph:
-    // "**Setup.**" over "Inspect the surface." is the shape the label checks
-    // exist for, and reading it as a heading hid it from them and cut a
-    // section. A bare "**Second**" over prose keeps its heading: the period
-    // is the marker that separates the two, because a heading does not end
-    // in one and a label does.
     // A bold-only line with prose directly above it, no blank between, is
     // the paragraph continuing, as CommonMark reads it; it opens nothing.
     if (kind === 'heading' && !/^\s*#/.test(raw) && !setext.has(index) && current && current.kind === 'text') {
-      kind = 'text';
-    }
-    if (kind === 'heading' && /^\s*(?:\*\*|__).*[.:!?](?:\*\*|__)\s*$/.test(raw) && !setext.has(index)
-      && index + 1 < lines.length && !underline.has(index + 1) && lineKind(lines[index + 1]) === 'text') {
       kind = 'text';
     }
     if (kind === 'blank' || kind === 'rule') {
@@ -284,10 +276,10 @@ function blocksOf(text) {
 
 function sentencesIn(paragraphText) {
   return String(paragraphText)
-    // Split after sentence punctuation before a capital, digit, quote,
-    // bracket or emphasis marker, but not after an initial or a common
-    // abbreviation: "vs. They lost" and "Mr. Smith" are one sentence.
-    .split(/(?<=(?<!\b[A-Z])(?<!\b(?:vs|Mr|Mrs|Ms|Dr|No|Jr|Sr|St|etc|e\.g|i\.e|a\.m|p\.m|U\.S|D\.C))[.!?])\s+(?=[A-Z0-9"'(\u201c\u2018*_\[`])/)
+    // Split after sentence punctuation before any non-space ("iOS removes"
+    // opens a sentence), but not after an initial or a common abbreviation:
+    // "vs. They lost" and "Mr. Smith" are one sentence.
+    .split(/(?<=(?<!\b[A-Z])(?<!\b(?:vs|Mr|Mrs|Ms|Dr|No|Jr|Sr|St|etc|e\.g|i\.e|a\.m|p\.m|U\.S|D\.C))[.!?])\s+(?=\S)/)
     .map((s) => s.trim())
     .filter(Boolean);
 }
@@ -297,7 +289,7 @@ function sentencesIn(paragraphText) {
 const STOP = new Set(('a an the and or but nor of to in on at for with from by as is are was were be been being '
   + 'it its this that these those we our ours you your yours they their theirs he she his her him them us me my i '
   + 'who whom whose which what where when how why will would can could should shall may might must do does did '
-  + 'done not no nor so if then than there here has have had having into onto over under up out about more most '
+  + 'done so if then than there here has have had having into onto over under up out about more most '
   + 'much many some any all each every both either neither one also just only very too such same own other another '
   + 'because while before after since until though although whether per via get gets got let lets like via '
   + 'way something anything nothing everything someone anyone nobody everyone').split(' '));
@@ -306,23 +298,29 @@ const STOP = new Set(('a an the and or but nor of to in on at for with from by a
 // the harmless direction: it joins words that are not the same more often
 // than it splits words that are, which errs toward reporting a restatement
 // rather than missing one, and every report here quotes its evidence.
+// A suffix comes off only when enough letters remain (five, or four for a
+// bare plural s), so "evening" is not "even", "united" is not "unit" and
+// "news" is not "new", while "scans" is still "scan".
 function stem(w) {
-  let s = w.toLowerCase();
-  if (s.length > 5 && s.endsWith('ing')) s = s.slice(0, -3);
-  else if (s.length > 4 && s.endsWith('ed')) s = s.slice(0, -2);
-  else if (s.length > 4 && s.endsWith('es')) s = s.slice(0, -2);
-  else if (s.length > 3 && s.endsWith('s') && !s.endsWith('ss')) s = s.slice(0, -1);
-  if (s.length > 4 && s.endsWith('e')) s = s.slice(0, -1);
-  return s;
+  const s = w.toLowerCase();
+  const cut = (n, floor) => (s.length - n >= floor ? s.slice(0, -n) : s);
+  let out = s;
+  if (s.endsWith('ing')) out = cut(3, 5);
+  else if (s.endsWith('ed') || s.endsWith('es')) out = cut(2, 5);
+  else if (s.endsWith('s') && !s.endsWith('ss')) out = cut(1, 4);
+  if (out.length >= 6 && out.endsWith('e')) out = out.slice(0, -1);
+  return out;
 }
 
 function contentWords(s) {
   // Contractions lose their clitic before the stop list sees them, or "don't"
   // and "it's" count as content and "Don't skip" reappears wherever "skip"
   // does.
+  // Negation is kept: "are not required" does not restate "are required".
   return wordsOf(plain(s).toLowerCase().replace(/[^a-z0-9'\s-]/g, ' '))
-    .map((w) => w.replace(/^'+|'+$/g, '').replace(/n't$|'(?:s|re|ve|ll|d|m)$/, ''))
-    .filter((w) => w.length >= 3 && !STOP.has(w))
+    .flatMap((w) => (/n't$/.test(w) ? [w.replace(/n't$/, ''), 'not'] : [w]))
+    .map((w) => w.replace(/^'+|'+$/g, '').replace(/'(?:s|re|ve|ll|d|m)$/, ''))
+    .filter((w) => (w.length >= 3 || w === 'no') && !STOP.has(w))
     .map(stem);
 }
 
@@ -347,9 +345,12 @@ function contentWords(s) {
 // placeholder the next sentence fills. A tail with its own content after it
 // ("is simple because seals shrink.") matches nothing here. "Comes down to"
 // was on the list and is not: its object is the answer ("It comes down to
-// trust."), so it names the content rather than deferring it.
+// trust."), so it names the content rather than deferring it. Nor are
+// "clear", "plain", "key" and "already there": a transparent specimen is
+// clear, a parcel is already there, and a literal reading is as common as
+// the announcing one.
 const FORWARD_TAIL = new RegExp([
-  "\\b(?:is|was|are|were|'s|seems?|sounds?)\\s+(?:also\\s+|very\\s+|quite\\s+)?(?:(?:a|an|the|some)\\s+)?(?:(?:simple|clear|obvious|straightforward|easy|plain|subtle|telling)(?:\\s+(?:fix|one|problem|point|reason|case|thing|part))?|points?|reasons?|key|hard part|catch|problems?|differences?|things?|answers?|questions?|deal|already there|worth \\w+ing(?: here| now| briefly)?|where (?:\\w+ ){1,3}(?:starts?|begins?|comes? in))[.!?]*$",
+  "\\b(?:is|was|are|were|'s|seems?|sounds?)\\s+(?:also\\s+|very\\s+|quite\\s+)?(?:(?:a|an|the|some)\\s+)?(?:(?:simple|obvious|straightforward|easy)(?:\\s+(?:fix|one|problem|point|reason|case|thing|part))?|points?|reasons?|hard part|catch|problems?|differences?|things?|answers?|questions?|deal|worth \\w+ing(?: here| now| briefly)?|where (?:\\w+ ){1,3}(?:starts?|begins?|comes? in))[.!?]*$",
   "\\bbecause of (?:what|how|who|where|when)\\b[^.!?]*[.!?]*$",
   "\\bmakes? (?:it|this|that|them|the \\w+(?: \\w+)?) (?:concrete|clear|simple|obvious|real|plain|visible)[.!?]*$",
   "\\b(?:changes?|decides?|explains?|shows?|answers?|tells? (?:you|us)) (?:who|what|how|why|where|when)\\b[^.!?]*[.!?]*$",
@@ -481,7 +482,7 @@ function tableColumns(block) {
   const body = rows.slice(1);
   const columns = [];
   for (let c = 0; c < header.length; c += 1) {
-    const cells = body.map((r) => r[c] || '').filter((cell) => contentWords(cell).length >= 2);
+    const cells = body.map((r) => (r[c] || '').split(/(?<=[.!?])\s/)[0]).filter((cell) => contentWords(cell).length >= 2);
     if (cells.length >= 3) columns.push({ label: `the table column "${header[c] || c + 1}"`, items: cells });
   }
   return columns;
@@ -489,7 +490,7 @@ function tableColumns(block) {
 
 function listItems(block) {
   const items = block.lines
-    .map((l) => plain(l.replace(/^(?:[-*+]|\d{1,3}[.)])\s+/, '').split('\u0002')[0]))
+    .map((l) => plain(l.replace(/^(?:[-*+]|\d{1,3}[.)])\s+/, '')))
     .map((l) => l.split(/(?<=[.!?])\s/)[0])
     .filter((l) => contentWords(l).length >= 2);
   return items.length >= 3 ? [{ label: `the list beginning "${items[0]}"`, items }] : [];
@@ -536,6 +537,9 @@ function reappearsAt(item, sentences, used, common) {
   for (let i = 0; i < sentences.length; i += 1) {
     if (used && used.has(i)) continue;
     const have = sentences[i].set || (sentences[i].set = new Set(sentences[i].words));
+    // Polarity has to agree: "are not required" does not say "are required"
+    // again, whatever else the two share.
+    if (have.has('not') !== words.includes('not')) continue;
     let shared = 0;
     for (const w of words) if (have.has(w)) shared += 1;
     if (shared < need) continue;
@@ -754,7 +758,7 @@ function logisticsBeforeSubject(blocks) {
     if (seen >= 6) break;
     seen += 1;
     if (b.kind === 'text' || b.kind === 'quote' || b.kind === 'subtitle' || b.kind === 'note') opening.push(b.text);
-    else if (b.kind === 'list' || b.kind === 'table') opening.push(plain(b.lines.join(' ').replace(/[|\u0002]/g, ' ')));
+    else if (b.kind === 'list' || b.kind === 'table') opening.push(plain(b.lines.join(' ').replace(/\|/g, ' ')));
   }
   if (!opening.length) return null;
   const text = opening.join(' ');

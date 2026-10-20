@@ -118,7 +118,10 @@ function formatReport(result) {
   }[result.reading];
   lines.push(verdict);
   lines.push('');
-  if (result.soft.some((finding) => finding.standalone === true)) {
+  if (result.soft.length === 0 && questions.length) {
+    lines.push('The questions above are counted against nothing, however many there are.');
+    lines.push('Answer them with the document in front of you.');
+  } else if (result.soft.some((finding) => finding.standalone === true)) {
     lines.push('This structural signal reports only after the same pattern appears twice.');
     lines.push('It can support "some" on its own, but never "strong".');
   } else {

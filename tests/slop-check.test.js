@@ -1766,9 +1766,12 @@ check('a sentence ending before emphasis is split there',
   softOf('It matters now because of what the change removes. **Nobody** designs the pace, catches what looks '
     + 'wrong or passes it along, so none of that exists until someone builds it.').includes('announce-then-explain'), true);
 check('an abbreviation does not end a sentence',
-  questionsOf('We won vs. the team that lost, and the summary names what would have moved.\n\n'
-    + 'We met Mr. Smith at the gate, and nothing leaves until a person has read the list.')
+  questionsOf('We met Mr. Smith at the gate, and nothing leaves until a person has read the list.\n\n'
+    + 'We saw Dr. Jones at noon, and the summary names what would have moved.')
     .includes('short-claim-opener'), false);
+check('a sentence may open lowercase',
+  softOf('It is simple. iOS removes the manual approval step and routes each request to the person '
+    + 'responsible for the account.').includes('announce-then-explain'), true);
 check('a sentence in a fenced block is not read',
   softOf('```\n' + ANNOUNCE + '\n```').includes('announce-then-explain'), false);
 // Found by review: plain() kept the words inside backticks, so an announcing
@@ -1830,10 +1833,6 @@ check('a definition-style list keeps its descriptions',
   softOf('# Fields\n\n## Items\n\n- owner: the person who signs the record off\n- source: the system the record came from\n'
     + '- volume: how many records arrive each week\n\n## Later\n\nEvery record names the person who signs it off, the '
     + 'system it came from and how many arrive each week.\n').includes('list-enumerated-twice'), true);
-check('a wrapped line does not lift an item out of reach of its restatement',
-  softOf('# Audit\n\n## First\n\n- Audit the system logs\n    rotate them weekly and keep ninety days\n'
-    + '- Audit the server logs\n- Audit the access logs\n\n## Second\n\nThe nightly job will audit the system logs, '
-    + 'audit the server logs and audit the access logs before the report.\n').includes('list-enumerated-twice'), true);
 check('a lone line starting with a pipe is prose',
   JSON.stringify(require(path.join(base, 'structure.js')).blocksOf('It matters now because of what the change removes.\n| and the pipe wraps here.')
     .map((b) => b.kind)), JSON.stringify(['text']));
@@ -1894,6 +1893,27 @@ check('an indented line continuing an open paragraph stays in it',
     + '    and audits the access logs before releasing the report.\n').includes('list-enumerated-twice'), true);
 // Found by review: a bare bold heading touching its paragraph lost its
 // section boundary once bold-over-prose became a label.
+check('a bold sentence on its own is prose, not a heading',
+  softOf('**The reason it matters now is simple.**\n\nThe housing was machined to the old tolerance and the '
+    + 'replacement seal was cut to a new profile, so neither fits.').includes('announce-then-explain'), true);
+check('a wrapped item is its whole text up to the first sentence end',
+  softOf('# Items\n\n- Emergency\n  contact number\n- Battery\n  charge level\n- Radio\n  channel assignment\n\n'
+    + '# Again\n\nCheck the emergency contact number, battery charge level and radio channel assignment before '
+    + 'departure.\n').includes('list-enumerated-twice'), true);
+check('a stem never shortens a word below five letters',
+  softOf('# A\n\n- News desk\n- Evening classes\n- United front\n\n# B\n\n- New desk\n- Even classes\n- Unit front\n')
+    .includes('list-enumerated-twice'), false);
+check('negation is kept',
+  softOf('# A\n\n- Permit checks are required\n- Identity checks are required\n- Safety checks are required\n\n'
+    + '# B\n\n- Permit checks are not required\n- Identity checks are not required\n- Safety checks are not required\n')
+    .includes('list-enumerated-twice'), false);
+check('a literal predicate is not an announcement',
+  softOf('It is clear. The inspector recorded the observation in the log before moving to the next item on '
+    + 'the shelf.').includes('announce-then-explain'), false);
+check('multi-sentence cells match prose by their first sentence',
+  softOf('# Items\n\n| Item |\n|---|\n| Emergency contact number? Ask dispatch. |\n| Battery charge level? Inspect '
+    + 'meter. |\n| Radio channel assignment? Read schedule. |\n\n# Again\n\nEmergency contact number? Ask dispatch. '
+    + 'Battery charge level? Inspect meter. Radio channel assignment? Read schedule.\n').includes('list-enumerated-twice'), true);
 check('a bare bold heading touching its paragraph is still a heading',
   softOf('# Audit\n\n## First\n\n- Audit the system logs\n- Audit the server logs\n- Audit the access logs\n\n'
     + '**Second**\nAudit the system logs, audit the server logs, and audit the access logs.\n')
@@ -1926,7 +1946,7 @@ check('many code spans are stripped in linear time', (() => {
 })(), true);
 check('a contraction is not a content word',
   JSON.stringify(require(path.join(base, 'structure.js')).contentWords("Don't skip, it's late")),
-  JSON.stringify(['skip', 'late']));
+  JSON.stringify(['not', 'skip', 'late']));
 check('two of four items reappearing is not enough',
   softOf(PARTS_TABLE + '\n## Why it matters\n\nAn operator asks where the records live and who reads them next, '
     + 'and leaves the rest to the build.\n').includes('list-enumerated-twice'), false);
@@ -2037,8 +2057,8 @@ check('a bold line directly under prose continues the paragraph',
   JSON.stringify(require(path.join(base, 'structure.js')).blocksOf('First sentence here.\n<!-- note -->\n**Not a heading**\nSecond sentence here.')
     .map((b) => b.kind)), JSON.stringify(['text']));
 check('"Room B2" is a room',
-  questionsOf('# Capacity planning\n\nThe session for the guests runs on 2026-10-28 in Room B2.\n')
-    .includes('logistics-before-the-subject'), true);
+  hitsOf('# Capacity planning\n\nThe session for the guests runs in Room B2.\n', 'logistics-before-the-subject')[0]
+    .includes('the room'), true);
 check('a comment dropped from above a rule does not make the prose a heading',
   JSON.stringify(require(path.join(base, 'structure.js')).blocksOf('First sentence.\n<!-- note -->\n---\n\nMore.')
     .map((b) => b.kind)), JSON.stringify(['text', 'text']));
@@ -2096,6 +2116,9 @@ check('a question prints under its own heading',
   structuralReport.includes('Worth asking about the structure, counted against nothing:'), true);
 check('...with its evidence',
   structuralReport.includes('logistics-before-the-subject: is the opening about the event'), true);
+check('a questions-only report does not call them aggregate signals',
+  runCli(['--prose'], '# Capacity planning\n\nThe session on Oct 28 is for the guests.\n')
+    .includes('counted against nothing, however many there are'), true);
 check('a report with no questions has no such heading',
   runCli(['--prose'], ANNOUNCE).includes('Worth asking about the structure'), false);
 
