@@ -21,7 +21,10 @@ A thread's handoff stays the current state of its subject instead of growing.
   `handoffBudget.enforce` on it refuses an over-budget draft (`check-failed`)
   unless given `--accept-check "<reason>"`, which is written into the header.
   Off by default.
-- `save` refuses odd shapes outright (`bad-shape`): any code fence, an indented
+- `save` refuses odd shapes outright (`bad-shape`): a `## ` section that is not
+  one of the template's nine (the reason names the one to fold it under), a
+  title that is not the first line, a header label below the header, any code
+  fence, an indented
   or malformed heading, a rule section name in any spelling but its own, any
   `## ` section twice, a heading deeper than `###` inside Standing rules, a
   rule continued onto a second line, a second `# ` title, a line break other

@@ -219,8 +219,39 @@ const SHAPES = [
   ['Last session with two spaces', 'header-line', (h) => doc(h, { rules: ['R.'], format: 2 }).replace(/(\*\*Working directory:\*\*.*)/, '$1\n**Last  session:** 2026-10-01')],
   ['bare carriage return', 'line-break', (h) => doc(h, { rules: ['R.'], format: 2, standing: { A: ['S.'] } }).replace('- S.', '- S.\r## Notes')],
   ['Unicode line separator', 'line-break', (h) => doc(h, { rules: ['R.'], format: 2, standing: { A: ['S.'] } }).replace('- S.', `- S.${String.fromCharCode(0x2028)}### B`)],
+  // Only the template's sections exist at level two.
+  ['constraints heading with a colon', 'unknown-section', (h) => doc(h, { rules: ['R.'], format: 2 }).replace('## Constraints still in force', '## Constraints still in force:')],
+  ['Standing rules with closing hashes', 'unknown-section', (h) => doc(h, { rules: ['R.'], format: 2, standing: { A: ['S.'] } }).replace('## Standing rules', '## Standing rules ##')],
+  ['Standing rules with a suffix', 'unknown-section', (h) => doc(h, { rules: ['R.'], format: 2, standing: { A: ['S.'] } }).replace('## Standing rules', '## Standing rules (draft)')],
+  ['a dated session section', 'unknown-section', (h) => doc(h, { rules: ['R.'], format: 2, extra: '\n## Export batch completed, 27 September 2026\nDone.\n' })],
+  ['worked-on heading with a colon', 'unknown-section', (h) => doc(h, { rules: ['R.'], format: 2 }).replace('## What was worked on', '## What was worked on:')],
+  ['a section name used at level three', 'rule-line', (h) => doc(h, { rules: ['R.'], format: 2 }).replace('1. Something.', '1. Something.\n\n### What was worked on\nMore.')],
+  ['a title line inside a rule section', 'extra-title', (h) => doc(h, { rules: ['R.'], format: 2, standing: { A: ['S.'] } }).replace('# Session Handoff\n', '').replace('- S.', '- S.\n# Notes\n- T.')],
+  ['no title', 'extra-title', (h) => doc(h, { rules: ['R.'], format: 2 }).replace('# Session Handoff\n', '')],
+  ['a header label in the body', 'header-line', (h) => doc(h, { rules: ['R.'], format: 2 }).replace(/\*\*Working directory:\*\*.*\n/, '').replace('1. Something.', `1. Something.\n\n## Context to reload\n**Working directory:** ${h}`)],
+  ['a bare ~ as a project rules file', 'project-rules-entry', (h) => doc(h, { rules: ['R.'], format: 2, projectRules: '~' })],
   ['Unicode paragraph separator', 'line-break', (h) => doc(h, { rules: ['R.'], format: 2 }).replace('- R.', `- R.${String.fromCharCode(0x2029)}- Q.`)],
 ];
+
+check('a section that is not in the template is told which section to fold into', () => {
+  const at = (heading) => handoffs.threadShapeProblems(doc('/x', { rules: ['R.'], format: 2, extra: `\n## ${heading}\nText.\n` }))
+    .find((p) => p.kind === 'unknown-section').detail;
+  assert.match(at('Constraints still in force, carried'), /fold it under "## Constraints still in force"/);
+  assert.match(at('Open loops and next session'), /fold it under "## Open loops"/);
+  assert.match(at('Logo comparison completed, 27 September 2026'), /fold it under "## Context to reload"/);
+  assert.match(at('Notes'), /The sections are: What was worked on, Constraints still in force, Standing rules/);
+});
+
+check('every section the wrap template writes is allowed', () => {
+  const wrap = fs.readFileSync(path.join(ROOT, 'skills', 'wrap', 'SKILL.md'), 'utf8');
+  const block = wrap.match(/```markdown\n([\s\S]*?)```/)[1];
+  const names = [...block.matchAll(/^## (.+?)\s*$/gm)].map((m) => m[1]);
+  assert.ok(names.length >= 9, names.join(', '));
+  for (const name of names) {
+    const probs = handoffs.threadShapeProblems(`# T\n**Working directory:** /x\n\n## ${name}\n`);
+    assert.ok(!probs.some((p) => p.kind === 'unknown-section' || p.kind === 'malformed-heading'), `${name}: ${JSON.stringify(probs)}`);
+  }
+});
 
 check('a Windows line ending is not a shape problem', () => {
   const text = doc('/x', { rules: ['R.'], format: 2, standing: { A: ['S.'] } }).replace(/\n/g, '\r\n');
@@ -274,6 +305,21 @@ check('a thread hand-edited to a miscased Standing rules heading still guards it
   assert.strictEqual(r.body.reason, 'standing-dropped', JSON.stringify(r.body));
   assert.deepStrictEqual(snapshot(docPath(home, 'site-thread')), before);
   const ok = save(home, 'site-thread', doc(home, { rules: ['R.'], format: 2, standing: { Deploy: ['Obtain approval.'] } }));
+  assert.strictEqual(ok.body.saved, true, JSON.stringify(ok.body));
+});
+
+check('the guard also holds for a no-break space in the heading, and a Standing rules title does not trip it', () => {
+  const home = migrated((h) => [['site-thread', doc(h)]]);
+  fs.writeFileSync(docPath(home, 'site-thread'), doc(home, { rules: ['R.'], format: 2, standing: { Deploy: ['Obtain approval.'] } })
+    .replace('## Standing rules', `## Standing${String.fromCharCode(0xa0)}rules`));
+  const before = snapshot(docPath(home, 'site-thread'));
+  const r = save(home, 'site-thread', doc(home, { rules: ['R.'], format: 2 }));
+  assert.strictEqual(r.body.reason, 'standing-dropped', JSON.stringify(r.body));
+  assert.deepStrictEqual(snapshot(docPath(home, 'site-thread')), before);
+
+  const titled = (h) => doc(h, { rules: ['R.'], format: 2 }).replace('# Session Handoff', '# Standing rules');
+  fs.writeFileSync(docPath(home, 'site-thread'), titled(home));
+  const ok = save(home, 'site-thread', titled(home));
   assert.strictEqual(ok.body.saved, true, JSON.stringify(ok.body));
 });
 

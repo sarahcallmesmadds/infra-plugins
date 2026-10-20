@@ -733,12 +733,15 @@ function saveThread({
       const retired = new Set(handoffs.retiredAnywhere(draft));
       const vanished = handoffs.standingIn(currentText)
         .filter((r) => !retired.has(handoffs.normalizeConstraint(r.text)));
-      // A file already on disk with the section heading written some other
-      // way (a hand edit; save never writes one) cannot be read exactly, so
-      // it counts as holding standing rules. Fails closed, like the format
-      // guard: the draft must carry a standing section or name the file.
-      const unreadable = /^#{1,6}[ \t]*standing[ \t]+rules[ \t]*$/im.test(currentText)
-        && !/^## Standing rules[ \t]*$/m.test(currentText);
+      // A file on disk hand-edited so its Standing rules heading is not the
+      // exact one (save never writes that) cannot be read exactly, so it
+      // counts as holding standing rules. Fails closed, like the format
+      // guard. Decided from the lines the shape check already flags, not by
+      // a second pattern: a separate regex here missed a no-break space and
+      // caught a `# Standing rules` title.
+      const curLines = String(currentText).replace(/\r\n/g, '\n').split('\n');
+      const unreadable = handoffs.threadShapeProblems(currentText)
+        .some((p) => (curLines[p.line - 1] || '').replace(/[^a-z]/gi, '').toLowerCase().includes('standingrules'));
       if ((vanished.length || unreadable) && !handoffs.standingIn(draft).length && !movedTo.length) {
         return refuse('standing-dropped',
           `${target} holds standing rules and the draft has none and names no project rules file that is there; carry them, or name the file they went to`,

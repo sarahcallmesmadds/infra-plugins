@@ -1304,17 +1304,34 @@ const ODD_BREAK = /[\r\u2028\u2029]/;
 // The two rule sections, each with one spelling.
 const RULE_SECTIONS = ['Constraints still in force', 'Standing rules'];
 const squash = (s) => s.trim().replace(/\s+/g, ' ').toLowerCase();
+// The only level-two sections a thread's handoff has: the wrap template's.
+// Allowing any name and then catching near-misses of the reserved ones drew
+// a new near-miss every review round (a trailing colon, closing hashes, a
+// suffix), each one a section whose rules no reader saw. Anything else goes
+// under a `### ` heading inside one of these.
+const TEMPLATE_SECTIONS = ['What was worked on', 'Constraints still in force', 'Standing rules', 'Decisions made',
+  'Files created or changed', 'Verified vs assumed', 'Open loops', 'Next actions', 'Context to reload'];
+const letters = (s) => String(s).replace(/[^a-z]/gi, '').toLowerCase();
+// Where a heading that is not a template section belongs: the section whose
+// name it starts with, and otherwise Context to reload.
+function foldInto(name) {
+  const l = letters(name);
+  return TEMPLATE_SECTIONS.find((t) => l.startsWith(letters(t))) || 'Context to reload';
+}
 function threadShapeProblems(text) {
   const lines = String(text || '').replace(/\r\n/g, '\n').split('\n');
   const out = [];
   const add = (kind, n, detail) => out.push({ kind, line: n, detail: `line ${n} ${detail}` });
   let inHeader = true;
   let seenTitle = false;
+  let seenText = false;
   let section = null;
   const sectionsSeen = new Set();
   const labelsSeen = new Set();
   lines.forEach((line, i) => {
     const n = i + 1;
+    const first = !seenText && line.trim() !== '';
+    if (line.trim()) seenText = true;
     if (ODD_BREAK.test(line)) { add('line-break', n, 'holds a carriage return or a Unicode line separator; end lines with a plain newline'); return; }
     if (FENCE_LINE.test(line)) { add('fence', n, 'is a code fence; a thread\'s handoff carries none, because a fenced example heading or rule reads as a real one'); return; }
     if (/^[ \t]+#{1,6}\s/.test(line)) { add('indented-heading', n, 'is a heading with spaces before it; start headings at the beginning of the line'); return; }
@@ -1324,7 +1341,10 @@ function threadShapeProblems(text) {
     if (/^#/.test(line)) {
       if (!/^#{1,6} \S/.test(line)) { add('malformed-heading', n, 'starts with # but is not a heading written as hashes, one space, then text'); return; }
       if (/^# /.test(line)) {
+        // One title, on the first line with text. A `# ` line anywhere else
+        // ends a rule section for the readers but not for this check.
         if (seenTitle) add('extra-title', n, 'is a second level-one heading; a thread\'s handoff has one title line');
+        else if (!first) add('extra-title', n, 'is a level-one heading that is not the first line; the title is the first line and comes once');
         seenTitle = true;
         return;
       }
@@ -1332,8 +1352,11 @@ function threadShapeProblems(text) {
       if (h) {
         inHeader = false;
         section = squash(h[1]);
-        const rule = RULE_SECTIONS.find((r) => r.toLowerCase() === section);
-        if (rule && h[1] !== rule) add('malformed-heading', n, `is "## ${h[1]}"; write the section name exactly as "## ${rule}"`);
+        const named = TEMPLATE_SECTIONS.find((r) => r.toLowerCase() === section);
+        if (named && h[1] !== named) add('malformed-heading', n, `is "## ${h[1]}"; write the section name exactly as "## ${named}"`);
+        else if (!named) {
+          add('unknown-section', n, `is "## ${h[1]}", which is not a section of a thread's handoff; fold it under "## ${foldInto(h[1])}" as a "### " heading or as text. The sections are: ${TEMPLATE_SECTIONS.join(', ')}`);
+        }
         // Any section twice, not only the standing one: every reader takes
         // the first and drops the rest.
         if (sectionsSeen.has(section)) add('section-repeated', n, `is a second "## ${h[1]}" heading; keep one section of each name`);
@@ -1343,8 +1366,13 @@ function threadShapeProblems(text) {
       // The two rule section names belong to level two only. A `###` with
       // either name is read by the constraints parser as its section, so its
       // bullets would bind twice.
-      if (/^#{3,6}\s+(constraints\s+still\s+in\s+force|standing\s+rules)\s*$/i.test(line)) {
-        add('rule-line', n, 'reuses a rule section name below level two; use it only as a "## " heading');
+      // A section name belongs to level two only. A `###` with a rule
+      // section's name is read by the constraints parser as its section, so
+      // its bullets would bind twice; one with another section's name is
+      // read as that section by subject display and missed by the measure.
+      const sub = /^#{3,6} (.+)$/.exec(line);
+      if (sub && TEMPLATE_SECTIONS.some((t) => letters(t) === letters(sub[1]))) {
+        add('rule-line', n, 'reuses a section name below level two; use it only as a "## " heading');
         return;
       }
       if (section === 'standing rules') {
@@ -1367,7 +1395,13 @@ function threadShapeProblems(text) {
       }
       return;
     }
-    if (!inHeader) return;
+    if (!inHeader) {
+      // Header labels live in the header only. A pooled reader searches the
+      // whole document, so one in the body can stand in for a missing one.
+      const loose = LOOSE_LABEL.exec(line);
+      if (loose) add('header-line', n, `is a **${loose[1]}:** line below the header; header lines go above the first "## " heading only`);
+      return;
+    }
     const lab = LABEL_LIKE.exec(line);
     if (!lab) {
       const loose = LOOSE_LABEL.exec(line);
@@ -1389,12 +1423,13 @@ function threadShapeProblems(text) {
     if (known === 'Format' && !/^\*\*Format:\*\* \d+\s*$/.test(line)) add('header-line', n, 'has a **Format:** value that is not a number');
     if (known === 'Project rules') {
       for (const entry of line.replace(/^\*\*Project rules:\*\* /, '').split(',').map((e) => e.trim().replace(/^`+|`+$/g, '').trim())) {
-        if (!(entry === '~' || entry.startsWith('~/') || path.isAbsolute(entry))) {
+        if (!(entry.startsWith('~/') || path.isAbsolute(entry))) {
           add('project-rules-entry', n, `names "${entry}" as a project rules file; each entry is an absolute path or starts with ~/`);
         }
       }
     }
   });
+  if (!seenTitle) add('extra-title', 1, 'is not a "# " title; a thread\'s handoff starts with one title line');
   return out;
 }
 

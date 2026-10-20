@@ -570,7 +570,13 @@ document's header. Enforcement is off by default.
 The pooled answer outside threads never reads `## Standing rules`, so the
 section is for thread handoffs only.
 
-**Shapes are refused at save (`bad-shape`), whatever the budget says:** a code
+**Shapes are refused at save (`bad-shape`), whatever the budget says:** a `## `
+section that is not one of the template's nine (What was worked on,
+Constraints still in force, Standing rules, Decisions made, Files created or
+changed, Verified vs assumed, Open loops, Next actions, Context to reload; the
+reason names the one to fold it under as a `### ` heading), a section name
+reused at a deeper level, a `# ` title that is not the first line or comes
+twice, a header label written below the header, a code
 fence anywhere in the document, a heading with spaces before it or not written
 as hashes, one space and text, `## Standing rules` or `## Constraints still in
 force` in any other spelling or case, any `## ` section twice, a heading deeper

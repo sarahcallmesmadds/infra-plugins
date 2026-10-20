@@ -386,6 +386,8 @@ this session. Rewrite it from the version read in Step 1:
 - replace "Verified vs assumed" with what is true now;
 - set `**Last session:**` to today's date and one line on what changed;
 - set `**Format:** 2` in the header;
+- use the template's `## ` sections and no others; anything else, a dated
+  session section included, folds into one of them under a `### ` heading;
 - carry the rules as Step 1 sorted them: this week's under
   `## Constraints still in force`, standing ones under `## Standing rules`.
 
@@ -435,7 +437,10 @@ Read what comes back:
   `--accept-check "<one-line reason>"`; the reason is written into the saved
   document's header.
 - `reason: "bad-shape"`: the draft has a shape every reader would get wrong: a
-  code fence anywhere, a heading with spaces before it or not written as
+  `## ` section that is not one of the template's (fold it under the section
+  the reason names, as a `### ` heading or as text), a section name reused
+  below level two, a title that is not the first line, a header label below
+  the header, a code fence anywhere, a heading with spaces before it or not written as
   hashes, one space and text, a rule section name in another spelling or case,
   any `## ` section twice, a heading deeper than `###` inside Standing rules, a
   rule continued onto a second line or a subheading inside the constraints, a
