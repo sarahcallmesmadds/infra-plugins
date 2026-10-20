@@ -1024,6 +1024,10 @@ check('the command line never prints a credential, whatever route the text took'
       });
       assert.strictEqual(prune.status, 3, prune.stderr);
       assert.ok(prune.stderr.includes('dry run failed'), `did not reach the prune dry run: ${prune.stderr}`);
+      // The hint names the dry run, never a live prune that would clear
+      // registrations nobody approved.
+      assert.ok(prune.stderr.includes('--dry-run'), prune.stderr);
+      assert.ok(!/run it (there )?by hand/.test(prune.stderr), prune.stderr);
       assert.ok(!`${prune.stdout}${prune.stderr}`.includes('prune_secret'), prune.stderr);
     } finally { fs.rmSync(bin, { recursive: true, force: true }); }
     // An unknown argument is never echoed, even a plain-looking one.
@@ -1032,6 +1036,9 @@ check('the command line never prints a credential, whatever route the text took'
     assert.notStrictEqual(badRepo.status, 0);
     assert.ok(!badRepo.stderr.includes('repo_secret'), badRepo.stderr);
     assert.ok(badRepo.stderr.includes('existing folder'), badRepo.stderr);
+    // A configured audit ignores --repo, so a stale one must not stop it.
+    const configured = spawnSync(process.execPath, [engine, 'audit', '--all-configured', '--repo', path.join(home, 'gone')], { encoding: 'utf8', env });
+    assert.ok(!configured.stderr.includes('existing folder'), configured.stderr);
     const bad = spawnSync(process.execPath, [engine, 'audit', 'arg_secret123'], { encoding: 'utf8', env });
     assert.notStrictEqual(bad.status, 0);
     assert.ok(!bad.stderr.includes('arg_secret123'), bad.stderr);

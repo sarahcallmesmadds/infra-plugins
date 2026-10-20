@@ -21,8 +21,10 @@ or a registration is missing, without changing anything. With no setting, the
 skill still reports on the current repository.
 
 When a Git step fails, the message names the step, the folder and how it ended,
-not Git's own text, because Git can echo a remote URL with a token in it. Run
-the step by hand in that folder to see Git's message. For the same reason a
+not Git's own text, because Git can echo a remote URL with a token in it. It
+points at `git status` and `git worktree list` (or, for prune, the dry run)
+rather than at rerunning the step, which would skip the checks. For the same
+reason a
 worktree locked by something else shows as `locked`, without its lock note.
 
 ## 0.4.2 — 2026-10-19

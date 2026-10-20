@@ -34,8 +34,10 @@ const ACTIVE_LOCK_REASON = 'git-hygiene: active agent work';
 // own stderr or the full argument list. Git echoes remote URLs, and a URL can
 // carry a token; recognising every credential inside arbitrary text took four
 // review rounds and still missed forms, so that text is not printed at all.
-// The hint sends whoever is fixing a failed cleanup to run the step by hand.
-function describeFailure(file, args, result) {
+// The hint never says to rerun the step: for remove, move or prune that would
+// change the repository by hand, past every check this script makes. It
+// points at read-only commands instead, or at a caller's own safe command.
+function describeFailure(file, args, result, hint) {
   let where = null;
   let rest = args;
   if (file === 'git' && args[0] === '-C') { where = args[1]; rest = args.slice(2); }
@@ -47,9 +49,8 @@ function describeFailure(file, args, result) {
   else if (result.signal) how = `was stopped by ${result.signal}`;
   else if (result.status === null) how = 'did not run';
   else how = `exited ${result.status}`;
-  return where
-    ? `${step} ${how} in ${where}; run it there by hand to see its own message`
-    : `${step} ${how}; run it by hand to see its own message`;
+  const look = hint || 'git status and git worktree list show the current state';
+  return `${step} ${how}${where ? ` in ${where}` : ''}; ${look}`;
 }
 
 // The message to show for any caught error. A Node system error (from mkdir,
@@ -734,7 +735,8 @@ function pruneCandidates(repository) {
     timeout: MUTATION_TIMEOUT_MS,
   });
   if (result.status !== 0 || result.error) {
-    throw new Error(`refusing prune: the dry run failed (${describeFailure('git', ['-C', repository, 'worktree', 'prune'], result)})`);
+    throw new Error(`refusing prune: the dry run failed (${describeFailure('git', ['-C', repository, 'worktree', 'prune'], result,
+      'git worktree prune --dry-run --verbose --expire now shows what it would clear, without clearing it')})`);
   }
   const out = `${result.stdout || ''}\n${result.stderr || ''}`;
   const admin = path.join(commonDir(repository), 'worktrees');
@@ -1067,7 +1069,9 @@ function main() {
   try {
     // --repo reaches `git -C` and is printed when a step fails, so it must be
     // a folder that exists: then it is a path, never pasted text.
-    if (args.repo !== undefined) {
+    // Only where --repo is used: a configured audit ignores it, so a stale
+    // folder there must not stop the audit.
+    if (args.repo !== undefined && !(args.command === 'audit' && args.allConfigured)) {
       let isFolder = false;
       try { isFolder = fs.statSync(args.repo).isDirectory(); } catch (_) { isFolder = false; }
       if (!isFolder) throw new Error('--repo must name an existing folder');
