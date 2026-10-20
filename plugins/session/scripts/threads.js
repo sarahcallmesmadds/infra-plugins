@@ -486,11 +486,7 @@ function threadConstraints({ slug, home = os.homedir() }) {
   // describe one revision; a pickup can never pair this week's constraints
   // with another save's standing rules.
   const standing = handoffs.standingIn(text).map((s) => ({ ...s, from: declared.slug, path: declared.path }));
-  const projectRules = handoffs.projectRulesIn(text, home).map((p) => {
-    let exists = false;
-    try { exists = fs.statSync(p).isFile(); } catch (_) { /* not there */ }
-    return { path: p, exists };
-  });
+  const projectRules = handoffs.projectRulesIn(text, home).map(projectRuleState);
   return {
     mode: 'threads',
     kind: 'thread',
@@ -512,6 +508,16 @@ function threadConstraints({ slug, home = os.homedir() }) {
 
 function refuse(reason, detail, extra = {}) {
   return { saved: false, declared: false, indexUpdated: false, reason, detail, ...extra };
+}
+
+// Whether a project rules entry names a file that is there. A relative entry
+// is reported as such and never looked up, because it would be found or not
+// depending on the folder the command ran in.
+function projectRuleState(p) {
+  if (!path.isAbsolute(p)) return { path: p, exists: false, relative: true };
+  let exists = false;
+  try { exists = fs.statSync(p).isFile(); } catch (_) { /* not there */ }
+  return { path: p, exists };
 }
 
 // The header line that records why a draft was saved over its check. Written
@@ -541,6 +547,10 @@ function withAcceptance(draft, reason) {
 // Everything that can be refused is refused before anything is written, and the
 // result reports each part on its own, because "saved" and "the index knows"
 // and "declared as a thread" can each fail without the others.
+function withoutAcceptance(draft) {
+  return draft.replace(/^\*\*Check accepted:\*\*.*(\r?\n|$)/gmi, '');
+}
+
 function saveThread({
   slug, from, base, generation, create = false, home = os.homedir(), now = Date.now(), acceptCheck = null,
 }) {
@@ -596,7 +606,12 @@ function saveThread({
       `the draft is over its budget: ${measured.flags.map((f) => f.detail).join('; ')}`,
       { draft: from, flags: measured.flags });
   }
-  if (accept) draft = withAcceptance(draft, accept);
+  // An acceptance describes the revision it excused. Written only when there
+  // is something to excuse, and a line carried over from an earlier save is
+  // dropped, so the header never shows a reason for a problem the document no
+  // longer has.
+  const accepted = Boolean(accept && measured.flags.length);
+  draft = accepted ? withAcceptance(draft, accept) : withoutAcceptance(draft);
 
   return handoffs.mutateIndex(home, (index, saveIndex) => {
     // Everything checked again under the lock, because every answer above was
@@ -677,10 +692,13 @@ function saveThread({
       // loses every standing rule, naming no project file they moved to, is
       // the same loss by another route, and a rule leaving by omission is the
       // one thing a retirement line exists to prevent.
-      if (was !== null && was >= 2 && handoffs.standingIn(currentText).length
-        && !handoffs.standingIn(draft).length && !handoffs.projectRulesIn(draft, home).length) {
+      // Judged on the rules, not the marker: a document can carry a standing
+      // section without the line, and its rules bind all the same. The way out
+      // is a project rules file that is really there.
+      const movedTo = handoffs.projectRulesIn(draft, home).map(projectRuleState).filter((p) => p.exists);
+      if (handoffs.standingIn(currentText).length && !handoffs.standingIn(draft).length && !movedTo.length) {
         return refuse('standing-dropped',
-          `${target} holds standing rules and the draft has none and names no project rules file; carry them, or say where they went`,
+          `${target} holds standing rules and the draft has none and names no project rules file that is there; carry them, or name the file they went to`,
           { draft: from });
       }
     }
@@ -740,7 +758,7 @@ function saveThread({
       indexConflict,
       // What the draft measured, enforced or not, so a wrap that saved over
       // budget is told so by the save itself.
-      check: { enforced: budget.enforce, body: measured.body, flags: measured.flags, accepted: accept || null },
+      check: { enforced: budget.enforce, body: measured.body, flags: measured.flags, accepted: accepted ? accept : null },
       ...(saved ? {} : { reason: 'verify-failed', detail: 'what is on disk is not the draft', draft: from }),
       ...(create && saved && !declaredOk
         ? { reason: 'not-declared-yet', detail: `saved, but not added to the thread list; run cli.js declare ${key}` }

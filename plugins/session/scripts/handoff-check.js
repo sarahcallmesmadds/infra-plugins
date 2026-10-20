@@ -18,7 +18,7 @@
 
 const fs = require('fs');
 
-const { withoutFences } = require('./handoffs');
+const { withoutFences, headerOf } = require('./handoffs');
 
 const DEFAULT_BUDGET = {
   // Off by default: a check that refuses most real handoffs on its first day
@@ -91,10 +91,13 @@ function key(heading) {
 // The date the handoff describes: its Last session line when it has one,
 // otherwise its Date line. Used only to tell a dated row from an older one.
 function handoffDate(text) {
-  const last = /^\*\*Last session:\*\*\s*(.*)$/mi.exec(text);
+  // From the header only, fences blanked, like the other header readers: an
+  // example date further down made every real dated paragraph look future.
+  const head = headerOf(text);
+  const last = /^\*\*Last session:\*\*\s*(.*)$/mi.exec(head);
   const fromLast = last && ISO.exec(last[1]);
   if (fromLast) return fromLast[0];
-  const date = /^\*\*Date:\*\*\s*(.*)$/mi.exec(text);
+  const date = /^\*\*Date:\*\*\s*(.*)$/mi.exec(head);
   const fromDate = date && ISO.exec(date[1]);
   return fromDate ? fromDate[0] : null;
 }
@@ -122,7 +125,12 @@ function checkText(text, budget = DEFAULT_BUDGET) {
   const past = (s) => (s.match(ISO_ALL) || []).some((d) => !date || d <= date);
   const lastLines = (bare.match(/^\*\*Last session:\*\*/gmi) || []).length;
   const worked = all.find((s) => key(s.heading) === 'what was worked on');
-  const datedParas = worked ? paragraphs(withoutFences(worked.body)).filter(past).length : 0;
+  // Distinct dates, not paragraphs: one session told in two paragraphs that
+  // both name today is one entry. A log carries a different date per session.
+  const pastDates = (p) => (p.match(ISO_ALL) || []).filter((d) => !date || d <= date);
+  const datedParas = worked
+    ? new Set(paragraphs(withoutFences(worked.body)).filter(past).map((p) => pastDates(p)[0])).size
+    : 0;
   const datedHeadings = bare.split('\n')
     .filter((l) => /^#{2,6}\s/.test(l) && past(l)).length;
   const entries = Math.max(lastLines, datedParas, datedHeadings);

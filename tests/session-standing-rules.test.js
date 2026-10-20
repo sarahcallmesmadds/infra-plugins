@@ -174,6 +174,17 @@ check('the format marker counts only as a real header line', () => {
   assert.strictEqual(handoffs.handoffFormat('# H\n**Format:**\n2\n'), null, 'the value was read from the next line');
 });
 
+check('a tab before three backticks is not a fence, so the rules after it are read', () => {
+  const text = '## Standing rules\n- Keep one.\n\t```\n- Keep two.\n\n## Next actions\n';
+  assert.deepStrictEqual(handoffs.standingIn(text).map((r) => r.text), ['Keep one.', 'Keep two.']);
+});
+
+check('the marker lines count only in the header, not as body text', () => {
+  const text = '# H\n**Working directory:** /x\n\n## Notes\n**Format:** 2\n**Project rules:** /r/CLAUDE.md\n';
+  assert.strictEqual(handoffs.handoffFormat(text), null);
+  assert.deepStrictEqual(handoffs.projectRulesIn(text, '/h'), []);
+});
+
 check('an empty project rules line names no file', () => {
   assert.deepStrictEqual(handoffs.projectRulesIn('**Project rules:**\n\n## What was worked on\n', '/h'), []);
 });
@@ -225,9 +236,45 @@ check('a draft that keeps the marker and drops every standing rule is refused', 
   const r = save(home, 'brand-thread', doc(home, { rules: ['R.'], format: 2 }));
   assert.strictEqual(r.body.reason, 'standing-dropped', JSON.stringify(r.body));
   assert.deepStrictEqual(snapshot(docPath(home, 'brand-thread')), before);
-  // Naming where they went is the legitimate route, and it saves.
-  const moved = save(home, 'brand-thread', doc(home, { rules: ['R.'], format: 2, projectRules: '/repo/CLAUDE.md' }));
+  // Naming a file that is not there, or a relative one, is not where they
+  // went; naming one that is there is the legitimate route, and it saves.
+  assert.strictEqual(save(home, 'brand-thread', doc(home, { rules: ['R.'], format: 2, projectRules: '/no/such/CLAUDE.md' })).body.reason, 'standing-dropped');
+  assert.strictEqual(save(home, 'brand-thread', doc(home, { rules: ['R.'], format: 2, projectRules: 'repo/CLAUDE.md' })).body.reason, 'standing-dropped');
+  const rules = path.join(home, 'repo', 'CLAUDE.md');
+  fs.mkdirSync(path.dirname(rules), { recursive: true });
+  fs.writeFileSync(rules, '# rules');
+  const moved = save(home, 'brand-thread', doc(home, { rules: ['R.'], format: 2, projectRules: rules }));
   assert.strictEqual(moved.body.saved, true, JSON.stringify(moved.body));
+});
+
+check('dropping every standing rule is refused even where the document has no marker', () => {
+  // The rules bind whether or not the line is there, so the guard follows the
+  // rules, not the line.
+  const home = migrated((h) => [['brand-thread', doc(h)]]);
+  fs.writeFileSync(docPath(home, 'brand-thread'), doc(home, { rules: ['R.'], standing: { Look: ['S.'] } }));
+  assert.strictEqual(save(home, 'brand-thread', doc(home, { rules: ['R.'] })).body.reason, 'standing-dropped');
+});
+
+check('a relative project rules entry is reported, never looked up', () => {
+  const home = migrated((h) => [['site-thread', doc(h, { format: 2, projectRules: 'repo/CLAUDE.md' })]]);
+  const r = json(home, ['constraints', '--thread', 'site-thread']).body;
+  assert.deepStrictEqual(r.projectRules, [{ path: 'repo/CLAUDE.md', exists: false, relative: true }]);
+  assert.match(run(home, ['constraints', '--thread', 'site-thread']).stdout, /NOT AN ABSOLUTE PATH/);
+});
+
+check('an acceptance is written only when something was excused, and goes once the draft is clean', () => {
+  const home = migrated((h) => [['site-thread', doc(h)]]);
+  fs.writeFileSync(docPath(home, 'site-thread'), doc(home, { rules: ['R.'], format: 2 }));
+  assert.strictEqual(save(home, 'site-thread', logShaped(home), ['--accept-check', 'next session']).body.saved, true);
+  assert.match(fs.readFileSync(docPath(home, 'site-thread'), 'utf8'), /\*\*Check accepted:\*\*/);
+  // A clean draft that still carries the old line has it dropped.
+  const clean = doc(home, { rules: ['R.'], format: 2 }).replace(/(\*\*Working directory:\*\*.*)/, '$1\n**Check accepted:** next session');
+  assert.strictEqual(save(home, 'site-thread', clean).body.saved, true);
+  assert.doesNotMatch(fs.readFileSync(docPath(home, 'site-thread'), 'utf8'), /Check accepted/);
+  // A reason given for a clean draft excuses nothing and is not written.
+  const r = save(home, 'site-thread', doc(home, { rules: ['R.', 'Q.'], format: 2 }), ['--accept-check', 'nothing to excuse']);
+  assert.strictEqual(r.body.check.accepted, null);
+  assert.doesNotMatch(fs.readFileSync(docPath(home, 'site-thread'), 'utf8'), /Check accepted/);
 });
 
 check('a marker shown in a fenced example does not get an older draft past the guard', () => {
@@ -300,6 +347,23 @@ check('dates still to come are a plan, not a log', () => {
   const worked = 'The launch is set for 2026-11-05.\n\nThe review follows on 2026-11-12.';
   const r = json(home, ['handoff-check', '--file', draft(home, doc(home, { rules: ['R.'], worked }))]).body;
   assert.ok(!r.flags.some((f) => f.kind === 'log'), JSON.stringify(r.flags));
+});
+
+check('one session told in two paragraphs dated today is not a log', () => {
+  const home = tmpHome();
+  const worked = 'Rebuilt the page on 2026-10-01.\n\nThen reviewed it, also 2026-10-01.';
+  const r = json(home, ['handoff-check', '--file', draft(home, doc(home, { rules: ['R.'], worked }))]).body;
+  assert.ok(!r.flags.some((f) => f.kind === 'log'), JSON.stringify(r.flags));
+});
+
+check('a fenced example date does not move the handoff date', () => {
+  // With no real Date line, a fenced one made every real entry look future.
+  const home = tmpHome();
+  const worked = 'Round one, 2026-09-01.\n\nRound two, 2026-09-08.';
+  const text = doc(home, { rules: ['R.'], worked }).replace(/^\*\*Date:\*\*.*\n/m, '')
+    + '\n```\n**Date:** 2020-01-01\n```\n';
+  const r = json(home, ['handoff-check', '--file', draft(home, text)]).body;
+  assert.ok(r.flags.some((f) => f.kind === 'log'), JSON.stringify(r.flags));
 });
 
 check('a dated filename is not an old row', () => {

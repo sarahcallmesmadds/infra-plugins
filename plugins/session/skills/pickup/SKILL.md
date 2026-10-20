@@ -185,7 +185,7 @@ Resuming from: {path}
 {this week's constraints, every one, verbatim, with the document each one names}
 
 **Standing rules:**
-{every standing rule, verbatim, under its area}
+{every standing rule, verbatim, under its area; rules written before any area heading under General}
 
 **Project rules files:**
 {each path, and that it governs work in that repository}

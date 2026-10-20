@@ -176,7 +176,7 @@ function printThreadConstraints(opts, t) {
   }
   if (projectRules.length) {
     lines.push('', 'Project rules files this thread names, which govern work in their repositories:',
-      ...projectRules.map((p) => `  ${p.path}${p.exists ? '' : '  (NOT THERE)'}`));
+      ...projectRules.map((p) => `  ${p.path}${p.relative ? '  (NOT AN ABSOLUTE PATH, so not looked up)' : (p.exists ? '' : '  (NOT THERE)')}`));
   }
   return emit(opts, {}, lines);
 }
