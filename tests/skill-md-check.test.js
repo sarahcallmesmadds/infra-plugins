@@ -175,8 +175,18 @@ check('the optional-type explanation does not embed a repository count', () => {
   const readme = fs.readFileSync(path.join(PLUGINS, 'build-loop', 'README.md'), 'utf8');
   assert.match(hook, /optional because valid installed skills do not all set it/i);
   assert.match(readme, /does not embed the current repository inventory/i);
-  assert.doesNotMatch(hook, /\d+ of the \d+ skills/);
-  assert.doesNotMatch(readme, /\d+ of the \d+ skills/);
+  // Counts have been written both ways here ("11 of the 24", "Eight of the
+  // twenty-one"), so a digits-only pattern lets the spelled-out form back in.
+  const units = 'one|two|three|four|five|six|seven|eight|nine';
+  const number = `(?:\\d+|(?:twenty|thirty|forty|fifty)(?:-(?:${units}))?|${units}|ten|eleven|twelve|`
+    + 'thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen)';
+  const count = new RegExp(`\\b${number} of the ${number} skills\\b`, 'i');
+  const header = fs.readFileSync(__filename, 'utf8').split("'use strict';")[0];
+  for (const [name, text] of [['hook', hook], ['README', readme], ['test header', header]]) {
+    assert.doesNotMatch(text, count, `${name} quotes a skill count`);
+  }
+  assert.match('Eight of the twenty-one skills', count);
+  assert.match('11 of the 24 skills', count);
 });
 
 // --- against the real repository -------------------------------------------
