@@ -6,9 +6,10 @@
 // The hook was adapted from an earlier implementation. Two deliberate changes
 // define this repository's contract.
 //
-// 1. The original required `type: human|agent`. Eight of the twenty-one skills
-//    in this repository do not set it, so requiring it would report eight files
-//    that are fine. Here it is validated when present and never required.
+// 1. The original required `type: human|agent`. Valid skills in this
+//    repository do not all set it, so requiring it would report files that are
+//    fine. Here it is validated when present and never required. No count is
+//    quoted, because any count goes stale the next time a skill is added.
 //
 // 2. The original did not compare the frontmatter name against the directory.
 //    That is the fault this repository keeps hitting: /audit-deps carries a
@@ -169,25 +170,28 @@ check('type is validated when present and not required when absent', () => {
   assert.match(bad.hookSpecificOutput.additionalContext, /type: huamn/);
 });
 
-check('the documented type counts match the repository inventory', () => {
-  const files = [];
-  for (const plugin of fs.readdirSync(PLUGINS)) {
-    const skills = path.join(PLUGINS, plugin, 'skills');
-    if (!fs.existsSync(skills)) continue;
-    for (const name of fs.readdirSync(skills)) {
-      const file = path.join(skills, name, 'SKILL.md');
-      if (fs.existsSync(file)) files.push(file);
-    }
-  }
-  const withoutType = files.filter((file) => !/^type:\s*(human|agent)\s*$/m.test(fs.readFileSync(file, 'utf8')));
-  const claim = `${withoutType.length} of the ${files.length} skills`;
-  const affectedFiles = `${withoutType.length} files that are fine`;
+check('the optional-type explanation does not embed a repository count', () => {
   const hook = fs.readFileSync(HOOK, 'utf8');
   const readme = fs.readFileSync(path.join(PLUGINS, 'build-loop', 'README.md'), 'utf8');
-  assert.ok(hook.includes(claim), `hook does not contain the current count: ${claim}`);
-  assert.ok(hook.includes(affectedFiles), `hook does not contain the current unaffected-file count: ${affectedFiles}`);
-  assert.ok(readme.includes(claim), `README does not contain the current count: ${claim}`);
-  assert.ok(readme.includes(affectedFiles), `README does not contain the current unaffected-file count: ${affectedFiles}`);
+  assert.match(hook, /optional because valid installed skills do not all set it/i);
+  assert.match(readme, /does not embed the current repository inventory/i);
+  // Counts have been written both ways here ("11 of the 24", "Eight of the
+  // twenty-one"), so a digits-only pattern lets the spelled-out form back in.
+  const units = 'one|two|three|four|five|six|seven|eight|nine';
+  const tens = 'twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety';
+  const number = `(?:\\d+|(?:${tens})(?:[-\\u2013\\s]?(?:${units}))?|zero|${units}|ten|eleven|twelve|`
+    + 'thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen)';
+  const count = new RegExp(`\\b${number} of the ${number} skills\\b`, 'i');
+  const header = fs.readFileSync(__filename, 'utf8').split("'use strict';")[0];
+  for (const [name, text] of [['hook', hook], ['README', readme], ['test header', header]]) {
+    assert.doesNotMatch(text, count, `${name} quotes a skill count`);
+  }
+  for (const sample of ['Eight of the twenty-one skills', '11 of the 24 skills', 'five of the twenty one skills',
+    'five of the twenty–one skills', 'five of the twentyone skills', 'Zero of the nine skills',
+    'Sixty of the seventy skills']) {
+    assert.match(sample, count, sample);
+  }
+  assert.doesNotMatch('none of the five skills', count);
 });
 
 // --- against the real repository -------------------------------------------
