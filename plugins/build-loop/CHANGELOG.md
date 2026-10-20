@@ -3,6 +3,12 @@
 Upgrade notes for past versions, moved out of the README so that file says what
 the plugin is and how to use it. Nothing here is needed to install or run it.
 
+## Upgrading to 0.10.22
+
+**The `SKILL.md` check now quotes the current repository skill count.** The
+Git Hygiene worktree setup skill increased the total by one; the check's
+explanation and this README now say 11 of 25 skills omit `type:`.
+
 ## Upgrading to 0.10.21
 
 **The skill count quoted by the `SKILL.md` check now reads 24.** Nothing to

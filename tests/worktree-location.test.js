@@ -249,6 +249,145 @@ check('loads only an absolute worktree policy nested inside the project root', (
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
+check('configures the user-owned policy without replacing unrelated settings', () => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'worktree-configure-')));
+  try {
+    const home = path.join(root, 'home');
+    const project = path.join(root, 'Projects');
+    const configDir = path.join(home, '.claude');
+    const configFile = path.join(configDir, 'git-hygiene.config.json');
+    const linkedConfig = path.join(root, 'dotfiles', 'git-hygiene.config.json');
+    fs.mkdirSync(project, { recursive: true });
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.mkdirSync(path.dirname(linkedConfig), { recursive: true });
+    fs.writeFileSync(linkedConfig, JSON.stringify({ branchCleanup: { staleAfterDays: 30 } }));
+    fs.symlinkSync(linkedConfig, configFile);
+    const script = path.resolve(__dirname, '../plugins/git-hygiene/scripts/configure-worktree-location.js');
+    const env = { ...process.env, HOME: home };
+    const args = ['--project-root', project, '--worktree-root', path.join(project, 'Worktrees')];
+    const configured = spawnSync(process.execPath, [script, ...args], { env, encoding: 'utf8' });
+    assert.strictEqual(configured.status, 0, configured.stderr);
+    assert.ok(fs.lstatSync(configFile).isSymbolicLink());
+    assert.deepStrictEqual(JSON.parse(fs.readFileSync(configFile, 'utf8')), {
+      branchCleanup: { staleAfterDays: 30 },
+      worktreeLocation: { projectRoot: project, worktreeRoot: path.join(project, 'Worktrees') },
+    });
+
+    const original = fs.readFileSync(configFile, 'utf8');
+    const newWorktreeRoot = path.join(project, 'TeamWorktrees');
+    const replacementArgs = ['--project-root', project, '--worktree-root', newWorktreeRoot];
+    const refused = spawnSync(process.execPath, [script, ...replacementArgs], { env, encoding: 'utf8' });
+    assert.strictEqual(refused.status, 1);
+    assert.strictEqual(fs.readFileSync(configFile, 'utf8'), original);
+
+    const replacement = spawnSync(process.execPath, [script, ...replacementArgs, '--replace-existing'], { env, encoding: 'utf8' });
+    assert.strictEqual(replacement.status, 0, replacement.stderr);
+    assert.deepStrictEqual(JSON.parse(fs.readFileSync(configFile, 'utf8')), {
+      branchCleanup: { staleAfterDays: 30 },
+      worktreeLocation: { projectRoot: project, worktreeRoot: newWorktreeRoot },
+    });
+    assert.ok(replacement.stdout.includes('Configured worktreeLocation'));
+
+    const shown = spawnSync(process.execPath, [script, '--show'], { env, encoding: 'utf8' });
+    assert.strictEqual(shown.status, 0, shown.stderr);
+    assert.strictEqual(JSON.parse(shown.stdout).configured, true);
+
+    const afterReplace = fs.readFileSync(configFile, 'utf8');
+    const outside = spawnSync(process.execPath, [script, '--project-root', project,
+      '--worktree-root', path.join(root, 'Outside'), '--replace-existing'], { env, encoding: 'utf8' });
+    assert.strictEqual(outside.status, 1);
+    assert.strictEqual(fs.readFileSync(configFile, 'utf8'), afterReplace);
+
+    const external = path.join(root, 'External');
+    fs.mkdirSync(external, { recursive: true });
+    fs.symlinkSync(external, path.join(project, 'link'));
+    const symlinkEscape = `${project}${path.sep}link${path.sep}..${path.sep}Worktrees`;
+    const escaped = spawnSync(process.execPath, [script, '--project-root', project,
+      '--worktree-root', symlinkEscape, '--replace-existing'], { env, encoding: 'utf8' });
+    assert.strictEqual(escaped.status, 1);
+    assert.strictEqual(fs.readFileSync(configFile, 'utf8'), afterReplace);
+
+    const redirected = path.join(root, 'External', 'nested');
+    fs.mkdirSync(redirected, { recursive: true });
+    fs.symlinkSync(redirected, path.join(project, 'redirect'));
+    fs.symlinkSync(`redirect${path.sep}..${path.sep}Worktrees`, path.join(project, 'dangling-link'));
+    const danglingSymlinkEscape = spawnSync(process.execPath, [script, '--project-root', project,
+      '--worktree-root', path.join(project, 'dangling-link'), '--replace-existing'], { env, encoding: 'utf8' });
+    assert.strictEqual(danglingSymlinkEscape.status, 1);
+    assert.strictEqual(fs.readFileSync(configFile, 'utf8'), afterReplace);
+
+    const fileComponent = path.join(project, 'not-a-directory');
+    fs.writeFileSync(fileComponent, 'file');
+    const beneathFile = spawnSync(process.execPath, [script, '--project-root', project,
+      '--worktree-root', path.join(fileComponent, 'Worktrees'), '--replace-existing'], { env, encoding: 'utf8' });
+    assert.strictEqual(beneathFile.status, 1);
+    assert.strictEqual(fs.readFileSync(configFile, 'utf8'), afterReplace);
+
+    const parentOfFile = `${fileComponent}${path.sep}..${path.sep}Worktrees`;
+    const nonDirectoryParent = spawnSync(process.execPath, [script, '--project-root', project,
+      '--worktree-root', parentOfFile, '--replace-existing'], { env, encoding: 'utf8' });
+    assert.strictEqual(nonDirectoryParent.status, 1);
+    assert.strictEqual(fs.readFileSync(configFile, 'utf8'), afterReplace);
+
+    const fileRoot = path.join(project, 'a-file');
+    fs.writeFileSync(fileRoot, 'file');
+    const regularFile = spawnSync(process.execPath, [script, '--project-root', project,
+      '--worktree-root', fileRoot, '--replace-existing'], { env, encoding: 'utf8' });
+    assert.strictEqual(regularFile.status, 1);
+    assert.strictEqual(fs.readFileSync(configFile, 'utf8'), afterReplace);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+check('keeps trailing spaces in configured root paths consistent with the hook', () => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'worktree-space-path-')));
+  try {
+    const home = path.join(root, 'home');
+    const project = path.join(root, 'Projects ');
+    fs.mkdirSync(project, { recursive: true });
+    const script = path.resolve(__dirname, '../plugins/git-hygiene/scripts/configure-worktree-location.js');
+    const env = { ...process.env, HOME: home };
+    const configured = spawnSync(process.execPath, [script, '--project-root', project,
+      '--worktree-root', path.join(project, 'Worktrees')], { env, encoding: 'utf8' });
+    assert.strictEqual(configured.status, 0, configured.stderr);
+    const hook = path.resolve(__dirname, '../plugins/git-hygiene/scripts/worktree-location.js');
+    const loaded = spawnSync(process.execPath, ['-e', `process.stdout.write(JSON.stringify(require(${JSON.stringify(hook)}).loadPolicy()))`], {
+      env, encoding: 'utf8',
+    });
+    assert.strictEqual(loaded.status, 0, loaded.stderr);
+    assert.deepStrictEqual(JSON.parse(loaded.stdout), {
+      projectRoot: project, worktreeRoot: path.join(project, 'Worktrees'),
+    });
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+check('writes through symlink targets using filesystem path traversal', () => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'worktree-config-link-')));
+  try {
+    const home = path.join(root, 'home');
+    const configDir = path.join(home, '.claude');
+    const project = path.join(root, 'Projects');
+    const external = path.join(root, 'External', 'nested');
+    const actualConfig = path.join(root, 'External', 'settings.json');
+    const lexicalNeighbor = path.join(configDir, 'settings.json');
+    fs.mkdirSync(path.join(configDir), { recursive: true });
+    fs.mkdirSync(project, { recursive: true });
+    fs.mkdirSync(external, { recursive: true });
+    fs.symlinkSync(external, path.join(configDir, 'redirect'));
+    fs.writeFileSync(actualConfig, JSON.stringify({ destination: 'active' }));
+    fs.writeFileSync(lexicalNeighbor, JSON.stringify({ destination: 'neighbor' }));
+    fs.symlinkSync(`redirect${path.sep}..${path.sep}settings.json`, path.join(configDir, 'git-hygiene.config.json'));
+    const script = path.resolve(__dirname, '../plugins/git-hygiene/scripts/configure-worktree-location.js');
+    const configured = spawnSync(process.execPath, [script, '--project-root', project,
+      '--worktree-root', path.join(project, 'Worktrees')], { env: { ...process.env, HOME: home }, encoding: 'utf8' });
+    assert.strictEqual(configured.status, 0, configured.stderr);
+    assert.deepStrictEqual(JSON.parse(fs.readFileSync(actualConfig, 'utf8')), {
+      destination: 'active',
+      worktreeLocation: { projectRoot: project, worktreeRoot: path.join(project, 'Worktrees') },
+    });
+    assert.deepStrictEqual(JSON.parse(fs.readFileSync(lexicalNeighbor, 'utf8')), { destination: 'neighbor' });
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 check('hook emits the documented PreToolUse denial shape for an unapproved path', () => {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'worktree-hook-')));
   try {

@@ -32,6 +32,7 @@ anything from the second list to the first.
 /stale-branches owner/name          a repository on GitHub
 /stale-branches all                 every repository you own
 /merge-strategy                     recommend how to merge the current change
+/git-hygiene:setup                  configure the optional worktree guard
 ```
 
 You get something like this:
@@ -196,22 +197,26 @@ Git binary name in any letter case and literal leading environment assignments. 
 worktree commands whose destination it cannot check safely. Use explicit paths
 and run the Git command by itself.
 
-The command must not contain shell metacharacters, redirects or substitutions.
-For example, `bash -c`, pipelines, conditionals and multiple commands in one
-submission are outside the check.
+If a command starts with `git worktree add` or `move` but also contains shell
+syntax, the hook denies it because it cannot safely check the destination. It
+does not split compound input into separate commands or search later clauses
+for Git. For example, `echo ready; git worktree add ...` is outside the check,
+while `git worktree add ... && echo ready` is denied.
 
-The hook intentionally does not parse shell syntax. It does not inspect
-compound commands, redirections, substitutions, `bash -c`, wrappers such as
-`command`, `env` or `timeout`, Git or shell aliases (including aliases set with
-`git -c` or `GIT_CONFIG_*`), shell functions, `eval`, sourced or executed
-script files, heredocs, or other shell interpreters. It also cannot see
-functions defined before the command, or programs that construct and launch
-Git commands. A command can also change a path after the hook checks it and
-before Git uses it. This is a convenience check, not a sandbox. Use a
-controlled Git wrapper or filesystem policy if those cases must be prevented.
+The hook does not parse shell syntax. It cannot inspect commands hidden behind
+redirections, substitutions, wrappers such as `command`, `env` or `timeout`,
+Git or shell aliases (including aliases set with `git -c` or `GIT_CONFIG_*`),
+shell functions, `eval`, sourced or executed script files, heredocs, or other
+shell interpreters. It also cannot see functions defined before the command,
+or programs that construct and launch Git commands. A command can change a
+path after the hook checks it and before Git uses it. This is a convenience
+check, not a sandbox. Use a controlled Git wrapper or filesystem policy if
+those cases must be prevented.
 
-To turn it on, add `worktreeLocation` to
-`~/.claude/git-hygiene.config.json`:
+Before using the guard, run `/git-hygiene:setup`. It proposes paths from the
+current repository, asks you to confirm or correct them, and stores the result
+in your user-owned configuration. You can also add `worktreeLocation` to
+`~/.claude/git-hygiene.config.json` yourself:
 
 ```json
 {

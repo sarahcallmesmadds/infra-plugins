@@ -3,6 +3,13 @@
 Upgrade notes for past versions, moved out of the README so that file stays
 focused on current installation, configuration and behavior.
 
+## 0.4.2 — 2026-09-28
+
+**Configure the worktree guard with `/git-hygiene:setup`.** The skill proposes
+the project and worktree roots, asks before changing user-owned configuration,
+and preserves other Git Hygiene settings. The README now clarifies how shell
+syntax affects commands the hook can check.
+
 ## 0.4.1 — 2026-09-28
 
 **Project worktrees can stay together.** When `worktreeLocation` is set in

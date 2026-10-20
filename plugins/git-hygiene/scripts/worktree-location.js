@@ -11,7 +11,17 @@ function physicalPath(value, seenLinks = new Set()) {
   const root = path.parse(absolute).root;
   let current = root;
   for (const part of absolute.slice(root.length).split(path.sep).filter(Boolean)) {
-    if (part === '..') { current = path.dirname(current); continue; }
+    if (part === '..') {
+      try {
+        if (!fs.statSync(current).isDirectory()) {
+          throw new Error(`Cannot resolve parent of a non-directory path: ${current}`);
+        }
+      } catch (error) {
+        if (error.code !== 'ENOENT') throw error;
+      }
+      current = path.dirname(current);
+      continue;
+    }
     if (part === '.') continue;
     const next = path.join(current, part);
     try { current = fs.realpathSync.native(next); }
@@ -22,7 +32,7 @@ function physicalPath(value, seenLinks = new Set()) {
           const target = fs.readlinkSync(next);
           const followed = new Set(seenLinks);
           followed.add(next);
-          current = physicalPath(path.isAbsolute(target) ? target : path.resolve(current, target), followed);
+          current = physicalPath(path.isAbsolute(target) ? target : `${current}${path.sep}${target}`, followed);
         }
       } catch (_) { current = next; }
     }
@@ -40,7 +50,7 @@ function loadPolicy() {
   try {
     const section = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')).worktreeLocation;
     const expand = (value) => typeof value === 'string'
-      ? value.trim().replace(/^~(?=\/|$)/, os.homedir()) : value;
+      ? value.replace(/^~(?=\/|$)/, os.homedir()) : value;
     const projectRoot = expand(section && section.projectRoot);
     const worktreeRoot = expand(section && section.worktreeRoot);
     if (typeof projectRoot !== 'string' || typeof worktreeRoot !== 'string'
@@ -209,6 +219,9 @@ function worktreeArgs(words, start, cwd, policy, unsupported) {
     }
     args.push(arg);
   }
+  if (action.value === 'add' && args.slice(1).some((arg) => (
+    path.isAbsolute(arg.value) || (arg.homeExpandable && arg.value.startsWith('~'))
+  ))) return { unknown: true };
   const destToken = action.value === 'move' ? args[1] : args[0];
   if (!destToken) return { unknown: true };
   const expanded = expandHome(destToken);
@@ -267,4 +280,4 @@ function misplacedTarget(command, cwd, policy) {
   return worktreeArgs(words, gitIndex + 1, cwd ? physicalPath(cwd) : null, policy, parsed.unsupported);
 }
 
-module.exports = { loadPolicy, misplacedTarget };
+module.exports = { loadPolicy, misplacedTarget, physicalPath, isWithin };
