@@ -32,12 +32,24 @@ function remaining(deadline, fallback = READ_TIMEOUT_MS) {
 // carries remote URLs in errors, lock reasons and prune output, and all of it
 // can reach the conversation, so this runs where text leaves the process (the
 // output function and both stderr writes), not at any one source; a source-side
-// mask missed lock reasons and prune errors. Greedy up to the last `@` inside
-// the authority: user-info may itself contain an `@` (an email username), and
-// stopping at the first one leaves the password visible. The authority ends at
-// `/ ? #`, whitespace or a quote, so an `@` in a query is never treated as one.
+// mask missed lock reasons and prune errors. Greedy up to the last `@` before
+// whitespace or `/ ? #`. It errs toward masking: user-info may hold an `@` (an
+// email username) or a quote (pa'ss), and every narrower boundary tried left a
+// password visible. The cost is that `https://host,bob@x` with no space hides a
+// little extra text, never that a credential shows. JSON output is masked value
+// by value before serialization, so an escape such as `\n` is never read as
+// part of an address.
 function redactCredentials(text) {
-  return String(text).replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s/?#"'<>]*@/gi, '$1***@');
+  return String(text).replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s/?#]*@/gi, '$1***@');
+}
+
+function redactValue(value) {
+  if (typeof value === 'string') return redactCredentials(value);
+  if (Array.isArray(value)) return value.map(redactValue);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([key, inner]) => [key, redactValue(inner)]));
+  }
+  return value;
 }
 
 function run(file, args, options = {}) {
@@ -496,6 +508,9 @@ function discoverRepositories(projectRoots, deadline) {
   const seen = new Set();
   for (const root of projectRoots) {
     if (deadline && Date.now() >= deadline) return { repositories, truncated: true };
+    // Same rule as for children below, for a review tool's repository named
+    // directly as a root.
+    if (REVIEW_LOCATION.test(canonical(root).replace(/\\/g, '/'))) continue;
     try {
       const top = topLevel(root, deadline);
       if (top === canonical(root)) {
@@ -964,8 +979,10 @@ function parseArgs(argv) {
 }
 
 function output(value, json) {
-  const text = json || typeof value !== 'string' ? JSON.stringify(value, null, 2) : value;
-  process.stdout.write(redactCredentials(text) + '\n');
+  const text = json || typeof value !== 'string'
+    ? JSON.stringify(redactValue(value), null, 2)
+    : redactCredentials(value);
+  process.stdout.write(text + '\n');
 }
 
 function main() {

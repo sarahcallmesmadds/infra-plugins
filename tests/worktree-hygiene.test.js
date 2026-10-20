@@ -849,8 +849,10 @@ check('configured discovery finds primary repositories without descending into w
     const dotted = path.join(f.projects, '.website');
     execFileSync('git', ['init', '-q', '-b', 'main', dotted]);
     fs.mkdirSync(path.join(f.projects, '.notes'));
-    // A review tool's repository stays out even though it is a repository.
+    // A review tool's repository stays out even though it is a repository,
+    // whether found under a root or named as the root itself.
     execFileSync('git', ['init', '-q', '-b', 'main', path.join(f.projects, '.review')]);
+    assert.deepStrictEqual(worktrees.discoverRepositories([path.join(f.projects, '.review')]).repositories, []);
     const withDot = worktrees.discoverRepositories([f.projects]);
     assert.deepStrictEqual(
       withDot.repositories.map((repo) => path.resolve(repo)).sort(),
@@ -891,6 +893,9 @@ check('credentials in remote URLs are masked in error text', () => {
   assert.strictEqual(r('https://host/path?email=user@example.com'), 'https://host/path?email=user@example.com');
   assert.strictEqual(r('https://host?email=user@example.com'), 'https://host?email=user@example.com');
   assert.strictEqual(r('ssh://user:pw@host/x'), 'ssh://***@host/x');
+  // Quotes are valid in user-info; stopping at one left the password visible.
+  assert.strictEqual(r("https://user:pa'ssword@host/repo"), 'https://***@host/repo');
+  assert.strictEqual(r('https://user:pa"ss@host/repo'), 'https://***@host/repo');
   assert.strictEqual(r('git@github.com:o/r.git'), 'git@github.com:o/r.git');
 });
 
@@ -908,6 +913,35 @@ check('the command line never prints a credential, whatever route the text took'
       assert.ok(audit.stdout.includes('***@github.com'), `lock reason not shown ${extra}: ${audit.stdout}`);
       assert.ok(!`${audit.stdout}${audit.stderr}`.includes('ghp_lock'), `audit ${extra} leaked: ${audit.stdout}`);
     }
+    // JSON is masked before serialization: a real newline stays a boundary,
+    // so the escaped `\n` never joins a bare host to a later address.
+    const plain = f.add('noted', path.join(f.projects, 'example-noted'));
+    git(f.repo, 'worktree', 'lock', '--reason', 'https://host\ncontact@example.com', plain);
+    const json = spawnSync(process.execPath, [engine, 'audit', '--repo', f.repo, '--json'], { encoding: 'utf8', env });
+    assert.ok(json.stdout.includes('https://host\\ncontact@example.com'), json.stdout);
+    // The prune dry run calls Git directly, not through run(), so its error
+    // text relies on the final stderr write alone. A stand-in git fails only
+    // that call, with a credential in its stderr.
+    const missing = f.add('gone', path.join(f.projects, 'example-gone'));
+    fs.rmSync(missing, { recursive: true, force: true });
+    const realGit = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+    const bin = fs.mkdtempSync(path.join(os.tmpdir(), 'git-hygiene-prune-git-'));
+    fs.writeFileSync(path.join(bin, 'git'), [
+      '#!/bin/sh',
+      'if [ "$3" = worktree ] && [ "$4" = prune ]; then',
+      '  echo "fatal: https://user:ghp_prune@github.com/o/r.git" >&2; exit 1',
+      'fi',
+      `exec '${realGit}' "$@"`,
+    ].join('\n') + '\n');
+    fs.chmodSync(path.join(bin, 'git'), 0o755);
+    try {
+      const prune = spawnSync(process.execPath, [engine, 'verify-prune', '--repo', f.repo, '--path', missing], {
+        encoding: 'utf8', env: { ...env, PATH: `${bin}${path.delimiter}${process.env.PATH}` },
+      });
+      assert.strictEqual(prune.status, 3, prune.stderr);
+      assert.ok(prune.stderr.includes('dry run failed'), `did not reach the prune dry run: ${prune.stderr}`);
+      assert.ok(!prune.stderr.includes('ghp_prune'), prune.stderr);
+    } finally { fs.rmSync(bin, { recursive: true, force: true }); }
     // An argument error is echoed straight from the parser.
     const bad = spawnSync(process.execPath, [engine, 'audit', '--https://user:ghp_arg@host/x'], { encoding: 'utf8', env });
     assert.notStrictEqual(bad.status, 0);
