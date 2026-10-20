@@ -123,7 +123,13 @@ check('destinations are <worktreeRoot>/<repo>/<task> and the location guard acce
     }
     assert.throws(() => worktrees.destinationFor(f.repo, 'feature/new', f.config, 'a/b'), /unsafe task folder name/);
     assert.throws(() => worktrees.destinationFor(f.repo, 'feature/new', f.config, '.review'), /unsafe task folder name/);
-    assert.throws(() => worktrees.destinationFor(f.repo, '.hidden', f.config), /unsafe task folder name|invalid branch name/);
+    // The repository segment can land on the review-tool pattern on its own:
+    // `.cache` plus task `devin`, or `.review` plus any task.
+    for (const [folder, task] of [['.cache', 'devin'], ['.review', 'my-task']]) {
+      const odd = path.join(f.projects, folder);
+      execFileSync('git', ['init', '-q', '-b', 'main', odd]);
+      assert.throws(() => worktrees.destinationFor(odd, 'feature/new', f.config, task), /review tool's folder/, folder);
+    }
   } finally { f.cleanup(); }
 });
 

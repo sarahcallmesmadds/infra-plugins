@@ -237,6 +237,13 @@ function destinationFor(repo, branch, config = loadConfig(), task) {
   if (path.relative(root, resolvedTarget).split(path.sep).length !== 2) {
     throw new Error('the computed worktree path is not exactly <worktreeRoot>/<repo>/<task> once symlinks are resolved');
   }
+  // The audit classifies the whole path, so check the whole path here too. A
+  // repository folder named `.cache` with task `devin`, or `.review` with any
+  // task, passes the task-name check yet lands on the review-tool pattern, and
+  // that worktree would be held forever instead of offered for cleanup.
+  if (REVIEW_LOCATION.test(resolvedTarget.replace(/\\/g, '/'))) {
+    throw new Error(`refusing a destination the audit would treat as a review tool's folder: ${resolvedTarget}`);
+  }
   return resolvedTarget;
 }
 
