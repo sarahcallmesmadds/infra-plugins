@@ -1,0 +1,198 @@
+// The list of declared threads, at ~/.planning/handoffs/threads.json.
+//
+// A thread is a central handoff that is rewritten in place at every wrap and
+// is the only authority for its own rules. Which documents are threads is
+// declared here rather than inferred, because inference was tried on paper and
+// failed both ways: a filename suffix promotes nothing a person did not name
+// that way, and "every central handoff is a thread" promotes years of session
+// logs, one of them carrying 505 rules, into binding documents.
+//
+// No file means the plugin has not been migrated and behaves as it always did.
+// A file that exists and cannot be trusted is `invalid`, and every command that
+// writes refuses on it: guessing which documents are threads is exactly the
+// decision this file exists to take away from the code.
+//
+// Shape:
+//   { "version": 1, "generation": 3, "migratedAt": "...",
+//     "threads": [ { "slug": "site-thread", "path": "/abs/HANDOFF-site-thread.md" } ],
+//     "pending": [ { "kind": "add" | "drop", "slug": "site-thread", "text": "..." } ] }
+//
+// `generation` changes on every migration, never on an ordinary save, and is
+// never reused. A draft carries the generation it was prepared under, so one
+// written before a migration cannot be saved after it.
+//
+// `pending` is what a migration still has to write into thread files. While it
+// is not empty nothing reads a home thread's rules as binding, because a list
+// that is half written is neither the old answer nor the new one.
+
+'use strict';
+
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+
+function registryPath(home = os.homedir()) {
+  return path.join(home, '.planning', 'handoffs', 'threads.json');
+}
+
+function slugify(text) {
+  return String(text || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 60);
+}
+
+function canonicalPath(p) {
+  const absolute = path.resolve(p);
+  try { return fs.realpathSync(absolute); } catch (_) { return absolute; }
+}
+
+// The one checkout decision, used by readRegistry and migratePlan alike, so
+// the plan can never write a list that reading it then refuses, and a list
+// can never read as valid where the plan would refuse. Two tests: the path
+// walk, from the path as written and from its real path, catches a stray or
+// broken .git that git ignores and a symlinked home inside a checkout; git
+// itself catches a repository found some other way, such as GIT_DIR.
+// Only git's answer is remembered, per home for the life of the process,
+// because readRegistry runs many times a command and each probe is a spawn.
+// The walk is a few stats and runs every time: a whole remembered answer went
+// stale when home became a checkout part way through a migration, and a
+// `git init` then is exactly what the walk sees.
+const gitAnswer = new Map();
+function homeIsCheckout(home) {
+  let real = home;
+  try { real = fs.realpathSync(home); } catch (_) { /* the written path is all there is */ }
+  if (walkForGit(home) || (real !== home && walkForGit(real))) return true;
+  // Required here rather than at the top: handoffs.js requires this file.
+  if (!gitAnswer.has(home)) gitAnswer.set(home, Boolean(require('./handoffs').repoRoot(home)));
+  return gitAnswer.get(home);
+}
+
+function walkForGit(start) {
+  let dir = start;
+  for (;;) {
+    try { if (fs.existsSync(path.join(dir, '.git'))) return true; } catch (_) { /* keep looking */ }
+    const up = path.dirname(dir);
+    if (up === dir) return false;
+    dir = up;
+  }
+}
+
+function existsAsLink(p) {
+  try { fs.lstatSync(p); return true; } catch (_) { return false; }
+}
+
+function validate(raw, home = null) {
+  const errors = [];
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return ['not a JSON object'];
+  if (raw.version !== 1) errors.push(`version is ${JSON.stringify(raw.version)}, expected 1`);
+  if (!Number.isInteger(raw.generation) || raw.generation < 1) errors.push('generation must be a whole number of at least 1');
+  if (!Array.isArray(raw.threads)) errors.push('threads must be a list');
+  if (raw.pending !== undefined && !Array.isArray(raw.pending)) errors.push('pending must be a list');
+  if (errors.length) return errors;
+
+  const slugs = new Set();
+  const paths = new Set();
+  raw.threads.forEach((t, i) => {
+    if (!t || typeof t !== 'object') { errors.push(`thread ${i + 1} is not an object`); return; }
+    if (typeof t.slug !== 'string' || !t.slug || slugify(t.slug) !== t.slug) errors.push(`thread ${i + 1} has an unusable slug`);
+    if (typeof t.path !== 'string' || !path.isAbsolute(t.path)) { errors.push(`thread ${i + 1} path must be absolute`); return; }
+    // A thread is always the central document named for its slug. Anything
+    // else is a hand edit pointing a save somewhere it was never meant to go.
+    // Compared as written, not normalized: a trailing slash or a `..` passes
+    // path.resolve and then names a file that existsSync cannot find.
+    if (home && t.path !== path.join(home, '.planning', 'handoffs', `HANDOFF-${t.slug}.md`)) {
+      errors.push(`thread ${t.slug} must be ~/.planning/handoffs/HANDOFF-${t.slug}.md, not ${t.path}`);
+    }
+    const canonical = canonicalPath(t.path);
+    if (slugs.has(t.slug)) errors.push(`slug ${t.slug} is declared twice`);
+    if (paths.has(canonical)) errors.push(`path ${t.path} is declared twice`);
+    slugs.add(t.slug);
+    paths.add(canonical);
+  });
+  (raw.pending || []).forEach((p, i) => {
+    if (!p || (p.kind !== 'add' && p.kind !== 'drop') || typeof p.text !== 'string' || !p.text.trim()) {
+      errors.push(`pending item ${i + 1} is malformed`);
+    } else if (!slugs.has(p.slug)) {
+      errors.push(`pending item ${i + 1} names ${p.slug}, which is not declared`);
+    }
+  });
+  return errors;
+}
+
+// { state: 'absent' | 'invalid' | 'ok', registry, errors }
+function readRegistry(home = os.homedir()) {
+  let text;
+  try {
+    text = fs.readFileSync(registryPath(home), 'utf8');
+  } catch (e) {
+    // ENOENT alone is not "no thread list". A symlink whose target is gone
+    // reads the same way, and treating it as absent would quietly switch every
+    // thread protection off, so only a path with nothing at it counts.
+    if (e && e.code === 'ENOENT' && !existsAsLink(registryPath(home))) return { state: 'absent', registry: null, errors: [] };
+    return { state: 'invalid', registry: null, errors: [`could not be read: ${e.message}`] };
+  }
+  let raw;
+  try { raw = JSON.parse(text); } catch (e) {
+    return { state: 'invalid', registry: null, errors: [`is not valid JSON: ${e.message}`] };
+  }
+  const errors = validate(raw, home);
+  // A thread list in a home directory that has since become a git checkout is
+  // not trusted: see threads.js migratePlan. Treated as invalid, so every
+  // write refuses and nothing guesses.
+  if (!errors.length && homeIsCheckout(home)) errors.push('the home directory is a git checkout, which threads do not support');
+  if (errors.length) return { state: 'invalid', registry: null, errors };
+  return { state: 'ok', registry: { ...raw, pending: raw.pending || [] }, errors: [] };
+}
+
+// Temp file and rename, so a reader sees the old list or the new one and never
+// half of one. Only ever called from inside a locked region.
+//
+// `guard` runs just before the rename, to refuse if the lock was lost while the
+// temporary file was being written. The list is read back afterwards and a
+// write that does not read back as written throws, because the thread list is
+// the commit point of a migration and "written" has to mean on disk.
+function writeRegistryUnlocked(registry, home = os.homedir(), guard = () => {}) {
+  const errors = validate(registry, home);
+  if (errors.length) throw new Error(`refusing to write an invalid thread list: ${errors.join('; ')}`);
+  const file = registryPath(home);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const tmp = `${file}.${process.pid}.tmp`;
+  const body = `${JSON.stringify(registry, null, 2)}\n`;
+  try {
+    fs.writeFileSync(tmp, body);
+    guard();
+    fs.renameSync(tmp, file);
+  } catch (e) {
+    try { fs.rmSync(tmp, { force: true }); } catch (_) { /* nothing else to try */ }
+    throw e;
+  }
+  if (fs.readFileSync(file, 'utf8') !== body) throw new Error(`${file} did not read back as written`);
+}
+
+function declaredBySlug(registry, slug) {
+  if (!registry) return null;
+  const key = slugify(slug);
+  return registry.threads.find((t) => t.slug === key) || null;
+}
+
+function declaredPaths(registry) {
+  if (!registry) return new Set();
+  const out = new Set();
+  for (const t of registry.threads) {
+    out.add(t.path);
+    try { out.add(fs.realpathSync(t.path)); } catch (_) { /* not there; the plain path is enough */ }
+  }
+  return out;
+}
+
+module.exports = {
+  registryPath,
+  readRegistry,
+  writeRegistryUnlocked,
+  declaredBySlug,
+  declaredPaths,
+  validate,
+  homeIsCheckout,
+};

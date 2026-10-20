@@ -22,9 +22,13 @@ function check(name, fn) {
 function fixture({ linked = false, missing = false, notice = true } = {}) {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'git-hygiene-notice-'));
   const projects = path.join(base, 'Projects');
-  const hidden = path.join(base, '.worktrees');
+  const hidden = path.join(projects, 'Worktrees');
   const repo = path.join(projects, 'example');
-  const config = path.join(base, 'config.json');
+  // The hook reads ~/.claude/git-hygiene.config.json, so each check runs with
+  // HOME pointed here. Never let a check fall through to the real home folder:
+  // it then audits the developer's own projects and its counts mean nothing.
+  const config = path.join(base, '.claude', 'git-hygiene.config.json');
+  fs.mkdirSync(path.dirname(config), { recursive: true });
   fs.mkdirSync(projects, { recursive: true });
   execFileSync('git', ['init', '-q', '-b', 'main', repo]);
   execFileSync('git', ['-C', repo, '-c', 'user.email=t@example.com', '-c', 'user.name=Test',
@@ -36,10 +40,9 @@ function fixture({ linked = false, missing = false, notice = true } = {}) {
     execFileSync('git', ['-C', repo, 'worktree', 'add', '-q', target, 'feature']);
     if (missing) fs.rmSync(target, { recursive: true, force: true });
   }
-  fs.writeFileSync(config, JSON.stringify({
-    projectRoots: [projects], worktreeRoot: hidden,
-    enforceWorktreeRoot: true, sessionNotice: notice,
-  }));
+  fs.writeFileSync(config, JSON.stringify(notice
+    ? { worktreeLocation: { projectRoot: projects, worktreeRoot: hidden } }
+    : { branchCleanup: { staleAfterDays: 30 } }));
   return { base, projects, hidden, repo, config, target, cleanup: () => fs.rmSync(base, { recursive: true, force: true }) };
 }
 
@@ -47,7 +50,7 @@ function fire(f, source = 'startup') {
   const result = spawnSync(process.execPath, [HOOK], {
     input: JSON.stringify({ cwd: f.base, source }),
     encoding: 'utf8',
-    env: { ...process.env, GIT_HYGIENE_CONFIG: f.config },
+    env: { ...process.env, HOME: f.base },
     timeout: 5000,
   });
   assert.strictEqual(result.status, 0, result.stderr);
@@ -81,7 +84,7 @@ check('missing registrations are reported without pruning them', () => {
   } finally { f.cleanup(); }
 });
 
-check('turning off the worktree session notice keeps visible clutter silent', () => {
+check('a config with only branch settings keeps the worktree notice silent', () => {
   const f = fixture({ linked: true, notice: false });
   try { assert.strictEqual(fire(f), null); }
   finally { f.cleanup(); }
@@ -121,7 +124,7 @@ exec "${realGit}" "$@"
       env: {
         ...process.env,
         PATH: `${bin}${path.delimiter}${process.env.PATH}`,
-        GIT_HYGIENE_CONFIG: f.config,
+        HOME: f.base,
       },
       timeout: 5000,
     });
@@ -140,7 +143,7 @@ check('current-repository status works without configuration', () => {
   try {
     const result = spawnSync(process.execPath, [CLI, 'audit', '--repo', f.repo, '--json'], {
       encoding: 'utf8',
-      env: { ...process.env, GIT_HYGIENE_CONFIG: path.join(f.base, 'absent.json') },
+      env: { ...process.env, HOME: path.join(f.base, 'empty-home') },
     });
     assert.strictEqual(result.status, 0, result.stderr);
     const audit = JSON.parse(result.stdout);
@@ -155,7 +158,7 @@ check('configured global status discovers repositories from outside them', () =>
     const result = spawnSync(process.execPath, [CLI, 'audit', '--all-configured', '--json'], {
       cwd: f.base,
       encoding: 'utf8',
-      env: { ...process.env, GIT_HYGIENE_CONFIG: f.config },
+      env: { ...process.env, HOME: f.base },
     });
     assert.strictEqual(result.status, 0, result.stderr);
     const audit = JSON.parse(result.stdout);

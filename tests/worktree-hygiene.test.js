@@ -5,11 +5,12 @@ const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { execFileSync } = require('child_process');
+const { execFileSync, spawnSync } = require('child_process');
 
 const ROOT = path.join(__dirname, '..', 'plugins', 'git-hygiene');
 const configModule = require(path.join(ROOT, 'scripts', 'worktree-config'));
 const worktrees = require(path.join(ROOT, 'scripts', 'worktrees'));
+const { misplacedTarget, resolveRoots } = require(path.join(ROOT, 'scripts', 'worktree-location'));
 
 let failed = 0;
 let ran = 0;
@@ -42,7 +43,7 @@ exec "${realGit}" "$@"
 function fixture() {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'git-hygiene-worktrees-'));
   const projects = path.join(base, 'Projects');
-  const hidden = path.join(base, '.worktrees');
+  const hidden = path.join(projects, 'Worktrees');
   const repo = path.join(projects, 'example');
   fs.mkdirSync(projects, { recursive: true });
   execFileSync('git', ['init', '-q', '-b', 'main', repo]);
@@ -51,15 +52,13 @@ function fixture() {
   fs.writeFileSync(path.join(repo, 'base.txt'), 'base\n');
   git(repo, 'add', '.');
   git(repo, 'commit', '-qm', 'base');
-  const checked = configModule.validate({
-    projectRoots: [projects], worktreeRoot: hidden,
-    enforceWorktreeRoot: true, sessionNotice: true,
-  });
+  const roots = resolveRoots(projects, hidden);
   const config = {
-    ...checked.config,
     exists: true,
     valid: true,
     errors: [],
+    projectRoots: [roots.projectRoot],
+    worktreeRoot: roots.worktreeRoot,
   };
   return {
     base, projects, hidden, repo, config,
@@ -75,59 +74,49 @@ function fixture() {
   };
 }
 
-check('configuration normalizes home paths and rejects overlapping visible and hidden roots', () => {
-  const good = configModule.validate({
-    projectRoots: ['~/Projects'], worktreeRoot: '~/.worktrees',
-    enforceWorktreeRoot: true, sessionNotice: true,
-  });
-  assert.strictEqual(good.valid, true, good.errors.join('; '));
-  assert.ok(path.isAbsolute(good.config.projectRoots[0]));
-  const bad = configModule.validate({
-    projectRoots: ['~/Projects'], worktreeRoot: '~/Projects/worktrees',
-    enforceWorktreeRoot: true, sessionNotice: true,
-  });
-  assert.strictEqual(bad.valid, false);
-  assert.match(bad.errors.join(' '), /must not overlap/);
-  const reverse = configModule.validate({
-    projectRoots: ['~/.worktrees/projects'], worktreeRoot: '~/.worktrees',
-    enforceWorktreeRoot: true, sessionNotice: true,
-  });
-  assert.strictEqual(reverse.valid, false);
-});
-
-check('configuration writes atomically with private permissions and reads back', () => {
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'git-hygiene-config-'));
-  const projects = path.join(base, 'Projects');
-  const hidden = path.join(base, '.worktrees');
-  const file = path.join(base, '.claude', 'git-hygiene.config.json');
-  fs.mkdirSync(projects, { recursive: true });
-  const before = process.env.GIT_HYGIENE_CONFIG;
-  process.env.GIT_HYGIENE_CONFIG = file;
+check('configuration reads only the shared worktreeLocation setting', () => {
+  const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'git-hygiene-config-')));
   try {
-    const written = configModule.writeConfig({
-      projectRoots: [projects], worktreeRoot: hidden,
-      enforceWorktreeRoot: true, sessionNotice: true,
-    });
-    assert.strictEqual(written.valid, true);
-    assert.strictEqual(written.exists, true);
-    assert.strictEqual(fs.statSync(file).mode & 0o777, 0o600);
-    assert.deepStrictEqual(configModule.loadConfig().projectRoots, [fs.realpathSync.native(projects)]);
-    assert.deepStrictEqual(fs.readdirSync(path.dirname(file)).sort(), ['git-hygiene.config.json']);
-  } finally {
-    if (before === undefined) delete process.env.GIT_HYGIENE_CONFIG;
-    else process.env.GIT_HYGIENE_CONFIG = before;
-    fs.rmSync(base, { recursive: true, force: true });
-  }
+    fs.mkdirSync(path.join(base, '.claude'), { recursive: true });
+    fs.mkdirSync(path.join(base, 'Projects'), { recursive: true });
+    const load = (contents) => {
+      const file = path.join(base, '.claude', 'git-hygiene.config.json');
+      if (contents === undefined) fs.rmSync(file, { force: true });
+      else fs.writeFileSync(file, JSON.stringify(contents));
+      const result = spawnSync(process.execPath, ['-e',
+        `process.stdout.write(JSON.stringify(require(${JSON.stringify(path.join(ROOT, 'scripts', 'worktree-config'))}).loadConfig()))`,
+      ], { env: { ...process.env, HOME: base }, encoding: 'utf8' });
+      assert.strictEqual(result.status, 0, result.stderr);
+      return JSON.parse(result.stdout);
+    };
+    const configured = load({ worktreeLocation: { projectRoot: '~/Projects', worktreeRoot: '~/Projects/Worktrees' } });
+    assert.strictEqual(configured.exists, true);
+    assert.strictEqual(configured.valid, true, configured.errors.join('; '));
+    assert.deepStrictEqual(configured.projectRoots, [path.join(base, 'Projects')]);
+    assert.strictEqual(configured.worktreeRoot, path.join(base, 'Projects', 'Worktrees'));
+    // Branch settings alone must not switch on the worktree audit or notice.
+    assert.strictEqual(load({ branchCleanup: { staleAfterDays: 30 } }).exists, false);
+    assert.strictEqual(load(undefined).exists, false);
+    // The rule the guard and setup enforce: the worktree folder sits inside the
+    // project folder. A hidden sibling root is invalid here too.
+    const outside = load({ worktreeLocation: { projectRoot: '~/Projects', worktreeRoot: '~/.worktrees' } });
+    assert.strictEqual(outside.exists, true);
+    assert.strictEqual(outside.valid, false);
+  } finally { fs.rmSync(base, { recursive: true, force: true }); }
 });
 
-check('setup proposed from a hidden linked checkout uses the primary project root', () => {
+check('destinations are <worktreeRoot>/<repo>/<task> and the location guard accepts them', () => {
   const f = fixture();
   try {
-    const linked = f.add('setup-linked', path.join(f.hidden, 'local', 'example', 'setup-linked'));
-    const proposed = configModule.propose(linked, f.base);
-    assert.deepStrictEqual(proposed.projectRoots, [fs.realpathSync.native(f.projects)]);
-    assert.strictEqual(proposed.worktreeRoot, fs.realpathSync.native(f.hidden));
-    assert.strictEqual(configModule.validate(proposed).valid, true);
+    const policy = { projectRoot: f.config.projectRoots[0], worktreeRoot: f.config.worktreeRoot };
+    const fromBranch = worktrees.destinationFor(f.repo, 'feature/new', f.config);
+    assert.strictEqual(fromBranch, path.join(f.config.worktreeRoot, 'example', 'feature-new'));
+    const named = worktrees.destinationFor(f.repo, 'feature/new', f.config, 'my-task');
+    assert.strictEqual(named, path.join(f.config.worktreeRoot, 'example', 'my-task'));
+    for (const destination of [fromBranch, named]) {
+      assert.strictEqual(misplacedTarget(`git worktree add '${destination}' feature/new`, f.repo, policy), null, destination);
+    }
+    assert.throws(() => worktrees.destinationFor(f.repo, 'feature/new', f.config, 'a/b'), /unsafe task folder name/);
   } finally { f.cleanup(); }
 });
 
@@ -225,17 +214,6 @@ check('HTTPS, SSH URL, and SCP remotes identify GitHub correctly', () => {
     const credentialed = worktrees.auditRepository(f.repo, { config: f.config, skipRemote: true }).identity;
     assert.strictEqual(credentialed.owner, 'owner');
     assert.doesNotMatch(JSON.stringify(credentialed), /secret|user:|"url"/);
-  } finally { f.cleanup(); }
-});
-
-check('non-GitHub destinations include the host and full remote namespace', () => {
-  const f = fixture();
-  try {
-    git(f.repo, 'remote', 'add', 'origin', 'https://gitlab.example.com/group/team/example.git');
-    const target = worktrees.destinationFor(f.repo, 'feature/remote', f.config);
-    assert.match(target.replace(/\\/g, '/'), /\/gitlab\.example\.com\/group\/team\/example\/feature\/remote$/);
-    git(f.repo, 'remote', 'set-url', 'origin', 'https://other.example.com/group/team/example.git');
-    assert.notStrictEqual(worktrees.destinationFor(f.repo, 'feature/remote', f.config), target);
   } finally { f.cleanup(); }
 });
 
@@ -462,13 +440,13 @@ check('a missing locked registration must be finished before it can be pruned', 
   } finally { f.cleanup(); }
 });
 
-check('canonical destination refuses a symlink escape inside the hidden root', () => {
+check('canonical destination refuses a symlink escape inside the worktree root', () => {
   const f = fixture();
   try {
     const outside = path.join(f.base, 'outside');
     fs.mkdirSync(f.hidden, { recursive: true });
     fs.mkdirSync(outside, { recursive: true });
-    fs.symlinkSync(outside, path.join(f.hidden, 'owner'));
+    fs.symlinkSync(outside, path.join(f.hidden, 'example'));
     git(f.repo, 'remote', 'add', 'origin', 'https://github.com/owner/example.git');
     assert.throws(
       () => worktrees.destinationFor(f.repo, 'feature/symlink', f.config),
@@ -477,20 +455,24 @@ check('canonical destination refuses a symlink escape inside the hidden root', (
   } finally { f.cleanup(); }
 });
 
-check('canonical destinations preserve distinct valid branch names', () => {
+check('branch names that flatten to one task folder are refused, never renamed', () => {
   const f = fixture();
   try {
     const plus = worktrees.destinationFor(f.repo, 'feature/a+b', f.config);
-    const dash = worktrees.destinationFor(f.repo, 'feature/a-b', f.config);
     const unicode = worktrees.destinationFor(f.repo, 'feature/\u96ea', f.config);
-    assert.notStrictEqual(plus, dash);
-    assert.match(plus, /a%2Bb$/);
-    assert.match(dash, /a-b$/);
-    assert.match(unicode, /%E9%9B%AA$/);
+    assert.match(plus, /feature-a%2Bb$/);
+    assert.match(unicode, /feature-%E9%9B%AA$/);
+    const slashed = worktrees.destinationFor(f.repo, 'feature/a-b', f.config);
+    assert.strictEqual(worktrees.destinationFor(f.repo, 'feature-a-b', f.config), slashed);
+    worktrees.createWorktree(f.repo, 'feature/a-b', { config: f.config, approved: true, base: 'main' });
+    assert.throws(
+      () => worktrees.createWorktree(f.repo, 'feature-a-b', { config: f.config, approved: true, base: 'main' }),
+      /destination already exists/
+    );
   } finally { f.cleanup(); }
 });
 
-check('a clean branch can move to its canonical hidden path and is locked there', () => {
+check('a clean branch can move to its canonical path and is locked there', () => {
   const f = fixture();
   try {
     const target = f.add('feature/move-me', path.join(f.projects, 'example-move'));
@@ -562,7 +544,7 @@ check('create refuses an unapproved new branch, then creates and locks the appro
     assert.strictEqual(created.branchCreated, true);
     assert.strictEqual(created.locked, true);
     assert.ok(configModule.contains(f.config.worktreeRoot, created.path));
-    assert.match(created.path.replace(/\\/g, '/'), /\/local\/example-[a-f0-9]{10}\/feature\/new$/);
+    assert.match(created.path.replace(/\\/g, '/'), /\/Worktrees\/example\/feature-new$/);
   } finally { f.cleanup(); }
 });
 
@@ -593,7 +575,7 @@ check('relocation is not offered until setup exists', () => {
   const f = fixture();
   try {
     const target = f.add('not-configured', path.join(f.projects, 'example-not-configured'));
-    const noConfig = { ...configModule.defaults(), exists: false, valid: true, errors: [] };
+    const noConfig = { exists: false, valid: true, errors: [], projectRoots: [], worktreeRoot: null };
     const entry = worktrees.auditRepository(f.repo, { config: noConfig, skipRemote: true })
       .worktrees.find((row) => row.branch === 'not-configured');
     assert.strictEqual(entry.relocatable, false);

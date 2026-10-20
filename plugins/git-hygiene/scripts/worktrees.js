@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 'use strict';
 
-const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
@@ -73,7 +72,7 @@ function pathPresence(candidate) {
 
 // Resolve symlinks in the nearest existing ancestor even when the final path
 // does not exist yet. Plain realpath cannot protect a prospective destination:
-// `.worktrees/owner -> /somewhere/else` makes the leaf absent while still
+// `Worktrees/<repo> -> /somewhere/else` makes the leaf absent while still
 // redirecting every later mkdir and Git write outside the configured root.
 function canonicalProspective(candidate) {
   const resolved = path.resolve(candidate);
@@ -206,27 +205,25 @@ function validateBase(repo, base) {
   return base;
 }
 
-function destinationFor(repo, branch, config = loadConfig()) {
+// The task folder name. Branch slashes become dashes so the destination is
+// always exactly <worktreeRoot>/<repo>/<task>, the only depth the
+// worktree-location guard accepts. Two branches that flatten to one name (a/b
+// and a-b) collide on purpose: creation refuses an existing destination rather
+// than inventing a second naming scheme.
+function taskName(branch, task) {
+  const name = task === undefined ? branch.split('/').join('-') : task;
+  if (!name || typeof name !== 'string' || name.includes('/') || name.includes(path.sep)) {
+    throw new Error(`refusing unsafe task folder name: ${name || '(empty)'}`);
+  }
+  return safeSegment(name);
+}
+
+function destinationFor(repo, branch, config = loadConfig(), task) {
   if (!config.exists || !config.valid) throw new Error('run /git-hygiene:setup before creating or moving worktrees');
   const registered = registeredWorktrees(repo);
   const primary = registered.length ? registered[0].path : topLevel(repo);
   validateBranch(primary, branch);
-  const identity = remoteIdentity(primary);
-  let pieces;
-  if (identity) {
-    // Keep the documented GitHub owner/repository layout for its single-level
-    // namespace. Other hosts include the host and full namespace so two
-    // distinct remotes cannot collapse onto one checkout destination.
-    pieces = identity.github && identity.namespace.length === 1
-      ? [safeSegment(identity.owner), safeSegment(identity.repository)]
-      : [safeSegment(identity.host), ...identity.namespace.map(safeSegment), safeSegment(identity.repository)];
-  } else {
-    pieces = [
-      'local',
-      `${safeSegment(path.basename(primary))}-${crypto.createHash('sha256').update(commonDir(primary)).digest('hex').slice(0, 10)}`,
-    ];
-  }
-  const target = path.join(config.worktreeRoot, ...pieces, ...branch.split('/').map(safeSegment));
+  const target = path.join(config.worktreeRoot, safeSegment(path.basename(primary)), taskName(branch, task));
   const root = canonicalProspective(config.worktreeRoot);
   const resolvedTarget = canonicalProspective(target);
   if (!contains(root, resolvedTarget) || resolvedTarget === root) {
@@ -237,8 +234,9 @@ function destinationFor(repo, branch, config = loadConfig()) {
 
 function classifyLocation(candidate, config) {
   const here = canonical(candidate);
-  const worktreeRoot = canonicalProspective(config.worktreeRoot);
-  if (contains(worktreeRoot, here)) return 'managed-root';
+  // Unconfigured, there is no managed folder. The current-repository audit
+  // still has to run then, so a missing root must not reach path functions.
+  if (config.worktreeRoot && contains(canonicalProspective(config.worktreeRoot), here)) return 'managed-root';
   if (REVIEW_LOCATION.test(here.replace(/\\/g, '/'))) return 'review-tool';
   if (config.projectRoots.some((root) => contains(root, here))) return 'project-root';
   return 'other';
@@ -636,7 +634,7 @@ function moveWorktree(raw, options = {}) {
     throw new Error(`refusing to move ${found.target}: ${found.entry.state}, ${found.entry.reason}`);
   }
   const config = options.config || loadConfig();
-  const destination = destinationFor(found.audited.repository, found.entry.branch, config);
+  const destination = destinationFor(found.audited.repository, found.entry.branch, config, options.task);
   if (fs.existsSync(destination)) throw new Error(`destination already exists: ${destination}`);
   fs.mkdirSync(path.dirname(destination), { recursive: true });
   if (canonicalProspective(destination) !== destination) {
@@ -662,7 +660,7 @@ function createWorktree(repo, branch, options = {}) {
   const primary = auditRepository(repo, { config: options.config || loadConfig(), skipRemote: true }).repository;
   validateBranch(primary, branch);
   const config = options.config || loadConfig();
-  const destination = destinationFor(primary, branch, config);
+  const destination = destinationFor(primary, branch, config, options.task);
   if (fs.existsSync(destination)) throw new Error(`destination already exists: ${destination}`);
 
   const branchExists = git(primary, ['show-ref', '--verify', '--quiet', `refs/heads/${branch}`], { allowFailure: true }) !== null;
@@ -777,6 +775,7 @@ function parseArgs(argv) {
     else if (arg === '--path') { out.path = argv[++i]; out.paths.push(out.path); }
     else if (arg === '--branch') out.branch = argv[++i];
     else if (arg === '--base') out.base = argv[++i];
+    else if (arg === '--task') out.task = argv[++i];
     else if (arg === '--json') out.json = true;
     else if (arg === '--all-configured') out.allConfigured = true;
     else if (arg === '--approved') out.approved = true;
@@ -811,7 +810,7 @@ function main() {
       output({
         repository: auditRepository(args.repo || process.cwd(), { skipRemote: true }).repository,
         branch: args.branch,
-        path: destinationFor(args.repo || process.cwd(), args.branch),
+        path: destinationFor(args.repo || process.cwd(), args.branch, loadConfig(), args.task),
       }, true);
     }
     else if (args.command === 'create') output(createWorktree(args.repo || process.cwd(), args.branch, args), true);

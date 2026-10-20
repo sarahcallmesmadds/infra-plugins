@@ -571,13 +571,16 @@ check('an index that could not be written is not reported as changed', () => {
   const root = handoffs.handoffRoot(home);
   fs.chmodSync(root, 0o500);                             // readable, not writable
   try {
+    // A folder no lock can be made in is refused before anything is attempted,
+    // rather than attempted and then reported as failed. Either way the rule is
+    // the same: nothing may be reported as dropped that was not dropped.
     const out = cli(['archive', '--json'], home);
-    assert.deepStrictEqual(out.pruned.map((p) => p.slug), ['unwritable']);
-    assert.strictEqual(out.indexWritten, false, 'a failed write was reported as a completed prune');
+    assert.deepStrictEqual(out.pruned, [], 'a prune that could not be written was reported as done');
+    assert.match(String(out.lockSkipped), /cannot be written/i, JSON.stringify(out));
     assert.ok(handoffs.readIndex(home).unwritable, 'setup: the entry should still be on disk');
 
     const human = cli(['archive'], home);
-    assert.match(human.raw, /could not be written/i, human.raw);
+    assert.match(human.raw, /cannot be written/i, human.raw);
   } finally {
     fs.chmodSync(root, 0o700);
   }
@@ -787,11 +790,17 @@ check('the summary template does not carry the success lines', () => {
 });
 
 check('the success ending is stated as conditional before it appears', () => {
+  // Two endings now, one per way of keeping handoffs, and each has to state its
+  // condition before the saved line it governs.
+  const threadCond = STEP_4.indexOf('the ending follows what `save` reported');
+  const threadSaved = STEP_4.indexOf('Handoff saved to');
+  assert.ok(threadCond !== -1 && threadSaved !== -1, 'the thread ending or its condition is gone');
+  assert.ok(threadCond < threadSaved, 'the thread condition must come before the line it governs');
+
   const cond = STEP_4.indexOf('returned a match');
-  const saved = STEP_4.indexOf('Handoff saved to');
+  const saved = STEP_4.indexOf('Handoff saved to', cond);
   assert.ok(cond !== -1, 'the match condition should be stated');
-  assert.ok(saved !== -1, 'the saved ending should still exist');
-  assert.ok(cond < saved, 'the condition must come before the line it governs');
+  assert.ok(saved !== -1, 'the saved ending should still exist after its condition');
 });
 
 check('the failure ending exists and does not offer a pickup slug', () => {

@@ -1,7 +1,7 @@
 # git-hygiene
 
-Which branches are proved safe to delete, and which linked worktrees can be
-moved or removed without guessing.
+Safe branch cleanup for branches proved safe to delete, plus one folder for your
+project worktrees and a careful way to clean them up.
 
 Branches pile up. Every so often you notice, feel vaguely bad about it, and
 either delete a pile of them or none of them. Both are bad options, because the
@@ -37,7 +37,7 @@ anything from the second list to the first.
 /git-hygiene:worktree-hygiene create   create an isolated checkout
 /git-hygiene:worktree-hygiene activate lock an existing checkout as active work
 /git-hygiene:worktree-hygiene cleanup  remove approved finished worktrees
-/git-hygiene:setup                  configure project and worktree roots
+/git-hygiene:setup                  choose the project and worktree folders
 ```
 
 You get something like this:
@@ -91,17 +91,17 @@ change, ignored local data, an open review, unique work, and incomplete evidence
 `--force`, never removes more than one approved path at a time, and never deletes
 the branch.
 
-Creating an agent worktree uses this layout:
+Creating a worktree uses the folder set by `/git-hygiene:setup`, the same one
+the guard below enforces:
 
 ```text
-~/.worktrees/<remote-owner>/<repository>/<branch>/
+<worktreeRoot>/<repo>/<task>/
 ```
 
-That concise layout applies to a normal `github.com/<owner>/<repository>` remote.
-Other hosts use `<remote-host>/<full-namespace>/<repository>` so distinct remote
-identities cannot collide. Repositories without a parseable remote use a stable local repository identity.
-Branch path components use reversible percent encoding, so distinct valid names
-cannot collapse onto the same directory.
+`<repo>` is the primary checkout's folder name. `<task>` is the branch name with
+slashes turned into dashes, or a name you give with `--task`. If two branches
+flatten to the same folder (`fix/a` and `fix-a`), creation refuses rather than
+picking another name.
 Created worktrees are locked as active agent work. `finish` unlocks one only
 after the user confirms no session is using it and the script proves it clean.
 Unlocking makes it reviewable; it does not remove it.
@@ -112,7 +112,7 @@ locked until `finish` clears it with the primary checkout named explicitly;
 only then can the separate missing-registration prune flow consider it.
 
 `relocate` moves only an exact clean, unlocked, attached worktree to its computed
-hidden path. Existing review-tool worktrees stay in their owner-specific cache.
+path in the worktree folder. Existing review-tool worktrees stay in their owner-specific cache.
 
 ## What it will not do
 
@@ -168,8 +168,9 @@ necessarily accurate when you answer it.
 
 In a git repository, it mentions once when a session starts that three or more
 branches have been proved safe to delete **and** have been sitting there a while.
-With worktree configuration enabled, the same bounded notice also reports linked
-worktrees still sitting inside visible project roots and missing registrations.
+When `worktreeLocation` is set, the same bounded notice also reports linked
+worktrees sitting in the project folder instead of its worktree folder, and
+missing registrations.
 It does not access GitHub, move anything, or claim a partial count.
 
 Three separate things keep it quiet, and all three matter:
@@ -189,20 +190,6 @@ rather than reporting a number that is only partly true.
 
 The session notice never blocks anything.
 
-## Direct worktree command guard
-
-When `enforceWorktreeRoot` is enabled, the PreToolUse hook denies direct agent
-commands that run mutating `git worktree` operations. `list`, `repair`, and prune
-dry-runs remain available. `add`, `move`, `remove`, `lock`, `unlock`, and a
-non-dry-run `prune` are routed through `worktree-hygiene`, even when a raw add
-already names the canonical path. That prevents a direct Git command from
-bypassing repository identity, activity locks, approval, or the final verifier.
-
-This boundary governs agent tool calls in a host running the plugin. Git has no
-native hook for worktree creation, so commands typed manually in Terminal, GUI
-applications, and unrelated processes are detected by the next audit rather
-than intercepted.
-
 ## Install
 
 ```
@@ -210,10 +197,11 @@ than intercepted.
 /plugin install git-hygiene@infra-plugins
 ```
 
-Run `/git-hygiene:setup` once after installation to confirm the project roots
-to scan and the hidden worktree root. Branch hygiene and current-repository
-worktree status remain available without setup; global discovery, canonical
-worktree creation, and direct-command enforcement remain off until it runs.
+Run `/git-hygiene:setup` once after installation to choose the project folder
+and the worktree folder inside it. Branch hygiene and current-repository
+worktree status work without setup; scanning every project, creating worktrees
+in the right place, the session notice for worktrees, and the guard stay off
+until it runs.
 
 Add the marketplace **by repository**, as above. Pasting a direct URL to
 `marketplace.json` downloads only that one file, the plugin folders never
@@ -261,9 +249,60 @@ file is an error rather than a reason to look elsewhere. Naming an interpreter
 and silently getting a different one hides the mistake, and a directory passes
 an executable check while starting nothing.
 
-## Configuration
+## Keep project worktrees together
 
-Branch hygiene needs no configuration. Its defaults are at the top of
+The Bash hook checks a single standalone, literal Git command, including a
+Git binary name in any letter case and literal leading environment assignments. For
+`git worktree add` and `git worktree move`, the destination must be exactly
+`<worktreeRoot>/<repo>/<task>`. It blocks `git worktree repair` and standalone
+worktree commands whose destination it cannot check safely. Use explicit paths
+and run the Git command by itself.
+
+If a command starts with `git worktree add` or `move` but also contains shell
+syntax, the hook denies it because it cannot safely check the destination. It
+does not split compound input into separate commands or search later clauses
+for Git. For example, `echo ready; git worktree add ...` is outside the check,
+while `git worktree add ... && echo ready` is denied.
+
+The hook does not parse shell syntax. It cannot inspect commands hidden behind
+redirections, substitutions, wrappers such as `command`, `env` or `timeout`,
+Git or shell aliases (including aliases set with `git -c` or `GIT_CONFIG_*`),
+shell functions, `eval`, sourced or executed script files, heredocs, or other
+shell interpreters. It also cannot see functions defined before the command,
+or programs that construct and launch Git commands. A command can change a
+path after the hook checks it and before Git uses it. This is a convenience
+check, not a sandbox. Use a controlled Git wrapper or filesystem policy if
+those cases must be prevented.
+
+Before using the guard, run `/git-hygiene:setup`. It proposes paths from the
+current repository, asks you to confirm or correct them, and stores the result
+in your user-owned configuration. You can also add `worktreeLocation` to
+`~/.claude/git-hygiene.config.json` yourself:
+
+```json
+{
+  "worktreeLocation": {
+    "projectRoot": "~/Code",
+    "worktreeRoot": "~/Code/Worktrees"
+  }
+}
+```
+
+The project folder must already exist, and the worktree folder must be inside
+it. The hook applies the same checks as setup, so a hand-written setting setup
+would refuse is treated as invalid. If the setting is missing or invalid, the
+hook does not block worktree commands. Claude Code and
+Codex read the same file. Codex asks you to review and trust the hook before its
+first use.
+
+This guard covers commands an agent runs in a host with the plugin enabled. Git
+has no hook for worktree creation, so a worktree made in Terminal or another app
+is not stopped. The next `worktree-hygiene` status run, or the session notice,
+finds it instead.
+
+## Branch cleanup settings
+
+Branch cleanup needs no configuration. Its defaults are at the top of
 `scripts/classify.js`:
 
 ```js
@@ -283,24 +322,6 @@ how you end up believing a repository is tidy.
 
 Nothing about age can ever move a branch into the safe list. There is no setting
 for that and there is not meant to be.
-
-Worktree placement and global discovery use user-owned configuration at
-`~/.claude/git-hygiene.config.json`. Run `/git-hygiene:setup` to discover local
-project roots and approve a proposal like:
-
-```json
-{
-  "projectRoots": ["~/Projects"],
-  "worktreeRoot": "~/.worktrees",
-  "enforceWorktreeRoot": true,
-  "sessionNotice": true
-}
-```
-
-No personal path ships in the plugin. Without this file, worktree status still
-works for the current repository, while global scanning, canonical creation,
-and the direct-command guard remain off. Setup writes only this configuration;
-it does not migrate existing worktrees.
 
 ## Codex
 

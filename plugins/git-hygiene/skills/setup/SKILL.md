@@ -1,48 +1,51 @@
 ---
 name: setup
 type: human
-description: Configures Git Hygiene's visible project roots, hidden worktree root, placement enforcement, and session notice. Use when the user installs worktree hygiene, asks where agent worktrees should live, or must repair git-hygiene configuration. Writes only ~/.claude/git-hygiene.config.json after confirmation.
-argument-hint: ""
-allowed-tools: Read, Bash(node:*), Bash(ls:*)
+description: Sets up Git Hygiene's optional project worktree location guard by choosing the project and worktree folders and writing them to user-owned configuration. Use when the user asks to configure or enable the worktree location guard, or invokes /git-hygiene:setup.
+allowed-tools: Read, Bash(git rev-parse:*), Bash(node:*)
 ---
 
-Configure the machine-specific paths that worktree hygiene cannot infer safely
-from shipped plugin code.
+Configure the optional worktree location guard in `~/.claude/git-hygiene.config.json`.
+Do not edit files inside the installed plugin directory.
 
-## Discover before asking
-
-Run:
+## 1. Read the current setting
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}"/scripts/worktree-config.js propose
+node "${CLAUDE_PLUGIN_ROOT}"/scripts/configure-worktree-location.js --show
 ```
 
-It checks common local project roots and the current repository without
-descending through their working trees. Present the proposed project roots,
-hidden worktree root, enforcement setting, and session-notice setting.
+If a setting already exists, show its two paths and include them in the confirmation below. Do not replace it silently.
 
-If no project root was found, ask one question: where are the user's primary Git
-repositories kept? Do not ask for paths already discovered.
+## 2. Propose the folders
 
-## Confirm and write
-
-Ask the user to confirm or correct the complete proposal. Nothing is written
-before that response. Then call the writer with one `--project-root` per approved
-root and the approved hidden root:
+If the current directory is inside a Git repository, get its root:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}"/scripts/worktree-config.js write \
-  --project-root "<root>" \
-  --worktree-root "<hidden root>" \
-  --enforce \
-  --session-notice \
-  --approved
+git rev-parse --show-toplevel
 ```
 
-Use `--no-enforce` or `--no-session-notice` only when the user selected that
-setting. The script writes only `~/.claude/git-hygiene.config.json`, uses an
-atomic replacement, and reads it back before reporting success.
+By default, propose the repository's parent as `projectRoot` and `<projectRoot>/Worktrees` as `worktreeRoot`. If the surrounding folder layout clearly indicates a different shared project folder, propose that instead. If there is no current repository, ask for both paths together. Both must be absolute paths, or start with `~/`.
 
-Show the read-back result. Explain that setup does not create, move, unlock, or
-remove a worktree. Existing worktrees are handled later through
-`/git-hygiene:worktree-hygiene` with separate approvals.
+Show both proposed paths and ask once:
+
+> Use these project and worktree folders? (yes / give me different paths)
+
+If changing an existing setting, say that it will be replaced. Do not write anything until the user confirms the displayed paths. A correction gives the paths to use and counts as confirmation for that pair; do not ask the same question twice.
+
+## 3. Write and verify
+
+For a new setting:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}"/scripts/configure-worktree-location.js --project-root "{projectRoot}" --worktree-root "{worktreeRoot}"
+```
+
+To replace an existing setting, include `--replace-existing` after the user's confirmation. The script validates the project folder and nesting, preserves other keys, and writes atomically. If validation fails, show the error and leave the prior configuration untouched.
+
+Then verify:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}"/scripts/configure-worktree-location.js --show
+```
+
+Report the configured paths. The hook reads this user-owned file for each Bash command, so the new setting applies to the next command.

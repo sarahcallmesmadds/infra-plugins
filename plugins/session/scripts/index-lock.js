@@ -86,18 +86,14 @@ function sameLock(a, b) {
 
 // Returns 'acquired', 'busy', or 'unavailable'.
 //
-// Three answers rather than two, because the two failures need different
-// handling and one boolean cannot tell them apart. 'busy' means somebody else
-// is writing right now and this write is going ahead beside theirs, which is
-// the dangerous case and gets said out loud. 'unavailable' means no lock could
-// be created at all, usually a directory that is not writable, in which case
-// the index write is about to fail too and `indexWritten: false` already
-// reports it. Warning about a lost race that nobody was in would be noise on
-// exactly the path that is already reporting a real failure.
+// Three answers rather than two, because the two failures mean different
+// things to the person told about them. 'busy' means somebody else is writing
+// right now, and waiting a moment will do. 'unavailable' means no lock could
+// be created at all, usually a directory that is not writable, and waiting will
+// not help. Either way the caller writes nothing.
 //
-// Never throws on contention. The caller's contract is that losing the index
-// must not take the wrap down, so a refusal here has to be something the
-// caller can carry on past rather than an exception through the middle of it.
+// Never throws on contention, so a caller can refuse in words rather than
+// crash part way through.
 function acquire(lock, now = Date.now) {
   const deadline = now() + WAIT_MS;
 
@@ -196,29 +192,18 @@ function release(lock) {
 // Returns `{ value, locked, reason }`. `reason` is 'acquired', 'reentrant',
 // 'busy' or 'unavailable'.
 //
-// Running `fn` even when the lock was not taken is deliberate, and it is the
-// one place this trades correctness for availability. The rule it serves is
-// written at `writeIndex`: losing the index degrades pickup to guessed paths,
-// and it must never take the wrap down, because the handoff itself is the
-// point. Refusing to write after a five second wait would fail the wrap to
-// protect an index that is a convenience.
-//
-// An unprotected write must not be silent about it, but the warning belongs to
-// the write and not to the region. It used to be printed here, up front, from
-// the lock answer alone. Every path through the gate reaches this line,
-// including the ones that only read: a dry run, or a sweep with nothing to move
-// and nothing to prune. Those printed "an entry may have been lost" after
-// changing nothing, which is not a warning, it is a false statement, and it is
-// the same contract the surrounding code enforces on `indexWritten`. Devin
-// round 2 on PR #109.
-//
-// So `warnUnprotectedWrite` is exported and called at the moment a write
-// actually happens without the lock. Once per region, because one write is one
-// warning however many nested calls made it.
+// `fn` runs whether or not the lock was taken, and is told which. The lock
+// does not decide what a caller does without it: every caller that writes
+// refuses in that case, and says so, because a handoff written beside another
+// session has no second copy. Keeping the decision with the caller is what
+// lets a read-only caller carry on while a writer stops.
 //
 // A caller that knows it cannot write says so with `readOnly`, and then no lock
 // is taken and nothing waits. That is what stops a preview stalling five
 // seconds behind another session's write.
+//
+// `fn` is handed `{ locked, reason }` for the region it runs in, including an
+// inherited one, which is how a caller knows to refuse.
 function exists(dir) {
   try { return fs.existsSync(dir); } catch (_) { return false; }
 }
@@ -230,7 +215,7 @@ function unlockedRegion(lock, fn, reason) {
   const region = { count: 1, locked: false, reason, refreshedAt: 0 };
   regions.set(lock, region);
   try {
-    return { value: fn(), locked: false, reason };
+    return { value: fn({ locked: false, reason }), locked: false, reason };
   } finally {
     region.count -= 1;
     if (region.count === 0) regions.delete(lock);
@@ -250,7 +235,13 @@ function withIndexLock(lock, fn, { readOnly = false, mayCreate = false } = {}) {
   if (outer) {
     outer.count += 1;
     try {
-      return { value: fn(), locked: outer.locked, reason: 'reentrant' };
+      // The outer answer travels with it, so a nested caller can tell "inside a
+      // region that holds the lock" from "inside one that never needed it".
+      return {
+        value: fn({ locked: outer.locked, reason: 'reentrant', outerReason: outer.reason }),
+        locked: outer.locked,
+        reason: 'reentrant',
+      };
     } finally {
       outer.count -= 1;
     }
@@ -305,7 +296,7 @@ function withIndexLock(lock, fn, { readOnly = false, mayCreate = false } = {}) {
   const region = { count: 1, locked, reason, refreshedAt: Date.now() };
   regions.set(lock, region);
   try {
-    return { value: fn(), locked, reason };
+    return { value: fn({ locked, reason }), locked, reason };
   } finally {
     region.count -= 1;
     // Deleted rather than left at zero, so a later independent call starts from
@@ -391,31 +382,8 @@ function lockLost(lock) {
   }
 }
 
-// Say that a write went ahead without the lock, at the moment it does.
-//
-// Called by the writer rather than by the region, because only the writer knows
-// a write happened. Once per region: one write is one warning, however many
-// nested calls contributed to it.
-//
-// Silent when the region holds the lock, obviously, and silent for
-// 'unavailable' too. That one means no lock could be created at all, usually a
-// directory that is not writable, in which case the index write is about to
-// fail and `indexWritten: false` reports it properly. Two messages for one
-// failure, one of them speculative, is worse than one.
-function warnUnprotectedWrite(lock) {
-  const region = regions.get(lock);
-  if (!region || region.reason !== 'busy' || region.warned) return false;
-  region.warned = true;
-  process.stderr.write(
-    `session: wrote the handoff index without the lock at ${lock}, after waiting ${WAIT_MS}ms. `
-    + 'Another session was writing at the same time, so an entry may have been lost.\n',
-  );
-  return true;
-}
-
 module.exports = {
   withIndexLock,
-  warnUnprotectedWrite,
   refreshLock,
   lockLost,
   REFRESH_MS,

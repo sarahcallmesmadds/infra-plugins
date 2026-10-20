@@ -93,7 +93,10 @@ function worktreeNotice(deadline) {
   const { loadConfig } = require(path.join(__dirname, '..', 'scripts', 'worktree-config.js'));
   const { auditConfigured } = require(path.join(__dirname, '..', 'scripts', 'worktrees.js'));
   const config = loadConfig();
-  if (!config.exists || !config.valid || !config.sessionNotice) return null;
+  // On whenever worktreeLocation is configured: the notice only speaks when a
+  // worktree sits outside that folder or a registration is missing, so a
+  // separate on/off switch would only be one more setting to get wrong.
+  if (!config.exists || !config.valid) return null;
 
   const audit = auditConfigured({ config, deadline, skipRemote: true });
   if (audit.truncated) return null;

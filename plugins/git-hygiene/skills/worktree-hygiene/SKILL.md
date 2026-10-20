@@ -17,7 +17,7 @@ available for `stale-branches` to review separately.
 ## Choose the route
 
 - `status`: inspect worktrees without changing anything.
-- `create`: create or open an isolated checkout at the configured hidden path.
+- `create`: create or open an isolated checkout at `<worktreeRoot>/<repo>/<task>`.
 - `activate`: lock an existing linked checkout as active agent work.
 - `relocate`: move an existing clean, unlocked worktree to its configured path.
 - `cleanup`: remove only worktrees classified `merged` after exact-path approval.
@@ -40,8 +40,9 @@ For every configured project root:
 node "${CLAUDE_PLUGIN_ROOT}"/scripts/worktrees.js audit --all-configured --json
 ```
 
-If configuration is missing, the current-repository form still works. Global
-discovery, canonical placement, and enforcement stay off until setup is complete.
+If `worktreeLocation` is not configured, the current-repository form still works.
+Global discovery and canonical placement stay off until `/git-hygiene:setup` has
+run.
 
 Group the result by state. Show the exact path, branch, reason, and whether the
 script marked it removable or relocatable. A partial audit carries
@@ -53,7 +54,7 @@ cleanup from it.
 Read the configuration first:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}"/scripts/worktree-config.js show
+node "${CLAUDE_PLUGIN_ROOT}"/scripts/configure-worktree-location.js --show
 ```
 
 If it is absent or invalid, route to `/git-hygiene:setup`. Do not guess a project
@@ -64,6 +65,11 @@ Show the computed destination before creating anything:
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}"/scripts/worktrees.js destination --repo "<repository>" --branch "<branch>"
 ```
+
+The task folder defaults to the branch name with slashes turned into dashes. If
+the user names the task differently, add `--task "<name>"` to this command and to
+`create`, and use the same name in both. The script refuses a destination that
+already exists rather than picking another name.
 
 Ask for approval if the branch does not already exist. If it exists on exactly
 one remote but not locally, omit `--base`; the script creates a local tracking

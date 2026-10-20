@@ -1,6 +1,7 @@
 # slop-check
 
-Catch what nobody edited, and rewrite what did not land, in either host.
+Catch what nobody edited, rewrite what did not land, and make slide titles say
+something, in either host.
 
 The useful question about a piece of work is not whether a machine touched it.
 Almost everything has been touched by one, and no tool can honestly tell you
@@ -9,7 +10,7 @@ it afterwards, because that is the part that actually went missing.
 
 This looks for the evidence that nobody did.
 
-## Four things
+## Five things
 
 **A hook that holds the line on your own writing.** Em dashes and runs of very
 short sentences are blocked in the assistant's output, so it has to rewrite
@@ -67,7 +68,7 @@ says why each is a problem, so the result is something you can act on yourself
 or send back to whoever produced it.
 
 **A skill, `say-it-simply`, that rewrites an answer that did not land.** The
-other three report on writing that already exists. This one shapes an answer as
+first three report on writing that already exists. This one shapes an answer as
 it is being produced, which is a different job.
 
 It comes out of reading every message across ten days where the answer drew "I
@@ -85,6 +86,30 @@ Type `/say-it-simply`, or just push back in your own words. It answers to "in
 plain english", "i dont understand", "too much text" and the rest.
 
 There is deliberately no hook on this one. It runs when you ask.
+
+**A skill, `slide-titles`, that makes slide titles say something.** A title that
+names a topic ("Pricing", "The margin math") makes the reader open the slide to
+learn what it says. This one makes each title the takeaway of its slide, as a
+sentence, so the titles alone tell the story of the deck.
+
+On a deck you already have, it reads every slide, lists the titles in order,
+marks each one as saying something, naming a topic, repeating the slide before,
+needing the slide to make sense, or holding for a build, and proposes a
+replacement from what the slide's body shows for each title that needs one. A
+title that already says something is left alone. A build, one visual filling in
+across several slides, keeps its title on every step. It returns a table and
+then the final titles as one paragraph, so you can read them top to bottom
+yourself. On a new deck it starts from five to nine plain sentences that make
+the argument, before any slide exists. On a single slide it gives two or three
+candidates and says the rest of the deck was not seen.
+
+It names the two ways titles usually go wrong: the label on a table, where the
+real claim ends up in a banner at the bottom, and the label with the claim in a
+smaller line underneath. It will not write a claim the slide does not support,
+and it does not change the deck unless you ask.
+
+Type `/slide-titles`, or ask for a title pass or a headline pass on a deck. No
+hook on this one either.
 
 ## What it looks for
 
@@ -122,6 +147,25 @@ ends, claims sourced to nobody, hedging with no position, "not X but Y"
 antithesis, lists of three, forced enthusiasm, melodrama, brochure-style lists
 that repeat a bold "that" or "where" headline followed by explanatory copy,
 and sentences that are all suspiciously similar lengths.
+
+Two of the soft categories sit above the sentence, because a document was
+rejected on sight with every sentence-level check clean. A sentence that
+announces a point and leaves it to the next sentence: "It matters now because
+of what the change removes." followed by the sentence that says what is
+removed. The fix is to say the thing in the sentence. And a list said twice: a
+table column, a bullet list or a run of bold paragraph labels whose items turn
+up again, three or more of them inside one paragraph, list or column of another
+section. Both quote the lines they rest on.
+
+Three more structural shapes are printed as questions under their own heading
+and counted against nothing: paragraphs opening on a very short pronoun
+sentence ("So we talk."), consecutive paragraphs opening with a bold label
+that shares its first two words ("**How things connect.** ... **How things
+behave.** ..."), and an opening that is about the event rather than the
+subject under a title that names a subject. Each of those is also how a sound
+document can be organised, which is why they ask rather than count. Two others
+were tried and left out after measurement, and `scripts/structure.js` says
+which and why.
 
 ### Code
 
@@ -215,10 +259,15 @@ rate at all.
 
 Splitting the copular contrast into its own category moved one document of the
 41 in this repository from "little" to "some", on a real hit rather than a
-false one. That measurement is worth repeating whenever a category is added,
-because the first version of this change also added a reversed-order contrast
-pattern, and that one carried the contrast category onto 16 of the 41 before it
-was withdrawn.
+false one. The two structural categories, measured over 213 documents across
+four repositories, moved three from "little" to "some" and none to "strong"; the
+first versions of three of the structural checks moved 23, two of them to
+"strong", and were anchored or demoted to questions on that evidence.
+
+That measurement is worth repeating whenever a category is added, because the
+first version of the copular-contrast change also added a reversed-order
+contrast pattern, and that one carried the contrast category onto 16 of the 41
+before it was withdrawn.
 
 The checkable problems are worth much more than the stylistic ones. A shipped
 `your-api-key`, percentages that do not add up, or a left-in `oaicite` are

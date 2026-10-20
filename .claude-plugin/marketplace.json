@@ -27,8 +27,8 @@
     {
       "name": "git-hygiene",
       "source": "./plugins/git-hygiene",
-      "description": "Manages branches and linked worktrees through positive evidence rather than guesses. It places agent-created worktrees under a configured hidden root, reports cleanup candidates automatically, and moves or removes only exact worktrees proved safe by a deterministic re-check after approval. Branch cleanup remains separate, and unknown evidence always means keep.",
-      "version": "0.4.0",
+      "version": "0.5.0",
+      "description": "Tells you which branches are proved safe to delete, keeps project worktrees in one configured folder, and cleans up finished worktrees. It removes only the branches and worktrees you approve, re-checks each one first, and keeps anything it cannot prove safe.",
       "author": {
         "name": "Sarah Madden"
       },
@@ -46,7 +46,7 @@
       "name": "build-loop",
       "source": "./plugins/build-loop",
       "description": "Keep everything you build honest. Log what a skill, hook, command, plugin or script got wrong the moment it happens, fix it from the queue with an approval gate, know what else the fix puts at risk, and keep a to-build list that closes itself when the work actually ships.",
-      "version": "0.10.21",
+      "version": "0.10.23",
       "author": {
         "name": "Sarah Madden"
       },
@@ -64,8 +64,8 @@
     {
       "name": "slop-check",
       "source": "./plugins/slop-check",
-      "description": "Catch the habits that mean nobody edited it, and rewrite an answer that did not land. Blocks em dashes and choppy sentence runs in the assistant's own writing in both Claude Code and Codex, checks any draft, document, pull request, chart or spec for the signs it shipped unreviewed, and reshapes a confusing answer around what you have to do.",
-      "version": "0.8.3",
+      "description": "Catch the habits that mean nobody edited it, and rewrite an answer that did not land. Blocks em dashes and choppy sentence runs in the assistant's own writing in both Claude Code and Codex, checks any draft, document, pull request, chart or spec for the signs it shipped unreviewed, reshapes a confusing answer around what you have to do, and makes each slide title state the takeaway of its slide.",
+      "version": "0.10.0",
       "author": {
         "name": "Sarah Madden"
       },
@@ -83,7 +83,7 @@
       "name": "session",
       "source": "./plugins/session",
       "description": "Make sessions continuous. Wrap one up into a handoff the next one loads, start with today's date and a compact build-loop brief, warn when another session is already working here, and put cost, context and connected tool health in the status line.",
-      "version": "0.8.23",
+      "version": "0.9.0",
       "author": {
         "name": "Sarah Madden"
       },

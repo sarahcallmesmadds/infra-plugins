@@ -6,9 +6,10 @@
 // The hook was adapted from an earlier implementation. Two deliberate changes
 // define this repository's contract.
 //
-// 1. The original required `type: human|agent`. Eleven of the twenty-five skills
-//    in this repository do not set it, so requiring it would report eleven files
-//    that are fine. Here it is validated when present and never required.
+// 1. The original required `type: human|agent`. Valid skills in this
+//    repository do not all set it, so requiring it would report files that are
+//    fine. Here it is validated when present and never required. No count is
+//    quoted, because any count goes stale the next time a skill is added.
 //
 // 2. The original did not compare the frontmatter name against the directory.
 //    That is the fault this repository keeps hitting: /audit-deps carries a
@@ -174,8 +175,23 @@ check('the optional-type explanation does not embed a repository count', () => {
   const readme = fs.readFileSync(path.join(PLUGINS, 'build-loop', 'README.md'), 'utf8');
   assert.match(hook, /optional because valid installed skills do not all set it/i);
   assert.match(readme, /does not embed the current repository inventory/i);
-  assert.doesNotMatch(hook, /\d+ of the \d+ skills/);
-  assert.doesNotMatch(readme, /\d+ of the \d+ skills/);
+  // Counts have been written both ways here ("11 of the 24", "Eight of the
+  // twenty-one"), so a digits-only pattern lets the spelled-out form back in.
+  const units = 'one|two|three|four|five|six|seven|eight|nine';
+  const tens = 'twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety';
+  const number = `(?:\\d+|(?:${tens})(?:[-\\u2013\\s]?(?:${units}))?|zero|${units}|ten|eleven|twelve|`
+    + 'thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen)';
+  const count = new RegExp(`\\b${number} of the ${number} skills\\b`, 'i');
+  const header = fs.readFileSync(__filename, 'utf8').split("'use strict';")[0];
+  for (const [name, text] of [['hook', hook], ['README', readme], ['test header', header]]) {
+    assert.doesNotMatch(text, count, `${name} quotes a skill count`);
+  }
+  for (const sample of ['Eight of the twenty-one skills', '11 of the 24 skills', 'five of the twenty one skills',
+    'five of the twenty–one skills', 'five of the twentyone skills', 'Zero of the nine skills',
+    'Sixty of the seventy skills']) {
+    assert.match(sample, count, sample);
+  }
+  assert.doesNotMatch('none of the five skills', count);
 });
 
 // --- against the real repository -------------------------------------------
