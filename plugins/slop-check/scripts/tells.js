@@ -111,6 +111,7 @@ function choppyRun(text, limit) {
 // --- soft tells ------------------------------------------------------------
 
 const P = require('./patterns.js');
+const { structuralTells } = require('./structure.js');
 
 function countPhrases(haystack, needles) {
   // Both sides folded, so a list entry spelled with one apostrophe still finds
@@ -1510,6 +1511,17 @@ function checkAll(text, config = {}) {
   const smart = (String(text).match(/[‘’“”]/g) || []).length;
   if (smart >= 6) soft.push({ name: 'typographic-quotes-throughout', count: smart });
 
+  // Shapes above the sentence. The lexical checks above reported a document
+  // clean on 2026-10-19 that its author rejected on sight for exactly these.
+  // Two count like any other soft tell: a sentence that announces the next
+  // one, and the same list said twice. Three are questions, printed beside the
+  // reading and never fed to it, because the shapes they describe are also how
+  // good documents are organised: a short pronoun sentence opening paragraphs,
+  // bold labels sharing a stem, and logistics before the subject. structure.js
+  // says why each sits where it does.
+  const structure = structuralTells(text);
+  soft.push(...structure.soft);
+
   // Distinct categories, not raw hits. One phrase repeated ten times is one
   // habit; six different categories at once is a pattern. A detector may mark
   // itself standalone only after it has already aggregated a repeated structure
@@ -1520,7 +1532,13 @@ function checkAll(text, config = {}) {
   const reading =
     categories >= 4 ? 'strong' : categories >= 2 || standalone ? 'some' : 'little';
 
-  return { hard: hard.violations, soft, categories, reading };
+  return { hard: hard.violations, soft, questions: structure.questions, categories, reading };
 }
 
-module.exports = { checkHard, checkAll, proseOf, sentencesOf, EM_DASH };
+// withoutFencedBlocks and the two markers are shared with structure.js, which
+// requires them lazily: the two files require each other, and a top-level
+// require from structure.js would see this object before it is filled.
+module.exports = {
+  checkHard, checkAll, proseOf, sentencesOf, EM_DASH,
+  withoutFencedBlocks, MARKDOWN_BOUNDARY, MARKDOWN_PARAGRAPH_CONTINUATION,
+};
