@@ -10,11 +10,55 @@ Load the context from a previous session so work can restart in minute one
 rather than minute ten. Your past self briefing your future self.
 
 The argument is the **slug**. `/wrap` prints it as the last line of every wrap,
-so most pickups are a paste.
+so most pickups are a paste. In Codex there is no slash command: the same slug
+is passed to this skill by asking for it, for example "pick up site-thread".
+
+---
+
+## Step 0: Check the scripts match this skill
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js capabilities --json
+```
+
+It has to print a JSON object whose `threads` is 1 or higher. Anything else,
+including a list of commands or an error, means the scripts installed in this
+host are older than this skill.
+Stop and say so: "The installed session scripts are older than this skill;
+update the session plugin in this host and start a new session." Do not carry
+on with the older scripts. They accept the commands below and answer a
+different question, so the result would look right and be wrong.
 
 ---
 
 ## Step 1: Find the handoff
+
+**If the argument is a path directly inside `~/.planning/handoffs/`** named
+`HANDOFF-<name>.md`, it is a central handoff, possibly a thread: use `<name>` as
+the slug and carry on with `find` below. Then check that the match (or
+`thread.path`) is that same file. If the name leads to a different document,
+because the index maps it elsewhere, say so, show both paths, and ask which was
+meant before going on.
+
+**If the argument is any other path to a file rather than a name**, which is
+how `/wrap` ends for a project when both its name and `<name>-project` are
+taken, skip `find`: the name would open something else. Open the path with the Read tool. If the read fails,
+say nothing is there and stop. Otherwise it is a project handoff; carry on at
+Step 2, and in its constraints step pass the file itself, exactly as given:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js constraints --file "<the path>" --json
+```
+
+Never copy its **Working directory:** line into `--cwd` yourself. The command
+reads that line the way every other command does, expanding `~` and dropping a
+trailing note, and a line pasted as written can name no real folder and come
+back as an empty list that looks like a first wrap. The answer is the older
+pooled one for the project's own scope, which is what binds a project. If it
+answers with `error` or `refused`, say what it says and stop. If it answers
+with `binding: false`, its rules are home history, not binding: say so.
+
+Otherwise the argument is a slug:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js find "<slug>" --json
@@ -49,6 +93,33 @@ If the match is an archived handoff, open the summary with:
 
 > This handoff was archived as finished or stale. Loading it anyway.
 
+### Thread or history
+
+The same JSON says which kind of handoff this is.
+
+- **`thread` is set.** This is a declared thread: one handoff per subject,
+  rewritten in place at every wrap. If `thread.exists` is false its file is
+  missing, and if `thread.unreadable` is true it cannot be read: say which and
+  stop. Otherwise keep `thread.slug`, `thread.path`,
+  `thread.rev` and `thread.generation`; Step 3 prints them. If
+  `thread.conflicts` is not empty, two documents answer to this slug: show
+  both paths and ask which is meant before going on.
+- **`match.history` is true.** Threads are set up here, and this document is an
+  older home handoff that is not one of them. It is kept as history and binds
+  nothing. Say so, then run `cli.js threads` and offer the thread that covers
+  this subject. If the user takes it, start this pickup again with that slug.
+- **`listUncertain` is true.** The thread list cannot be read, and this
+  handoff could be a thread, so which rules bind it cannot be told. Say so and
+  stop; the list needs fixing first. That includes a repository's own
+  `HANDOFF.md` whose name is also a central handoff's, because the name may
+  belong to a thread. A repository handoff with a name of its own is never
+  affected and carries on as below.
+- **`unreadable` is set** (at the top level, for a handoff that is not a
+  thread). The file is there and cannot be read: say so, with the path, and
+  stop.
+- **Neither.** Threads are not set up here yet (`mode: "pre-migration"`), or this
+  is a project handoff kept beside its work. Carry on as below.
+
 ---
 
 ## Step 2: Read it
@@ -59,36 +130,51 @@ else, take the structure as it comes and do not force it into the template.
 ### Then ask what still binds
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js constraints --cwd "<the project directory>"
+node "${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js constraints --thread "<slug>" --json
 ```
 
-**Pass `--cwd` explicitly. Do not rely on where the session started.** Scope is
-worked out from the working directory, and Step 4 is what moves to the project,
-two steps after this. Run without the flag and it answers for wherever the
-session opened, usually the home directory, which resolves to a different
-project and reports no constraints. A confident "none" is the worst answer this
-command can give, because it is indistinguishable from a project that genuinely
-has none.
+Always the slug you were given, never the directory this session started in.
+What comes back depends on how the handoff is kept, and the command decides,
+not this skill:
 
-The project directory is the `**Working directory:**` line inside the handoff
-you just read. Use that, not `dirname` of the handoff's own path: a central
-handoff lives in the handoffs folder, which is nobody's project.
+- **A declared thread** (`binding: true` and `kind: "thread"`): the rules
+  written in that thread's own file, and nothing else. That is the whole answer. Rules that apply to
+  every thread live in the user's standing instructions and memory, not in
+  other handoffs, so there is no second list to go and find.
+- **Threads not set up yet, or a handoff outside the home directory** (a
+  repository's `HANDOFF.md`, or one written from anywhere but home): the older
+  pooled answer, every rule recorded by any handoff written from the same
+  working directory as this one, exactly as before. A constraint set on one
+  piece of work still governs the next there, and the list can be long; print
+  it anyway. Show any `truncated`, `unreadable`, `unmatchedRetirements`,
+  `nearDuplicates` or `gitDegraded` in the answer above the list, the way the command's plain
+  output does: each means the list may be incomplete or doubled.
+- **An `error`** (the handoff has no `**Working directory:**` line, or was not
+  found): say that what binds could not be worked out, and why. Never answer
+  for the directory this session happens to be in instead.
+- **History** (`binding: false`): nothing binds. Say the document is history.
 
-**Run it even when the handoff has a `## Constraints still in force` section.**
-That section holds what the last session carried. This asks the project, across
-every handoff written for it, including ones for other threads of work. A
-constraint set on one thread governs the next one, and the thread that set it is
-not the thread that breaks it.
+Two refusals stop the pickup rather than print a list:
 
-If the two disagree, show both and say which came from where. Do not silently
-prefer either: a constraint in the project but not in this handoff is the exact
-shape of something that was dropped, and it is worth the user seeing that.
+- `refused: "migration-unfinished"`: a migration is part way through. Show the
+  rules in `pending` that are still to be written into this thread, say that no
+  thread's rules are given until it finishes, and name `cli.js migrate finish`.
+- `refused: "registry-invalid"`, `"declared-missing"`, `"declared-unreadable"`,
+  `"declared-no-directory"` or `"declared-out-of-scope"`: the thread list cannot
+  be read, or names a file that is not there, cannot be read, has no
+  `**Working directory:**` line, or was written outside the home directory. Say
+  which and stop.
 
----
+If the handoff's own `## Constraints still in force` section and the command
+disagree, show both and say which came from where. For a declared thread they
+should be identical apart from `Retired this session:` lines, which the command
+leaves out, because they are the same file; any other difference means the file
+changed since it was read.
 
 ## Step 3: Surface it
 
 ```
+Thread: {slug} · {path} · rev {first 12 of rev} · generation {generation}
 Resuming from: {path}
 
 **Still binding:**
@@ -106,6 +192,14 @@ Resuming from: {path}
 **Files of interest:**
 {paths only, at most eight}
 ```
+
+Print the `Thread:` line only for a declared thread, and keep it word for word
+in any summary this conversation is later compressed into. Wrap reads it to know
+which thread to save, and to notice whether another session saved it since this
+pickup. A lost line means wrap has to work the thread out again.
+
+When more than one opening note applies, the order is: the `Thread:` line, then
+`Resuming from:`, then the archived note, then the age note.
 
 Omit any section the handoff does not have. Do not fill a gap with a guess: a
 fabricated "where we left off" is worse than an absent one, because it reads
@@ -175,7 +269,9 @@ entirely.
 
 ## Edge cases
 
-**No slug given.** Show a menu rather than guessing:
+**No slug given.** If threads are set up (`cli.js threads` lists them), show
+that list first, since those are what a pickup should resume; offer the menu
+below only for older history. Otherwise show a menu rather than guessing:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js recent

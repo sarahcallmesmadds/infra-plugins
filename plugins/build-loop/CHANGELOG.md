@@ -3,12 +3,29 @@
 Upgrade notes for past versions, moved out of the README so that file says what
 the plugin is and how to use it. Nothing here is needed to install or run it.
 
-## Upgrading to 0.10.21
+## Upgrading to 0.10.23
 
 **The skill frontmatter check no longer embeds the repository's current skill
 count.** Adding a valid skill in another plugin cannot make this hook's error
 message and documentation stale. The rule is unchanged: `type` remains optional,
 and is validated only when a skill sets it.
+
+## Upgrading to 0.10.22
+
+**Interrupted Devin CLI reviews now have transcript-linked reconciliation.**
+Every assistant message is explicitly accounted for, and each partial finding
+is tied to an exact transcript quote and source report ID. The response gate
+still requires a later complete retry for the same purpose and commit. Unknown
+failures remain blocked as incomplete. Tool-only transcript steps are accounted
+for, malformed reconciliation entries fail validation cleanly, and interruption
+signals, outcomes, and finding counts must match evidence the capture can prove.
+
+## Upgrading to 0.10.21
+
+**The skill count quoted by the `SKILL.md` check now reads 24.** Nothing to
+change on your side. The repository gained a skill in another plugin, and the
+check's message and this plugin's README quote the repository's own count, so
+both were brought up to date. The check itself behaves exactly as before.
 
 ## Upgrading to 0.10.20
 
