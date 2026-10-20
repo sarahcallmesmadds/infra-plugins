@@ -520,12 +520,17 @@ check('prune reads what Git would clear from its dry run, and refuses anything u
 });
 
 check('prune maps a relative-paths registration to its real path', () => {
-  // --relative-paths arrived in Git 2.48. Older Git cannot write such a
-  // registration, so there is nothing to map.
-  const help = spawnSync('git', ['worktree', 'add', '-h'], { encoding: 'utf8' });
-  if (!`${help.stdout}${help.stderr}`.includes('relative-paths')) return;
   const f = fixture();
   try {
+    // --relative-paths arrived in Git 2.48. Older Git cannot write such a
+    // registration, so there is nothing to map. Probe inside the fixture
+    // repository: outside one, `git worktree add -h` fails for that reason
+    // alone and the check would skip silently on a Git that supports it.
+    const help = spawnSync('git', ['-C', f.repo, 'worktree', 'add', '-h'], { encoding: 'utf8' });
+    if (!`${help.stdout}${help.stderr}`.includes('relative-paths')) {
+      assert.match(`${help.stdout}${help.stderr}`, /usage: git worktree add/);
+      return;
+    }
     const target = path.join(f.projects, 'example gone relative');
     git(f.repo, 'worktree', 'add', '-q', '--relative-paths', '-b', 'gone-relative', target);
     const admin = fs.readdirSync(path.join(f.repo, '.git', 'worktrees'))[0];
