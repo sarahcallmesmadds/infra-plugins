@@ -504,6 +504,37 @@ function summarize(repositories) {
   };
 }
 
+// The session notice's scan. It counts only what needs no per-worktree Git
+// work: where each registered worktree sits and whether its path exists. The
+// full audit runs `git status` and branch evidence for every worktree, which on
+// 27 repositories and 89 worktrees took about 28 seconds, so inside a 1.5
+// second budget it always ran out and the notice never spoke. The counts match
+// summarize(): visible is a present, non-primary worktree in the project folder
+// but outside the worktree folder; missing is a registration whose path is
+// confirmed absent.
+function placementCounts(options = {}) {
+  const config = options.config || loadConfig();
+  const roots = config.exists && config.valid ? config.projectRoots : [];
+  const discovered = discoverRepositories(roots, options.deadline);
+  if (discovered.truncated) return { truncated: true, visible: 0, missing: 0 };
+  let visible = 0;
+  let missing = 0;
+  for (const repo of discovered.repositories) {
+    if (options.deadline && Date.now() >= options.deadline) return { truncated: true, visible: 0, missing: 0 };
+    let entries;
+    try { entries = registeredWorktrees(repo, options.deadline); }
+    catch (_) { return { truncated: true, visible: 0, missing: 0 }; }
+    entries.forEach((entry, index) => {
+      if (index === 0) return;
+      const presence = pathPresence(entry.path);
+      if (presence.absenceConfirmed) missing += 1;
+      else if (presence.present && classifyLocation(entry.path, config) === 'project-root') visible += 1;
+    });
+  }
+  if (options.deadline && Date.now() >= options.deadline) return { truncated: true, visible: 0, missing: 0 };
+  return { truncated: false, visible, missing };
+}
+
 function auditConfigured(options = {}) {
   const config = options.config || loadConfig();
   const roots = config.exists && config.valid ? config.projectRoots : [];
@@ -832,6 +863,7 @@ if (require.main === module) main();
 
 module.exports = {
   STATES,
+  placementCounts,
   activateWorktree,
   auditConfigured,
   auditForPath,

@@ -91,21 +91,24 @@ function branchNotice(cwd, deadline) {
 
 function worktreeNotice(deadline) {
   const { loadConfig } = require(path.join(__dirname, '..', 'scripts', 'worktree-config.js'));
-  const { auditConfigured } = require(path.join(__dirname, '..', 'scripts', 'worktrees.js'));
+  const { placementCounts } = require(path.join(__dirname, '..', 'scripts', 'worktrees.js'));
   const config = loadConfig();
   // On whenever worktreeLocation is configured: the notice only speaks when a
   // worktree sits outside that folder or a registration is missing, so a
   // separate on/off switch would only be one more setting to get wrong.
   if (!config.exists || !config.valid) return null;
 
-  const audit = auditConfigured({ config, deadline, skipRemote: true });
-  if (audit.truncated) return null;
-  const visible = audit.summary.visible;
-  const missing = audit.summary.missing;
+  // Never the full audit here: it runs git status on every worktree and cannot
+  // finish inside the session budget on a real machine, so the notice would
+  // always fall silent. placementCounts needs one Git call per repository.
+  const counts = placementCounts({ config, deadline });
+  if (counts.truncated) return null;
+  const visible = counts.visible;
+  const missing = counts.missing;
   if (visible === 0 && missing === 0) return null;
 
   const facts = [];
-  if (visible) facts.push(`${visible} linked worktree${visible === 1 ? '' : 's'} still ${visible === 1 ? 'sits' : 'sit'} inside a visible project root`);
+  if (visible) facts.push(`${visible} linked worktree${visible === 1 ? '' : 's'} ${visible === 1 ? 'sits' : 'sit'} in the project folder instead of the worktree folder`);
   if (missing) facts.push(`${missing} missing worktree registration${missing === 1 ? '' : 's'} ${missing === 1 ? 'needs' : 'need'} review`);
   return `${facts.join(', and ')}. Run /git-hygiene:worktree-hygiene to inspect them; nothing was moved or removed.`;
 }

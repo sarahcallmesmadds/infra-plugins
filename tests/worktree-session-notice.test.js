@@ -68,7 +68,7 @@ check('a home-directory-style session reports visible linked worktree clutter on
   try {
     const event = fire(f);
     assert.strictEqual(event.hookSpecificOutput.hookEventName, 'SessionStart');
-    assert.match(event.hookSpecificOutput.additionalContext, /1 linked worktree still sits/);
+    assert.match(event.hookSpecificOutput.additionalContext, /1 linked worktree sits in the project folder instead of the worktree folder/);
     assert.match(event.hookSpecificOutput.additionalContext, /nothing was moved or removed/);
   } finally { f.cleanup(); }
 });
@@ -78,7 +78,7 @@ check('missing registrations are reported without pruning them', () => {
   try {
     const event = fire(f);
     assert.match(event.hookSpecificOutput.additionalContext, /1 missing worktree registration needs review/);
-    assert.doesNotMatch(event.hookSpecificOutput.additionalContext, /still sits inside/);
+    assert.doesNotMatch(event.hookSpecificOutput.additionalContext, /sits in the project folder/);
     const list = execFileSync('git', ['-C', f.repo, 'worktree', 'list', '--porcelain'], { encoding: 'utf8' });
     assert.match(list, /prunable/);
   } finally { f.cleanup(); }
@@ -100,7 +100,8 @@ check('resume and compact stay silent even when visible clutter exists', () => {
 
 check('an incomplete worktree scan makes no count claim', () => {
   const source = fs.readFileSync(HOOK, 'utf8');
-  assert.match(source, /if \(audit\.truncated\) return null;/);
+  assert.match(source, /if \(counts\.truncated\) return null;/);
+  assert.doesNotMatch(source, /auditConfigured/);
 });
 
 check('a slow Git command is stopped by the session deadline', () => {
@@ -110,12 +111,14 @@ check('a slow Git command is stopped by the session deadline', () => {
   const wrapper = path.join(bin, 'git');
   fs.writeFileSync(wrapper, `#!/bin/sh
 for argument in "$@"; do
-  if [ "$argument" = status ]; then sleep 2; fi
+  if [ "$argument" = worktree ]; then sleep 3; fi
   if [ "$argument" = for-each-ref ]; then sleep 3; fi
 done
 exec "${realGit}" "$@"
 `);
   fs.chmodSync(wrapper, 0o755);
+  // Slow the one per-repository command the notice scan runs. If the scan ever
+  // stops passing its deadline down as a timeout, this hangs past the budget.
   try {
     const started = Date.now();
     const result = spawnSync(process.execPath, [HOOK], {
@@ -150,6 +153,26 @@ check('current-repository status works without configuration', () => {
     assert.strictEqual(audit.summary.repositories, 1);
     assert.strictEqual(audit.repositories[0].worktrees[0].state, 'primary');
   } finally { f.cleanup(); }
+});
+
+check('the notice scan counts exactly what the full audit counts', () => {
+  for (const options of [{ linked: true }, { linked: true, missing: true }, {}]) {
+    const f = fixture(options);
+    try {
+      const managed = path.join(f.hidden, 'example', 'managed');
+      execFileSync('git', ['-C', f.repo, 'branch', 'managed', 'main']);
+      execFileSync('git', ['-C', f.repo, 'worktree', 'add', '-q', managed, 'managed']);
+      const script = `const w = require(${JSON.stringify(CLI)});
+        const full = w.auditConfigured({ skipRemote: true }).summary;
+        const fast = w.placementCounts({});
+        process.stdout.write(JSON.stringify({ full: [full.visible, full.missing], fast: [fast.visible, fast.missing], truncated: fast.truncated }));`;
+      const result = spawnSync(process.execPath, ['-e', script], { env: { ...process.env, HOME: f.base }, encoding: 'utf8' });
+      assert.strictEqual(result.status, 0, result.stderr);
+      const counts = JSON.parse(result.stdout);
+      assert.strictEqual(counts.truncated, false);
+      assert.deepStrictEqual(counts.fast, counts.full, JSON.stringify(options));
+    } finally { f.cleanup(); }
+  }
 });
 
 check('configured global status discovers repositories from outside them', () => {
