@@ -158,6 +158,11 @@ function printThreadConstraints(opts, t) {
   }
   const standing = t.standing || [];
   const projectRules = t.projectRules || [];
+  // First, before any list: a shape that makes the lists below unreliable.
+  if ((t.shapeProblems || []).length) {
+    lines.push(`${t.path} has a shape the rule lists below may be read wrongly from, so they may be incomplete:`,
+      ...t.shapeProblems.map((p) => `  ${p.detail}`), '  The next wrap fixes it; save refuses this shape.', '');
+  }
   // This week's constraints first, then the standing rules, then the project
   // files that hold the rest. All three bind, so none is shortened or left
   // out because another one is long.
@@ -1083,6 +1088,7 @@ const COMMANDS = {
     if (!result.saved) {
       const lines = [`Not saved (${result.reason}): ${result.detail}`];
       if (result.reason === 'check-failed') lines.push('Fix the draft, or save with --accept-check "<one-line reason>".');
+      if (result.reason === 'bad-shape') lines.push('Fix those lines in the draft and save again. --accept-check does not cover a shape.');
       if (result.previousUnchanged === true) lines.push('The previous handoff is unchanged.');
       if (result.nothingWritten === true) lines.push(`Nothing was written to ${result.path || 'the thread path'}.`);
       if (result.draft) lines.push(`The draft is kept at ${result.draft}.`);

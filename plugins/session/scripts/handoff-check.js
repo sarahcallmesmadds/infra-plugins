@@ -18,7 +18,7 @@
 
 const fs = require('fs');
 
-const { withoutFences, headerOf } = require('./handoffs');
+const { headerOf, threadShapeProblems } = require('./handoffs');
 
 const DEFAULT_BUDGET = {
   // Off by default: a check that refuses most real handoffs on its first day
@@ -59,17 +59,14 @@ function words(text) {
 
 // Splits on level-two headings only. A `###` inside a section belongs to it:
 // the standing rules section carries its areas that way, and splitting there
-// would report each area as a section of its own.
-// Headings inside a fenced block are examples, not sections: one there either
-// hid the narrative after it under a fake rule section or exposed real rules
-// to the body cap. The fence decides where sections split; the words counted
-// are the document's own, fences included.
+// would report each area as a section of its own. Plain text: a fence that
+// would make this wrong (in the header or a rule section) is a shape save
+// refuses and this check reports, and a second title is too.
 function sections(text) {
   const raw = String(text).replace(/\r\n/g, '\n').split('\n');
-  const bare = withoutFences(text).split('\n');
   const out = [{ heading: null, lines: [] }];
-  raw.forEach((line, i) => {
-    const m = /^##\s+(.+?)\s*$/.exec(bare[i]);
+  raw.forEach((line) => {
+    const m = /^##\s+(.+?)\s*$/.exec(line);
     if (m) out.push({ heading: m[1], lines: [] });
     else out[out.length - 1].lines.push(line);
   });
@@ -91,8 +88,8 @@ function key(heading) {
 // The date the handoff describes: its Last session line when it has one,
 // otherwise its Date line. Used only to tell a dated row from an older one.
 function handoffDate(text) {
-  // From the header only, fences blanked, like the other header readers: an
-  // example date further down made every real dated paragraph look future.
+  // From the header only, like the other header readers: a date further down
+  // made every real dated paragraph look like a future one.
   const head = headerOf(text);
   const last = /^\*\*Last session:\*\*\s*(.*)$/mi.exec(head);
   const fromLast = last && ISO.exec(last[1]);
@@ -111,17 +108,20 @@ function checkText(text, budget = DEFAULT_BUDGET) {
   const flags = [];
   const date = handoffDate(text);
 
+  // Shapes save refuses, reported here first so the wrap can fix the draft
+  // before it gets that far.
+  for (const p of threadShapeProblems(text)) {
+    flags.push({ kind: 'shape', shape: p.kind, line: p.line, enforceable: false, detail: p.detail });
+  }
+
   const rows = all.map((s) => ({ heading: s.heading, words: words(s.body) + (s.heading ? words(s.heading) : 0) }));
   const total = rows.reduce((n, r) => n + r.words, 0);
   const isRules = (h) => key(h) === CONSTRAINTS || key(h) === STANDING;
   const body = rows.filter((r) => !isRules(r.heading)).reduce((n, r) => n + r.words, 0);
 
-  // A log, measured three ways, each of which is what a rewrite in place does
-  // not produce: two Last session lines, two dated paragraphs describing what
-  // was worked on, or two dated headings.
   // Only dates on or before the handoff's own count: a paragraph naming a
   // date still to come is a plan, not a record of a session.
-  const bare = withoutFences(text);
+  const bare = String(text).replace(/\r\n/g, '\n');
   const past = (s) => (s.match(ISO_ALL) || []).some((d) => !date || d <= date);
   const lastLines = (bare.match(/^\*\*Last session:\*\*/gmi) || []).length;
   const worked = all.find((s) => key(s.heading) === 'what was worked on');
@@ -131,10 +131,10 @@ function checkText(text, budget = DEFAULT_BUDGET) {
   // dates with at least two different dates among them. One day's work in
   // two paragraphs is not a log; a paragraph per session is. Headings are not
   // read, because area headings that carry dates are legitimate. The flag is
-  // advice unless enforcement is on, and that is what makes a coarse rule an
-  // acceptable one.
+  // advice only and never refuses a save, enforcement on or off: a coarse
+  // rule is acceptable as a prompt and not as a gate.
   const pastDates = (p) => (p.match(ISO_ALL) || []).filter((d) => !date || d <= date);
-  const dated = worked ? paragraphs(withoutFences(worked.body)).filter(past) : [];
+  const dated = worked ? paragraphs(worked.body).filter(past) : [];
   const distinct = new Set(dated.flatMap(pastDates)).size;
   const datedParas = dated.length > 1 && distinct > 1 ? dated.length : 0;
   const entries = Math.max(lastLines, datedParas);
@@ -142,6 +142,7 @@ function checkText(text, budget = DEFAULT_BUDGET) {
     flags.push({
       kind: 'log',
       count: entries,
+      enforceable: false,
       detail: `${entries} dated session entries; a thread's handoff holds the current state, so fold them into one`,
     });
   }
@@ -149,30 +150,32 @@ function checkText(text, budget = DEFAULT_BUDGET) {
   if (worked) {
     const w = words(worked.body);
     if (w > budget.workedOnWords) {
-      flags.push({ kind: 'worked-on-long', section: worked.heading, words: w, limit: budget.workedOnWords, detail: `"What was worked on" is ${w} words, over ${budget.workedOnWords}` });
+      flags.push({ kind: 'worked-on-long', enforceable: true, section: worked.heading, words: w, limit: budget.workedOnWords, detail: `"What was worked on" is ${w} words, over ${budget.workedOnWords}` });
     }
   }
 
   // Only rows that carry a date older than the handoff's own are counted. A
-  // row with no date cannot be told apart, so it is not guessed at.
+  // row with no date cannot be told apart, so it is not guessed at. Advice
+  // only: a date in a row can be a reference rather than when the row's file
+  // was touched, and a guess like that must never refuse a save.
   const files = all.find((s) => key(s.heading) === 'files created or changed');
   if (files && date) {
     // The first column is the file, and a dated filename says when the file
     // was named, not which session touched it. Only the other cells count,
     // and only a date standing on its own there.
-    const older = withoutFences(files.body).split('\n')
+    const older = files.body.split('\n')
       .filter((l) => /^\s*\|/.test(l) && !/^\s*\|[\s:|-]+\|\s*$/.test(l))
       .filter((l) => {
         const cells = l.trim().replace(/^\||\|$/g, '').split('|').slice(1).join(' ');
         return (cells.match(/(?<![\w./-])\d{4}-\d{2}-\d{2}(?![\w/-])/g) || []).some((d) => d < date);
       });
     if (older.length) {
-      flags.push({ kind: 'old-file-rows', section: files.heading, count: older.length, detail: `${older.length} row${older.length === 1 ? '' : 's'} in "Files created or changed" dated before ${date}; list this session's files only` });
+      flags.push({ kind: 'old-file-rows', enforceable: false, section: files.heading, count: older.length, detail: `${older.length} row${older.length === 1 ? '' : 's'} in "Files created or changed" dated before ${date}; list this session's files only` });
     }
   }
 
   if (body > budget.bodyWords) {
-    flags.push({ kind: 'body-long', words: body, limit: budget.bodyWords, detail: `the body is ${body} words without the two rule sections, over ${budget.bodyWords}` });
+    flags.push({ kind: 'body-long', enforceable: true, words: body, limit: budget.bodyWords, detail: `the body is ${body} words without the two rule sections, over ${budget.bodyWords}` });
   }
 
   // Standing rules are exempt: that section is meant to hold every rule the
@@ -180,7 +183,7 @@ function checkText(text, budget = DEFAULT_BUDGET) {
   for (const r of rows) {
     if (!r.heading || key(r.heading) === STANDING) continue;
     if (r.words > budget.sectionWords) {
-      flags.push({ kind: 'section-long', section: r.heading, words: r.words, limit: budget.sectionWords, detail: `"${r.heading}" is ${r.words} words, over ${budget.sectionWords}` });
+      flags.push({ kind: 'section-long', enforceable: true, section: r.heading, words: r.words, limit: budget.sectionWords, detail: `"${r.heading}" is ${r.words} words, over ${budget.sectionWords}` });
     }
   }
 

@@ -570,6 +570,19 @@ document's header. Enforcement is off by default.
 The pooled answer outside threads never reads `## Standing rules`, so the
 section is for thread handoffs only.
 
+**Four shapes are refused at save (`bad-shape`), whatever the budget says:** a
+code fence in the header (above the first `## ` heading), a code fence inside
+either rule section, a second `## Standing rules` heading, and a second `# `
+title. Each is a shape a plain reading of the document gets wrong, and `/wrap`
+is the only writer, so refusing them is cheaper and surer than teaching every
+parser to read around them. Fences anywhere else are ordinary content. If a
+thread file is edited by hand into one of these shapes, `constraints --thread`
+reports it as `shapeProblems` and `/pickup` says the lists may be incomplete.
+
+Only the word counts can refuse a save when the budget is enforced. The log and
+old-row flags are judgements made by pattern, so they are reported and never
+refuse.
+
 ### A project named like a thread
 
 `/pickup <name>` opens the thread, so a project whose folder has a thread's name

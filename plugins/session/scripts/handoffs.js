@@ -1221,31 +1221,6 @@ function bulletsIn(text) {
   return { live, retired };
 }
 
-// The text with every fenced code block blanked line for line, so a heading
-// or a header line shown as an example inside a fence is not read as the real
-// thing. Line count is kept, so nothing after a fence moves.
-//
-// Used by the parsers added for standing rules and by the handoff check. Not
-// by bulletsIn: the constraints parser outside threads is the pooled answer,
-// and changing what it reads would change what a project handoff binds.
-function withoutFences(text) {
-  const lines = String(text || '').replace(/\r\n/g, '\n').split('\n');
-  let fence = null;
-  return lines.map((line) => {
-    // Up to three spaces, never a tab: a tab makes it an indented code line,
-    // and opening a fence there blanked every rule after it.
-    const m = /^ {0,3}(`{3,}|~{3,})/.exec(line);
-    if (fence) {
-      // A closing fence carries nothing after its run: a ```js line inside an
-      // open block is content, and closing there exposed the example after it.
-      if (m && m[1][0] === fence[0] && m[1].length >= fence.length && /^ {0,3}[`~]+\s*$/.test(line)) fence = null;
-      return '';
-    }
-    if (m) { fence = m[1]; return ''; }
-    return line;
-  }).join('\n');
-}
-
 // Rules a thread keeps beyond the current piece of work, under a
 // `## Standing rules` heading, grouped by `### <area>` subheadings.
 //
@@ -1255,18 +1230,25 @@ function withoutFences(text) {
 // section runs to the next heading of level one or two, and a `###` only
 // changes the area the following bullets belong to.
 //
+// Plain text, no reading around code fences. A thread's document is written
+// by one writer, and save refuses the shapes that would make a plain read
+// wrong (see threadShapeProblems), so this parser supports only the shape
+// save lets through. Reading around fences was tried and drew a new edge
+// case every review round.
+//
 // Read for declared threads only. The pooled answer outside threads never
 // reads this section, so a project handoff that happens to carry one binds
 // exactly what it did before.
 function standingIn(text) {
-  const src = withoutFences(text);
-  // Every such section, not the first: a heading written twice left the
-  // rules under the second copy on disk and out of every pickup.
-  const found = [...src.matchAll(/^#{2}\s*Standing rules\s*$([\s\S]*?)(?=^#{1,2}\s|$(?![\s\S]))/gmi)];
-  if (!found.length) return [];
+  const src = String(text || '').replace(/\r\n/g, '\n');
+  // The first section only. A second one is a shape save refuses and
+  // threadShapeProblems reports, so a hand-edited file says so instead of
+  // having its sections merged under the wrong areas.
+  const m = src.match(/^#{2}\s*Standing rules\s*$([\s\S]*?)(?=^#{1,2}\s|$(?![\s\S]))/mi);
+  if (!m) return [];
   const out = [];
   let area = null;
-  for (const raw of found.map((m) => m[1]).join('\n').split('\n')) {
+  for (const raw of m[1].split('\n')) {
     const line = raw.trim();
     const h = /^#{3,6}\s+(.+?)\s*$/.exec(line);
     if (h) {
@@ -1284,20 +1266,63 @@ function standingIn(text) {
   return out;
 }
 
-// The header: everything before the first level-two heading, fences blanked.
-// The two marker lines are read here only, so the same words written as an
-// example further down the document mark nothing.
+// The header: everything before the first level-two heading. The two marker
+// lines are read here only, so the same words further down mark nothing. A
+// code fence in the header is a shape save refuses, so a plain split is exact
+// and its length is an offset into the original text.
 function headerOf(text) {
-  const bare = withoutFences(text);
-  const m = /^##\s/m.exec(bare);
-  return m ? bare.slice(0, m.index) : bare;
+  const src = String(text || '').replace(/\r\n/g, '\n');
+  const m = /^##\s/m.exec(src);
+  return m ? src.slice(0, m.index) : src;
+}
+
+// The shapes a thread's handoff may not have, with the line each sits on.
+// Each one is a shape a plain reading gets wrong, and the wrap is the only
+// writer, so refusing them at save is cheaper and surer than teaching every
+// reader to cope: measured on 33 real thread handoffs, none had a code fence,
+// a second title or a repeated rule section. Fence detection here is
+// deliberately generous (any indentation, tabs included), because over-
+// detecting only asks the writer to move a block, and under-detecting is a
+// silent misread.
+const FENCE_LINE = /^\s*(`{3,}|~{3,})/;
+function threadShapeProblems(text) {
+  const lines = String(text || '').replace(/\r\n/g, '\n').split('\n');
+  const out = [];
+  let section = null; // null = header, else the lower-cased level-two heading
+  let seenTitle = false;
+  let standing = 0;
+  lines.forEach((line, i) => {
+    const n = i + 1;
+    if (/^#\s/.test(line)) {
+      if (seenTitle) out.push({ kind: 'extra-title', line: n, detail: `line ${n} is a second level-one heading; a thread's handoff has one title line` });
+      seenTitle = true;
+      // A level-one heading also ends whatever rule section came before it.
+      if (section !== null) section = '#';
+      return;
+    }
+    const h = /^##\s+(.+?)\s*$/.exec(line);
+    if (h) {
+      section = h[1].toLowerCase();
+      if (section === 'standing rules') {
+        standing += 1;
+        if (standing > 1) out.push({ kind: 'standing-repeated', line: n, detail: `line ${n} is a second "## Standing rules" heading; keep one section and group rules under ### areas` });
+      }
+      return;
+    }
+    if (!FENCE_LINE.test(line)) return;
+    if (section === null) out.push({ kind: 'fence-in-header', line: n, detail: `line ${n} opens or closes a code fence in the header, above the first ## heading; move it below` });
+    else if (section === 'constraints still in force' || section === 'standing rules') {
+      out.push({ kind: 'fence-in-rules', line: n, detail: `line ${n} is a code fence inside "## ${section === 'standing rules' ? 'Standing rules' : 'Constraints still in force'}"; write rules as plain bullets` });
+    }
+  });
+  return out;
 }
 
 // Every `Retired this session:` line outside fences, wherever it sits, with
 // its reason cut off the way retiredTarget cuts it. Used to tell a standing
 // rule that was retired on purpose from one that was dropped.
 function retiredAnywhere(text) {
-  return withoutFences(text).split('\n')
+  return String(text || '').replace(/\r\n/g, '\n').split('\n')
     .map((l) => /^\s*-\s+retired this session\s*:\s*(.+)$/i.exec(l))
     .filter(Boolean)
     .map((m) => retiredTarget(m[1]));
@@ -1307,8 +1332,7 @@ function retiredAnywhere(text) {
 // Format 2 is the shape with a standing rules section; a document without the
 // line is the older shape, which every handoff written before 0.10 is.
 function handoffFormat(text) {
-  // Same line only, leading spaces allowed, and never inside a fence: an
-  // example of the header must not mark a document as the new shape.
+  // Same line only, leading spaces allowed, header only.
   const m = /^[ \t]*\*\*Format:\*\*[ \t]*(\d+)[ \t]*$/mi.exec(headerOf(text));
   return m ? parseInt(m[1], 10) : null;
 }
@@ -1603,7 +1627,7 @@ module.exports = {
   handoffDir,
   bulletsIn,
   standingIn,
-  withoutFences,
+  threadShapeProblems,
   headerOf,
   retiredAnywhere,
   handoffFormat,

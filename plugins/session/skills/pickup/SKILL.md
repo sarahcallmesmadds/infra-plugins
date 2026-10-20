@@ -144,7 +144,9 @@ not this skill:
   repository instructions files its standing rules moved into). That is the
   whole answer. Rules that apply to every thread live in the user's standing
   instructions and memory, not in other handoffs, so there is no second list to
-  go and find.
+  go and find. If `shapeProblems` is not empty, the file was edited into a shape
+  the lists may be read wrongly from: say so above the lists, name each line it
+  gives, and say the next wrap fixes it.
 - **Threads not set up yet, or a handoff outside the home directory** (a
   repository's `HANDOFF.md`, or one written from anywhere but home): the older
   pooled answer, every rule recorded by any handoff written from the same

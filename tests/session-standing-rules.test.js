@@ -161,32 +161,9 @@ check('the format marker and the project rules line are read from the header', (
   assert.deepStrictEqual(handoffs.projectRulesIn(text, '/h'), ['/repo/CLAUDE.md', '/h/other/AGENTS.md']);
 });
 
-check('a heading inside a code fence neither ends the standing section nor starts a fake one', () => {
-  const real = '## Standing rules\n### A\n- one\n```\n## Example\n```\n- two\n\n## Next actions\n';
-  assert.deepStrictEqual(handoffs.standingIn(real).map((r) => r.text), ['one', 'two']);
-  const fake = '## What was worked on\n```\n## Standing rules\n- not a rule\n```\n\n## Standing rules\n- the rule\n';
-  assert.deepStrictEqual(handoffs.standingIn(fake).map((r) => r.text), ['the rule']);
-});
-
-check('a standing rules heading written twice keeps the rules under both', () => {
-  const text = '## Standing rules\n### Build\n- Use generated pages.\n\n## Decisions made\n- x\n\n## Standing rules\n### Deploy\n- Require staging.\n';
-  assert.deepStrictEqual(handoffs.standingIn(text).map((r) => [r.area, r.text]), [['Build', 'Use generated pages.'], ['Deploy', 'Require staging.']]);
-});
-
-check('a fence opener inside an open fence is content, not its end', () => {
-  const text = '## Standing rules\n- real one\n```text\n```js\n## Example\n- fake\n```\n- real two\n';
-  assert.deepStrictEqual(handoffs.standingIn(text).map((r) => r.text), ['real one', 'real two']);
-});
-
 check('the format marker counts only as a real header line', () => {
-  assert.strictEqual(handoffs.handoffFormat('# H\n```\n**Format:** 2\n```\n'), null, 'a fenced example marked the document');
   assert.strictEqual(handoffs.handoffFormat('# H\n  **Format:** 2\n'), 2, 'an indented marker was missed');
   assert.strictEqual(handoffs.handoffFormat('# H\n**Format:**\n2\n'), null, 'the value was read from the next line');
-});
-
-check('a tab before three backticks is not a fence, so the rules after it are read', () => {
-  const text = '## Standing rules\n- Keep one.\n\t```\n- Keep two.\n\n## Next actions\n';
-  assert.deepStrictEqual(handoffs.standingIn(text).map((r) => r.text), ['Keep one.', 'Keep two.']);
 });
 
 check('the marker lines count only in the header, not as body text', () => {
@@ -197,6 +174,78 @@ check('the marker lines count only in the header, not as body text', () => {
 
 check('an empty project rules line names no file', () => {
   assert.deepStrictEqual(handoffs.projectRulesIn('**Project rules:**\n\n## What was worked on\n', '/h'), []);
+});
+
+// ------------------------------------------------------------ shapes ----
+//
+// Every review round of the first design found a new way an unusual shape
+// fooled a parser that tried to read around it: fences in the header, fence
+// variants, a repeated rule section. The wrap is the only writer, so save
+// refuses those shapes and the parsers read plain text. Measured on 33 real
+// thread handoffs, none had any of them.
+
+const SHAPES = {
+  'fence-in-header': (h) => doc(h, { rules: ['R.'], format: 2 }).replace(/(\*\*Working directory:\*\*.*)/, '$1\n```\nexample\n```'),
+  'fence-in-rules': (h) => doc(h, { rules: ['R.'], format: 2, standing: { A: ['S.'] } }).replace('- S.', '- S.\n\t```\n## Example\n```'),
+  'standing-repeated': (h) => `${doc(h, { rules: ['R.'], format: 2, standing: { A: ['S.'] } })}\n## Standing rules\n- T.\n`,
+  'extra-title': (h) => `${doc(h, { rules: ['R.'], format: 2 })}\n# Notes\n${'more words '.repeat(50)}\n`,
+};
+
+check('save refuses each shape a plain reading gets wrong, names the line, and keeps the draft', () => {
+  const home = migrated((h) => [['site-thread', doc(h)]]);
+  fs.writeFileSync(docPath(home, 'site-thread'), doc(home, { rules: ['R.'], format: 2 }));
+  const before = snapshot(docPath(home, 'site-thread'));
+  for (const [kind, make] of Object.entries(SHAPES)) {
+    const r = save(home, 'site-thread', make(home));
+    assert.strictEqual(r.body.reason, 'bad-shape', `${kind}: ${JSON.stringify(r.body)}`);
+    assert.ok(r.body.problems.some((p) => p.kind === kind && Number.isInteger(p.line)), `${kind} not named: ${JSON.stringify(r.body.problems)}`);
+    assert.ok(fs.existsSync(r.body.draft), `${kind}: the draft was not kept`);
+  }
+  assert.deepStrictEqual(snapshot(docPath(home, 'site-thread')), before, 'a refused shape touched the thread');
+  // A reason does not get a shape through: it is not a budget question.
+  const r = save(home, 'site-thread', SHAPES['fence-in-header'](home), ['--accept-check', 'please']);
+  assert.strictEqual(r.body.reason, 'bad-shape');
+});
+
+check('a code fence below the rule sections is allowed', () => {
+  // Only the places a plain reading gets wrong are refused. A command shown
+  // in the notes is ordinary content.
+  const home = migrated((h) => [['site-thread', doc(h)]]);
+  fs.writeFileSync(docPath(home, 'site-thread'), doc(home, { rules: ['R.'], format: 2 }));
+  const r = save(home, 'site-thread', doc(home, { rules: ['R.'], format: 2, standing: { A: ['S.'] }, extra: '\n## Notes\n```bash\nnode x.js\n```\n' }));
+  assert.strictEqual(r.body.saved, true, JSON.stringify(r.body));
+});
+
+check('handoff-check reports the same shapes, so the wrap can fix the draft first', () => {
+  const home = tmpHome();
+  for (const [kind, make] of Object.entries(SHAPES)) {
+    const r = json(home, ['handoff-check', '--file', draft(home, make(home))]).body;
+    assert.ok(r.flags.some((f) => f.kind === 'shape' && f.shape === kind), `${kind}: ${JSON.stringify(r.flags)}`);
+  }
+});
+
+check('a thread file edited into an odd shape is reported at pickup, not read as whole', () => {
+  const home = migrated((h) => [['site-thread', doc(h)]]);
+  fs.writeFileSync(docPath(home, 'site-thread'), SHAPES['standing-repeated'](home));
+  const r = json(home, ['constraints', '--thread', 'site-thread']).body;
+  assert.ok(r.shapeProblems.some((p) => p.kind === 'standing-repeated'), JSON.stringify(r.shapeProblems));
+  const text = run(home, ['constraints', '--thread', 'site-thread']).stdout;
+  assert.ok(text.indexOf('may be incomplete') !== -1 && text.indexOf('may be incomplete') < text.indexOf('standing rule'),
+    'the warning is missing or printed below the lists it qualifies');
+});
+
+check('advice flags never refuse a save, even with enforcement on', () => {
+  // A log or an old row is a judgement made by pattern; only counts gate.
+  const home = migrated((h) => [['site-thread', doc(h)]]);
+  fs.writeFileSync(docPath(home, 'site-thread'), doc(home, { rules: ['R.'], format: 2 }));
+  writeConfig(home, { handoffBudget: { enforce: true } });
+  const worked = 'Round one, 2026-09-01.\n\nRound two, 2026-09-08.';
+  const files = '\n## Files created or changed\n| File | What |\n|---|---|\n| a.md | replaces the 2026-01-01 version |\n';
+  const text = doc(home, { rules: ['R.'], format: 2, worked, extra: files });
+  const flags = json(home, ['handoff-check', '--file', draft(home, text)]).body.flags;
+  assert.ok(flags.some((f) => f.kind === 'log') && flags.some((f) => f.kind === 'old-file-rows'), `the fixture does not raise both: ${JSON.stringify(flags)}`);
+  const r = save(home, 'site-thread', text);
+  assert.strictEqual(r.body.saved, true, JSON.stringify(r.body));
 });
 
 // ------------------------------------------------- what a thread binds ----
@@ -401,26 +450,11 @@ check('dated area headings are not a log', () => {
   assert.ok(!r.flags.some((f) => f.kind === 'log'), JSON.stringify(r.flags));
 });
 
-check('a fenced example row is not an old file row', () => {
-  const home = tmpHome();
-  const files = '\n## Files created or changed\n| File | What |\n|---|---|\n| a.md | made now |\n```\n| sample.md | made 2026-01-01 |\n```\n';
-  const r = json(home, ['handoff-check', '--file', draft(home, doc(home, { rules: ['R.'], extra: files }))]).body;
-  assert.ok(!r.flags.some((f) => f.kind === 'old-file-rows'), JSON.stringify(r.flags));
-});
-
 check('a dated filename is not an old row', () => {
   const home = tmpHome();
   const files = '\n## Files created or changed\n| File | What |\n|---|---|\n| 2026-01-01-plan.md | updated today |\n';
   const r = json(home, ['handoff-check', '--file', draft(home, doc(home, { rules: ['R.'], extra: files }))]).body;
   assert.ok(!r.flags.some((f) => f.kind === 'old-file-rows'), JSON.stringify(r.flags));
-});
-
-check('a fenced heading does not hide the narrative after it from the body cap', () => {
-  const home = tmpHome();
-  const narrative = 'Narrative that belongs in the body and is long. '.repeat(200);
-  const body = doc(home, { rules: ['R.'], extra: `\n## Notes\n\`\`\`\n## Standing rules\n\`\`\`\n${narrative}\n` });
-  const r = json(home, ['handoff-check', '--file', draft(home, body)]).body;
-  assert.ok(r.flags.some((f) => f.kind === 'body-long'), `the narrative hid behind a fenced heading: body ${r.body}`);
 });
 
 check('a section written twice is measured as one', () => {

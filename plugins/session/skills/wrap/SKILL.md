@@ -434,6 +434,11 @@ Read what comes back:
   Only when a flag cannot be fixed this session, save with
   `--accept-check "<one-line reason>"`; the reason is written into the saved
   document's header.
+- `reason: "bad-shape"`: the draft has a shape every reader would get wrong: a
+  code fence in the header or inside either rule section, a second
+  `## Standing rules` heading, or a second `# ` title. `problems` names each
+  line. Fix them in the draft (rules are plain bullets; one standing section,
+  grouped by `###` areas) and save again. `--accept-check` does not cover this.
 - `reason: "standing-dropped"`: the thread has standing rules and the draft has
   none and names no project rules file. Carry them into the draft, or name the
   file they went to, and save again.
@@ -499,7 +504,7 @@ not:
 - [Retired this session: the constraint quoted exactly, because the reason. Drop this line unless something was actually retired.]
 
 ## Standing rules
-[Threads only. Outside threads this section is never read, so a rule put here there stops binding. Drop the section outside threads.]
+[Threads only. Outside threads this section is never read, so a rule put here there stops binding. Drop the section outside threads. One such section per document, plain bullets, no code fences in it, in the constraints section or in the header.]
 ### [area the rules govern]
 - [a rule that stays true as long as the subject does]
 
