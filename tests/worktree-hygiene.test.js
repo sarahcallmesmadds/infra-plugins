@@ -906,16 +906,31 @@ check('the command line never prints a credential, whatever route the text took'
   try {
     const engine = path.join(ROOT, 'scripts', 'worktrees.js');
     const env = { ...process.env, HOME: home };
-    // A lock reason is free text that never passes through a failing command.
-    // It is not echoed at all: the worktree shows as locked, the text nowhere,
-    // even in a form the URL mask cannot recognise (a non-breaking space).
+    // A lock note is free text. It is not echoed at all, so the sentinel has
+    // no URL: the mask cannot be what hides it.
     const target = f.add('locked', path.join(f.projects, 'example-locked'));
-    git(f.repo, 'worktree', 'lock', '--reason', 'see https://user:ghp lock@github.com/o/r.git', target);
+    git(f.repo, 'worktree', 'lock', '--reason', 'Authorization: Bearer lock_secret', target);
+    // A malformed remote splits a token into pieces no URL mask recognises.
+    git(f.repo, 'remote', 'add', 'origin', 'user:remote_secret@github.com/o/r.git');
     for (const extra of [[], ['--json']]) {
       const audit = spawnSync(process.execPath, [engine, 'audit', '--repo', f.repo, ...extra], { encoding: 'utf8', env });
-      assert.ok(audit.stdout.includes('locked'), `lock not reported ${extra}: ${audit.stdout}`);
-      assert.ok(!`${audit.stdout}${audit.stderr}`.includes('lock@github'), `audit ${extra} leaked: ${audit.stdout}`);
+      const all = `${audit.stdout}${audit.stderr}`;
+      assert.ok(!all.includes('lock_secret'), `audit ${extra} printed the lock note: ${audit.stdout}`);
+      assert.ok(!all.includes('remote_secret'), `audit ${extra} printed the remote: ${audit.stdout}`);
     }
+    const json = JSON.parse(spawnSync(process.execPath, [engine, 'audit', '--repo', f.repo, '--json'], { encoding: 'utf8', env }).stdout);
+    const lockedEntry = json.repositories[0].worktrees.find((entry) => entry.path === fs.realpathSync.native(target));
+    assert.strictEqual(lockedEntry.locked, 'locked');
+    assert.strictEqual(lockedEntry.reason, 'the worktree is locked');
+    assert.strictEqual(json.repositories[0].identity, null);
+    // Text typed as a command or a base is repeated only when it is a plain name.
+    const pasted = spawnSync(process.execPath, [engine, 'Authorization: Bearer cmd_secret'], { encoding: 'utf8', env });
+    assert.notStrictEqual(pasted.status, 0);
+    assert.ok(!pasted.stderr.includes('cmd_secret'), pasted.stderr);
+    assert.ok(pasted.stderr.includes('unknown command'), pasted.stderr);
+    // A plain-looking word is not echoed either: it may be a pasted token.
+    const word = spawnSync(process.execPath, [engine, 'tok_secret123'], { encoding: 'utf8', env });
+    assert.ok(!word.stderr.includes('tok_secret123'), word.stderr);
     // The prune dry run calls Git directly, not through run(), so its error
     // text relies on the final stderr write alone. A stand-in git fails only
     // that call, with a credential in its stderr.
@@ -939,10 +954,10 @@ check('the command line never prints a credential, whatever route the text took'
       assert.ok(prune.stderr.includes('dry run failed'), `did not reach the prune dry run: ${prune.stderr}`);
       assert.ok(!prune.stderr.includes('ghp_prune'), prune.stderr);
     } finally { fs.rmSync(bin, { recursive: true, force: true }); }
-    // An argument error is echoed straight from the parser.
-    const bad = spawnSync(process.execPath, [engine, 'audit', '--https://user:ghp_arg@host/x'], { encoding: 'utf8', env });
+    // An unknown argument is never echoed, even a plain-looking one.
+    const bad = spawnSync(process.execPath, [engine, 'audit', 'arg_secret123'], { encoding: 'utf8', env });
     assert.notStrictEqual(bad.status, 0);
-    assert.ok(!bad.stderr.includes('ghp_arg'), bad.stderr);
+    assert.ok(!bad.stderr.includes('arg_secret123'), bad.stderr);
   } finally {
     f.cleanup();
     fs.rmSync(home, { recursive: true, force: true });

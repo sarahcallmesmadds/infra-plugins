@@ -42,10 +42,14 @@ function describeFailure(file, args, result) {
   const words = rest.filter((arg) => !arg.startsWith('-'));
   // Only fixed verbs, never an argument that could be user text.
   const step = [file, ...words.slice(0, file === 'gh' || words[0] === 'worktree' ? 2 : 1)].join(' ');
-  const how = result.error && result.error.code === 'ETIMEDOUT'
-    ? 'timed out'
-    : (result.status === null ? 'did not run' : `exited ${result.status}`);
-  return `${step} ${how}${where ? ` in ${where}` : ''}; run it there by hand to see Git's own message`;
+  let how;
+  if (result.error && result.error.code === 'ETIMEDOUT') how = 'timed out';
+  else if (result.signal) how = `was stopped by ${result.signal}`;
+  else if (result.status === null) how = 'did not run';
+  else how = `exited ${result.status}`;
+  return where
+    ? `${step} ${how} in ${where}; run it there by hand to see its own message`
+    : `${step} ${how}; run it by hand to see its own message`;
 }
 
 // Masks URL user-info (https://user:token@host -> https://***@host). Git text
@@ -204,6 +208,10 @@ function remoteIdentity(repo, deadline) {
     host = scp[2];
     pathname = scp[3];
   }
+  // A malformed remote such as user:token@host/o/r splits into a "host" and
+  // "path" that carry the token in pieces no URL mask recognises, and the
+  // identity is printed. A real host or repository path has no `@` or space.
+  if (/[@\s/]/.test(String(host)) || /[@\s]/.test(String(pathname))) return null;
 
   const parts = String(pathname || '').replace(/\.git$/, '').split('/').filter(Boolean);
   if (parts.length < 2) return null;
@@ -216,9 +224,18 @@ function remoteIdentity(repo, deadline) {
   };
 }
 
+// Text a user typed is repeated back only when it looks like a plain name.
+// Anything else (spaces, colons, `@`) may be pasted text holding a token, and
+// the URL mask only recognises tokens inside URLs, so it is not shown at all.
+function shown(value) {
+  const text = String(value === undefined || value === null ? '' : value);
+  if (!text) return '(empty)';
+  return /^[A-Za-z0-9._\/+-]{1,200}$/.test(text) ? text : '(not shown: it is not a plain name)';
+}
+
 function safeSegment(value) {
   const source = String(value || '');
-  if (!source) throw new Error(`cannot turn ${value} into a safe path segment`);
+  if (!source) throw new Error(`cannot turn ${shown(value)} into a safe path segment`);
   // Percent-encode every byte outside the deliberately small readable set.
   // Lossy replacement makes distinct valid refs such as a+b and a-b collide.
   try {
@@ -228,25 +245,25 @@ function safeSegment(value) {
     if (encoded === '..') return '%2E%2E';
     return encoded;
   } catch (_) {
-    throw new Error(`cannot turn ${value} into a safe path segment`);
+    throw new Error(`cannot turn ${shown(value)} into a safe path segment`);
   }
 }
 
 function validateBranch(repo, branch) {
   if (!branch || branch.startsWith('-') || branch.split('/').some((part) => !part || part === '.' || part === '..')) {
-    throw new Error(`refusing unsafe branch name: ${branch || '(empty)'}`);
+    throw new Error(`refusing unsafe branch name: ${shown(branch)}`);
   }
   const valid = git(repo, ['check-ref-format', '--branch', branch], { allowFailure: true });
-  if (valid === null) throw new Error(`refusing invalid branch name: ${branch}`);
+  if (valid === null) throw new Error(`refusing invalid branch name: ${shown(branch)}`);
   return branch;
 }
 
 function validateBase(repo, base) {
   if (!base || typeof base !== 'string' || base.startsWith('-')) {
-    throw new Error(`refusing unsafe base revision: ${base || '(empty)'}`);
+    throw new Error(`refusing unsafe base revision: ${shown(base)}`);
   }
   const resolved = git(repo, ['rev-parse', '--verify', `${base}^{commit}`], { allowFailure: true });
-  if (resolved === null) throw new Error(`refusing unknown base revision: ${base}`);
+  if (resolved === null) throw new Error(`refusing unknown base revision: ${shown(base)}`);
   return base;
 }
 
@@ -260,7 +277,7 @@ function taskName(branch, task) {
   // A leading dot is refused too: `.review` or `.cache` would match the
   // review-tool folder pattern, and the finished worktree could never be removed.
   if (!name || typeof name !== 'string' || name.includes('/') || name.includes(path.sep) || name.startsWith('.')) {
-    throw new Error(`refusing unsafe task folder name: ${name || '(empty)'}`);
+    throw new Error(`refusing unsafe task folder name: ${shown(name)}`);
   }
   return safeSegment(name);
 }
@@ -697,7 +714,9 @@ function pruneCandidates(repository) {
     }
     let gitdir;
     try { gitdir = fs.readFileSync(path.join(admin, match[1], 'gitdir'), 'utf8').trim(); }
-    catch (_) { throw new Error(`refusing prune: cannot tell which path registration ${match[1]} belongs to`); }
+    // The registration name comes from Git's output and is named after a
+    // user-chosen folder, so it is not printed.
+    catch (_) { throw new Error(`refusing prune: cannot tell which path one of Git's registrations belongs to; run git worktree prune --dry-run --verbose in ${repository} to see them`); }
     // `git worktree add --relative-paths` stores this relative to the
     // registration's own folder, which is how Git resolves it too. Resolving it
     // from the process's folder names the wrong path and refuses a valid prune.
@@ -995,8 +1014,8 @@ function parseArgs(argv) {
     else if (arg === '--json') out.json = true;
     else if (arg === '--all-configured') out.allConfigured = true;
     else if (arg === '--approved') out.approved = true;
-    // Echo only what looks like an option name; anything else may be pasted text.
-    else throw new Error(/^--[a-z][a-z-]*$/.test(arg) ? `unknown option: ${arg}` : 'unknown argument (not an option this script accepts)');
+    // Never echoed: even a plain-looking word here may be a pasted token.
+    else throw new Error('unknown option; accepted: --repo --path --branch --base --task --json --all-configured --approved');
   }
   return out;
 }
@@ -1044,7 +1063,7 @@ function main() {
     else if (args.command === 'verify-remove') output(verifyRemove(args.path, args), true);
     else if (args.command === 'remove') output(removeWorktree(args.path, args), true);
     else if (args.command === 'finish') output(finishWorktree(args.path, args), true);
-    else throw new Error(`unknown command: ${args.command}`);
+    else throw new Error('unknown command; accepted: audit destination create move activate verify-prune prune verify-remove remove finish');
   } catch (error) {
     process.stderr.write(`${redactCredentials(error.message)}\n`);
     process.exit(3);
