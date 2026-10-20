@@ -178,15 +178,20 @@ check('the optional-type explanation does not embed a repository count', () => {
   // Counts have been written both ways here ("11 of the 24", "Eight of the
   // twenty-one"), so a digits-only pattern lets the spelled-out form back in.
   const units = 'one|two|three|four|five|six|seven|eight|nine';
-  const number = `(?:\\d+|(?:twenty|thirty|forty|fifty)(?:-(?:${units}))?|${units}|ten|eleven|twelve|`
+  const tens = 'twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety';
+  const number = `(?:\\d+|(?:${tens})(?:[-\\u2013\\s]?(?:${units}))?|zero|${units}|ten|eleven|twelve|`
     + 'thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen)';
   const count = new RegExp(`\\b${number} of the ${number} skills\\b`, 'i');
   const header = fs.readFileSync(__filename, 'utf8').split("'use strict';")[0];
   for (const [name, text] of [['hook', hook], ['README', readme], ['test header', header]]) {
     assert.doesNotMatch(text, count, `${name} quotes a skill count`);
   }
-  assert.match('Eight of the twenty-one skills', count);
-  assert.match('11 of the 24 skills', count);
+  for (const sample of ['Eight of the twenty-one skills', '11 of the 24 skills', 'five of the twenty one skills',
+    'five of the twenty–one skills', 'five of the twentyone skills', 'Zero of the nine skills',
+    'Sixty of the seventy skills']) {
+    assert.match(sample, count, sample);
+  }
+  assert.doesNotMatch('none of the five skills', count);
 });
 
 // --- against the real repository -------------------------------------------
