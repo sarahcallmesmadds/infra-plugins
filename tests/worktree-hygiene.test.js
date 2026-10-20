@@ -900,6 +900,38 @@ check('credentials in remote URLs are masked in error text', () => {
   assert.strictEqual(r('git@github.com:o/r.git'), 'git@github.com:o/r.git');
 });
 
+check('system errors, remote names and config errors print only our own words', () => {
+  // A Node system error is reduced to call, code and path.
+  const native = Object.assign(new Error('EEXIST: file already exists, mkdir sys_secret'), {
+    code: 'EEXIST', syscall: 'mkdir', path: '/tmp/x',
+  });
+  assert.strictEqual(worktrees.errorText(native), 'mkdir failed with EEXIST at /tmp/x');
+  assert.strictEqual(worktrees.errorText(new Error('our own words')), 'our own words');
+  // Branch, base and task values are repeated only when they are plain names.
+  assert.strictEqual(worktrees.shown('feature/new-1.2'), 'feature/new-1.2');
+  assert.ok(!worktrees.shown('Authorization: Bearer base_secret').includes('base_secret'));
+  assert.strictEqual(worktrees.shown(''), '(empty)');
+  // A remote whose owner is not a plain name has no identity to print.
+  const f = fixture();
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'git-hygiene-home-'));
+  try {
+    git(f.repo, 'remote', 'add', 'origin', 'git@github.com:Bearer:id_secret/repo.git');
+    const audited = worktrees.auditRepository(f.repo, { config: f.config, skipRemote: true });
+    assert.strictEqual(audited.identity, null);
+    // A config file that is not JSON is named, not quoted.
+    fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+    fs.writeFileSync(path.join(home, '.claude', 'git-hygiene.config.json'), '{"worktreeLocation": cfg_secret');
+    const out = spawnSync(process.execPath, ['-e',
+      `console.log(JSON.stringify(require(${JSON.stringify(path.join(ROOT, 'scripts', 'worktree-config'))}).loadConfig().errors))`,
+    ], { encoding: 'utf8', env: { ...process.env, HOME: home } });
+    assert.ok(out.stdout.includes('not valid JSON'), out.stdout + out.stderr);
+    assert.ok(!out.stdout.includes('cfg_secret'), out.stdout);
+  } finally {
+    f.cleanup();
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
 check('the command line never prints a credential, whatever route the text took', () => {
   const f = fixture();
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'git-hygiene-home-'));
@@ -923,7 +955,7 @@ check('the command line never prints a credential, whatever route the text took'
     assert.strictEqual(lockedEntry.locked, 'locked');
     assert.strictEqual(lockedEntry.reason, 'the worktree is locked');
     assert.strictEqual(json.repositories[0].identity, null);
-    // Text typed as a command or a base is repeated only when it is a plain name.
+    // A typed command is never repeated, whatever it looks like.
     const pasted = spawnSync(process.execPath, [engine, 'Authorization: Bearer cmd_secret'], { encoding: 'utf8', env });
     assert.notStrictEqual(pasted.status, 0);
     assert.ok(!pasted.stderr.includes('cmd_secret'), pasted.stderr);
@@ -941,7 +973,7 @@ check('the command line never prints a credential, whatever route the text took'
     fs.writeFileSync(path.join(bin, 'git'), [
       '#!/bin/sh',
       'if [ "$3" = worktree ] && [ "$4" = prune ]; then',
-      '  echo "fatal: https://user:ghp_prune@github.com/o/r.git" >&2; exit 1',
+      '  echo "fatal: Authorization: Bearer prune_secret" >&2; exit 1',
       'fi',
       `exec '${realGit}' "$@"`,
     ].join('\n') + '\n');
@@ -952,9 +984,14 @@ check('the command line never prints a credential, whatever route the text took'
       });
       assert.strictEqual(prune.status, 3, prune.stderr);
       assert.ok(prune.stderr.includes('dry run failed'), `did not reach the prune dry run: ${prune.stderr}`);
-      assert.ok(!prune.stderr.includes('ghp_prune'), prune.stderr);
+      assert.ok(!`${prune.stdout}${prune.stderr}`.includes('prune_secret'), prune.stderr);
     } finally { fs.rmSync(bin, { recursive: true, force: true }); }
     // An unknown argument is never echoed, even a plain-looking one.
+    // --repo must be an existing folder, so a failing step never prints typed text.
+    const badRepo = spawnSync(process.execPath, [engine, 'audit', '--repo', 'Authorization: Bearer repo_secret'], { encoding: 'utf8', env });
+    assert.notStrictEqual(badRepo.status, 0);
+    assert.ok(!badRepo.stderr.includes('repo_secret'), badRepo.stderr);
+    assert.ok(badRepo.stderr.includes('existing folder'), badRepo.stderr);
     const bad = spawnSync(process.execPath, [engine, 'audit', 'arg_secret123'], { encoding: 'utf8', env });
     assert.notStrictEqual(bad.status, 0);
     assert.ok(!bad.stderr.includes('arg_secret123'), bad.stderr);

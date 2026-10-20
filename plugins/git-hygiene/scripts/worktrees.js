@@ -52,6 +52,17 @@ function describeFailure(file, args, result) {
     : `${step} ${how}; run it by hand to see its own message`;
 }
 
+// The message to show for any caught error. A Node system error (from mkdir,
+// rename, stat) carries its own message text, which is not ours to print; it
+// is reduced to the call, the code and the path. Errors this file threw are
+// already in its own words.
+function errorText(error) {
+  if (error && error.code && error.syscall) {
+    return `${error.syscall} failed with ${error.code}${error.path ? ` at ${error.path}` : ''}`;
+  }
+  return error && error.message ? error.message : String(error);
+}
+
 // Masks URL user-info (https://user:token@host -> https://***@host). Git text
 // carries remote URLs in errors, lock reasons and prune output, and all of it
 // can reach the conversation, so this runs where text leaves the process (the
@@ -208,13 +219,14 @@ function remoteIdentity(repo, deadline) {
     host = scp[2];
     pathname = scp[3];
   }
-  // A malformed remote such as user:token@host/o/r splits into a "host" and
-  // "path" that carry the token in pieces no URL mask recognises, and the
-  // identity is printed. A real host or repository path has no `@` or space.
-  if (/[@\s/]/.test(String(host)) || /[@\s]/.test(String(pathname))) return null;
+  // The identity is printed, so every part must be a plain name. A malformed
+  // remote such as user:token@host/o/r, or git@host:Bearer:token/r, otherwise
+  // splits a token into a "host" or "owner" no URL mask recognises.
+  const plainName = /^[A-Za-z0-9._-]+$/;
+  if (!plainName.test(String(host))) return null;
 
   const parts = String(pathname || '').replace(/\.git$/, '').split('/').filter(Boolean);
-  if (parts.length < 2) return null;
+  if (parts.length < 2 || !parts.every((part) => plainName.test(part))) return null;
   return {
     host: String(host).toLowerCase(),
     namespace: parts.slice(0, -1),
@@ -653,7 +665,7 @@ function auditConfigured(options = {}) {
     let audited;
     try { audited = auditRepository(repo, { ...options, config }); }
     catch (error) {
-      errors.push({ repository: repo, error: error.message });
+      errors.push({ repository: repo, error: errorText(error) });
       continue;
     }
     repositories.push(audited);
@@ -919,7 +931,7 @@ function createWorktree(repo, branch, options = {}) {
       allowFailure: true,
     });
     if (removed === null) {
-      throw new Error(`worktree creation reached ${destination}, but locking it and removing it both failed: ${error.message}`);
+      throw new Error(`worktree creation reached ${destination}, but locking it and removing it both failed: ${errorText(error)}`);
     }
     if (!branchExists) {
       const branchRemoved = git(primary, ['branch', '-d', branch], {
@@ -927,10 +939,10 @@ function createWorktree(repo, branch, options = {}) {
         allowFailure: true,
       });
       if (branchRemoved === null) {
-        throw new Error(`worktree creation was removed after its activity lock failed, but the new branch ${branch} remains: ${error.message}`);
+        throw new Error(`worktree creation was removed after its activity lock failed, but the new branch ${branch} remains: ${errorText(error)}`);
       }
     }
-    throw new Error(`worktree creation was rolled back because its activity lock failed: ${error.message}`);
+    throw new Error(`worktree creation was rolled back because its activity lock failed: ${errorText(error)}`);
   }
   return { created: true, branchCreated: !branchExists, path: destination, branch, locked: true };
 }
@@ -1015,7 +1027,7 @@ function parseArgs(argv) {
     else if (arg === '--all-configured') out.allConfigured = true;
     else if (arg === '--approved') out.approved = true;
     // Never echoed: even a plain-looking word here may be a pasted token.
-    else throw new Error('unknown option; accepted: --repo --path --branch --base --task --json --all-configured --approved');
+    else throw new Error('unknown argument; accepted options: --repo --path --branch --base --task --json --all-configured --approved');
   }
   return out;
 }
@@ -1030,9 +1042,16 @@ function output(value, json) {
 function main() {
   let args;
   try { args = parseArgs(process.argv.slice(2)); }
-  catch (error) { process.stderr.write(`${redactCredentials(error.message)}\n`); process.exit(2); }
+  catch (error) { process.stderr.write(`${redactCredentials(errorText(error))}\n`); process.exit(2); }
 
   try {
+    // --repo reaches `git -C` and is printed when a step fails, so it must be
+    // a folder that exists: then it is a path, never pasted text.
+    if (args.repo !== undefined) {
+      let isFolder = false;
+      try { isFolder = fs.statSync(args.repo).isDirectory(); } catch (_) { isFolder = false; }
+      if (!isFolder) throw new Error('--repo must name an existing folder');
+    }
     if (args.command === 'audit') {
       let audit;
       if (args.allConfigured) audit = auditConfigured();
@@ -1065,7 +1084,7 @@ function main() {
     else if (args.command === 'finish') output(finishWorktree(args.path, args), true);
     else throw new Error('unknown command; accepted: audit destination create move activate verify-prune prune verify-remove remove finish');
   } catch (error) {
-    process.stderr.write(`${redactCredentials(error.message)}\n`);
+    process.stderr.write(`${redactCredentials(errorText(error))}\n`);
     process.exit(3);
   }
 }
@@ -1085,6 +1104,8 @@ module.exports = {
   classifyEntry,
   createWorktree,
   destinationFor,
+  errorText,
+  shown,
   discoverRepositories,
   finishWorktree,
   moveWorktree,

@@ -35,14 +35,16 @@ function loadConfig() {
   try { raw = fs.readFileSync(CONFIG_FILE, 'utf8'); }
   catch (error) {
     if (error.code === 'ENOENT') return base;
-    return { ...base, exists: true, valid: false, errors: [`configuration could not be read: ${error.message}`] };
+    // Fixed wording: Node's message is not ours to print.
+    return { ...base, exists: true, valid: false, errors: [`configuration could not be read (${error.code || 'error'})`] };
   }
   let section;
   try {
     const parsed = JSON.parse(raw);
     section = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed.worktreeLocation : undefined;
   } catch (error) {
-    return { ...base, exists: true, valid: false, errors: [`configuration could not be read: ${error.message}`] };
+    // A JSON parse error quotes part of the file; say where to look instead.
+    return { ...base, exists: true, valid: false, errors: [`configuration is not valid JSON: ${CONFIG_FILE}`] };
   }
   if (section === undefined) return base;
   try {
