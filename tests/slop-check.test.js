@@ -1446,6 +1446,42 @@ check('a stray backtick pair cannot swallow a heading',
 check('marker characters typed into the source are not read as structure',
   choppy('A test.\n\u0001- Go.\n\u0001- Now.\n\u0001- Done.'), false);
 
+console.log('\ncode spans inside list items and quotes, double backticks, running time');
+
+check('a code span in a list item closing on the lazy line under it stays in the item',
+  choppy('- Example `Run this.\nGo. Now. Done.`'), false);
+
+for (const marker of ['- ', '> ', '2. ']) {
+  check(`the tail of a span opened on a "${marker.trim()}" line belongs to that block`,
+    choppy(`${marker}\`a\nb\` Go. Now. Done.`), false);
+}
+
+check('a code span cannot swallow a setext underline',
+  softNames('The deployment date is Friday. The process has two reviewers. `x\n===\ny` This is the same question.')
+    .includes('empty-bridge-sentence'), false);
+
+check('a double-backtick span is code',
+  choppy('Wait. ``Go. Now. Done.`` End of the note for today.'), false);
+
+check('two single spans on one line are each code',
+  softNames('Use `a` and `b` then delve into this rich tapestry, crucial and pivotal and vibrant.')
+    .includes('generic-vocabulary'), true);
+
+check('a setext heading is not part of the paragraph under it',
+  askedNamesEarly('Leaders make careful choices when the evidence remains incomplete.\n===\nTeams learn sound judgment by seeing those choices repeated. Good operators explain their reasoning before the outcome is known.')
+    .includes('near-equal-declarative-run'), false);
+
+check('a conjunction before a pronoun and a verb is a sentence, not a fragment',
+  softNames('But this works.').includes('fragment-beat'), false);
+
+{
+  const started = Date.now();
+  checkHard(Array(16000).fill('Use `x` for the next example.').join('\n'));
+  checkAll(Array(16000).fill('Readers review the draft before sending it for approval.').join(' '));
+  check('code spans on every line and one long run of declaratives stay linear',
+    Date.now() - started < 3000, true);
+}
+
 console.log('\nstructural prose tells from rejected application drafts');
 
 check('an empty bridge sentence is reported',

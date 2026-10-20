@@ -51,11 +51,13 @@ function visibleLines(text) {
     });
 }
 
-// A code span is a run of backticks closed by a run of the same length, and
-// it cannot cross the blank line that ends its paragraph. Without that limit
+// A code span is a run of backticks closed by the next run of the same
+// length: ``x`` is a span holding x, not two empty ones. It never crosses the
+// blank line or block boundary that ends its paragraph, because the regex
+// only ever sees one paragraph's rows (withoutCodeSpans). Without that limit
 // a stray backtick in one paragraph paired with one several paragraphs on and
 // hid everything between them.
-const CODE_SPAN = /`(?:[^`\n]|\n(?![ \t]*\n))*`/g;
+const CODE_SPAN = /(?<!`)(`+)(?!`)[\s\S]*?(?<!`)\1(?!`)/g;
 
 // Whether a row is a block of its own (a heading, list item, quote, table
 // row, rule) is judged on the row as written, before code spans come out:
@@ -65,7 +67,8 @@ const CODE_SPAN = /`(?:[^`\n]|\n(?![ \t]*\n))*`/g;
 const BLOCK_LINE = /^(?:[-*>#|]|\d+\.\s)/;
 // A span cannot cross a blank row or a row that opens a block CommonMark lets
 // interrupt a paragraph: a heading, a quote, a bullet, "1." and a rule.
-const INTERRUPTS = /^\s{0,3}(?:#{1,6}(?:\s|$)|>|[-*+]\s|1[.)]\s|(?:-[ \t]*){3,}$|(?:\*[ \t]*){3,}$|(?:_[ \t]*){3,}$)/;
+// A setext underline (=== or ---) ends the heading above it the same way.
+const INTERRUPTS = /^\s{0,3}(?:#{1,6}(?:\s|$)|>|[-*+]\s|1[.)]\s|(?:-[ \t]*){3,}$|(?:\*[ \t]*){3,}$|(?:_[ \t]*){3,}$|=+[ \t]*$|-+[ \t]*$)/;
 
 // `fill` is what a span leaves behind on its first row. The newlines inside a
 // span are kept, so every row keeps its index and its flags.
@@ -79,23 +82,43 @@ function withoutCodeSpans(lines, fill) {
   const flush = (end) => {
     if (end <= start) return;
     const joined = rows.slice(start, end).map((r) => r.text).join('\n');
-    const inside = new Set();
-    const stripped = joined.replace(CODE_SPAN, (span, offset) => {
-      const first = joined.slice(0, offset).split('\n').length - 1;
+    const inside = new Map();
+    // Matches arrive in order, so the row a span starts on is counted from
+    // the previous match rather than from the top: linear in the segment.
+    let seen = 0;
+    let row = 0;
+    const stripped = joined.replace(CODE_SPAN, (span, _run, offset) => {
+      for (let c = seen; c < offset; c += 1) if (joined[c] === '\n') row += 1;
       const count = span.split('\n').length - 1;
-      for (let r = 1; r <= count; r += 1) inside.add(first + r);
+      for (let r = 1; r <= count; r += 1) inside.set(row + r, row);
+      row += count;
+      seen = offset + span.length;
       return fill + span.replace(/[^\n]/g, '');
     }).split('\n');
     stripped.forEach((text, k) => {
       const row = rows[start + k];
       row.text = text;
-      if (inside.has(k)) { row.continues = true; row.block = false; }
+      // A row a span runs onto belongs to the block the span opened in: a
+      // list item's or a quote's, which the prose pass leaves out, or a
+      // paragraph's, which it reads whatever the row starts with.
+      if (inside.has(k)) {
+        const opener = rows[start + inside.get(k)];
+        row.continues = !opener.block;
+        row.block = opener.block;
+      }
     });
   };
+  // A blank row ends a segment. A row that interrupts a paragraph ends the
+  // one above it and opens its own, so a list item's span can still close on
+  // the lazy line under it, while a heading cannot sit inside a span begun
+  // above it.
   rows.forEach((row, i) => {
-    if (!row.text.trim() || (!row.continues && INTERRUPTS.test(row.text))) {
+    if (!row.text.trim()) {
       flush(i);
       start = i + 1;
+    } else if (!row.continues && INTERRUPTS.test(row.text)) {
+      flush(i);
+      start = i;
     }
   });
   flush(rows.length);
@@ -394,26 +417,45 @@ function emptyBridgeSentences(prose) {
 // pointing at, never worth counting. The whole-document version of the same
 // signal is uniform-rhythm, which does count.
 function nearEqualDeclarativeRun(text) {
-  let worst = [];
+  let worst = null;
 
   for (const paragraph of proseParagraphs(text)) {
     if (paragraph.includes('`')) continue;
-    const run = [];
-
-    for (const sentence of sentencesOf(paragraph)) {
-      const length = wordsIn(sentence).length;
-      if (sentence.endsWith('.') && length >= 8 && length <= 14) {
-        run.push({ sentence, length });
-        while (Math.max(...run.map((r) => r.length)) - Math.min(...run.map((r) => r.length)) > 3) run.shift();
-        if (run.length > worst.length) worst = run.slice();
+    const sentences = sentencesOf(paragraph);
+    // Lengths in a run are 8 to 14, so the spread is read off a count per
+    // length rather than by scanning the run: linear in the paragraph.
+    const counts = new Array(15).fill(0);
+    let from = 0;
+    const spread = () => {
+      let lo = 8;
+      let hi = 14;
+      while (lo <= 14 && !counts[lo]) lo += 1;
+      while (hi >= 8 && !counts[hi]) hi -= 1;
+      return hi - lo;
+    };
+    for (let i = 0; i < sentences.length; i += 1) {
+      const length = wordsIn(sentences[i]).length;
+      if (sentences[i].endsWith('.') && length >= 8 && length <= 14) {
+        counts[length] += 1;
+        while (spread() > 3) {
+          counts[wordsIn(sentences[from]).length] -= 1;
+          from += 1;
+        }
+        if (!worst || i + 1 - from > worst.length) worst = { sentences, from, length: i + 1 - from };
       } else {
-        run.length = 0;
+        counts.fill(0);
+        from = i + 1;
       }
     }
   }
 
-  return worst.length >= 3
-    ? { name: 'near-equal-declarative-run', question: true, count: worst.length, hits: worst.map((r) => `"${r.sentence}"`) }
+  return worst && worst.length >= 3
+    ? {
+      name: 'near-equal-declarative-run',
+      question: true,
+      count: worst.length,
+      hits: worst.sentences.slice(worst.from, worst.from + worst.length).map((s) => `"${s}"`),
+    }
     : null;
 }
 
@@ -449,7 +491,7 @@ function fragmentBeats(prose) {
     const length = wordsIn(sentence).length;
     if (length < 2 || length > 5) return false;
 
-    return /^(?:and|but|or|yet|so) (?:a|an|the|this|that|these|those|my|our|your|their) [a-z][a-z'-]*[.!?]$/i.test(sentence)
+    return /^(?:and|but|or|yet|so) (?:a|an|the|my|our|your|their) [a-z][a-z'-]*[.!?]$/i.test(sentence)
       || /^(?:one|two|three|four|five|six|seven|eight|nine|ten) [a-z][a-z'-]*(?: [a-z][a-z'-]*)? (?:in particular|especially)[.!?]$/i.test(sentence);
   }).length;
 }
@@ -466,6 +508,13 @@ function proseParagraphs(text) {
         if (current.length) paragraphs.push(current.join(' '));
         current = [];
       }
+      continue;
+    }
+    // A setext underline makes the line above it a heading, not prose.
+    if (!continues && /^\s{0,3}(?:=+|-+)\s*$/.test(line) && current.length) {
+      current.pop();
+      if (current.length) paragraphs.push(current.join(' '));
+      current = [];
       continue;
     }
     // A heading, list item, quote or table row is a block of its own: it
