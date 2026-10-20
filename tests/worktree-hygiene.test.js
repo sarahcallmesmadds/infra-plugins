@@ -12,6 +12,11 @@ const configModule = require(path.join(ROOT, 'scripts', 'worktree-config'));
 const worktrees = require(path.join(ROOT, 'scripts', 'worktrees'));
 const { misplacedTarget, resolveRoots } = require(path.join(ROOT, 'scripts', 'worktree-location'));
 
+// A developer's own Git config (url.insteadOf rewrites, a global hooks path,
+// signing) must not change what these fixtures see. Child processes inherit it.
+process.env.GIT_CONFIG_GLOBAL = os.devNull;
+process.env.GIT_CONFIG_NOSYSTEM = '1';
+
 let failed = 0;
 let ran = 0;
 function check(name, fn) {
@@ -515,6 +520,10 @@ check('prune reads what Git would clear from its dry run, and refuses anything u
 });
 
 check('prune maps a relative-paths registration to its real path', () => {
+  // --relative-paths arrived in Git 2.48. Older Git cannot write such a
+  // registration, so there is nothing to map.
+  const help = spawnSync('git', ['worktree', 'add', '-h'], { encoding: 'utf8' });
+  if (!`${help.stdout}${help.stderr}`.includes('relative-paths')) return;
   const f = fixture();
   try {
     const target = path.join(f.projects, 'example gone relative');
@@ -524,6 +533,19 @@ check('prune maps a relative-paths registration to its real path', () => {
     fs.rmSync(target, { recursive: true, force: true });
     const expected = path.join(fs.realpathSync.native(f.projects), 'example gone relative');
     assert.deepStrictEqual(worktrees.pruneCandidates(f.repo), [expected]);
+  } finally { f.cleanup(); }
+});
+
+check('a review tool checkout inside the worktree folder is still held as review-tool', () => {
+  const f = fixture();
+  try {
+    const target = f.add('tool-owned', path.join(f.hidden, '.review', 'tool-owned'));
+    const entry = worktrees.auditRepository(f.repo, { config: f.config, skipRemote: true })
+      .worktrees.find((row) => row.branch === 'tool-owned');
+    assert.strictEqual(entry.location, 'review-tool');
+    assert.strictEqual(entry.state, worktrees.STATES.DETACHED_REVIEW);
+    assert.strictEqual(entry.removable, false);
+    assert.ok(target);
   } finally { f.cleanup(); }
 });
 
@@ -553,6 +575,8 @@ exec "${realGit}" "$@"
     const audit = worktrees.auditConfigured({ config: f.config, skipRemote: true });
     assert.strictEqual(audit.repositories.length, 1);
     assert.strictEqual(audit.errors.length, 1);
+    assert.strictEqual(audit.summary.unreadable, 1);
+    assert.match(worktrees.renderAudit(audit), /1 repository was not read and is not counted above/);
     assert.match(worktrees.renderAudit(audit), /Could not read .*broken/);
   } finally {
     process.env.PATH = before;

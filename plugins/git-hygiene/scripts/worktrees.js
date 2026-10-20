@@ -242,8 +242,10 @@ function classifyLocation(candidate, config) {
   const here = canonical(candidate);
   // Unconfigured, there is no managed folder. The current-repository audit
   // still has to run then, so a missing root must not reach path functions.
-  if (config.worktreeRoot && contains(canonicalProspective(config.worktreeRoot), here)) return 'managed-root';
+  // Review-tool folders first: a review tool's checkout that happens to sit in
+  // the worktree folder must still be held, never offered as ordinary cleanup.
   if (REVIEW_LOCATION.test(here.replace(/\\/g, '/'))) return 'review-tool';
+  if (config.worktreeRoot && contains(canonicalProspective(config.worktreeRoot), here)) return 'managed-root';
   if (config.projectRoots.some((root) => contains(root, here))) return 'project-root';
   return 'other';
 }
@@ -512,6 +514,7 @@ function summarize(repositories) {
     relocatable: worktrees.filter((entry) => entry.relocatable).length,
     missing: worktrees.filter((entry) => entry.absenceConfirmed).length,
     held: worktrees.filter((entry) => !entry.primary && !entry.removable && !entry.absenceConfirmed).length,
+    unreadable: 0,
   };
 }
 
@@ -566,7 +569,9 @@ function auditConfigured(options = {}) {
     repositories.push(audited);
     if (audited.truncated) { truncated = true; break; }
   }
-  return { config, truncated, repositories, errors, summary: summarize(repositories) };
+  // Counts cover the repositories that were read. Say how many were not, so a
+  // total never reads as complete when a repository was skipped.
+  return { config, truncated, repositories, errors, summary: { ...summarize(repositories), unreadable: errors.length } };
 }
 
 function validateExactPath(raw) {
@@ -887,6 +892,9 @@ function renderAudit(audit) {
   if (audit.truncated) lines.push('The audit was incomplete, so no cleanup count is claimed.');
   if (audit.config && audit.config.exists && !audit.config.valid) {
     lines.push(`The worktreeLocation setting was rejected: ${(audit.config.errors || []).join('; ') || 'no reason given'}. Run /git-hygiene:setup to fix it.`);
+  }
+  if ((audit.errors || []).length) {
+    lines.push(`${audit.errors.length} repositor${audit.errors.length === 1 ? 'y was' : 'ies were'} not read and ${audit.errors.length === 1 ? 'is' : 'are'} not counted above.`);
   }
   for (const failure of audit.errors || []) lines.push(`Could not read ${failure.repository}: ${failure.error}`);
   for (const repo of audit.repositories) {

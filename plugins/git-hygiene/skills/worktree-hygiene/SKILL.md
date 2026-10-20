@@ -49,6 +49,10 @@ script marked it removable or relocatable. A partial audit carries
 `truncated: true`; report that the audit is incomplete and offer nothing for
 cleanup from it.
 
+If `errors` lists repositories that could not be read, name them and say the
+counts leave them out. Each removal still re-checks its own path, so cleanup in
+the repositories that were read can go ahead.
+
 ## Create
 
 Read the configuration first:

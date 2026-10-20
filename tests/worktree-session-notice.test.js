@@ -11,6 +11,11 @@ const ROOT = path.join(__dirname, '..', 'plugins', 'git-hygiene');
 const HOOK = path.join(ROOT, 'hooks', 'session-notice.js');
 const CLI = path.join(ROOT, 'scripts', 'worktrees.js');
 
+// A developer's own Git config (url.insteadOf rewrites, a global hooks path,
+// signing) must not change what these fixtures see. Child processes inherit it.
+process.env.GIT_CONFIG_GLOBAL = os.devNull;
+process.env.GIT_CONFIG_NOSYSTEM = '1';
+
 let failed = 0;
 let ran = 0;
 function check(name, fn) {
