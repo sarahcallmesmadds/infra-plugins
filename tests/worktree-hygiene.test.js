@@ -165,35 +165,50 @@ check('staged files make a worktree dirty', () => {
   } finally { f.cleanup(); }
 });
 
-check('a GitHub open pull request wins over local merge evidence', () => {
+function withGh(script, fn) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'git-hygiene-gh-'));
-  const gh = path.join(dir, 'gh');
-  fs.writeFileSync(gh, '#!/bin/sh\nprintf \'%s\\n\' \'[{"number":7,"state":"OPEN","mergedAt":null,"headRefOid":"abc","baseRefName":"main"}]\'\n');
-  fs.chmodSync(gh, 0o755);
+  fs.writeFileSync(path.join(dir, 'gh'), `#!/bin/sh\n${script}\n`);
+  fs.chmodSync(path.join(dir, 'gh'), 0o755);
   const before = process.env.PATH;
   process.env.PATH = `${dir}${path.delimiter}${before}`;
-  try {
-    const evidence = worktrees.pullRequestEvidence('.', {
-      github: true, owner: 'owner', repository: 'repo',
-    }, 'feature', 'abc', 'main');
-    assert.strictEqual(evidence.available, true);
-    assert.strictEqual(evidence.open, true);
-  } finally {
+  try { return fn(); }
+  finally {
     process.env.PATH = before;
     fs.rmSync(dir, { recursive: true, force: true });
   }
+}
+
+check('a GitHub open pull request wins over local merge evidence', () => {
+  const f = fixture();
+  try {
+    git(f.repo, 'remote', 'add', 'origin', 'https://github.com/owner/example.git');
+    const target = f.add('reviewed', path.join(f.projects, 'example-reviewed'));
+    const head = git(target, 'rev-parse', 'HEAD');
+    // The branch is locally merged (no commits beyond main), so only the open
+    // pull request can make it OPEN.
+    const row = JSON.stringify([{ number: 7, state: 'OPEN', mergedAt: null, headRefOid: head, baseRefName: 'main' }]);
+    withGh(`printf '%s\\n' '${row}'`, () => {
+      const entry = worktrees.auditRepository(f.repo, { config: f.config })
+        .worktrees.find((candidate) => candidate.branch === 'reviewed');
+      assert.strictEqual(entry.state, worktrees.STATES.OPEN);
+      assert.strictEqual(entry.removable, false);
+    });
+  } finally { f.cleanup(); }
 });
 
 check('an unavailable GitHub lookup is unknown, never merged', () => {
-  const before = process.env.PATH;
-  process.env.PATH = '';
+  const f = fixture();
   try {
-    const evidence = worktrees.pullRequestEvidence('.', {
-      github: true, owner: 'owner', repository: 'repo',
-    }, 'feature', 'abc', 'main');
-    assert.strictEqual(evidence.available, false);
-    assert.strictEqual(evidence.merged, false);
-  } finally { process.env.PATH = before; }
+    git(f.repo, 'remote', 'add', 'origin', 'https://github.com/owner/example.git');
+    f.add('unreadable', path.join(f.projects, 'example-unreadable'));
+    withGh('exit 1', () => {
+      const entry = worktrees.auditRepository(f.repo, { config: f.config })
+        .worktrees.find((candidate) => candidate.branch === 'unreadable');
+      assert.strictEqual(entry.state, worktrees.STATES.UNKNOWN);
+      assert.match(entry.reason, /could not be read from GitHub/);
+      assert.strictEqual(entry.removable, false);
+    });
+  } finally { f.cleanup(); }
 });
 
 check('HTTPS, SSH URL, and SCP remotes identify GitHub correctly', () => {
@@ -301,26 +316,35 @@ check('a merged worktree is removed through Git and its branch survives', () => 
   } finally { f.cleanup(); }
 });
 
-check('removal does not require GitHub availability', () => {
+check('removal refuses when GitHub pull requests cannot be read', () => {
   const f = fixture();
-  const bin = fs.mkdtempSync(path.join(os.tmpdir(), 'git-hygiene-no-gh-remove-'));
-  const realGit = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
-  fs.writeFileSync(path.join(bin, 'git'), `#!/bin/sh\nexec "${realGit}" "$@"\n`);
-  fs.writeFileSync(path.join(bin, 'gh'), '#!/bin/sh\nexit 1\n');
-  fs.chmodSync(path.join(bin, 'git'), 0o755);
-  fs.chmodSync(path.join(bin, 'gh'), 0o755);
-  const before = process.env.PATH;
   try {
     git(f.repo, 'remote', 'add', 'origin', 'https://github.com/owner/example.git');
     const target = f.add('offline-remove', path.join(f.projects, 'example-offline-remove'));
-    process.env.PATH = `${bin}${path.delimiter}${before}`;
-    const verified = worktrees.verifyRemove(target, { config: f.config, cwd: f.base });
-    assert.strictEqual(verified.state, worktrees.STATES.MERGED);
-  } finally {
-    process.env.PATH = before;
-    fs.rmSync(bin, { recursive: true, force: true });
-    f.cleanup();
-  }
+    withGh('exit 1', () => {
+      assert.throws(() => worktrees.removeWorktree(target, { config: f.config, cwd: f.base, approved: true }),
+        /open pull requests could not be read from GitHub/);
+    });
+    assert.strictEqual(fs.existsSync(target), true);
+  } finally { f.cleanup(); }
+});
+
+check('a worktree changed after its check is not removed or moved', () => {
+  const f = fixture();
+  try {
+    const target = f.add('changes-later', path.join(f.projects, 'example-changes-later'));
+    const verified = worktrees.verifyRemove(target, { config: f.config, cwd: f.base, skipRemote: true });
+    // Another session moves it to a detached HEAD with a commit of its own.
+    git(target, 'checkout', '-q', '--detach');
+    fs.writeFileSync(path.join(target, 'later.txt'), 'later\n');
+    git(target, 'add', '.'); git(target, 'commit', '-qm', 'later');
+    assert.throws(() => worktrees.recheckTarget(verified.repository, verified.path, verified), /changed branch or commit/);
+    git(target, 'checkout', '-q', 'changes-later');
+    fs.writeFileSync(path.join(target, 'scratch.txt'), 'scratch\n');
+    assert.throws(() => worktrees.recheckTarget(verified.repository, verified.path, verified), /changes made after/);
+    git(f.repo, 'worktree', 'lock', target);
+    assert.throws(() => worktrees.recheckTarget(verified.repository, verified.path, verified), /locked after/);
+  } finally { f.cleanup(); }
 });
 
 check('removal approval never carries to a later target', () => {
@@ -438,6 +462,70 @@ check('a missing locked registration must be finished before it can be pruned', 
     }).pruned, true);
     assert.ok(git(f.repo, 'show-ref', '--verify', 'refs/heads/missing-locked'));
   } finally { f.cleanup(); }
+});
+
+check('a symlink cannot change the <repo>/<task> depth of a destination', () => {
+  const f = fixture();
+  try {
+    fs.mkdirSync(f.hidden, { recursive: true });
+    fs.symlinkSync(f.hidden, path.join(f.hidden, 'example'));
+    assert.throws(() => worktrees.destinationFor(f.repo, 'feature', f.config), /not exactly <worktreeRoot>\/<repo>\/<task>/);
+  } finally { f.cleanup(); }
+});
+
+check('prune reads what Git would clear from its dry run, and refuses anything unapproved', () => {
+  const f = fixture();
+  try {
+    const one = f.add('gone-one', path.join(f.projects, 'example-gone-one'));
+    const two = f.add('gone-two', path.join(f.projects, 'example-gone-two'));
+    fs.rmSync(one, { recursive: true, force: true });
+    fs.rmSync(two, { recursive: true, force: true });
+    assert.deepStrictEqual(worktrees.pruneCandidates(f.repo), [one, two].map((p) => fs.realpathSync.native(path.dirname(p)) + path.sep + path.basename(p)).sort());
+    assert.throws(() => worktrees.pruneWorktrees(f.repo, [one], { config: f.config, approved: true }), /unapproved/);
+    assert.match(git(f.repo, 'worktree', 'list', '--porcelain'), /gone-one/);
+  } finally { f.cleanup(); }
+});
+
+check('activate refuses a worktree in a review tool folder', () => {
+  const f = fixture();
+  try {
+    const target = f.add('review-lock', path.join(f.base, '.review', 'review-lock'));
+    assert.throws(() => worktrees.activateWorktree(target, { config: f.config, approved: true }), /review tool/);
+  } finally { f.cleanup(); }
+});
+
+check('one unreadable repository is reported and the rest are still audited', () => {
+  const f = fixture();
+  const other = path.join(f.projects, 'broken');
+  execFileSync('git', ['init', '-q', '-b', 'main', other]);
+  git(other, '-c', 'user.email=t@example.com', '-c', 'user.name=T', 'commit', '-q', '--allow-empty', '-m', 'i');
+  const bin = fs.mkdtempSync(path.join(os.tmpdir(), 'git-hygiene-broken-'));
+  const realGit = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+  fs.writeFileSync(path.join(bin, 'git'), `#!/bin/sh
+case "$*" in *broken*worktree\\ list*) exit 1;; esac
+exec "${realGit}" "$@"
+`);
+  fs.chmodSync(path.join(bin, 'git'), 0o755);
+  const before = process.env.PATH;
+  process.env.PATH = `${bin}${path.delimiter}${before}`;
+  try {
+    const audit = worktrees.auditConfigured({ config: f.config, skipRemote: true });
+    assert.strictEqual(audit.repositories.length, 1);
+    assert.strictEqual(audit.errors.length, 1);
+    assert.match(worktrees.renderAudit(audit), /Could not read .*broken/);
+  } finally {
+    process.env.PATH = before;
+    fs.rmSync(bin, { recursive: true, force: true });
+    f.cleanup();
+  }
+});
+
+check('a rejected setting is named in the audit, not shown as nothing configured', () => {
+  const rendered = worktrees.renderAudit({
+    config: { exists: true, valid: false, errors: ['Project root is not an existing directory: /nowhere'] },
+    truncated: false, repositories: [], errors: [], summary: worktrees.summarize([]),
+  });
+  assert.match(rendered, /worktreeLocation setting was rejected: Project root is not an existing directory/);
 });
 
 check('canonical destination refuses a symlink escape inside the worktree root', () => {

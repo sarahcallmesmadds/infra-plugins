@@ -229,6 +229,12 @@ function destinationFor(repo, branch, config = loadConfig(), task) {
   if (!contains(root, resolvedTarget) || resolvedTarget === root) {
     throw new Error('the computed worktree path escaped the configured root');
   }
+  // Containment alone is not enough: a symlink such as Worktrees/<repo> ->
+  // Worktrees makes the physical path one level deep, which the location guard
+  // rejects, so the engine would create a worktree the guard calls misplaced.
+  if (path.relative(root, resolvedTarget).split(path.sep).length !== 2) {
+    throw new Error('the computed worktree path is not exactly <worktreeRoot>/<repo>/<task> once symlinks are resolved');
+  }
   return resolvedTarget;
 }
 
@@ -308,6 +314,11 @@ function branchEvidence(primary, entry, options = {}) {
   }
 
   if (prs.open) return { state: STATES.OPEN, reason: 'the branch has an open pull request' };
+  // An unreadable pull-request list must not read as an empty one. Removal
+  // promises the branch has no open pull request, and that was not checked.
+  if (!prs.available) {
+    return { state: STATES.UNKNOWN, reason: 'open pull requests could not be read from GitHub' };
+  }
   if (branch.aheadBy === 0 || branch.merged || prs.merged) {
     return {
       state: STATES.MERGED,
@@ -541,13 +552,21 @@ function auditConfigured(options = {}) {
   const discovered = discoverRepositories(roots, options.deadline);
   const repositories = [];
   let truncated = discovered.truncated;
+  const errors = [];
   for (const repo of discovered.repositories) {
     if (options.deadline && Date.now() >= options.deadline) { truncated = true; break; }
-    const audited = auditRepository(repo, { ...options, config });
+    // One repository Git cannot read must not discard the others. It is
+    // reported with no worktrees, so nothing from it is offered for cleanup.
+    let audited;
+    try { audited = auditRepository(repo, { ...options, config }); }
+    catch (error) {
+      errors.push({ repository: repo, error: error.message });
+      continue;
+    }
     repositories.push(audited);
     if (audited.truncated) { truncated = true; break; }
   }
-  return { config, truncated, repositories, summary: summarize(repositories) };
+  return { config, truncated, repositories, errors, summary: summarize(repositories) };
 }
 
 function validateExactPath(raw) {
@@ -557,6 +576,63 @@ function validateExactPath(raw) {
   if (/[?*\[\]$`]/.test(expanded)) throw new Error('the worktree path contains an unresolved expansion or glob');
   if (expanded.split(path.sep).includes('..')) throw new Error('the worktree path contains parent traversal');
   return canonicalProspective(expanded);
+}
+
+// Re-read one worktree's facts immediately before Git acts on it. The audit
+// that classified it can take seconds on a large repository, and in that time
+// another session can switch it to a detached HEAD with unique commits, write a
+// file into it, or lock it. Git itself would still remove a clean detached
+// checkout, and still move a dirty one.
+function recheckTarget(repository, target, expected) {
+  const entry = registeredWorktrees(repository).find((candidate) => canonical(candidate.path) === target);
+  if (!entry) throw new Error(`refusing: ${target} is no longer a registered worktree`);
+  if (entry.locked) throw new Error(`refusing: ${target} was locked after it was checked`);
+  if (entry.detached || entry.branch !== expected.branch || entry.head !== expected.head) {
+    throw new Error(`refusing: ${target} changed branch or commit after it was checked`);
+  }
+  const working = status(target);
+  if (!working.readable || working.dirty) throw new Error(`refusing: ${target} has changes made after it was checked`);
+}
+
+// What Git's repository-wide prune would actually clear, from its own dry run.
+// The audit's list of missing paths can be stale by the time prune runs, so the
+// dry run is the evidence, mapped back to paths through each registration's
+// gitdir file.
+function pruneCandidates(repository) {
+  // Git writes these "Removing worktrees/<name>" lines to stderr, not stdout.
+  // Reading stdout alone sees an empty list, which looks like nothing to prune.
+  const result = spawnSync('git', ['-C', repository, 'worktree', 'prune', '--dry-run', '--verbose', '--expire', 'now'], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    timeout: MUTATION_TIMEOUT_MS,
+  });
+  if (result.status !== 0 || result.error) {
+    throw new Error(`refusing prune: the dry run failed: ${(result.stderr || (result.error && result.error.message) || '').trim()}`);
+  }
+  const out = `${result.stdout || ''}\n${result.stderr || ''}`;
+  const admin = path.join(commonDir(repository), 'worktrees');
+  const paths = [];
+  for (const line of out.split('\n').filter(Boolean)) {
+    const match = /^Removing worktrees\/(.+?): /.exec(line);
+    if (!match) throw new Error(`refusing prune: unrecognised dry-run line: ${line}`);
+    let gitdir;
+    try { gitdir = fs.readFileSync(path.join(admin, match[1], 'gitdir'), 'utf8').trim(); }
+    catch (_) { throw new Error(`refusing prune: cannot tell which path registration ${match[1]} belongs to`); }
+    paths.push(canonicalProspective(path.dirname(gitdir)));
+  }
+  return [...new Set(paths)].sort();
+}
+
+function requireExactPruneSet(repository, targets) {
+  const candidates = pruneCandidates(repository);
+  const unapproved = candidates.filter((candidate) => !targets.includes(candidate));
+  const absent = targets.filter((candidate) => !candidates.includes(candidate));
+  if (unapproved.length) {
+    throw new Error(`refusing prune because Git would also clear unapproved registrations: ${unapproved.join(', ')}`);
+  }
+  if (absent.length) {
+    throw new Error(`refusing prune because Git would not clear these approved paths: ${absent.join(', ')}`);
+  }
 }
 
 function verifyPrune(repo, rawPaths, options = {}) {
@@ -589,9 +665,7 @@ function verifyPrune(repo, rawPaths, options = {}) {
     throw new Error(`refusing prune because Git would also clear unapproved missing registrations: ${unapproved.join(', ')}`);
   }
 
-  git(audited.repository, ['worktree', 'prune', '--dry-run', '--verbose', '--expire', 'now'], {
-    timeout: MUTATION_TIMEOUT_MS,
-  });
+  requireExactPruneSet(audited.repository, targets);
   return {
     ok: true,
     repository: audited.repository,
@@ -603,18 +677,24 @@ function verifyPrune(repo, rawPaths, options = {}) {
 function pruneWorktrees(repo, rawPaths, options = {}) {
   if (!options.approved) throw new Error('refusing prune without --approved');
   const verified = verifyPrune(repo, rawPaths, options);
-  // Git prune operates repository-wide, so repeat the complete exact-set check
-  // immediately before it runs. Every currently eligible registration must be
-  // one of the paths the user approved.
-  verifyPrune(verified.repository, verified.paths, options);
+  // Git prune operates repository-wide, so take Git's own dry run again
+  // immediately before it runs. Every registration it would clear must be one
+  // the user approved.
+  requireExactPruneSet(verified.repository, verified.paths);
+  const before = registeredWorktrees(verified.repository).map((entry) => canonicalProspective(entry.path));
   git(verified.repository, ['worktree', 'prune', '--verbose', '--expire', 'now'], {
     timeout: MUTATION_TIMEOUT_MS,
   });
-  const stillRegistered = registeredWorktrees(verified.repository)
-    .map((entry) => canonicalProspective(entry.path))
-    .filter((candidate) => verified.paths.includes(candidate));
+  const after = registeredWorktrees(verified.repository).map((entry) => canonicalProspective(entry.path));
+  const stillRegistered = after.filter((candidate) => verified.paths.includes(candidate));
   if (stillRegistered.length) {
     throw new Error(`git reported success but these missing registrations remain: ${stillRegistered.join(', ')}`);
+  }
+  // The window between the dry run and the prune cannot be closed, so report
+  // honestly if Git cleared anything else in it.
+  const extra = before.filter((candidate) => !after.includes(candidate) && !verified.paths.includes(candidate));
+  if (extra.length) {
+    throw new Error(`Git also cleared registrations that were not approved, which changed after the final check: ${extra.join(', ')}`);
   }
   return { ...verified, pruned: true };
 }
@@ -640,6 +720,7 @@ function verifyRemove(raw, options = {}) {
     repository: found.audited.repository,
     path: found.target,
     branch: found.entry.branch,
+    head: found.entry.head,
     state: found.entry.state,
     reason: found.entry.reason,
   };
@@ -648,6 +729,7 @@ function verifyRemove(raw, options = {}) {
 function removeWorktree(raw, options = {}) {
   if (!options.approved) throw new Error('refusing removal without --approved');
   const verified = verifyRemove(raw, options);
+  recheckTarget(verified.repository, verified.path, verified);
   git(verified.repository, ['worktree', 'remove', verified.path], { timeout: MUTATION_TIMEOUT_MS });
   if (fs.existsSync(verified.path)) throw new Error('git reported success but the worktree path still exists');
   return { ...verified, removed: true, branchPreserved: true };
@@ -671,6 +753,7 @@ function moveWorktree(raw, options = {}) {
   if (canonicalProspective(destination) !== destination) {
     throw new Error('the computed worktree path changed through a symlink before relocation');
   }
+  recheckTarget(found.audited.repository, found.target, found.entry);
   git(found.audited.repository, ['worktree', 'move', found.target, destination], { timeout: MUTATION_TIMEOUT_MS });
   try {
     git(found.audited.repository, ['worktree', 'lock', '--reason', 'git-hygiene: active agent work', destination], { timeout: MUTATION_TIMEOUT_MS });
@@ -745,6 +828,8 @@ function activateWorktree(raw, options = {}) {
   const found = auditForPath(raw, { ...options, skipRemote: true });
   if (found.entry.primary) throw new Error('the primary checkout is not managed as agent work');
   if (found.entry.locked) throw new Error('the worktree is already locked');
+  // A lock would stop the owning review tool from cleaning up its own checkout.
+  if (found.entry.location === 'review-tool') throw new Error('refusing to lock a worktree that belongs to a review tool');
   git(found.audited.repository, [
     'worktree', 'lock', '--reason', 'git-hygiene: active agent work', found.target,
   ], { timeout: MUTATION_TIMEOUT_MS });
@@ -787,6 +872,10 @@ function renderAudit(audit) {
   const lines = [];
   lines.push(`${audit.summary.repositories} repositories, ${audit.summary.worktrees} registered worktrees.`);
   if (audit.truncated) lines.push('The audit was incomplete, so no cleanup count is claimed.');
+  if (audit.config && audit.config.exists && !audit.config.valid) {
+    lines.push(`The worktreeLocation setting was rejected: ${audit.config.errors.join('; ')}. Run /git-hygiene:setup to fix it.`);
+  }
+  for (const failure of audit.errors || []) lines.push(`Could not read ${failure.repository}: ${failure.error}`);
   for (const repo of audit.repositories) {
     lines.push('', repo.repository);
     for (const entry of repo.worktrees) {
@@ -839,7 +928,7 @@ function main() {
     }
     if (args.command === 'destination') {
       output({
-        repository: auditRepository(args.repo || process.cwd(), { skipRemote: true }).repository,
+        repository: registeredWorktrees(args.repo || process.cwd())[0].path,
         branch: args.branch,
         path: destinationFor(args.repo || process.cwd(), args.branch, loadConfig(), args.task),
       }, true);
@@ -864,6 +953,8 @@ if (require.main === module) main();
 module.exports = {
   STATES,
   placementCounts,
+  pruneCandidates,
+  recheckTarget,
   activateWorktree,
   auditConfigured,
   auditForPath,

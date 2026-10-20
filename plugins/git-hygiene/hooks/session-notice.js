@@ -121,7 +121,10 @@ function main(event, deadline) {
   const notices = [];
   const branches = branchNotice(cwd, deadline);
   if (branches) notices.push(branches);
-  const worktrees = worktreeNotice(deadline);
+  // Its own budget, not what the branch scan left over. In a repository with
+  // many unmerged branches the branch scan can use the whole budget, and the
+  // worktree notice then always fell silent on exactly the setups it is for.
+  const worktrees = worktreeNotice(Date.now() + BUDGET_MS);
   if (worktrees) notices.push(worktrees);
   if (!notices.length) return;
 

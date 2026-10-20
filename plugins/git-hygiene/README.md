@@ -84,8 +84,12 @@ classifies every linked checkout in this order:
 8. carrying work not proved present in the default branch; or
 9. unknown because required evidence could not be read.
 
-Only `merged` reaches ordinary removal. The script checks the exact path again
-immediately before `git worktree remove` runs. It refuses the primary checkout,
+Only `merged` reaches ordinary removal. For a GitHub repository the open pull
+request check needs the `gh` CLI; if it cannot read the list, the worktree is
+`unknown` and kept. Only the `origin` remote is looked up. The script checks the
+exact path again immediately before `git worktree remove` runs, and re-reads that
+one worktree's branch, commit, lock and status just before Git acts, so a change
+made by another session in between stops the removal or move. It refuses the primary checkout,
 the caller's current directory, a changed registration, a lock, any working-tree
 change, ignored local data, an open review, unique work, and incomplete evidence. It never uses
 `--force`, never removes more than one approved path at a time, and never deletes
@@ -107,12 +111,17 @@ after the user confirms no session is using it and the script proves it clean.
 Unlocking makes it reviewable; it does not remove it.
 
 `activate` adds the same protective lock to an existing linked checkout after
-exact-path approval. A locked registration whose directory is absent remains
+exact-path approval. It refuses a worktree in a review tool's own folder,
+because the lock would stop that tool from cleaning it up. A locked registration whose directory is absent remains
 locked until `finish` clears it with the primary checkout named explicitly;
 only then can the separate missing-registration prune flow consider it.
 
 `relocate` moves only an exact clean, unlocked, attached worktree to its computed
-path in the worktree folder. Existing review-tool worktrees stay in their owner-specific cache.
+path in the worktree folder.
+
+Every command takes exact absolute paths. A path containing `$`, `*`, `?`, `[`,
+`]` or a backtick is refused as a possible unexpanded shell pattern, so a
+worktree in such a folder has to be handled with Git directly. Existing review-tool worktrees stay in their owner-specific cache.
 
 ## What it will not do
 
