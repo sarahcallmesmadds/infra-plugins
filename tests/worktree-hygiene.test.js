@@ -845,7 +845,37 @@ check('configured discovery finds primary repositories without descending into w
     assert.deepStrictEqual(found.repositories.map((repo) => path.resolve(repo)), [path.resolve(f.repo)]);
     const exact = worktrees.discoverRepositories([f.repo]);
     assert.deepStrictEqual(exact.repositories.map((repo) => path.resolve(repo)), [path.resolve(f.repo)]);
+    // A dot-named project is still a project; a dot-named plain folder is not.
+    const dotted = path.join(f.projects, '.website');
+    execFileSync('git', ['init', '-q', '-b', 'main', dotted]);
+    fs.mkdirSync(path.join(f.projects, '.notes'));
+    const withDot = worktrees.discoverRepositories([f.projects]);
+    assert.deepStrictEqual(
+      withDot.repositories.map((repo) => path.resolve(repo)).sort(),
+      [path.resolve(dotted), path.resolve(f.repo)].sort()
+    );
   } finally { f.cleanup(); }
+});
+
+check('a full page of closed pull requests cannot prove none is open', () => {
+  const identity = { github: true, owner: 'owner', repository: 'example' };
+  const closed = Array.from({ length: 100 }, (_, i) => ({
+    number: i + 1, state: 'CLOSED', mergedAt: null, headRefOid: 'x', baseRefName: 'main',
+  }));
+  const full = withGh(`cat <<'JSON'\n${JSON.stringify(closed)}\nJSON`, () =>
+    worktrees.pullRequestEvidence(process.cwd(), identity, 'feature', 'abc', 'main'));
+  assert.strictEqual(full.available, false, 'a full page must read as unknown');
+  const short = withGh(`cat <<'JSON'\n${JSON.stringify(closed.slice(0, 99))}\nJSON`, () =>
+    worktrees.pullRequestEvidence(process.cwd(), identity, 'feature', 'abc', 'main'));
+  assert.strictEqual(short.available, true);
+  assert.strictEqual(short.open, false);
+});
+
+check('credentials in remote URLs are masked in error text', () => {
+  const masked = worktrees.redactCredentials("fatal: unable to access 'https://user:ghp_secret@github.com/o/r.git/'");
+  assert.ok(!masked.includes('ghp_secret'), masked);
+  assert.ok(masked.includes('https://***@github.com/o/r.git/'), masked);
+  assert.strictEqual(worktrees.redactCredentials('git@github.com:o/r.git'), 'git@github.com:o/r.git');
 });
 
 console.log(`\n${ran} checks, ${failed} failed`);

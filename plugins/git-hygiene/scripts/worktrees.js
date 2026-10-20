@@ -28,6 +28,10 @@ function remaining(deadline, fallback = READ_TIMEOUT_MS) {
   return Math.max(1, Math.min(fallback, deadline - Date.now()));
 }
 
+function redactCredentials(text) {
+  return String(text).replace(/([a-z][a-z0-9+.-]*:\/\/)[^/\s@]+@/gi, '$1***@');
+}
+
 function run(file, args, options = {}) {
   const result = spawnSync(file, args, {
     cwd: options.cwd,
@@ -39,7 +43,10 @@ function run(file, args, options = {}) {
   if (result.status !== 0 || result.error) {
     if (options.allowFailure) return null;
     const detail = (result.stderr || result.stdout || (result.error && result.error.message) || 'command failed').trim();
-    throw new Error(`${file} ${args.join(' ')}: ${detail}`);
+    // Git echoes remote URLs into its errors, and a URL can carry a token
+    // (https://user:token@host). This message reaches audit output and the
+    // conversation, so the user-info part is masked in both args and detail.
+    throw new Error(redactCredentials(`${file} ${args.join(' ')}: ${detail}`));
   }
   return (result.stdout || '').trim();
 }
@@ -279,16 +286,24 @@ function submoduleState(candidate, deadline) {
   return { readable: true, initialized };
 }
 
+const PR_LIST_LIMIT = 100;
+
 function pullRequestEvidence(repo, identity, branch, head, defaultBranch, deadline) {
   if (!identity || !identity.github) return { available: true, open: false, merged: false, mergedVia: null };
   const out = run('gh', [
     'pr', 'list', '--repo', `${identity.owner}/${identity.repository}`,
-    '--head', branch, '--state', 'all', '--limit', '100',
+    '--head', branch, '--state', 'all', '--limit', String(PR_LIST_LIMIT),
     '--json', 'number,state,mergedAt,headRefOid,baseRefName',
   ], { timeout: remaining(deadline), allowFailure: true });
   if (out === null) return { available: false, open: false, merged: false, mergedVia: null };
   try {
     const rows = JSON.parse(out || '[]');
+    // A full page proves nothing about the pull requests past it: an older open
+    // one on a reused branch name would be missed and its checkout removed. The
+    // newest page still counts if it shows one open; otherwise fail closed.
+    if (rows.length >= PR_LIST_LIMIT && !rows.some((row) => String(row.state).toUpperCase() === 'OPEN')) {
+      return { available: false, open: false, merged: false, mergedVia: null };
+    }
     const open = rows.some((row) => String(row.state).toUpperCase() === 'OPEN');
     const merged = rows.find((row) => row.mergedAt && row.headRefOid === head && row.baseRefName === defaultBranch);
     return {
@@ -494,7 +509,10 @@ function discoverRepositories(projectRoots, deadline) {
     catch (_) { continue; }
     for (const entry of entries) {
       if (deadline && Date.now() >= deadline) return { repositories, truncated: true };
-      if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+      // Dot-named folders are probed too: a project at Projects/.website is a
+      // real repository, and skipping it by name hides all its worktrees.
+      // Folders that are not repositories fail the top-level check below.
+      if (!entry.isDirectory()) continue;
       const candidate = path.join(root, entry.name);
       let top;
       try { top = topLevel(candidate, deadline); }
@@ -1004,6 +1022,7 @@ module.exports = {
   pathPresence,
   pullRequestEvidence,
   pruneWorktrees,
+  redactCredentials,
   removeWorktree,
   renderAudit,
   summarize,
