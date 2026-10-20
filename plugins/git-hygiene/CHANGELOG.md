@@ -3,6 +3,52 @@
 Upgrade notes for past versions, moved out of the README so that file stays
 focused on current installation, configuration and behavior.
 
+## 0.5.0 — 2026-10-19
+
+**Git Hygiene now cleans up linked worktrees as well as branches.** The new
+`/git-hygiene:worktree-hygiene` skill shows every worktree's state and can
+create, move, finish or remove one, each only after you approve that exact path.
+Nothing is removed unless it is clean, unlocked, has no open pull request and
+its work is proved to be in the default branch, and that is re-checked
+immediately before Git removes it. Removing a worktree never deletes its
+branch; `/stale-branches` still owns that.
+
+It uses the same `worktreeLocation` setting as the guard, so new worktrees go
+to `<worktreeRoot>/<repo>/<task>`. The task folder is the branch name with
+slashes turned into dashes unless you name it. When that setting is configured,
+session start also says when a linked worktree sits outside the worktree folder
+or a registration is missing, without changing anything. With no setting, the
+skill still reports on the current repository.
+
+When a Git step fails, the message names the step, the folder and how it ended,
+not Git's own text, because Git can echo a remote URL with a token in it. It
+points at `git status` and `git worktree list` (or, for prune, the dry run)
+rather than at rerunning the step, which would skip the checks. For the same
+reason a
+worktree locked by something else shows as `locked`, without its lock note.
+
+## 0.4.2 — 2026-10-19
+
+**Configure the worktree guard with `/git-hygiene:setup`.** The skill proposes
+the project and worktree roots, asks before changing user-owned configuration,
+and preserves other Git Hygiene settings. If another session changes the file
+while setup runs, setup writes nothing and asks you to run it again. The README
+now clarifies how shell syntax affects commands the hook can check.
+
+**A hand-written setting is checked the way setup checks it.** The hook now
+ignores a `worktreeLocation` whose project folder does not exist or whose
+worktree folder runs through a file. Before, it enforced such a setting. Check
+yours with `/git-hygiene:setup` if the guard stops blocking misplaced worktrees.
+
+## 0.4.1 — 2026-09-28
+
+**Project worktrees can stay together.** When `worktreeLocation` is set in
+`~/.claude/git-hygiene.config.json`, the Bash hook checks one standalone,
+literal `git worktree add` or `git worktree move` command. Destinations must
+be exactly `<worktreeRoot>/<repo>/<task>`. Compound shell syntax, redirects,
+substitutions, wrappers, functions, scripts and other interpreters are outside
+its scope. This is a convenience check, not a sandbox or shell parser.
+
 ## 0.3.12 — 2026-08-29
 
 **Keep now means "not proved safe to delete," not "deleting would lose work."**
