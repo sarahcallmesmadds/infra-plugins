@@ -30,9 +30,17 @@ reply, on a document whose visible text was clean. The other hard rules still
 read comments, as before: an em dash, a banned phrase or a generation artefact
 inside a comment is still reported.
 
+The prose pass now reads paragraph boundaries the way the CommonMark reference
+parser renders them: a comment or raw HTML block on its own line ends the
+paragraph above it, a heading, rule or quote ends a code span, and a line that
+starts with inline code is not a list item. Known misses, all in the direction
+of reporting less: a comment that opens on one line and closes on the next
+leaves a word it splits as two words; the interior lines of such a comment end
+the paragraph; a table-shaped or "3." line inside a paragraph is not read.
+
 Measured over 697 Markdown documents in five repositories, two readings moved
 from "little" to "some", each on a sentence checked by hand, and none to
-"strong".
+"strong". The hard rules give the same answer as 0.10.0 on all 697.
 
 ## Upgrading to 0.10.0
 

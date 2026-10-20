@@ -36,30 +36,19 @@ const HIDDEN_SPAN = '\u0003';
 // "re<!-- x -->try" reads as one word. A comment that opens on one line and
 // closes on the next still leaves the two halves as separate words.
 function visibleLines(text) {
-  const rows = withoutFencedBlocks(String(text || '').replace(/\r\n?/g, '\n'), { hiddenFill: HIDDEN_SPAN });
-  const hidden = (row) => row.startsWith(MARKDOWN_BOUNDARY);
-  const out = [];
-  rows.forEach((row, i) => {
-    if (hidden(row)) {
-      // A hidden line with visible text directly above and below it, such as
-      // a comment on its own line inside a paragraph, is dropped rather than
-      // read as a blank, which would split a paragraph the reader sees as
-      // one. structure.js reads it the same way.
-      let a = i - 1;
-      while (a >= 0 && hidden(rows[a])) a -= 1;
-      let b = i + 1;
-      while (b < rows.length && hidden(rows[b])) b += 1;
-      const above = a >= 0 && rows[a].replace(/^\u0001/, '').trim();
-      const below = b < rows.length && rows[b].replace(/^\u0001/, '').trim()
-        && !/^\s*(?:=+|-+|\*\s*\*\s*\*[\s*]*|_\s*_\s*_[\s_]*)\s*$/.test(rows[b]);
-      if (!(above && below)) out.push({ text: '', continues: false });
-      return;
-    }
-    const continues = row.startsWith(MARKDOWN_PARAGRAPH_CONTINUATION);
-    const shown = continues ? row.slice(1) : row;
-    out.push({ text: shown.split(HIDDEN_SPAN).join(''), continues });
-  });
-  return out;
+  // A hidden row is a blank here. A comment or raw HTML block on its own line
+  // ends the paragraph above it, as the CommonMark reference parser renders
+  // it ("A.\n<!-- x -->\nB." is two paragraphs), so it is read as a boundary.
+  // The three characters the pass uses as markers are removed from the
+  // source first, so a document cannot spell one and be read as structure.
+  const source = String(text || '').replace(/\r\n?/g, '\n').replace(/[\0\u0001\u0003]/g, '');
+  return withoutFencedBlocks(source, { hiddenFill: HIDDEN_SPAN })
+    .map((row) => {
+      if (row.startsWith(MARKDOWN_BOUNDARY)) return { text: '', continues: false };
+      const continues = row.startsWith(MARKDOWN_PARAGRAPH_CONTINUATION);
+      const shown = continues ? row.slice(1) : row;
+      return { text: shown.split(HIDDEN_SPAN).join(''), continues };
+    });
 }
 
 // A code span is a run of backticks closed by a run of the same length, and
@@ -68,23 +57,53 @@ function visibleLines(text) {
 // hid everything between them.
 const CODE_SPAN = /`(?:[^`\n]|\n(?![ \t]*\n))*`/g;
 
-// Code spans come out before any line is judged, as they did before: a span
-// that wraps onto a line starting with "-" still closes on that line. The
-// newlines inside a span are kept, so every line keeps its continuation flag.
-// `fill` is what a span leaves behind on its first line.
+// Whether a row is a block of its own (a heading, list item, quote, table
+// row, rule) is judged on the row as written, before code spans come out:
+// "`x` - Go. Now." starts with code, not a list marker. Rows a span runs onto
+// are inside its paragraph and continue it whatever they start with, so
+// "code` - wait here" is not a list item either.
+const BLOCK_LINE = /^(?:[-*>#|]|\d+\.\s)/;
+// A span cannot cross a blank row or a row that opens a block CommonMark lets
+// interrupt a paragraph: a heading, a quote, a bullet, "1." and a rule.
+const INTERRUPTS = /^\s{0,3}(?:#{1,6}(?:\s|$)|>|[-*+]\s|1[.)]\s|(?:-[ \t]*){3,}$|(?:\*[ \t]*){3,}$|(?:_[ \t]*){3,}$)/;
+
+// `fill` is what a span leaves behind on its first row. The newlines inside a
+// span are kept, so every row keeps its index and its flags.
 function withoutCodeSpans(lines, fill) {
-  const joined = lines.map((l) => l.text).join('\n')
-    .replace(CODE_SPAN, (span) => fill + span.replace(/[^\n]/g, ''));
-  return joined.split('\n').map((text, i) => ({ text, continues: lines[i].continues }));
+  const rows = lines.map((l) => ({
+    text: l.text,
+    continues: l.continues,
+    block: !l.continues && BLOCK_LINE.test(l.text.trim()),
+  }));
+  let start = 0;
+  const flush = (end) => {
+    if (end <= start) return;
+    const joined = rows.slice(start, end).map((r) => r.text).join('\n');
+    const inside = new Set();
+    const stripped = joined.replace(CODE_SPAN, (span, offset) => {
+      const first = joined.slice(0, offset).split('\n').length - 1;
+      const count = span.split('\n').length - 1;
+      for (let r = 1; r <= count; r += 1) inside.add(first + r);
+      return fill + span.replace(/[^\n]/g, '');
+    }).split('\n');
+    stripped.forEach((text, k) => {
+      const row = rows[start + k];
+      row.text = text;
+      if (inside.has(k)) { row.continues = true; row.block = false; }
+    });
+  };
+  rows.forEach((row, i) => {
+    if (!row.text.trim() || (!row.continues && INTERRUPTS.test(row.text))) {
+      flush(i);
+      start = i + 1;
+    }
+  });
+  flush(rows.length);
+  return rows;
 }
 
-function isProseLine({ text: line, continues }) {
-  const t = line.trim();
-  if (!t) return false;
-  if (continues) return true;
-  if (/^[-*>#|]/.test(t)) return false;
-  if (/^\d+\.\s/.test(t)) return false;
-  return true;
+function isProseLine({ text: line, block }) {
+  return Boolean(line.trim()) && !block;
 }
 
 function proseOf(text) {
@@ -94,14 +113,15 @@ function proseOf(text) {
     .join(' ');
 }
 
-// The same prose, one string per section: a heading starts a new one. The
+// The same prose, one string per section: a heading, a rule or a setext
+// underline starts a new one. The
 // bridge check compares a sentence with the two before it, and those have to
 // be in the same section, or a section that opens "This is the same
 // question." is judged against the end of the section above.
 function proseSections(text) {
   const sections = [[]];
   for (const row of withoutCodeSpans(visibleLines(text), '')) {
-    if (!row.continues && /^\s{0,3}#{1,6}(?:\s|$)/.test(row.text)) {
+    if (!row.continues && /^\s{0,3}(?:#{1,6}(?:\s|$)|(?:[-=*_][ \t]*){3,}$)/.test(row.text)) {
       sections.push([]);
       continue;
     }
@@ -439,7 +459,7 @@ function proseParagraphs(text) {
   let current = [];
   // A code span leaves one backtick behind: its words are not prose, and the
   // declarative-run check still needs to know the paragraph held code.
-  for (const { text: line, continues } of withoutCodeSpans(visibleLines(text), ' ` ')) {
+  for (const { text: line, continues, block } of withoutCodeSpans(visibleLines(text), ' ` ')) {
     const t = line.trim();
     if (!t) {
       if (!continues) {
@@ -450,7 +470,7 @@ function proseParagraphs(text) {
     }
     // A heading, list item, quote or table row is a block of its own: it
     // ends the paragraph above it rather than vanishing from the middle of it.
-    if (!continues && (/^[-*>#|]/.test(t) || /^\d+\.\s/.test(t))) {
+    if (block) {
       if (current.length) paragraphs.push(current.join(' '));
       current = [];
       continue;

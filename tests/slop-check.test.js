@@ -1317,7 +1317,7 @@ check('copy inside a tilde fence raises nothing',
 
 const askedNamesEarly = (t) => (checkAll(t).questions || []).map((q) => q.name);
 
-console.log('\nreview round 1: what the visibility pass must not change');
+console.log('\nhidden spans: visible prose and the choppy-run rule are unchanged');
 
 const choppy = (t) => checkHard(t).violations.some((v) => v.name === 'choppy-run');
 
@@ -1373,7 +1373,7 @@ check('a negative followed by a participle is not a reversal',
 check('the two-sentence reversal in the present still reports',
   softNames('It is not a leaving move. It is a way to keep the work.').includes('antithesis-copular'), true);
 
-console.log('\nreview round 2: hidden spans, paragraph and section boundaries');
+console.log('\nhidden spans, paragraph and section boundaries');
 
 check('a spaced comment inside a word leaves the word whole',
   choppy('We can re<!-- hidden -->try. Go now. Try again.'), true);
@@ -1394,9 +1394,11 @@ check('a code span over a non-1 ordered line inside a paragraph is still code',
   softNames('Run `delve\n3. into this rich tapestry, crucial and pivotal\nand vibrant` now.')
     .includes('generic-vocabulary'), false);
 
-check('a whole-line comment inside a paragraph does not split the run',
+// The CommonMark reference parser renders "A.\n<!-- x -->\nB." as two
+// paragraphs: a comment on its own line interrupts the paragraph above it.
+check('a whole-line comment between sentences ends the paragraph, as CommonMark renders it',
   askedNamesEarly('Leaders make careful choices when the evidence remains incomplete.\n<!-- hidden -->\nTeams learn sound judgment by seeing those choices repeated. Good operators explain their reasoning before the outcome is known.')
-    .includes('near-equal-declarative-run'), true);
+    .includes('near-equal-declarative-run'), false);
 
 check('a heading between sentences ends the paragraph for the run',
   askedNamesEarly('Leaders make careful choices when the evidence remains incomplete.\n## Notes\nTeams learn sound judgment by seeing those choices repeated. Good operators explain their reasoning before the outcome is known.')
@@ -1420,6 +1422,29 @@ for (const [label, text] of [
 check('the reversal the check was written for still reports',
   softNames("It isn't a skills day. It's about deciding when nobody's certain.")
     .includes('antithesis-copular'), true);
+
+console.log('\ncode spans, rules and raw HTML as block boundaries');
+
+check('text after a code span that closes on a later line is still prose',
+  choppy('Go. Now. `example\ncode` - wait here for confirmation.\nDone.'), false);
+
+check('a line that starts with inline code is not a list item',
+  choppy('`x` - Go. Now. Try it.'), true);
+
+check('a raw HTML block between lines ends the paragraph',
+  askedNamesEarly('Readers review the draft before sending it for approval.\n<script></script>\nEditors check the final wording before publishing the announcement. Writers explain the changes before asking colleagues for feedback.')
+    .includes('near-equal-declarative-run'), false);
+
+check('a rule starts a new section for the bridge check',
+  softNames('The deployment date is Friday. The process has two reviewers.\n\n---\n\nThis is the same question.')
+    .includes('empty-bridge-sentence'), false);
+
+check('a stray backtick pair cannot swallow a heading',
+  softNames('The deployment date is Friday. The process has two reviewers.\n\n`x\n## Proposal\ny`\n\nThis is the same question.')
+    .includes('empty-bridge-sentence'), false);
+
+check('marker characters typed into the source are not read as structure',
+  choppy('A test.\n\u0001- Go.\n\u0001- Now.\n\u0001- Done.'), false);
 
 console.log('\nstructural prose tells from rejected application drafts');
 
