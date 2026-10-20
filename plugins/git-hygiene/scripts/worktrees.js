@@ -196,6 +196,9 @@ function registeredWorktrees(repo, deadline) {
   return parsePorcelain(out).map((entry) => ({ ...entry, path: canonical(entry.path) }));
 }
 
+// Printed in place of an identity that cannot be shown; carries nothing from the URL.
+const UNREADABLE_REMOTE = Object.freeze({ unreadable: true, github: false });
+
 function remoteIdentity(repo, deadline) {
   const url = git(repo, ['remote', 'get-url', 'origin'], {
     timeout: remaining(deadline),
@@ -211,8 +214,10 @@ function remoteIdentity(repo, deadline) {
       host = parsed.hostname;
       pathname = parsed.pathname.replace(/^\//, '');
     } catch (_) {
-      return null;
+      return UNREADABLE_REMOTE;
     }
+    // file:// and other host-less remotes are local folders: no pull requests.
+    if (!host) return null;
   } else {
     const scp = /^([^@]+@)?([^:]+):(.+)$/.exec(url);
     if (!scp || /^[A-Za-z]:[\\/]/.test(url)) return null;
@@ -222,11 +227,15 @@ function remoteIdentity(repo, deadline) {
   // The identity is printed, so every part must be a plain name. A malformed
   // remote such as user:token@host/o/r, or git@host:Bearer:token/r, otherwise
   // splits a token into a "host" or "owner" no URL mask recognises.
+  // Rejected is not the same as "no pull requests": the remote may well be
+  // GitHub, so it comes back unreadable and cleanup holds its worktrees as
+  // unknown instead of calling them removable without asking GitHub.
   const plainName = /^[A-Za-z0-9._-]+$/;
-  if (!plainName.test(String(host))) return null;
+  if (!plainName.test(String(host))) return UNREADABLE_REMOTE;
 
   const parts = String(pathname || '').replace(/\.git$/, '').split('/').filter(Boolean);
-  if (parts.length < 2 || !parts.every((part) => plainName.test(part))) return null;
+  if (parts.length < 2) return null;
+  if (!parts.every((part) => plainName.test(part))) return UNREADABLE_REMOTE;
   return {
     host: String(host).toLowerCase(),
     namespace: parts.slice(0, -1),
@@ -356,6 +365,7 @@ function submoduleState(candidate, deadline) {
 const PR_LIST_LIMIT = 100;
 
 function pullRequestEvidence(repo, identity, branch, head, defaultBranch, deadline) {
+  if (identity && identity.unreadable) return { available: false, open: false, merged: false, mergedVia: null };
   if (!identity || !identity.github) return { available: true, open: false, merged: false, mergedVia: null };
   const out = run('gh', [
     'pr', 'list', '--repo', `${identity.owner}/${identity.repository}`,

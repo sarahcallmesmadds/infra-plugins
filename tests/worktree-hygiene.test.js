@@ -916,8 +916,18 @@ check('system errors, remote names and config errors print only our own words', 
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'git-hygiene-home-'));
   try {
     git(f.repo, 'remote', 'add', 'origin', 'git@github.com:Bearer:id_secret/repo.git');
-    const audited = worktrees.auditRepository(f.repo, { config: f.config, skipRemote: true });
-    assert.strictEqual(audited.identity, null);
+    // Not printable, and not proof of "no pull requests": a clean, locally
+    // merged worktree must be held as unknown, never offered for removal.
+    const merged = f.add('merged-held', path.join(f.projects, 'example-merged-held'));
+    const audited = worktrees.auditRepository(f.repo, { config: f.config });
+    assert.deepStrictEqual(audited.identity, { unreadable: true, github: false });
+    assert.ok(!JSON.stringify(audited).includes('id_secret'));
+    const held = audited.worktrees.find((entry) => entry.path === fs.realpathSync.native(merged));
+    assert.strictEqual(held.state, 'unknown', JSON.stringify(held));
+    assert.strictEqual(held.removable, false);
+    // A local remote still has no pull requests to ask about.
+    git(f.repo, 'remote', 'set-url', 'origin', 'file:///srv/example.git');
+    assert.strictEqual(worktrees.auditRepository(f.repo, { config: f.config }).identity, null);
     // A config file that is not JSON is named, not quoted.
     fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
     fs.writeFileSync(path.join(home, '.claude', 'git-hygiene.config.json'), '{"worktreeLocation": cfg_secret');
@@ -926,6 +936,14 @@ check('system errors, remote names and config errors print only our own words', 
     ], { encoding: 'utf8', env: { ...process.env, HOME: home } });
     assert.ok(out.stdout.includes('not valid JSON'), out.stdout + out.stderr);
     assert.ok(!out.stdout.includes('cfg_secret'), out.stdout);
+    // A setting that parses but is not valid is named, not quoted either.
+    fs.writeFileSync(path.join(home, '.claude', 'git-hygiene.config.json'),
+      JSON.stringify({ worktreeLocation: { projectRoot: 'Authorization: Bearer root_secret', worktreeRoot: '/tmp/wt' } }));
+    const invalid = spawnSync(process.execPath, ['-e',
+      `console.log(JSON.stringify(require(${JSON.stringify(path.join(ROOT, 'scripts', 'worktree-config'))}).loadConfig().errors))`,
+    ], { encoding: 'utf8', env: { ...process.env, HOME: home } });
+    assert.ok(invalid.stdout.includes('/git-hygiene:setup'), invalid.stdout + invalid.stderr);
+    assert.ok(!invalid.stdout.includes('root_secret'), invalid.stdout);
   } finally {
     f.cleanup();
     fs.rmSync(home, { recursive: true, force: true });
@@ -954,7 +972,7 @@ check('the command line never prints a credential, whatever route the text took'
     const lockedEntry = json.repositories[0].worktrees.find((entry) => entry.path === fs.realpathSync.native(target));
     assert.strictEqual(lockedEntry.locked, 'locked');
     assert.strictEqual(lockedEntry.reason, 'the worktree is locked');
-    assert.strictEqual(json.repositories[0].identity, null);
+    assert.deepStrictEqual(json.repositories[0].identity, { unreadable: true, github: false });
     // A typed command is never repeated, whatever it looks like.
     const pasted = spawnSync(process.execPath, [engine, 'Authorization: Bearer cmd_secret'], { encoding: 'utf8', env });
     assert.notStrictEqual(pasted.status, 0);
