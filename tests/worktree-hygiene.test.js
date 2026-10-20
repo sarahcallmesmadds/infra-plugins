@@ -1037,8 +1037,17 @@ check('the command line never prints a credential, whatever route the text took'
     assert.ok(!badRepo.stderr.includes('repo_secret'), badRepo.stderr);
     assert.ok(badRepo.stderr.includes('existing folder'), badRepo.stderr);
     // A configured audit ignores --repo, so a stale one must not stop it.
-    const configured = spawnSync(process.execPath, [engine, 'audit', '--all-configured', '--repo', path.join(home, 'gone')], { encoding: 'utf8', env });
-    assert.ok(!configured.stderr.includes('existing folder'), configured.stderr);
+    fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+    fs.writeFileSync(path.join(home, '.claude', 'git-hygiene.config.json'),
+      JSON.stringify({ worktreeLocation: { projectRoot: f.projects, worktreeRoot: path.join(f.projects, 'Worktrees') } }));
+    const configured = spawnSync(process.execPath, [engine, 'audit', '--all-configured', '--json', '--repo', path.join(home, 'gone')], { encoding: 'utf8', env });
+    assert.strictEqual(configured.status, 0, configured.stderr);
+    const listed = JSON.parse(configured.stdout).repositories.map((entry) => fs.realpathSync.native(entry.repository));
+    assert.ok(listed.includes(fs.realpathSync.native(f.repo)), JSON.stringify(listed));
+    // Commands that find the repository from --path ignore --repo too.
+    const viaPath = spawnSync(process.execPath, [engine, 'verify-remove', '--path', target, '--repo', path.join(home, 'gone')], { encoding: 'utf8', env });
+    assert.ok(!viaPath.stderr.includes('existing folder'), viaPath.stderr);
+    assert.ok(viaPath.stderr.includes('locked') || viaPath.status === 0, viaPath.stderr);
     const bad = spawnSync(process.execPath, [engine, 'audit', 'arg_secret123'], { encoding: 'utf8', env });
     assert.notStrictEqual(bad.status, 0);
     assert.ok(!bad.stderr.includes('arg_secret123'), bad.stderr);

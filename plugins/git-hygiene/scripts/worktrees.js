@@ -744,13 +744,13 @@ function pruneCandidates(repository) {
   for (const line of out.split('\n').filter(Boolean)) {
     const match = /^Removing worktrees\/(.+?): /.exec(line);
     if (!match) {
-      throw new Error(`refusing prune: Git's dry run printed a line this script does not recognise; run git worktree prune --dry-run --verbose in ${repository} to see it`);
+      throw new Error(`refusing prune: Git's dry run printed a line this script does not recognise; run git worktree prune --dry-run --verbose --expire now in ${repository} to see it`);
     }
     let gitdir;
     try { gitdir = fs.readFileSync(path.join(admin, match[1], 'gitdir'), 'utf8').trim(); }
     // The registration name comes from Git's output and is named after a
     // user-chosen folder, so it is not printed.
-    catch (_) { throw new Error(`refusing prune: cannot tell which path one of Git's registrations belongs to; run git worktree prune --dry-run --verbose in ${repository} to see them`); }
+    catch (_) { throw new Error(`refusing prune: cannot tell which path one of Git's registrations belongs to; run git worktree prune --dry-run --verbose --expire now in ${repository} to see them`); }
     // `git worktree add --relative-paths` stores this relative to the
     // registration's own folder, which is how Git resolves it too. Resolving it
     // from the process's folder names the wrong path and refuses a valid prune.
@@ -1069,9 +1069,12 @@ function main() {
   try {
     // --repo reaches `git -C` and is printed when a step fails, so it must be
     // a folder that exists: then it is a path, never pasted text.
-    // Only where --repo is used: a configured audit ignores it, so a stale
-    // folder there must not stop the audit.
-    if (args.repo !== undefined && !(args.command === 'audit' && args.allConfigured)) {
+    // Only where --repo is read. remove, move, activate and verify-remove find
+    // the repository from --path, and a configured audit from its settings, so
+    // a stale --repo passed to them must not stop them.
+    const readsRepo = ['destination', 'create', 'verify-prune', 'prune', 'finish'].includes(args.command)
+      || (args.command === 'audit' && !args.allConfigured);
+    if (args.repo !== undefined && readsRepo) {
       let isFolder = false;
       try { isFolder = fs.statSync(args.repo).isDirectory(); } catch (_) { isFolder = false; }
       if (!isFolder) throw new Error('--repo must name an existing folder');
