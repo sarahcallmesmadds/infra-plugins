@@ -344,6 +344,10 @@ check('a worktree changed after its check is not removed or moved', () => {
     assert.throws(() => worktrees.recheckTarget(verified.repository, verified.path, verified), /changes made after/);
     git(f.repo, 'worktree', 'lock', target);
     assert.throws(() => worktrees.recheckTarget(verified.repository, verified.path, verified), /locked after/);
+    git(f.repo, 'worktree', 'unlock', target);
+    // A refused move must not leave the destination's parent folder behind.
+    assert.throws(() => worktrees.moveWorktree(target, { config: f.config, cwd: f.base, approved: true }));
+    assert.strictEqual(fs.existsSync(path.join(f.config.worktreeRoot, 'example')), false);
   } finally { f.cleanup(); }
 });
 
@@ -483,6 +487,19 @@ check('prune reads what Git would clear from its dry run, and refuses anything u
     assert.deepStrictEqual(worktrees.pruneCandidates(f.repo), [one, two].map((p) => fs.realpathSync.native(path.dirname(p)) + path.sep + path.basename(p)).sort());
     assert.throws(() => worktrees.pruneWorktrees(f.repo, [one], { config: f.config, approved: true }), /unapproved/);
     assert.match(git(f.repo, 'worktree', 'list', '--porcelain'), /gone-one/);
+  } finally { f.cleanup(); }
+});
+
+check('prune maps a relative-paths registration to its real path', () => {
+  const f = fixture();
+  try {
+    const target = path.join(f.projects, 'example gone relative');
+    git(f.repo, 'worktree', 'add', '-q', '--relative-paths', '-b', 'gone-relative', target);
+    const admin = fs.readdirSync(path.join(f.repo, '.git', 'worktrees'))[0];
+    assert.ok(!path.isAbsolute(fs.readFileSync(path.join(f.repo, '.git', 'worktrees', admin, 'gitdir'), 'utf8').trim()));
+    fs.rmSync(target, { recursive: true, force: true });
+    const expected = path.join(fs.realpathSync.native(f.projects), 'example gone relative');
+    assert.deepStrictEqual(worktrees.pruneCandidates(f.repo), [expected]);
   } finally { f.cleanup(); }
 });
 

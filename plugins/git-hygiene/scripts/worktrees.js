@@ -618,7 +618,11 @@ function pruneCandidates(repository) {
     let gitdir;
     try { gitdir = fs.readFileSync(path.join(admin, match[1], 'gitdir'), 'utf8').trim(); }
     catch (_) { throw new Error(`refusing prune: cannot tell which path registration ${match[1]} belongs to`); }
-    paths.push(canonicalProspective(path.dirname(gitdir)));
+    // `git worktree add --relative-paths` stores this relative to the
+    // registration's own folder, which is how Git resolves it too. Resolving it
+    // from the process's folder names the wrong path and refuses a valid prune.
+    const absolute = path.isAbsolute(gitdir) ? gitdir : path.resolve(path.join(admin, match[1]), gitdir);
+    paths.push(canonicalProspective(path.dirname(absolute)));
   }
   return [...new Set(paths)].sort();
 }
@@ -749,11 +753,12 @@ function moveWorktree(raw, options = {}) {
   const config = options.config || loadConfig();
   const destination = destinationFor(found.audited.repository, found.entry.branch, config, options.task);
   if (fs.existsSync(destination)) throw new Error(`destination already exists: ${destination}`);
+  // Re-check before creating the parent folder, so a refusal leaves nothing behind.
+  recheckTarget(found.audited.repository, found.target, found.entry);
   fs.mkdirSync(path.dirname(destination), { recursive: true });
   if (canonicalProspective(destination) !== destination) {
     throw new Error('the computed worktree path changed through a symlink before relocation');
   }
-  recheckTarget(found.audited.repository, found.target, found.entry);
   git(found.audited.repository, ['worktree', 'move', found.target, destination], { timeout: MUTATION_TIMEOUT_MS });
   try {
     git(found.audited.repository, ['worktree', 'lock', '--reason', 'git-hygiene: active agent work', destination], { timeout: MUTATION_TIMEOUT_MS });
@@ -873,7 +878,7 @@ function renderAudit(audit) {
   lines.push(`${audit.summary.repositories} repositories, ${audit.summary.worktrees} registered worktrees.`);
   if (audit.truncated) lines.push('The audit was incomplete, so no cleanup count is claimed.');
   if (audit.config && audit.config.exists && !audit.config.valid) {
-    lines.push(`The worktreeLocation setting was rejected: ${audit.config.errors.join('; ')}. Run /git-hygiene:setup to fix it.`);
+    lines.push(`The worktreeLocation setting was rejected: ${(audit.config.errors || []).join('; ') || 'no reason given'}. Run /git-hygiene:setup to fix it.`);
   }
   for (const failure of audit.errors || []) lines.push(`Could not read ${failure.repository}: ${failure.error}`);
   for (const repo of audit.repositories) {
@@ -928,7 +933,11 @@ function main() {
     }
     if (args.command === 'destination') {
       output({
-        repository: registeredWorktrees(args.repo || process.cwd())[0].path,
+        repository: (() => {
+          const listed = registeredWorktrees(args.repo || process.cwd());
+          if (!listed.length) throw new Error(`no registered worktrees found for ${args.repo || process.cwd()}`);
+          return listed[0].path;
+        })(),
         branch: args.branch,
         path: destinationFor(args.repo || process.cwd(), args.branch, loadConfig(), args.task),
       }, true);
