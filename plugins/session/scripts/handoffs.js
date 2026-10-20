@@ -1296,7 +1296,7 @@ const LABEL_LIKE = /^\s*\*\*([^*]+?):\*\*/;
 // Any spelling of a reserved label: bold or not, a colon inside or outside
 // the bold, spaces anywhere. A header line like this that is not the exact
 // form is a shape problem, because the exact readers would silently miss it.
-const LOOSE_LABEL = /^[\s*_>\-+]*(date|working\s+directory|last\s+session|format|project\s+rules|check\s+accepted)[\s*_]*:/i;
+const LOOSE_LABEL = /^[\s*_>\-+]*(\d+[.)]\s*)?[\s*_]*(date|working\s+directory|last\s+session|format|project\s+rules|check\s+accepted)[\s*_]*:/i;
 // Line breaks other than \n and \r\n. A bare \r or a Unicode line or
 // paragraph separator is a line end to some readers and not to others, so a
 // heading or bullet could be seen by one and missed by the next.
@@ -1360,7 +1360,9 @@ function threadShapeProblems(text) {
     // An HTML comment hides text from a person reading the rendered page and
     // from no reader here, so a commented example retires or binds for real.
     // The HTML blocks that show their text as an example do the same.
-    if (/<\/?(pre|code|textarea|script|style|xmp|details)\b/i.test(line)) { add('fence', n, 'holds an HTML block tag; a thread\'s handoff carries none, because an example rule or retirement inside one is still read'); return; }
+    // At the start of the line only, where an HTML block opens. A tag named in
+    // a sentence opens nothing.
+    if (/^\s*<\/?(pre|code|textarea|script|style|xmp|details)\b/i.test(line)) { add('fence', n, 'holds an HTML block tag; a thread\'s handoff carries none, because an example rule or retirement inside one is still read'); return; }
     if (/<!--|-->/.test(line)) { add('fence', n, 'holds an HTML comment; a thread\'s handoff carries none, because a commented-out rule or retirement is still read'); return; }
     if (FENCE_LINE.test(line)) { add('fence', n, 'is a code fence; a thread\'s handoff carries none, because a fenced example heading or rule reads as a real one'); return; }
     // Any leading space, a no-break space included: the readers want a
@@ -1452,15 +1454,24 @@ function threadShapeProblems(text) {
       return;
     }
     const lab = LABEL_LIKE.exec(line);
+    // A header line starts at the margin. An indented one reads as a
+    // continuation of the line above to a person, and as nothing to a reader,
+    // so a second project rules path written that way was silently lost.
+    if (/^\s+\S/.test(line) && !lab) {
+      add('header-line', n, 'is an indented line in the header; header lines start at the beginning of the line, and project rules files go on one line, separated by commas');
+      return;
+    }
     if (!lab) {
       const loose = LOOSE_LABEL.exec(line);
-      if (loose) add('header-line', n, `looks like a **${loose[1]}:** line but is not written exactly as "**Label:** value"; the readers would not see it`);
+      if (loose) add('header-line', n, `looks like a **${loose[2]}:** line but is not written exactly as "**Label:** value"; the readers would not see it`);
       return;
     }
     const name = lab[1].trim();
     // Case and spacing are ignored here only to recognise a reserved label
     // written wrongly, which is then refused below; it is never read.
-    const known = HEADER_LABELS.find((l) => l.toLowerCase() === squash(name));
+    // Letters only, so a word broken by a space or a stray digit
+    // (`**For mat:**`, `**Format2:**`) is still recognised, and refused below.
+    const known = HEADER_LABELS.find((l) => letters(l) === letters(name));
     if (!known) {
       if (/^(repository|repo)$/i.test(name)) add('header-line', n, `uses **${name}:**; a thread names its folder on a **Working directory:** line`);
       return;

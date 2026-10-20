@@ -246,6 +246,11 @@ const SHAPES = [
   ['a bulleted header label', 'header-line', (h) => doc(h, { rules: ['R.'], format: 2 }).replace(/(\*\*Working directory:\*\*.*)/, '$1\n- **Project rules:** /repo/CLAUDE.md')],
   ['a quoted Format label', 'header-line', (h) => doc(h, { rules: ['R.'] }).replace(/(\*\*Working directory:\*\*.*)/, '$1\n> **Format:** 2')],
   ['an underlined heading', 'malformed-heading', (h) => doc(h, { rules: ['R.'], format: 2 }).replace('\n## What was worked on', '\nStanding rules\n--------------\n- Obtain approval.\n\n## What was worked on')],
+  ['a numbered header label', 'header-line', (h) => doc(h, { rules: ['R.'], format: 2 }).replace(/(\*\*Working directory:\*\*.*)/, '$1\n1. **Project rules:** /repo/CLAUDE.md')],
+  ['an indented second project rules path', 'header-line', (h) => doc(h, { rules: ['R.'], format: 2, projectRules: '/repo/CLAUDE.md' }).replace(/(\*\*Project rules:\*\*.*)/, '$1\n    /repo/SECOND.md')],
+  ['a label broken inside a word', 'header-line', (h) => doc(h, { rules: ['R.'] }).replace(/(\*\*Working directory:\*\*.*)/, '$1\n**For mat:** 2')],
+  ['a label with a stray digit', 'header-line', (h) => doc(h, { rules: ['R.'] }).replace(/(\*\*Working directory:\*\*.*)/, '$1\n**Format2:** 2')],
+  ['a heading run together with its label', 'header-line', (h) => doc(h, { rules: ['R.'], format: 2 }).replace(/(\*\*Working directory:\*\*.*)/, '$1\n**Projectrules:** /repo/CLAUDE.md')],
   ['Unicode paragraph separator', 'line-break', (h) => doc(h, { rules: ['R.'], format: 2 }).replace('- R.', `- R.${String.fromCharCode(0x2029)}- Q.`)],
 ];
 
@@ -369,6 +374,21 @@ check('a thread hand-edited to a # or ### Standing rules heading still guards it
 check('a --- rule after a blank line is not an underlined heading', () => {
   const text = doc('/x', { rules: ['R.'], format: 2, extra: '\n## Context to reload\nSome text.\n\n---\n\nMore text.\n' });
   assert.deepStrictEqual(handoffs.threadShapeProblems(text), []);
+});
+
+check('an HTML tag named in a sentence is not an HTML block', () => {
+  const text = doc('/x', { rules: ['R.'], format: 2, worked: 'The page wraps its examples in a <pre> block and the guide shows `<code>`.' });
+  assert.deepStrictEqual(handoffs.threadShapeProblems(text), []);
+});
+
+check('a Standing rules heading with a tag after it still guards its rules on disk', () => {
+  const home = migrated((h) => [['site-thread', doc(h)]]);
+  fs.writeFileSync(docPath(home, 'site-thread'), doc(home, { rules: ['R.'], format: 2, standing: { Deploy: ['Obtain approval.'] } })
+    .replace('## Standing rules', '## Standing rules <code>'));
+  const before = snapshot(docPath(home, 'site-thread'));
+  const r = save(home, 'site-thread', doc(home, { rules: ['R.'], format: 2 }));
+  assert.strictEqual(r.body.reason, 'standing-dropped', JSON.stringify(r.body));
+  assert.deepStrictEqual(snapshot(docPath(home, 'site-thread')), before);
 });
 
 check('a Windows line ending is not a shape problem', () => {
