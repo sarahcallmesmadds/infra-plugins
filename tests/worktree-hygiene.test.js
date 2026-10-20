@@ -849,6 +849,8 @@ check('configured discovery finds primary repositories without descending into w
     const dotted = path.join(f.projects, '.website');
     execFileSync('git', ['init', '-q', '-b', 'main', dotted]);
     fs.mkdirSync(path.join(f.projects, '.notes'));
+    // A review tool's repository stays out even though it is a repository.
+    execFileSync('git', ['init', '-q', '-b', 'main', path.join(f.projects, '.review')]);
     const withDot = worktrees.discoverRepositories([f.projects]);
     assert.deepStrictEqual(
       withDot.repositories.map((repo) => path.resolve(repo)).sort(),
@@ -869,13 +871,51 @@ check('a full page of closed pull requests cannot prove none is open', () => {
     worktrees.pullRequestEvidence(process.cwd(), identity, 'feature', 'abc', 'main'));
   assert.strictEqual(short.available, true);
   assert.strictEqual(short.open, false);
+  // A full page that does show an open one is still proof of an open review.
+  const withOpen = closed.map((row, i) => (i === 50 ? { ...row, state: 'OPEN' } : row));
+  const fullOpen = withGh(`cat <<'JSON'\n${JSON.stringify(withOpen)}\nJSON`, () =>
+    worktrees.pullRequestEvidence(process.cwd(), identity, 'feature', 'abc', 'main'));
+  assert.strictEqual(fullOpen.available, true);
+  assert.strictEqual(fullOpen.open, true);
 });
 
 check('credentials in remote URLs are masked in error text', () => {
-  const masked = worktrees.redactCredentials("fatal: unable to access 'https://user:ghp_secret@github.com/o/r.git/'");
+  const r = worktrees.redactCredentials;
+  const masked = r("fatal: unable to access 'https://user:ghp_secret@github.com/o/r.git/'");
   assert.ok(!masked.includes('ghp_secret'), masked);
-  assert.ok(masked.includes('https://***@github.com/o/r.git/'), masked);
-  assert.strictEqual(worktrees.redactCredentials('git@github.com:o/r.git'), 'git@github.com:o/r.git');
+  assert.ok(masked.includes("'https://***@github.com/o/r.git/'"), masked);
+  // User-info holding its own `@` is masked whole, not up to the first one.
+  assert.strictEqual(r('https://user@example.com:ghp_secret@github.com/o/r.git'), 'https://***@github.com/o/r.git');
+  assert.strictEqual(r("'https://user:p@ssw0rd@gitlab.example.com/o/r.git/'"), "'https://***@gitlab.example.com/o/r.git/'");
+  // An `@` after the authority is not user-info.
+  assert.strictEqual(r('https://host/path?email=user@example.com'), 'https://host/path?email=user@example.com');
+  assert.strictEqual(r('https://host?email=user@example.com'), 'https://host?email=user@example.com');
+  assert.strictEqual(r('ssh://user:pw@host/x'), 'ssh://***@host/x');
+  assert.strictEqual(r('git@github.com:o/r.git'), 'git@github.com:o/r.git');
+});
+
+check('the command line never prints a credential, whatever route the text took', () => {
+  const f = fixture();
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'git-hygiene-home-'));
+  try {
+    const engine = path.join(ROOT, 'scripts', 'worktrees.js');
+    const env = { ...process.env, HOME: home };
+    // A lock reason is raw Git text that never passes through a failing command.
+    const target = f.add('locked', path.join(f.projects, 'example-locked'));
+    git(f.repo, 'worktree', 'lock', '--reason', 'see https://user:ghp_lock@github.com/o/r.git', target);
+    for (const extra of [[], ['--json']]) {
+      const audit = spawnSync(process.execPath, [engine, 'audit', '--repo', f.repo, ...extra], { encoding: 'utf8', env });
+      assert.ok(audit.stdout.includes('***@github.com'), `lock reason not shown ${extra}: ${audit.stdout}`);
+      assert.ok(!`${audit.stdout}${audit.stderr}`.includes('ghp_lock'), `audit ${extra} leaked: ${audit.stdout}`);
+    }
+    // An argument error is echoed straight from the parser.
+    const bad = spawnSync(process.execPath, [engine, 'audit', '--https://user:ghp_arg@host/x'], { encoding: 'utf8', env });
+    assert.notStrictEqual(bad.status, 0);
+    assert.ok(!bad.stderr.includes('ghp_arg'), bad.stderr);
+  } finally {
+    f.cleanup();
+    fs.rmSync(home, { recursive: true, force: true });
+  }
 });
 
 console.log(`\n${ran} checks, ${failed} failed`);

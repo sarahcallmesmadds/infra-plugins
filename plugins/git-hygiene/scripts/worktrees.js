@@ -28,8 +28,16 @@ function remaining(deadline, fallback = READ_TIMEOUT_MS) {
   return Math.max(1, Math.min(fallback, deadline - Date.now()));
 }
 
+// Masks URL user-info (https://user:token@host -> https://***@host). Git text
+// carries remote URLs in errors, lock reasons and prune output, and all of it
+// can reach the conversation, so this runs where text leaves the process (the
+// output function and both stderr writes), not at any one source; a source-side
+// mask missed lock reasons and prune errors. Greedy up to the last `@` inside
+// the authority: user-info may itself contain an `@` (an email username), and
+// stopping at the first one leaves the password visible. The authority ends at
+// `/ ? #`, whitespace or a quote, so an `@` in a query is never treated as one.
 function redactCredentials(text) {
-  return String(text).replace(/([a-z][a-z0-9+.-]*:\/\/)[^/\s@]+@/gi, '$1***@');
+  return String(text).replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s/?#"'<>]*@/gi, '$1***@');
 }
 
 function run(file, args, options = {}) {
@@ -514,6 +522,9 @@ function discoverRepositories(projectRoots, deadline) {
       // Folders that are not repositories fail the top-level check below.
       if (!entry.isDirectory()) continue;
       const candidate = path.join(root, entry.name);
+      // A review tool's own repository (Projects/.review) is not a project:
+      // auditing it would count the tool's internal registrations as missing.
+      if (REVIEW_LOCATION.test(canonical(candidate).replace(/\\/g, '/'))) continue;
       let top;
       try { top = topLevel(candidate, deadline); }
       catch (_) { continue; }
@@ -953,14 +964,14 @@ function parseArgs(argv) {
 }
 
 function output(value, json) {
-  if (json || typeof value !== 'string') process.stdout.write(JSON.stringify(value, null, 2) + '\n');
-  else process.stdout.write(value + '\n');
+  const text = json || typeof value !== 'string' ? JSON.stringify(value, null, 2) : value;
+  process.stdout.write(redactCredentials(text) + '\n');
 }
 
 function main() {
   let args;
   try { args = parseArgs(process.argv.slice(2)); }
-  catch (error) { process.stderr.write(`${error.message}\n`); process.exit(2); }
+  catch (error) { process.stderr.write(`${redactCredentials(error.message)}\n`); process.exit(2); }
 
   try {
     if (args.command === 'audit') {
@@ -995,7 +1006,7 @@ function main() {
     else if (args.command === 'finish') output(finishWorktree(args.path, args), true);
     else throw new Error(`unknown command: ${args.command}`);
   } catch (error) {
-    process.stderr.write(`${error.message}\n`);
+    process.stderr.write(`${redactCredentials(error.message)}\n`);
     process.exit(3);
   }
 }
