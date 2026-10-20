@@ -16,35 +16,59 @@ const EM_DASH = String.fromCharCode(0x2014);
 
 // Strip anything that is not prose: code, quotes, headings, lists, tables.
 // A style rule about sentence rhythm has no business judging a bullet list.
-// The document as a reader sees it: fenced and indented code, raw HTML
-// blocks and HTML comments, whole-line, inline or spanning lines, are gone.
+// The document as a reader sees it: fenced code, raw HTML blocks and HTML
+// comments, whole-line, inline or spanning lines, are gone. Indented code is
+// still read, as it was before this pass was used here.
 // The visibility pass is the one the brochure check and structure.js use.
 // proseOf used to strip only fenced code with a regex of its own, so a draft
 // note left in a comment ("<!-- delve into the tapestry here -->") was read
 // as prose by every lexical check and could raise the reading of a document
-// whose visible text was clean. A hidden line becomes a blank line, which
-// ends the paragraph it sat in, the miss direction for the paragraph checks.
-function visibleText(text) {
-  return withoutFencedBlocks(String(text || '').replace(/\r\n?/g, '\n'))
-    .map((line) => {
-      if (line.startsWith(MARKDOWN_BOUNDARY)) return '';
-      if (line.startsWith(MARKDOWN_PARAGRAPH_CONTINUATION)) return line.slice(1);
-      return line;
-    })
-    .join('\n');
+// whose visible text was clean, or break the choppy-run rule the hook
+// enforces.
+//
+// The pass keeps columns: a hidden span comes back as spaces of the same
+// width (measured over 51,699 lines of the author's documents, every visible
+// line kept its length). Those spaces are dropped here rather than read,
+// because "re<!---->try" is one word on the page and three columns of
+// padding would make it two. Each line comes back with a flag saying it
+// continues a paragraph after an inline comment closed: its text is prose
+// however it starts, so "-->- wait here" is not a list item.
+function visibleLines(text) {
+  const source = String(text || '').replace(/\r\n?/g, '\n').split('\n');
+  return withoutFencedBlocks(source.join('\n')).map((line, i) => {
+    if (line.startsWith(MARKDOWN_BOUNDARY)) return { text: '', continues: false };
+    const continues = line.startsWith(MARKDOWN_PARAGRAPH_CONTINUATION);
+    const shown = continues ? line.slice(1) : line;
+    const original = source[i] || '';
+    if (shown.length !== original.length) return { text: shown, continues };
+    let out = '';
+    for (let c = 0; c < shown.length; c += 1) {
+      if (shown[c] === original[c]) out += shown[c];
+    }
+    return { text: out, continues };
+  });
 }
 
+// A code span is a run of backticks closed by a run of the same length, and
+// it cannot cross the blank line that ends its paragraph. Without that limit
+// a stray backtick in one paragraph paired with one several paragraphs on and
+// hid everything between them.
+const CODE_SPAN = /`(?:[^`\n]|\n(?![ \t]*\n))*`/g;
+
 function proseOf(text) {
-  return visibleText(text)
-    .replace(/`[^`]*`/g, '')
-    .split('\n')
-    .filter((line) => {
+  return visibleLines(text)
+    .map(({ text: line, continues }) => {
       const t = line.trim();
-      if (!t) return false;
-      if (/^[-*>#|]/.test(t)) return false;
-      if (/^\d+\.\s/.test(t)) return false;
-      return true;
+      if (!t) return '\n';
+      if (continues) return line;
+      if (/^[-*>#|]/.test(t)) return '\n';
+      if (/^\d+\.\s/.test(t)) return '\n';
+      return line;
     })
+    .join('\n')
+    .replace(CODE_SPAN, '')
+    .split('\n')
+    .filter((line) => line.trim())
     .join(' ');
 }
 
@@ -229,8 +253,12 @@ function antithesis(prose) {
 // real hits in this repository's own documents, both "is not X, it is Y", are
 // unaffected.
 function copularAntithesis(prose) {
+  // The reversal split over two sentences ("It isn't a skills day. It's about
+  // deciding...") is read only when the second sentence restates in the
+  // present. "It wasn't fixed yet. It was merged anyway." and "It isn't ready.
+  // It is merged." are a negative followed by a fact, not a reversal.
   const patterns = [
-    /\b(?:it'?s not|it (?:is|was) not|it (?:is|was)n'?t) (about )?[^.]{3,50}\. (?:it'?s|it (?:is|was)|that's)\b/gi,
+    /\b(?:it'?s not|it (?:is|was) not|it (?:is|was)n'?t) (about )?[^.]{3,50}\. (?:it'?s|it is|that's)\b(?! \w+ed\b)/gi,
     /\b(is|are|was|were)n'?t (just |merely |only )?[^.,;]{3,50}, (?:it(?:'s| is)|they(?:'re| are)|that's)\b/gi,
     /\b(is|are) not (just |merely |only )?[^.,;]{3,50}, (?:it|they) (?:is|are)\b/gi,
   ];
@@ -285,6 +313,11 @@ function emptyBridgeSentences(prose) {
     );
     const content = words.filter((word) => !BRIDGE_SCAFFOLDING.has(word));
 
+    // A sentence made only of scaffolding passes the overlap test by having
+    // nothing to test, so it needs one of the abstract nouns that name a link
+    // without saying it. "That's why this agenda works for me." has "why";
+    // "That works for me." has none and is an ordinary reply.
+    if (!content.length && !/\b(?:connection|idea|link|point|question|reason|same|theme|thread|throughline|why)\b/.test(normalized)) continue;
     if (content.every((word) => previous.has(word))) hits.push(sentence);
   }
 
@@ -360,12 +393,19 @@ function fragmentBeats(prose) {
 }
 
 function proseParagraphs(text) {
-  return visibleText(text)
+  return visibleLines(text)
+    .map(({ text: line, continues }) => (continues ? `\u0002${line}` : line))
+    .join('\n')
     .split(/\n\s*\n/)
+    // A code span leaves one backtick behind: its words are not prose, and
+    // the declarative-run check still needs to know the paragraph held code.
+    .map((paragraph) => paragraph.replace(CODE_SPAN, ' ` '))
     .map((paragraph) => paragraph
       .split(/\r?\n/)
       .map((line) => line.trim())
-      .filter((line) => line && !/^[-*>#|]/.test(line) && !/^\d+\.\s/.test(line))
+      .filter((line) => line && (line.startsWith('\u0002')
+        || (!/^[-*>#|]/.test(line) && !/^\d+\.\s/.test(line))))
+      .map((line) => line.replace(/^\u0002/, ''))
       .join(' '))
     .filter(Boolean);
 }

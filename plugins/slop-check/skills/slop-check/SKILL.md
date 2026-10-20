@@ -80,7 +80,8 @@ by explanatory copy, and sentences that are all the same length. Also a
 bridge sentence that asserts a link and adds no new word, a mirrored "One
 is... The other is..." pair, a fragment beat ("And the people."), and three
 paragraphs in a row opening on a name and "on X, because". Text inside an
-HTML comment is never read.
+HTML comment is not read by the soft checks or the choppy-run rule; the other
+hard rules still see it.
 
 **Structure.** Two more soft categories sit above the sentence: a short
 sentence that announces a point the next sentence then makes ("It matters now

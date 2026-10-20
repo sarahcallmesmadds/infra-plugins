@@ -154,9 +154,10 @@ people."), and three paragraphs in a row that open on a name and "on X,
 because". The "not X but Y" check also reads the version split over two
 sentences.
 
-Nothing inside an HTML comment or a fenced block is read. Text in a comment is
-invisible to the reader, so it counts toward nothing, the hook's choppy-run
-rule included.
+Text inside an HTML comment or a fenced block is not read by the soft checks
+or by the hook's choppy-run rule, because the reader never sees it. The other
+hard rules still read it: an em dash, a banned phrase or a generation artefact
+left in a comment is still reported.
 
 Two of the soft categories sit above the sentence, because a document was
 rejected on sight with every sentence-level check clean. A sentence that

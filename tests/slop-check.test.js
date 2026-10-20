@@ -1315,6 +1315,64 @@ check('a choppy run left visible still breaks the hard rule',
 check('copy inside a tilde fence raises nothing',
   softNames(`The build passed.\n\n~~~\n${COMMENT_COPY}\n~~~\n\nIt shipped.`).length, 0);
 
+const askedNamesEarly = (t) => (checkAll(t).questions || []).map((q) => q.name);
+
+console.log('\nreview round 1: what the visibility pass must not change');
+
+const choppy = (t) => checkHard(t).violations.some((v) => v.name === 'choppy-run');
+
+check('text after a closed comment is prose even when it starts like a list item',
+  choppy('Go. Now. <!-- keep this private note\n-->- wait here for confirmation.\nDone.'), false);
+
+check('the same with CRLF line endings',
+  choppy('Go. Now. <!-- keep this private note\r\n-->- wait here for confirmation.\r\nDone.'), false);
+
+check('an empty comment inside a word leaves the word whole',
+  choppy('Wait for re<!---->try. Go. Now.'), true);
+
+check('a backtick hidden in a comment does not pair visible backticks across paragraphs',
+  choppy('Use ` literally.\n\n<!-- ` -->\n\nGo. Now. Done.\n\nAnother ` follows.'), true);
+
+check('a code span cannot cross a blank line',
+  choppy('First `half stays.\n\nGo. Now. Done.\n\nSecond `half stays too.'), true);
+
+check('a code span on one line is still removed',
+  choppy('Run `Go. Now. Done.` before you push the branch today.'), false);
+
+const SPEAKERS = (wrap) => [
+  `Shensi Ding on ${wrap('the rate')}, because judgment compounds.`,
+  `Amanda Davenport on ${wrap('the wait')}, because timing matters.`,
+  `Emily Man on ${wrap('the stack')}, because adoption is practical.`,
+].join('\n\n');
+
+check('the speaker check does not read inside code spans',
+  softNames('Alex Reed on `timing, because` that is the example.\n\nBlair Lane on `timing, because` that is the example.\n\nCasey Moss on `timing, because` that is the example.')
+    .includes('speaker-paragraph-tricolon'), false);
+
+check('the speaker check still fires on the same paragraphs without code',
+  softNames(SPEAKERS((x) => x)).includes('speaker-paragraph-tricolon'), true);
+
+check('a comment closing on its own line does not split the paragraph',
+  askedNamesEarly('Leaders make careful choices when the evidence remains incomplete. <!--\ndraft note -->\nTeams learn sound judgment by seeing those choices repeated. Good operators explain their reasoning before the outcome is known.')
+    .includes('near-equal-declarative-run'), true);
+
+check('a continuation that starts with > is still read',
+  softNames('Alpha text. <!--\nnote -->> Let us delve into this rich tapestry. It is crucial, pivotal and vibrant.')
+    .includes('generic-vocabulary'), true);
+
+check('a scaffolding-only reply is not a bridge',
+  softNames('The schedule moved twice. Reviews slipped a week. That works for me.')
+    .includes('empty-bridge-sentence'), false);
+
+check('a negative followed by a past fact is not a reversal',
+  softNames("It wasn't fixed yet. It was merged anyway.").includes('antithesis-copular'), false);
+
+check('a negative followed by a participle is not a reversal',
+  softNames("It isn't ready. It is merged now.").includes('antithesis-copular'), false);
+
+check('the two-sentence reversal in the present still reports',
+  softNames('It is not a leaving move. It is a way to keep the work.').includes('antithesis-copular'), true);
+
 console.log('\nstructural prose tells from rejected application drafts');
 
 check('an empty bridge sentence is reported',

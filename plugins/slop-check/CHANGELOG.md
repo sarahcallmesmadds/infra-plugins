@@ -24,9 +24,11 @@ counted category that shape fired on 56 of 697 documents and moved 17 readings
 on its own, because plain instruction prose reads that way.
 
 Text inside an HTML comment, whole-line, inline or spanning lines, and inside a
-tilde fence is now hidden from every lexical check and from the choppy-run rule
-the hook enforces. A draft note left in a comment could raise a reading, or
-block a reply, on a document whose visible text was clean.
+tilde fence is now hidden from the soft checks and from the choppy-run rule the
+hook enforces. A draft note left in a comment could raise a reading, or block a
+reply, on a document whose visible text was clean. The other hard rules still
+read comments, as before: an em dash, a banned phrase or a generation artefact
+inside a comment is still reported.
 
 Measured over 697 Markdown documents in five repositories, two readings moved
 from "little" to "some", each on a sentence checked by hand, and none to
