@@ -896,6 +896,7 @@ check('credentials in remote URLs are masked in error text', () => {
   // Quotes are valid in user-info; stopping at one left the password visible.
   assert.strictEqual(r("https://user:pa'ssword@host/repo"), 'https://***@host/repo');
   assert.strictEqual(r('https://user:pa"ss@host/repo'), 'https://***@host/repo');
+  assert.strictEqual(r('https://user:pa ss@host/repo'), 'https://***@host/repo');
   assert.strictEqual(r('git@github.com:o/r.git'), 'git@github.com:o/r.git');
 });
 
@@ -905,20 +906,16 @@ check('the command line never prints a credential, whatever route the text took'
   try {
     const engine = path.join(ROOT, 'scripts', 'worktrees.js');
     const env = { ...process.env, HOME: home };
-    // A lock reason is raw Git text that never passes through a failing command.
+    // A lock reason is free text that never passes through a failing command.
+    // It is not echoed at all: the worktree shows as locked, the text nowhere,
+    // even in a form the URL mask cannot recognise (a non-breaking space).
     const target = f.add('locked', path.join(f.projects, 'example-locked'));
-    git(f.repo, 'worktree', 'lock', '--reason', 'see https://user:ghp_lock@github.com/o/r.git', target);
+    git(f.repo, 'worktree', 'lock', '--reason', 'see https://user:ghp lock@github.com/o/r.git', target);
     for (const extra of [[], ['--json']]) {
       const audit = spawnSync(process.execPath, [engine, 'audit', '--repo', f.repo, ...extra], { encoding: 'utf8', env });
-      assert.ok(audit.stdout.includes('***@github.com'), `lock reason not shown ${extra}: ${audit.stdout}`);
-      assert.ok(!`${audit.stdout}${audit.stderr}`.includes('ghp_lock'), `audit ${extra} leaked: ${audit.stdout}`);
+      assert.ok(audit.stdout.includes('locked'), `lock not reported ${extra}: ${audit.stdout}`);
+      assert.ok(!`${audit.stdout}${audit.stderr}`.includes('lock@github'), `audit ${extra} leaked: ${audit.stdout}`);
     }
-    // JSON is masked before serialization: a real newline stays a boundary,
-    // so the escaped `\n` never joins a bare host to a later address.
-    const plain = f.add('noted', path.join(f.projects, 'example-noted'));
-    git(f.repo, 'worktree', 'lock', '--reason', 'https://host\ncontact@example.com', plain);
-    const json = spawnSync(process.execPath, [engine, 'audit', '--repo', f.repo, '--json'], { encoding: 'utf8', env });
-    assert.ok(json.stdout.includes('https://host\\ncontact@example.com'), json.stdout);
     // The prune dry run calls Git directly, not through run(), so its error
     // text relies on the final stderr write alone. A stand-in git fails only
     // that call, with a credential in its stderr.

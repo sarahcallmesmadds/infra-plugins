@@ -20,6 +20,11 @@ session start also says when a linked worktree sits outside the worktree folder
 or a registration is missing, without changing anything. With no setting, the
 skill still reports on the current repository.
 
+When a Git step fails, the message names the step, the folder and how it ended,
+not Git's own text, because Git can echo a remote URL with a token in it. Run
+the step by hand in that folder to see Git's message. For the same reason a
+worktree locked by something else shows as `locked`, without its lock note.
+
 ## 0.4.2 — 2026-10-19
 
 **Configure the worktree guard with `/git-hygiene:setup`.** The skill proposes

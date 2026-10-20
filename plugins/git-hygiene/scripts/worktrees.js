@@ -28,6 +28,26 @@ function remaining(deadline, fallback = READ_TIMEOUT_MS) {
   return Math.max(1, Math.min(fallback, deadline - Date.now()));
 }
 
+const ACTIVE_LOCK_REASON = 'git-hygiene: active agent work';
+
+// What a failed command reports: the step, where, and how it ended. Never Git's
+// own stderr or the full argument list. Git echoes remote URLs, and a URL can
+// carry a token; recognising every credential inside arbitrary text took four
+// review rounds and still missed forms, so that text is not printed at all.
+// The hint sends whoever is fixing a failed cleanup to run the step by hand.
+function describeFailure(file, args, result) {
+  let where = null;
+  let rest = args;
+  if (file === 'git' && args[0] === '-C') { where = args[1]; rest = args.slice(2); }
+  const words = rest.filter((arg) => !arg.startsWith('-'));
+  // Only fixed verbs, never an argument that could be user text.
+  const step = [file, ...words.slice(0, file === 'gh' || words[0] === 'worktree' ? 2 : 1)].join(' ');
+  const how = result.error && result.error.code === 'ETIMEDOUT'
+    ? 'timed out'
+    : (result.status === null ? 'did not run' : `exited ${result.status}`);
+  return `${step} ${how}${where ? ` in ${where}` : ''}; run it there by hand to see Git's own message`;
+}
+
 // Masks URL user-info (https://user:token@host -> https://***@host). Git text
 // carries remote URLs in errors, lock reasons and prune output, and all of it
 // can reach the conversation, so this runs where text leaves the process (the
@@ -40,7 +60,9 @@ function remaining(deadline, fallback = READ_TIMEOUT_MS) {
 // by value before serialization, so an escape such as `\n` is never read as
 // part of an address.
 function redactCredentials(text) {
-  return String(text).replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s/?#]*@/gi, '$1***@');
+  // ASCII whitespace only: `\s` also matches a non-breaking space, which is
+  // valid inside user-info and stopped the mask short of the `@`.
+  return String(text).replace(/([a-z][a-z0-9+.-]*:\/\/)[^ \t\r\n/?#]*@/gi, '$1***@');
 }
 
 function redactValue(value) {
@@ -62,11 +84,7 @@ function run(file, args, options = {}) {
   });
   if (result.status !== 0 || result.error) {
     if (options.allowFailure) return null;
-    const detail = (result.stderr || result.stdout || (result.error && result.error.message) || 'command failed').trim();
-    // Git echoes remote URLs into its errors, and a URL can carry a token
-    // (https://user:token@host). This message reaches audit output and the
-    // conversation, so the user-info part is masked in both args and detail.
-    throw new Error(redactCredentials(`${file} ${args.join(' ')}: ${detail}`));
+    throw new Error(redactCredentials(describeFailure(file, args, result)));
   }
   return (result.stdout || '').trim();
 }
@@ -389,7 +407,9 @@ function classifyEntry(primary, entry, index, config, options = {}) {
     primary: index === 0,
     present: presence.present,
     absenceConfirmed: presence.absenceConfirmed,
-    locked: entry.locked || null,
+    // A lock reason is free text anyone can write, so only this tool's own
+    // reason is reported; any other shows as plain `locked`.
+    locked: entry.locked ? (entry.locked === ACTIVE_LOCK_REASON ? ACTIVE_LOCK_REASON : 'locked') : null,
     prunable: entry.prunable || null,
     location: classifyLocation(entry.path, config),
     state: STATES.UNKNOWN,
@@ -408,7 +428,7 @@ function classifyEntry(primary, entry, index, config, options = {}) {
   if (entry.locked) {
     result.state = STATES.LOCKED;
     const absent = !result.present;
-    result.reason = `the worktree is locked${entry.locked === 'locked' ? '' : `: ${entry.locked}`}`
+    result.reason = `the worktree is locked${entry.locked === ACTIVE_LOCK_REASON ? ' as active agent work' : ''}`
       + (absent ? ', and its path is absent' : '');
     return result;
   }
@@ -665,14 +685,16 @@ function pruneCandidates(repository) {
     timeout: MUTATION_TIMEOUT_MS,
   });
   if (result.status !== 0 || result.error) {
-    throw new Error(`refusing prune: the dry run failed: ${(result.stderr || (result.error && result.error.message) || '').trim()}`);
+    throw new Error(`refusing prune: the dry run failed (${describeFailure('git', ['-C', repository, 'worktree', 'prune'], result)})`);
   }
   const out = `${result.stdout || ''}\n${result.stderr || ''}`;
   const admin = path.join(commonDir(repository), 'worktrees');
   const paths = [];
   for (const line of out.split('\n').filter(Boolean)) {
     const match = /^Removing worktrees\/(.+?): /.exec(line);
-    if (!match) throw new Error(`refusing prune: unrecognised dry-run line: ${line}`);
+    if (!match) {
+      throw new Error(`refusing prune: Git's dry run printed a line this script does not recognise; run git worktree prune --dry-run --verbose in ${repository} to see it`);
+    }
     let gitdir;
     try { gitdir = fs.readFileSync(path.join(admin, match[1], 'gitdir'), 'utf8').trim(); }
     catch (_) { throw new Error(`refusing prune: cannot tell which path registration ${match[1]} belongs to`); }
@@ -824,7 +846,7 @@ function moveWorktree(raw, options = {}) {
   }
   git(found.audited.repository, ['worktree', 'move', found.target, destination], { timeout: MUTATION_TIMEOUT_MS });
   try {
-    git(found.audited.repository, ['worktree', 'lock', '--reason', 'git-hygiene: active agent work', destination], { timeout: MUTATION_TIMEOUT_MS });
+    git(found.audited.repository, ['worktree', 'lock', '--reason', ACTIVE_LOCK_REASON, destination], { timeout: MUTATION_TIMEOUT_MS });
   } catch (lockError) {
     const rolledBack = git(found.audited.repository, ['worktree', 'move', destination, found.target], {
       timeout: MUTATION_TIMEOUT_MS,
@@ -871,7 +893,7 @@ function createWorktree(repo, branch, options = {}) {
     : ['worktree', 'add', ...(remoteBase ? ['--track'] : []), '-b', branch, destination, base];
   git(primary, args, { timeout: MUTATION_TIMEOUT_MS });
   try {
-    git(primary, ['worktree', 'lock', '--reason', 'git-hygiene: active agent work', destination], { timeout: MUTATION_TIMEOUT_MS });
+    git(primary, ['worktree', 'lock', '--reason', ACTIVE_LOCK_REASON, destination], { timeout: MUTATION_TIMEOUT_MS });
   } catch (error) {
     const removed = git(primary, ['worktree', 'remove', destination], {
       timeout: MUTATION_TIMEOUT_MS,
@@ -902,7 +924,7 @@ function activateWorktree(raw, options = {}) {
   // A lock would stop the owning review tool from cleaning up its own checkout.
   if (found.entry.location === 'review-tool') throw new Error('refusing to lock a worktree that belongs to a review tool');
   git(found.audited.repository, [
-    'worktree', 'lock', '--reason', 'git-hygiene: active agent work', found.target,
+    'worktree', 'lock', '--reason', ACTIVE_LOCK_REASON, found.target,
   ], { timeout: MUTATION_TIMEOUT_MS });
   return { activated: true, path: found.target, branch: found.entry.branch || null, locked: true };
 }
@@ -973,7 +995,8 @@ function parseArgs(argv) {
     else if (arg === '--json') out.json = true;
     else if (arg === '--all-configured') out.allConfigured = true;
     else if (arg === '--approved') out.approved = true;
-    else throw new Error(`unknown option: ${arg}`);
+    // Echo only what looks like an option name; anything else may be pasted text.
+    else throw new Error(/^--[a-z][a-z-]*$/.test(arg) ? `unknown option: ${arg}` : 'unknown argument (not an option this script accepts)');
   }
   return out;
 }
