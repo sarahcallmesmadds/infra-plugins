@@ -1272,55 +1272,82 @@ function standingIn(text) {
 // and its length is an offset into the original text.
 function headerOf(text) {
   const src = String(text || '').replace(/\r\n/g, '\n');
-  const m = /^##\s/m.exec(src);
+  // The same boundary sections() splits on, so the two cannot disagree about
+  // where the header ends.
+  const m = /^##\s+\S/m.exec(src);
   return m ? src.slice(0, m.index) : src;
 }
 
 // The shapes a thread's handoff may not have, with the line each sits on.
-// Each one is a shape a plain reading gets wrong, and the wrap is the only
-// writer, so refusing them at save is cheaper and surer than teaching every
-// reader to cope: measured on 33 real thread handoffs, none had a code fence,
-// a second title or a repeated rule section. Fence detection here is
-// deliberately generous (any indentation, tabs included), because over-
-// detecting only asks the writer to move a block, and under-detecting is a
-// silent misread.
+//
+// Each one is a shape a plain reading gets wrong, or a header line written in
+// a form the readers would have to be lenient about. The wrap is the only
+// writer, so save refuses them and every reader stays exact. Measured on 33
+// real thread handoffs: no code fence anywhere, one title each, no repeated
+// rule section. Two review rounds found that allowing fences anywhere still
+// let a fenced example heading or retirement line read as real, so none are
+// allowed. Detection is deliberately generous (any indentation, tabs too),
+// because over-detecting only asks the writer to change a line, and
+// under-detecting is a silent misread.
 const FENCE_LINE = /^\s*(`{3,}|~{3,})/;
-function threadShapeProblems(text) {
+// One spelling per header label, written exactly as `**Label:** value`.
+const HEADER_LABELS = ['Date', 'Working directory', 'Last session', 'Format', 'Project rules', 'Check accepted'];
+const LABEL_LIKE = /^\s*\*\*([^*]+?):\*\*/;
+function threadShapeProblems(text, home = os.homedir()) {
   const lines = String(text || '').replace(/\r\n/g, '\n').split('\n');
   const out = [];
-  let section = null; // null = header, else the lower-cased level-two heading
+  const add = (kind, n, detail) => out.push({ kind, line: n, detail: `line ${n} ${detail}` });
+  let inHeader = true;
   let seenTitle = false;
   let standing = 0;
+  const labelsSeen = new Set();
   lines.forEach((line, i) => {
     const n = i + 1;
+    if (FENCE_LINE.test(line)) { add('fence', n, 'is a code fence; a thread\'s handoff carries none, because a fenced example heading or rule reads as a real one'); return; }
+    if (/^[ \t]+#{1,6}\s/.test(line)) { add('indented-heading', n, 'is a heading with spaces before it; start headings at the beginning of the line'); return; }
     if (/^#\s/.test(line)) {
-      if (seenTitle) out.push({ kind: 'extra-title', line: n, detail: `line ${n} is a second level-one heading; a thread's handoff has one title line` });
+      if (seenTitle) add('extra-title', n, 'is a second level-one heading; a thread\'s handoff has one title line');
       seenTitle = true;
-      // A level-one heading also ends whatever rule section came before it.
-      if (section !== null) section = '#';
       return;
     }
     const h = /^##\s+(.+?)\s*$/.exec(line);
     if (h) {
-      section = h[1].toLowerCase();
-      if (section === 'standing rules') {
+      inHeader = false;
+      if (h[1].toLowerCase() === 'standing rules') {
         standing += 1;
-        if (standing > 1) out.push({ kind: 'standing-repeated', line: n, detail: `line ${n} is a second "## Standing rules" heading; keep one section and group rules under ### areas` });
+        if (standing > 1) add('standing-repeated', n, 'is a second "## Standing rules" heading; keep one section and group rules under ### areas');
       }
       return;
     }
-    if (!FENCE_LINE.test(line)) return;
-    if (section === null) out.push({ kind: 'fence-in-header', line: n, detail: `line ${n} opens or closes a code fence in the header, above the first ## heading; move it below` });
-    else if (section === 'constraints still in force' || section === 'standing rules') {
-      out.push({ kind: 'fence-in-rules', line: n, detail: `line ${n} is a code fence inside "## ${section === 'standing rules' ? 'Standing rules' : 'Constraints still in force'}"; write rules as plain bullets` });
+    if (!inHeader) return;
+    const lab = LABEL_LIKE.exec(line);
+    if (!lab) return;
+    const name = lab[1].trim();
+    const known = HEADER_LABELS.find((l) => l.toLowerCase() === name.toLowerCase());
+    if (!known) {
+      if (/^(repository|repo)$/i.test(name)) add('header-line', n, `uses **${name}:**; a thread names its folder on a **Working directory:** line`);
+      return;
+    }
+    const exact = new RegExp(`^\\*\\*${known.replace(/ /g, ' ')}:\\*\\* \\S`);
+    if (!exact.test(line)) { add('header-line', n, `is a **${known}:** line not written exactly as "**${known}:** value" at the start of the line with a value`); return; }
+    if (labelsSeen.has(known)) { add('header-line', n, `is a second **${known}:** line`); return; }
+    labelsSeen.add(known);
+    if (known === 'Format' && !/^\*\*Format:\*\* \d+\s*$/.test(line)) add('header-line', n, 'has a **Format:** value that is not a number');
+    if (known === 'Project rules') {
+      for (const entry of line.replace(/^\*\*Project rules:\*\* /, '').split(',').map((e) => e.trim().replace(/^`+|`+$/g, '').trim())) {
+        if (!(entry === '~' || entry.startsWith('~/') || path.isAbsolute(entry))) {
+          add('project-rules-entry', n, `names "${entry}" as a project rules file; each entry is an absolute path or starts with ~/`);
+        }
+      }
     }
   });
   return out;
 }
 
-// Every `Retired this session:` line outside fences, wherever it sits, with
-// its reason cut off the way retiredTarget cuts it. Used to tell a standing
-// rule that was retired on purpose from one that was dropped.
+// Every `Retired this session:` line, wherever it sits, with its reason cut
+// off the way retiredTarget cuts it. Used to tell a standing rule that was
+// retired on purpose from one that was dropped. A thread's handoff carries no
+// code fences, so no line here can be an example.
 function retiredAnywhere(text) {
   return String(text || '').replace(/\r\n/g, '\n').split('\n')
     .map((l) => /^\s*-\s+retired this session\s*:\s*(.+)$/i.exec(l))
@@ -1332,8 +1359,9 @@ function retiredAnywhere(text) {
 // Format 2 is the shape with a standing rules section; a document without the
 // line is the older shape, which every handoff written before 0.10 is.
 function handoffFormat(text) {
-  // Same line only, leading spaces allowed, header only.
-  const m = /^[ \t]*\*\*Format:\*\*[ \t]*(\d+)[ \t]*$/mi.exec(headerOf(text));
+  // Exactly as the wrap writes it, header only. Any other form is a shape
+  // save refuses, so it is never read leniently here.
+  const m = /^\*\*Format:\*\* (\d+)\s*$/m.exec(headerOf(text));
   return m ? parseInt(m[1], 10) : null;
 }
 
@@ -1346,7 +1374,7 @@ function handoffFormat(text) {
 function projectRulesIn(text, home = os.homedir()) {
   // The value ends at its own line. With `\s*` an empty line handed back the
   // next heading as a file path.
-  const m = /^[ \t]*\*\*Project rules:\*\*[ \t]*(.*)$/mi.exec(headerOf(text));
+  const m = /^\*\*Project rules:\*\* (\S.*)$/m.exec(headerOf(text));
   if (!m) return [];
   return m[1].split(',')
     .map((p) => p.trim().replace(/^`+|`+$/g, '').trim())

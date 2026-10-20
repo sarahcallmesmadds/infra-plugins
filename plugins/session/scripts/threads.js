@@ -499,7 +499,7 @@ function threadConstraints({ slug, home = os.homedir() }) {
     // A shape save would refuse, in the file as it stands. Possible only by
     // hand editing, and reported rather than read around, so a pickup says
     // the lists below may be incomplete instead of presenting them as whole.
-    shapeProblems: handoffs.threadShapeProblems(text),
+    shapeProblems: handoffs.threadShapeProblems(text, home),
     constraints,
     standing,
     projectRules,
@@ -541,9 +541,10 @@ function withAcceptance(draft, reason) {
   const [lf, rest] = splitHeader(all);
   let out;
   // Function replacers, because a reason is free text and a `$&` or `$1` in
-  // it would otherwise be expanded as a replacement pattern.
-  if (/^\*\*Check accepted:\*\*.*$/mi.test(lf)) out = lf.replace(/^\*\*Check accepted:\*\*.*$/mi, () => line);
-  else if (/^\*\*Working directory:\*\*.*$/mi.test(lf)) out = lf.replace(/^(\*\*Working directory:\*\*.*)$/mi, (m) => `${m}\n${line}`);
+  // it would otherwise be expanded as a replacement pattern. Exact forms only:
+  // any other spelling of either line is a shape save has already refused.
+  if (/^\*\*Check accepted:\*\* \S.*$/m.test(lf)) out = lf.replace(/^\*\*Check accepted:\*\* \S.*$/m, () => line);
+  else if (/^\*\*Working directory:\*\* \S.*$/m.test(lf)) out = lf.replace(/^(\*\*Working directory:\*\* \S.*)$/m, (m) => `${m}\n${line}`);
   else out = `${line}\n${lf}`;
   out += rest;
   return crlf ? out.replace(/\n/g, '\r\n') : out;
@@ -564,7 +565,7 @@ function withoutAcceptance(draft) {
   const all = draft.replace(/\r\n/g, '\n');
   const crlf = all !== draft;
   const [head, rest] = splitHeader(all);
-  const out = head.replace(/^\*\*Check accepted:\*\*.*(\n|$)/gmi, '') + rest;
+  const out = head.replace(/^\*\*Check accepted:\*\* \S.*(\n|$)/gm, '') + rest;
   return crlf ? out.replace(/\n/g, '\r\n') : out;
 }
 
@@ -616,16 +617,15 @@ function saveThread({
   if (acceptCheck !== null && acceptCheck !== undefined && !accept) {
     return refuse('bad-input', '--accept-check needs a one-line reason', { draft: from });
   }
-  // A line carried over from an earlier save is not part of this revision,
-  // so it comes off before the draft is measured, not after.
-  draft = withoutAcceptance(draft);
-  // A shape every reader would get wrong is refused outright, enforcement or
-  // not. The wrap is the only writer, so it can always fix its own draft, and
-  // that is cheaper and surer than teaching each parser to read around it.
-  const shape = handoffs.threadShapeProblems(draft);
+  // Shapes first, on the draft as written: a Check accepted line in any form
+  // but the exact one is a shape problem, not something to strip.
+  const shape = handoffs.threadShapeProblems(draft, home);
   if (shape.length) {
     return refuse('bad-shape', shape.map((p) => p.detail).join('; '), { draft: from, problems: shape });
   }
+  // A line carried over from an earlier save, in its exact form, is not part
+  // of this revision, so it comes off before the draft is measured.
+  draft = withoutAcceptance(draft);
   const budget = handoffCheck.budgetFrom(config.load(home).handoffBudget);
   const measured = handoffCheck.checkText(draft, budget);
   // Only the counts can refuse. The log and old-row flags are judgements made

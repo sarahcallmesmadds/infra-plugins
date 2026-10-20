@@ -161,11 +161,13 @@ check('the format marker and the project rules line are read from the header', (
   assert.deepStrictEqual(handoffs.projectRulesIn(text, '/h'), ['/repo/CLAUDE.md', '/h/other/AGENTS.md']);
 });
 
-check('the format marker counts only as a real header line', () => {
-  assert.strictEqual(handoffs.handoffFormat('# H\n  **Format:** 2\n'), 2, 'an indented marker was missed');
-  assert.strictEqual(handoffs.handoffFormat('# H\n**Format:**\n2\n'), null, 'the value was read from the next line');
+check('the format marker counts only in its exact form, and any other form is a shape problem', () => {
+  for (const bad of ['# H\n  **Format:** 2\n', '# H\n**Format:**\n2\n', '# H\n**format:** 2\n', '# H\n**Format:**  2\n']) {
+    assert.strictEqual(handoffs.handoffFormat(bad), null, `read leniently: ${JSON.stringify(bad)}`);
+  }
+  assert.ok(handoffs.threadShapeProblems('# H\n  **Format:** 2\n## Next\n').some((p) => p.kind === 'header-line'));
+  assert.strictEqual(handoffs.handoffFormat('# H\n**Format:** 2\n'), 2);
 });
-
 check('the marker lines count only in the header, not as body text', () => {
   const text = '# H\n**Working directory:** /x\n\n## Notes\n**Format:** 2\n**Project rules:** /r/CLAUDE.md\n';
   assert.strictEqual(handoffs.handoffFormat(text), null);
@@ -184,57 +186,61 @@ check('an empty project rules line names no file', () => {
 // refuses those shapes and the parsers read plain text. Measured on 33 real
 // thread handoffs, none had any of them.
 
-const SHAPES = {
-  'fence-in-header': (h) => doc(h, { rules: ['R.'], format: 2 }).replace(/(\*\*Working directory:\*\*.*)/, '$1\n```\nexample\n```'),
-  'fence-in-rules': (h) => doc(h, { rules: ['R.'], format: 2, standing: { A: ['S.'] } }).replace('- S.', '- S.\n\t```\n## Example\n```'),
-  'standing-repeated': (h) => `${doc(h, { rules: ['R.'], format: 2, standing: { A: ['S.'] } })}\n## Standing rules\n- T.\n`,
-  'extra-title': (h) => `${doc(h, { rules: ['R.'], format: 2 })}\n# Notes\n${'more words '.repeat(50)}\n`,
-};
+const SHAPES = [
+  ['fence in the header', 'fence', (h) => doc(h, { rules: ['R.'], format: 2 }).replace(/(\*\*Working directory:\*\*.*)/, '$1\n```\nexample\n```')],
+  ['tab-indented fence in a rule section', 'fence', (h) => doc(h, { rules: ['R.'], format: 2, standing: { A: ['S.'] } }).replace('- S.', '- S.\n\t```\n## Example\n```')],
+  ['fence in the notes', 'fence', (h) => doc(h, { rules: ['R.'], format: 2, extra: '\n## Notes\n```markdown\n## Standing rules\n- Example only.\n- Retired this session: S., because example.\n```\n' })],
+  ['indented heading', 'indented-heading', (h) => doc(h, { rules: ['R.'], format: 2, standing: { A: ['S.'] } }).replace('- S.', '- S.\n  ## Notes\n- Example only.')],
+  ['second Standing rules heading', 'standing-repeated', (h) => `${doc(h, { rules: ['R.'], format: 2, standing: { A: ['S.'] } })}\n## Standing rules\n- T.\n`],
+  ['second title', 'extra-title', (h) => `${doc(h, { rules: ['R.'], format: 2 })}\n# Notes\n${'more words '.repeat(50)}\n`],
+  ['indented header label', 'header-line', (h) => doc(h, { rules: ['R.'] }).replace(/(\*\*Working directory:\*\*.*)/, '$1\n  **Format:** 2')],
+  ['empty header value', 'header-line', (h) => doc(h, { rules: ['R.'], format: 2 }).replace(/(\*\*Working directory:\*\*.*)/, '$1\n**Last session:**')],
+  ['second header label', 'header-line', (h) => doc(h, { rules: ['R.'], format: 2 }).replace(/(\*\*Working directory:\*\*.*)/, '$1\n**Format:** 2')],
+  ['Repository spelling', 'header-line', (h) => doc(h, { rules: ['R.'], format: 2 }).replace(/(\*\*Working directory:\*\*.*)/, `$1\n**Repository:** \`${h}\``)],
+  ['Check accepted not in its exact form', 'header-line', (h) => doc(h, { rules: ['R.'], format: 2 }).replace(/(\*\*Working directory:\*\*.*)/, '$1\n **Check accepted:** old')],
+  ['placeholder on the project rules line', 'project-rules-entry', (h) => doc(h, { rules: ['R.'], format: 2, projectRules: '[for a thread: the files]' })],
+  ['relative project rules entry', 'project-rules-entry', (h) => doc(h, { rules: ['R.'], format: 2, projectRules: 'repo/CLAUDE.md' })],
+];
 
 check('save refuses each shape a plain reading gets wrong, names the line, and keeps the draft', () => {
   const home = migrated((h) => [['site-thread', doc(h)]]);
-  fs.writeFileSync(docPath(home, 'site-thread'), doc(home, { rules: ['R.'], format: 2 }));
+  fs.writeFileSync(docPath(home, 'site-thread'), doc(home, { rules: ['R.'], format: 2, standing: { A: ['S.'] } }));
   const before = snapshot(docPath(home, 'site-thread'));
-  for (const [kind, make] of Object.entries(SHAPES)) {
+  for (const [name, kind, make] of SHAPES) {
     const r = save(home, 'site-thread', make(home));
-    assert.strictEqual(r.body.reason, 'bad-shape', `${kind}: ${JSON.stringify(r.body)}`);
-    assert.ok(r.body.problems.some((p) => p.kind === kind && Number.isInteger(p.line)), `${kind} not named: ${JSON.stringify(r.body.problems)}`);
-    assert.ok(fs.existsSync(r.body.draft), `${kind}: the draft was not kept`);
+    assert.strictEqual(r.body.reason, 'bad-shape', `${name}: ${JSON.stringify(r.body)}`);
+    assert.ok(r.body.problems.some((p) => p.kind === kind && Number.isInteger(p.line) && p.line > 0), `${name} not named as ${kind}: ${JSON.stringify(r.body.problems)}`);
+    assert.ok(fs.existsSync(r.body.draft), `${name}: the draft was not kept`);
+    assert.deepStrictEqual(snapshot(docPath(home, 'site-thread')), before, `${name}: a refused shape touched the thread`);
   }
-  assert.deepStrictEqual(snapshot(docPath(home, 'site-thread')), before, 'a refused shape touched the thread');
   // A reason does not get a shape through: it is not a budget question.
-  const r = save(home, 'site-thread', SHAPES['fence-in-header'](home), ['--accept-check', 'please']);
+  const r = save(home, 'site-thread', SHAPES[0][2](home), ['--accept-check', 'please']);
   assert.strictEqual(r.body.reason, 'bad-shape');
+  assert.deepStrictEqual(snapshot(docPath(home, 'site-thread')), before, '--accept-check let a shape reach disk');
 });
-
-check('a code fence below the rule sections is allowed', () => {
-  // Only the places a plain reading gets wrong are refused. A command shown
-  // in the notes is ordinary content.
-  const home = migrated((h) => [['site-thread', doc(h)]]);
-  fs.writeFileSync(docPath(home, 'site-thread'), doc(home, { rules: ['R.'], format: 2 }));
-  const r = save(home, 'site-thread', doc(home, { rules: ['R.'], format: 2, standing: { A: ['S.'] }, extra: '\n## Notes\n```bash\nnode x.js\n```\n' }));
-  assert.strictEqual(r.body.saved, true, JSON.stringify(r.body));
-});
-
 check('handoff-check reports the same shapes, so the wrap can fix the draft first', () => {
   const home = tmpHome();
-  for (const [kind, make] of Object.entries(SHAPES)) {
+  for (const [name, kind, make] of SHAPES) {
     const r = json(home, ['handoff-check', '--file', draft(home, make(home))]).body;
-    assert.ok(r.flags.some((f) => f.kind === 'shape' && f.shape === kind), `${kind}: ${JSON.stringify(r.flags)}`);
+    assert.ok(r.flags.some((f) => f.kind === 'shape' && f.shape === kind), `${name}: ${JSON.stringify(r.flags)}`);
   }
+  const text = run(home, ['handoff-check', '--file', draft(home, SHAPES[0][2](home))]).stdout;
+  assert.match(text, /Shape problems\. save refuses these whatever the budget, and --accept-check does not cover them/);
+  assert.doesNotMatch(text, /does not refuse/, 'the plain output says save will not refuse a shape it always refuses');
 });
-
 check('a thread file edited into an odd shape is reported at pickup, not read as whole', () => {
   const home = migrated((h) => [['site-thread', doc(h)]]);
-  fs.writeFileSync(docPath(home, 'site-thread'), SHAPES['standing-repeated'](home));
+  fs.writeFileSync(docPath(home, 'site-thread'), SHAPES.find(([, k]) => k === 'standing-repeated')[2](home));
   const r = json(home, ['constraints', '--thread', 'site-thread']).body;
   assert.ok(r.shapeProblems.some((p) => p.kind === 'standing-repeated'), JSON.stringify(r.shapeProblems));
   const text = run(home, ['constraints', '--thread', 'site-thread']).stdout;
-  assert.ok(text.indexOf('may be incomplete') !== -1 && text.indexOf('may be incomplete') < text.indexOf('standing rule'),
-    'the warning is missing or printed below the lists it qualifies');
+  const warn = text.indexOf('may be incomplete');
+  const list = text.indexOf('in force this week');
+  assert.ok(warn !== -1 && list !== -1 && warn < list, `the warning is missing or printed below the lists it qualifies:\n${text}`);
 });
 
 check('advice flags never refuse a save, even with enforcement on', () => {
+  // And the save records no acceptance, because it excused nothing.
   // A log or an old row is a judgement made by pattern; only counts gate.
   const home = migrated((h) => [['site-thread', doc(h)]]);
   fs.writeFileSync(docPath(home, 'site-thread'), doc(home, { rules: ['R.'], format: 2 }));
@@ -246,6 +252,8 @@ check('advice flags never refuse a save, even with enforcement on', () => {
   assert.ok(flags.some((f) => f.kind === 'log') && flags.some((f) => f.kind === 'old-file-rows'), `the fixture does not raise both: ${JSON.stringify(flags)}`);
   const r = save(home, 'site-thread', text);
   assert.strictEqual(r.body.saved, true, JSON.stringify(r.body));
+  assert.strictEqual(r.body.check.accepted, null);
+  assert.doesNotMatch(fs.readFileSync(docPath(home, 'site-thread'), 'utf8'), /Check accepted/);
 });
 
 // ------------------------------------------------- what a thread binds ----
@@ -298,7 +306,8 @@ check('a draft that keeps the marker and drops every standing rule is refused', 
   // Naming a file that is not there, or a relative one, is not where they
   // went; naming one that is there is the legitimate route, and it saves.
   assert.strictEqual(save(home, 'brand-thread', doc(home, { rules: ['R.'], format: 2, projectRules: '/no/such/CLAUDE.md' })).body.reason, 'standing-dropped');
-  assert.strictEqual(save(home, 'brand-thread', doc(home, { rules: ['R.'], format: 2, projectRules: 'repo/CLAUDE.md' })).body.reason, 'standing-dropped');
+  assert.strictEqual(save(home, 'brand-thread', doc(home, { rules: ['R.'], format: 2, projectRules: 'repo/CLAUDE.md' })).body.reason, 'bad-shape',
+    'a relative project rules entry is a shape problem before it is anything else');
   const rules = path.join(home, 'repo', 'CLAUDE.md');
   fs.mkdirSync(path.dirname(rules), { recursive: true });
   fs.writeFileSync(rules, '# rules');
@@ -334,13 +343,6 @@ check('an acceptance is written only when something was excused, and goes once t
   const r = save(home, 'site-thread', doc(home, { rules: ['R.', 'Q.'], format: 2 }), ['--accept-check', 'nothing to excuse']);
   assert.strictEqual(r.body.check.accepted, null);
   assert.doesNotMatch(fs.readFileSync(docPath(home, 'site-thread'), 'utf8'), /Check accepted/);
-});
-
-check('a marker shown in a fenced example does not get an older draft past the guard', () => {
-  const home = migrated((h) => [['brand-thread', doc(h)]]);
-  fs.writeFileSync(docPath(home, 'brand-thread'), doc(home, { rules: ['R.'], standing: { Look: ['S.'] }, format: 2 }));
-  const r = save(home, 'brand-thread', doc(home, { rules: ['R.'], extra: '\n```\n**Format:** 2\n```\n' }));
-  assert.strictEqual(r.body.reason, 'format-downgrade', JSON.stringify(r.body));
 });
 
 check('a thread still in the older shape can be saved either way', () => {
@@ -542,14 +544,14 @@ check('an acceptance line carried from an earlier save does not count against th
   assert.strictEqual(r.body.saved, true, JSON.stringify(r.body));
 });
 
-check('an example of the acceptance line below the header is left alone', () => {
+check('an acceptance line in its exact form is replaced, never duplicated', () => {
   const home = migrated((h) => [['site-thread', doc(h)]]);
   fs.writeFileSync(docPath(home, 'site-thread'), doc(home, { rules: ['R.'], format: 2 }));
-  const example = '\n## Notes\n```\n**Check accepted:** example to preserve\n```\n';
-  assert.strictEqual(save(home, 'site-thread', doc(home, { rules: ['R.'], format: 2, extra: example })).body.saved, true);
-  assert.ok(fs.readFileSync(docPath(home, 'site-thread'), 'utf8').includes('example to preserve'), 'a save deleted document content');
+  const carried = logShaped(home).replace(/(\*\*Working directory:\*\*.*)/, '$1\n**Check accepted:** an old reason');
+  assert.strictEqual(save(home, 'site-thread', carried, ['--accept-check', 'a new reason']).body.saved, true);
+  const saved = fs.readFileSync(docPath(home, 'site-thread'), 'utf8');
+  assert.deepStrictEqual(saved.match(/^\*\*Check accepted:\*\*.*$/gm), ['**Check accepted:** a new reason']);
 });
-
 check('an empty --accept-check reason is refused, not taken as consent', () => {
   const home = migrated((h) => [['site-thread', doc(h)]]);
   fs.writeFileSync(docPath(home, 'site-thread'), doc(home, { rules: ['R.'], format: 2 }));

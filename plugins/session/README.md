@@ -570,12 +570,14 @@ document's header. Enforcement is off by default.
 The pooled answer outside threads never reads `## Standing rules`, so the
 section is for thread handoffs only.
 
-**Four shapes are refused at save (`bad-shape`), whatever the budget says:** a
-code fence in the header (above the first `## ` heading), a code fence inside
-either rule section, a second `## Standing rules` heading, and a second `# `
-title. Each is a shape a plain reading of the document gets wrong, and `/wrap`
-is the only writer, so refusing them is cheaper and surer than teaching every
-parser to read around them. Fences anywhere else are ordinary content. If a
+**Shapes are refused at save (`bad-shape`), whatever the budget says:** a code
+fence anywhere in the document, a heading with spaces before it, a second
+`## Standing rules` heading, a second `# ` title, a header line not written
+exactly as `**Label:** value` (one spelling per label, at the start of the line,
+with a value on that line, once), and a `**Project rules:**` entry that is not
+an absolute path. Each is a shape a plain reading gets wrong or would have to be
+lenient about, and `/wrap` is the only writer, so the readers stay exact and
+the writer is held to the shape. If a
 thread file is edited by hand into one of these shapes, `constraints --thread`
 reports it as `shapeProblems` and `/pickup` says the lists may be incomplete.
 

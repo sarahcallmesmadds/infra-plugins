@@ -21,9 +21,10 @@ A thread's handoff stays the current state of its subject instead of growing.
   `handoffBudget.enforce` on it refuses an over-budget draft (`check-failed`)
   unless given `--accept-check "<reason>"`, which is written into the header.
   Off by default.
-- `save` refuses four shapes outright (`bad-shape`): a code fence in the header
-  or inside either rule section, a second `## Standing rules` heading, a second
-  `# ` title. The parsers read plain text; `constraints --thread` reports a
+- `save` refuses odd shapes outright (`bad-shape`): any code fence, an indented
+  heading, a second `## Standing rules` heading, a second `# ` title, a header
+  line not in its exact `**Label:** value` form, a project rules entry that is
+  not an absolute path. The parsers read plain text and exact header lines; `constraints --thread` reports a
   hand-edited file in one of these shapes as `shapeProblems`. Only word counts
   can refuse under enforcement; the log and old-row flags are advice.
 - `/wrap` sorts every rule into this week, standing or done, proposes standing

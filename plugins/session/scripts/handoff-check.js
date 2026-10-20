@@ -91,10 +91,12 @@ function handoffDate(text) {
   // From the header only, like the other header readers: a date further down
   // made every real dated paragraph look like a future one.
   const head = headerOf(text);
-  const last = /^\*\*Last session:\*\*\s*(.*)$/mi.exec(head);
+  // The value on the same line, exactly as written; an empty one is missing,
+  // never the next line's.
+  const last = /^\*\*Last session:\*\* (\S.*)$/m.exec(head);
   const fromLast = last && ISO.exec(last[1]);
   if (fromLast) return fromLast[0];
-  const date = /^\*\*Date:\*\*\s*(.*)$/mi.exec(head);
+  const date = /^\*\*Date:\*\* (\S.*)$/m.exec(head);
   const fromDate = date && ISO.exec(date[1]);
   return fromDate ? fromDate[0] : null;
 }
@@ -123,7 +125,7 @@ function checkText(text, budget = DEFAULT_BUDGET) {
   // date still to come is a plan, not a record of a session.
   const bare = String(text).replace(/\r\n/g, '\n');
   const past = (s) => (s.match(ISO_ALL) || []).some((d) => !date || d <= date);
-  const lastLines = (bare.match(/^\*\*Last session:\*\*/gmi) || []).length;
+  const lastLines = (bare.match(/^\*\*Last session:\*\*/gm) || []).length;
   const worked = all.find((s) => key(s.heading) === 'what was worked on');
   // Two signals only, kept deliberately simple after three review rounds each
   // found another phrasing the finer rules misread: a second Last session

@@ -190,7 +190,7 @@ Resuming from: {path}
 {every standing rule, verbatim, under its area; rules written before any area heading under General}
 
 **Project rules files:**
-{each path, and that it governs work in that repository}
+{each path, with NOT THERE or NOT AN ABSOLUTE PATH wherever constraints marks it so, and that it governs work in that repository}
 
 **Last session ({date}):**
 {two or three sentences, paraphrased, not copied}

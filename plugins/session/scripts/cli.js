@@ -1126,9 +1126,23 @@ const COMMANDS = {
     const lines = [`${r.total} words, ${r.body} in the body without the two rule sections (budget ${r.budget.bodyWords}).`, ''];
     for (const s of r.sections) lines.push(`  ${String(s.words).padStart(6)}  ${s.heading}`);
     lines.push('');
-    if (!r.flags.length) lines.push('Nothing over budget, and no sign of a session log.');
-    else lines.push(`${r.flags.length} thing${r.flags.length === 1 ? '' : 's'} to fix:`, ...r.flags.map((f) => `  ${f.detail}`));
-    lines.push('', r.budget.enforce ? 'save refuses a draft with any of these unless given --accept-check.' : 'save reports these and does not refuse (handoffBudget.enforce is off).');
+    // Three kinds, and what save does with each is different, so they are
+    // listed apart rather than under one line that is true of none of them.
+    const shapes = r.flags.filter((f) => f.kind === 'shape');
+    const counts = r.flags.filter((f) => f.enforceable);
+    const advice = r.flags.filter((f) => f.kind !== 'shape' && !f.enforceable);
+    if (!r.flags.length) lines.push('Nothing over budget, no shape problem, and no sign of a session log.');
+    if (shapes.length) {
+      lines.push('Shape problems. save refuses these whatever the budget, and --accept-check does not cover them:', ...shapes.map((f) => `  ${f.detail}`), '');
+    }
+    if (counts.length) {
+      lines.push(r.budget.enforce
+        ? 'Over budget. save refuses these unless given --accept-check "<reason>":'
+        : 'Over budget. save reports these and does not refuse (handoffBudget.enforce is off):', ...counts.map((f) => `  ${f.detail}`), '');
+    }
+    if (advice.length) {
+      lines.push('Advice. save reports these and never refuses for them:', ...advice.map((f) => `  ${f.detail}`));
+    }
     emit(opts, {}, lines);
   },
 
