@@ -1236,7 +1236,9 @@ function withoutFences(text) {
     // and opening a fence there blanked every rule after it.
     const m = /^ {0,3}(`{3,}|~{3,})/.exec(line);
     if (fence) {
-      if (m && m[1][0] === fence[0] && m[1].length >= fence.length) fence = null;
+      // A closing fence carries nothing after its run: a ```js line inside an
+      // open block is content, and closing there exposed the example after it.
+      if (m && m[1][0] === fence[0] && m[1].length >= fence.length && /^ {0,3}[`~]+\s*$/.test(line)) fence = null;
       return '';
     }
     if (m) { fence = m[1]; return ''; }
@@ -1258,11 +1260,13 @@ function withoutFences(text) {
 // exactly what it did before.
 function standingIn(text) {
   const src = withoutFences(text);
-  const m = src.match(/^#{2}\s*Standing rules\s*$([\s\S]*?)(?=^#{1,2}\s|$(?![\s\S]))/mi);
-  if (!m) return [];
+  // Every such section, not the first: a heading written twice left the
+  // rules under the second copy on disk and out of every pickup.
+  const found = [...src.matchAll(/^#{2}\s*Standing rules\s*$([\s\S]*?)(?=^#{1,2}\s|$(?![\s\S]))/gmi)];
+  if (!found.length) return [];
   const out = [];
   let area = null;
-  for (const raw of m[1].split('\n')) {
+  for (const raw of found.map((m) => m[1]).join('\n').split('\n')) {
     const line = raw.trim();
     const h = /^#{3,6}\s+(.+?)\s*$/.exec(line);
     if (h) {
@@ -1287,6 +1291,16 @@ function headerOf(text) {
   const bare = withoutFences(text);
   const m = /^##\s/m.exec(bare);
   return m ? bare.slice(0, m.index) : bare;
+}
+
+// Every `Retired this session:` line outside fences, wherever it sits, with
+// its reason cut off the way retiredTarget cuts it. Used to tell a standing
+// rule that was retired on purpose from one that was dropped.
+function retiredAnywhere(text) {
+  return withoutFences(text).split('\n')
+    .map((l) => /^\s*-\s+retired this session\s*:\s*(.+)$/i.exec(l))
+    .filter(Boolean)
+    .map((m) => retiredTarget(m[1]));
 }
 
 // The format a handoff declares with `**Format:** N` in its header, or null.
@@ -1591,6 +1605,7 @@ module.exports = {
   standingIn,
   withoutFences,
   headerOf,
+  retiredAnywhere,
   handoffFormat,
   projectRulesIn,
   constraintsIn,

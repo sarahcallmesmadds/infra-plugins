@@ -523,16 +523,25 @@ function projectRuleState(p) {
 // The header line that records why a draft was saved over its check. Written
 // into the document itself, so the reason travels with the revision it
 // excused rather than living in a transcript nobody reads again.
+// The header and the rest, split where the header reader splits, so an
+// example of the line further down the document is never edited.
+function splitHeader(lf) {
+  const at = handoffs.headerOf(lf).length;
+  return [lf.slice(0, at), lf.slice(at)];
+}
+
 function withAcceptance(draft, reason) {
   const line = `**Check accepted:** ${reason}`;
-  const lf = draft.replace(/\r\n/g, '\n');
-  const crlf = lf !== draft;
+  const all = draft.replace(/\r\n/g, '\n');
+  const crlf = all !== draft;
+  const [lf, rest] = splitHeader(all);
   let out;
   // Function replacers, because a reason is free text and a `$&` or `$1` in
   // it would otherwise be expanded as a replacement pattern.
   if (/^\*\*Check accepted:\*\*.*$/mi.test(lf)) out = lf.replace(/^\*\*Check accepted:\*\*.*$/mi, () => line);
   else if (/^\*\*Working directory:\*\*.*$/mi.test(lf)) out = lf.replace(/^(\*\*Working directory:\*\*.*)$/mi, (m) => `${m}\n${line}`);
   else out = `${line}\n${lf}`;
+  out += rest;
   return crlf ? out.replace(/\n/g, '\r\n') : out;
 }
 
@@ -548,7 +557,11 @@ function withAcceptance(draft, reason) {
 // result reports each part on its own, because "saved" and "the index knows"
 // and "declared as a thread" can each fail without the others.
 function withoutAcceptance(draft) {
-  return draft.replace(/^\*\*Check accepted:\*\*.*(\r?\n|$)/gmi, '');
+  const all = draft.replace(/\r\n/g, '\n');
+  const crlf = all !== draft;
+  const [head, rest] = splitHeader(all);
+  const out = head.replace(/^\*\*Check accepted:\*\*.*(\n|$)/gmi, '') + rest;
+  return crlf ? out.replace(/\n/g, '\r\n') : out;
 }
 
 function saveThread({
@@ -599,6 +612,9 @@ function saveThread({
   if (acceptCheck !== null && acceptCheck !== undefined && !accept) {
     return refuse('bad-input', '--accept-check needs a one-line reason', { draft: from });
   }
+  // A line carried over from an earlier save is not part of this revision,
+  // so it comes off before the draft is measured, not after.
+  draft = withoutAcceptance(draft);
   const budget = handoffCheck.budgetFrom(config.load(home).handoffBudget);
   const measured = handoffCheck.checkText(draft, budget);
   if (budget.enforce && measured.flags.length && !accept) {
@@ -611,7 +627,7 @@ function saveThread({
   // dropped, so the header never shows a reason for a problem the document no
   // longer has.
   const accepted = Boolean(accept && measured.flags.length);
-  draft = accepted ? withAcceptance(draft, accept) : withoutAcceptance(draft);
+  if (accepted) draft = withAcceptance(draft, accept);
 
   return handoffs.mutateIndex(home, (index, saveIndex) => {
     // Everything checked again under the lock, because every answer above was
@@ -696,7 +712,12 @@ function saveThread({
       // section without the line, and its rules bind all the same. The way out
       // is a project rules file that is really there.
       const movedTo = handoffs.projectRulesIn(draft, home).map(projectRuleState).filter((p) => p.exists);
-      if (handoffs.standingIn(currentText).length && !handoffs.standingIn(draft).length && !movedTo.length) {
+      // A rule retired with its line has left on purpose, which is the wrap's
+      // "done" route, so only rules that vanished without one count.
+      const retired = new Set(handoffs.retiredAnywhere(draft));
+      const vanished = handoffs.standingIn(currentText)
+        .filter((r) => !retired.has(handoffs.normalizeConstraint(r.text)));
+      if (vanished.length && !handoffs.standingIn(draft).length && !movedTo.length) {
         return refuse('standing-dropped',
           `${target} holds standing rules and the draft has none and names no project rules file that is there; carry them, or name the file they went to`,
           { draft: from });

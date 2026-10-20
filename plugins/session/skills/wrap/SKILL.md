@@ -395,25 +395,28 @@ now in two or three sentences; it is not a list of sessions. Decisions made are
 the decisions still in force; one that settled for good becomes a standing rule
 or goes. Files created or changed are this session's files only.
 
-**Measure the draft before saving it.**
+Write the whole document to a draft file outside `~/.planning/handoffs` (in
+Claude Code, the session's scratchpad directory; in Codex, the system temporary
+directory). Never write the thread's file directly, and never write a
+`HANDOFF-*.md` into the handoffs folder yourself.
+
+**Then measure the draft before saving it.**
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js handoff-check --file "<draft path>" --json
 ```
 
-It reports words per section and flags a session log (more than one dated
-session entry), "What was worked on" over its limit, file rows dated before this
+It reports words per section and flags a session log (a second Last session
+line, or more than one dated paragraph under "What was worked on" across more
+than one date), "What was worked on" over its limit, file rows dated before this
 session, a body over its limit without the two rule sections, and any section
 over its limit except Standing rules. Fix every flag in the draft, then check
 again. The check is how "current state, not a log" is enforced. Its flags are
 structural, so read each one against the draft: a `log` flag means fold the
-dated entries into one current account; a size flag means cut what is history. `save` measures the same way and
-reports what it found.
+dated entries into one current account; a size flag means cut what is history.
+`save` measures the same way and reports what it found.
 
-Write the whole document to a draft file outside `~/.planning/handoffs` (in
-Claude Code, the session's scratchpad directory; in Codex, the system temporary
-directory), then save it. Never write the thread's file directly, and never
-write a `HANDOFF-*.md` into the handoffs folder yourself:
+Then save it:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}"/scripts/cli.js save --thread "<slug>" --from "<draft path>" --base "<rev from Step 1>" --generation <N> --json

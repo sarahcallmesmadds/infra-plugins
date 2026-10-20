@@ -125,15 +125,19 @@ function checkText(text, budget = DEFAULT_BUDGET) {
   const past = (s) => (s.match(ISO_ALL) || []).some((d) => !date || d <= date);
   const lastLines = (bare.match(/^\*\*Last session:\*\*/gmi) || []).length;
   const worked = all.find((s) => key(s.heading) === 'what was worked on');
-  // Distinct dates, not paragraphs: one session told in two paragraphs that
-  // both name today is one entry. A log carries a different date per session.
+  // Two signals only, kept deliberately simple after three review rounds each
+  // found another phrasing the finer rules misread: a second Last session
+  // line, or more than one paragraph under "What was worked on" carrying past
+  // dates with at least two different dates among them. One day's work in
+  // two paragraphs is not a log; a paragraph per session is. Headings are not
+  // read, because area headings that carry dates are legitimate. The flag is
+  // advice unless enforcement is on, and that is what makes a coarse rule an
+  // acceptable one.
   const pastDates = (p) => (p.match(ISO_ALL) || []).filter((d) => !date || d <= date);
-  const datedParas = worked
-    ? new Set(paragraphs(withoutFences(worked.body)).filter(past).map((p) => pastDates(p)[0])).size
-    : 0;
-  const datedHeadings = bare.split('\n')
-    .filter((l) => /^#{2,6}\s/.test(l) && past(l)).length;
-  const entries = Math.max(lastLines, datedParas, datedHeadings);
+  const dated = worked ? paragraphs(withoutFences(worked.body)).filter(past) : [];
+  const distinct = new Set(dated.flatMap(pastDates)).size;
+  const datedParas = dated.length > 1 && distinct > 1 ? dated.length : 0;
+  const entries = Math.max(lastLines, datedParas);
   if (entries > 1) {
     flags.push({
       kind: 'log',
@@ -156,7 +160,7 @@ function checkText(text, budget = DEFAULT_BUDGET) {
     // The first column is the file, and a dated filename says when the file
     // was named, not which session touched it. Only the other cells count,
     // and only a date standing on its own there.
-    const older = files.body.split('\n')
+    const older = withoutFences(files.body).split('\n')
       .filter((l) => /^\s*\|/.test(l) && !/^\s*\|[\s:|-]+\|\s*$/.test(l))
       .filter((l) => {
         const cells = l.trim().replace(/^\||\|$/g, '').split('|').slice(1).join(' ');

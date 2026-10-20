@@ -168,6 +168,16 @@ check('a heading inside a code fence neither ends the standing section nor start
   assert.deepStrictEqual(handoffs.standingIn(fake).map((r) => r.text), ['the rule']);
 });
 
+check('a standing rules heading written twice keeps the rules under both', () => {
+  const text = '## Standing rules\n### Build\n- Use generated pages.\n\n## Decisions made\n- x\n\n## Standing rules\n### Deploy\n- Require staging.\n';
+  assert.deepStrictEqual(handoffs.standingIn(text).map((r) => [r.area, r.text]), [['Build', 'Use generated pages.'], ['Deploy', 'Require staging.']]);
+});
+
+check('a fence opener inside an open fence is content, not its end', () => {
+  const text = '## Standing rules\n- real one\n```text\n```js\n## Example\n- fake\n```\n- real two\n';
+  assert.deepStrictEqual(handoffs.standingIn(text).map((r) => r.text), ['real one', 'real two']);
+});
+
 check('the format marker counts only as a real header line', () => {
   assert.strictEqual(handoffs.handoffFormat('# H\n```\n**Format:** 2\n```\n'), null, 'a fenced example marked the document');
   assert.strictEqual(handoffs.handoffFormat('# H\n  **Format:** 2\n'), 2, 'an indented marker was missed');
@@ -286,10 +296,21 @@ check('a marker shown in a fenced example does not get an older draft past the g
 
 check('a thread still in the older shape can be saved either way', () => {
   // The guard only protects documents that have the marker. Refusing an old
-  // draft over an old document would stop every unmigrated thread.
+  // draft over an old document would stop every unmigrated thread, and the
+  // move to the new shape has to be allowed too.
   const home = migrated((h) => [['brand-thread', doc(h)]]);
   fs.writeFileSync(docPath(home, 'brand-thread'), doc(home, { rules: ['R.'] }));
   assert.strictEqual(save(home, 'brand-thread', doc(home, { rules: ['R.', 'Q.'] })).body.saved, true);
+  const up = save(home, 'brand-thread', doc(home, { rules: ['R.'], standing: { Look: ['Q.'] }, format: 2 }));
+  assert.strictEqual(up.body.saved, true, JSON.stringify(up.body));
+  assert.strictEqual(json(home, ['constraints', '--thread', 'brand-thread']).body.format, 2);
+});
+
+check('retiring the last standing rule with its line is allowed', () => {
+  const home = migrated((h) => [['brand-thread', doc(h)]]);
+  fs.writeFileSync(docPath(home, 'brand-thread'), doc(home, { rules: ['R.'], standing: { Api: ['Use the old API.'] }, format: 2 }));
+  const r = save(home, 'brand-thread', doc(home, { rules: ['R.', 'Retired this session: Use the old API., because it was removed.'], format: 2 }));
+  assert.strictEqual(r.body.saved, true, JSON.stringify(r.body));
 });
 
 // ------------------------------------------------------ the handoff check ----
@@ -364,6 +385,27 @@ check('a fenced example date does not move the handoff date', () => {
     + '\n```\n**Date:** 2020-01-01\n```\n';
   const r = json(home, ['handoff-check', '--file', draft(home, text)]).body;
   assert.ok(r.flags.some((f) => f.kind === 'log'), JSON.stringify(r.flags));
+});
+
+check('a log written as paragraphs that all start from one date is still a log', () => {
+  const home = tmpHome();
+  const worked = 'Since 2026-09-01: session 2026-09-10 built the page.\n\nSince 2026-09-01: session 2026-09-20 reviewed it.';
+  const r = json(home, ['handoff-check', '--file', draft(home, doc(home, { rules: ['R.'], worked }))]).body;
+  assert.ok(r.flags.some((f) => f.kind === 'log'), JSON.stringify(r.flags));
+});
+
+check('dated area headings are not a log', () => {
+  const home = tmpHome();
+  const text = doc(home, { rules: ['R.'], extra: '\n## Notes\n### Build 2026-10-01\n- a\n### Review 2026-10-01\n- b\n' });
+  const r = json(home, ['handoff-check', '--file', draft(home, text)]).body;
+  assert.ok(!r.flags.some((f) => f.kind === 'log'), JSON.stringify(r.flags));
+});
+
+check('a fenced example row is not an old file row', () => {
+  const home = tmpHome();
+  const files = '\n## Files created or changed\n| File | What |\n|---|---|\n| a.md | made now |\n```\n| sample.md | made 2026-01-01 |\n```\n';
+  const r = json(home, ['handoff-check', '--file', draft(home, doc(home, { rules: ['R.'], extra: files }))]).body;
+  assert.ok(!r.flags.some((f) => f.kind === 'old-file-rows'), JSON.stringify(r.flags));
 });
 
 check('a dated filename is not an old row', () => {
@@ -453,6 +495,27 @@ check('with the budget not enforced, save reports the flags and saves', () => {
   assert.ok(r.body.check.flags.some((f) => f.kind === 'log'), 'the save stopped reporting what it measured');
 });
 
+check('an acceptance line carried from an earlier save does not count against the budget', () => {
+  const home = migrated((h) => [['site-thread', doc(h)]]);
+  fs.writeFileSync(docPath(home, 'site-thread'), doc(home, { rules: ['R.'], format: 2 }));
+  const clean = doc(home, { rules: ['R.', 'Q.'], format: 2 });
+  const limit = json(home, ['handoff-check', '--file', draft(home, clean)]).body.body;
+  writeConfig(home, { handoffBudget: { enforce: true, bodyWords: limit } });
+  const carried = clean.replace(/(\*\*Working directory:\*\*.*)/, '$1\n**Check accepted:** an old reason');
+  assert.ok(json(home, ['handoff-check', '--file', draft(home, carried)]).body.flags.some((f) => f.kind === 'body-long'),
+    'the fixture does not sit on the boundary, so it proves nothing');
+  const r = save(home, 'site-thread', carried);
+  assert.strictEqual(r.body.saved, true, JSON.stringify(r.body));
+});
+
+check('an example of the acceptance line below the header is left alone', () => {
+  const home = migrated((h) => [['site-thread', doc(h)]]);
+  fs.writeFileSync(docPath(home, 'site-thread'), doc(home, { rules: ['R.'], format: 2 }));
+  const example = '\n## Notes\n```\n**Check accepted:** example to preserve\n```\n';
+  assert.strictEqual(save(home, 'site-thread', doc(home, { rules: ['R.'], format: 2, extra: example })).body.saved, true);
+  assert.ok(fs.readFileSync(docPath(home, 'site-thread'), 'utf8').includes('example to preserve'), 'a save deleted document content');
+});
+
 check('an empty --accept-check reason is refused, not taken as consent', () => {
   const home = migrated((h) => [['site-thread', doc(h)]]);
   fs.writeFileSync(docPath(home, 'site-thread'), doc(home, { rules: ['R.'], format: 2 }));
@@ -501,8 +564,11 @@ check('the three protected cleanup handoffs are never touched by a save or a swe
   }
   writeConfig(home, { protectedHandoffs: names.map((n) => docPath(home, n)) });
   const before = names.map((n) => snapshot(docPath(home, n)));
-  save(home, 'brand-thread', doc(home, { rules: ['R.', 'Q.'], format: 2, standing: { A: ['S.'] } }));
-  run(home, ['archive']);
+  // Both have to actually run, or untouched files prove nothing.
+  assert.strictEqual(save(home, 'brand-thread', doc(home, { rules: ['R.', 'Q.'], format: 2, standing: { A: ['S.'] } })).body.saved, true);
+  const sweep = json(home, ['archive']);
+  assert.strictEqual(sweep.status, 0, JSON.stringify(sweep.body));
+  assert.deepStrictEqual(sweep.body.protectedSkipped.sort(), names.map((n) => `HANDOFF-${n}.md`).sort());
   assert.deepStrictEqual(names.map((n) => snapshot(docPath(home, n))), before);
   assert.strictEqual(json(home, ['save', '--thread', 'rule-pool-cleanup-a', '--from', draft(home, doc(home, { rules: ['x'], format: 2 })), '--base', 'none', '--generation', String(registry(home).generation), '--create']).body.reason, 'protected');
 });
@@ -512,8 +578,10 @@ check('the three protected cleanup handoffs are never touched by a save or a swe
 check('wrap sorts every rule into this week, standing or done, and measures the draft before saving', () => {
   const wrap = fs.readFileSync(path.join(ROOT, 'skills', 'wrap', 'SKILL.md'), 'utf8');
   assert.match(wrap, /Sort every rule, carried or new, into exactly one of three places/);
+  const writeAt = wrap.indexOf('Write the whole document to a draft file');
   const measure = wrap.indexOf('cli.js handoff-check --file');
   const saveAt = wrap.indexOf('cli.js save --thread', measure);
+  assert.ok(writeAt !== -1 && measure > writeAt, 'the draft is measured before it is written, so the check reads a file that is not there');
   assert.ok(measure !== -1 && saveAt > measure, 'the draft is not measured before the save step');
   assert.match(wrap, /A correction becomes a standing rule in these notes only when the user says\s+it is a rule/);
   assert.doesNotMatch(wrap, /Do not remove earlier entries unless they are now resolved or wrong/,
