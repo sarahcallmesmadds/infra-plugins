@@ -1244,7 +1244,7 @@ function standingIn(text) {
   // The first section only. A second one is a shape save refuses and
   // threadShapeProblems reports, so a hand-edited file says so instead of
   // having its sections merged under the wrong areas.
-  const m = src.match(/^#{2}\s*Standing rules\s*$([\s\S]*?)(?=^#{1,2}\s|$(?![\s\S]))/mi);
+  const m = src.match(/^## Standing rules\s*$([\s\S]*?)(?=^#{1,2} |$(?![\s\S]))/m);
   if (!m) return [];
   const out = [];
   let area = null;
@@ -1274,7 +1274,7 @@ function headerOf(text) {
   const src = String(text || '').replace(/\r\n/g, '\n');
   // The same boundary sections() splits on, so the two cannot disagree about
   // where the header ends.
-  const m = /^##\s+\S/m.exec(src);
+  const m = /^## \S/m.exec(src);
   return m ? src.slice(0, m.index) : src;
 }
 
@@ -1293,35 +1293,72 @@ const FENCE_LINE = /^\s*(`{3,}|~{3,})/;
 // One spelling per header label, written exactly as `**Label:** value`.
 const HEADER_LABELS = ['Date', 'Working directory', 'Last session', 'Format', 'Project rules', 'Check accepted'];
 const LABEL_LIKE = /^\s*\*\*([^*]+?):\*\*/;
+// Any spelling of a reserved label: bold or not, a colon inside or outside
+// the bold, spaces anywhere. A header line like this that is not the exact
+// form is a shape problem, because the exact readers would silently miss it.
+const LOOSE_LABEL = /^[\s*_]*(date|working\s+directory|last\s+session|format|project\s+rules|check\s+accepted)[\s*_]*:/i;
 function threadShapeProblems(text, home = os.homedir()) {
   const lines = String(text || '').replace(/\r\n/g, '\n').split('\n');
   const out = [];
   const add = (kind, n, detail) => out.push({ kind, line: n, detail: `line ${n} ${detail}` });
   let inHeader = true;
   let seenTitle = false;
-  let standing = 0;
+  let section = null;
+  const sectionsSeen = new Set();
   const labelsSeen = new Set();
   lines.forEach((line, i) => {
     const n = i + 1;
     if (FENCE_LINE.test(line)) { add('fence', n, 'is a code fence; a thread\'s handoff carries none, because a fenced example heading or rule reads as a real one'); return; }
     if (/^[ \t]+#{1,6}\s/.test(line)) { add('indented-heading', n, 'is a heading with spaces before it; start headings at the beginning of the line'); return; }
-    if (/^#\s/.test(line)) {
-      if (seenTitle) add('extra-title', n, 'is a second level-one heading; a thread\'s handoff has one title line');
-      seenTitle = true;
+    // Any line starting with # is a heading written exactly: hashes, one
+    // space, then text. `##Standing rules` or a bare `##` read as a heading to
+    // one reader and as text to another.
+    if (/^#/.test(line)) {
+      if (!/^#{1,6} \S/.test(line)) { add('malformed-heading', n, 'starts with # but is not a heading written as hashes, one space, then text'); return; }
+      if (/^# /.test(line)) {
+        if (seenTitle) add('extra-title', n, 'is a second level-one heading; a thread\'s handoff has one title line');
+        seenTitle = true;
+        return;
+      }
+      const h = /^## (.+?)\s*$/.exec(line);
+      if (h) {
+        inHeader = false;
+        section = h[1].toLowerCase();
+        // Any section twice, not only the standing one: every reader takes
+        // the first and drops the rest.
+        if (sectionsSeen.has(section)) add('section-repeated', n, `is a second "## ${h[1]}" heading; keep one section of each name`);
+        sectionsSeen.add(section);
+        return;
+      }
+      // The two rule section names belong to level two only. A `###` with
+      // either name is read by the constraints parser as its section, so its
+      // bullets would bind twice.
+      if (/^#{3,6} (constraints still in force|standing rules)\s*$/i.test(line)) {
+        add('rule-line', n, 'reuses a rule section name below level two; use it only as a "## " heading');
+        return;
+      }
+      if (section === 'standing rules' && /^### /.test(line)) return;
+      if (section === 'constraints still in force') {
+        add('rule-line', n, 'is a subheading inside "## Constraints still in force", which ends that section and drops the rules after it; areas belong in Standing rules');
+      }
       return;
     }
-    const h = /^##\s+(.+?)\s*$/.exec(line);
-    if (h) {
-      inHeader = false;
-      if (h[1].toLowerCase() === 'standing rules') {
-        standing += 1;
-        if (standing > 1) add('standing-repeated', n, 'is a second "## Standing rules" heading; keep one section and group rules under ### areas');
+    // Inside a rule section a line is blank or a one-line bullet. A bullet
+    // continued onto the next line is read without its continuation, which
+    // can turn a conditional rule into an unconditional one.
+    if (section === 'constraints still in force' || section === 'standing rules') {
+      if (line.trim() && !/^- \S/.test(line)) {
+        add('rule-line', n, `is neither a "- " bullet nor blank inside "## ${section === 'standing rules' ? 'Standing rules' : 'Constraints still in force'}"; write each rule on one line`);
       }
       return;
     }
     if (!inHeader) return;
     const lab = LABEL_LIKE.exec(line);
-    if (!lab) return;
+    if (!lab) {
+      const loose = LOOSE_LABEL.exec(line);
+      if (loose) add('header-line', n, `looks like a **${loose[1]}:** line but is not written exactly as "**Label:** value"; the readers would not see it`);
+      return;
+    }
     const name = lab[1].trim();
     const known = HEADER_LABELS.find((l) => l.toLowerCase() === name.toLowerCase());
     if (!known) {
@@ -1342,6 +1379,22 @@ function threadShapeProblems(text, home = os.homedir()) {
     }
   });
   return out;
+}
+
+// The format a document's header shows in any spelling, for the downgrade
+// guard only. The one deliberate tolerance in these readers, and it fails
+// closed: an existing thread whose marker was written in some other form
+// still counts as marked, so an older-shape draft cannot replace it. Drafts
+// are held to the exact form by threadShapeProblems; this is only for what is
+// already on disk.
+function looseFormat(text) {
+  const head = headerOf(text);
+  const exact = handoffFormat(text);
+  const m = /^[\s*_]*format[\s*_]*:[\s*_]*(\d+)/im.exec(head);
+  const loose = m ? parseInt(m[1], 10) : null;
+  if (exact === null) return loose;
+  if (loose === null) return exact;
+  return Math.max(exact, loose);
 }
 
 // Every `Retired this session:` line, wherever it sits, with its reason cut
@@ -1658,6 +1711,7 @@ module.exports = {
   threadShapeProblems,
   headerOf,
   retiredAnywhere,
+  looseFormat,
   handoffFormat,
   projectRulesIn,
   constraintsIn,

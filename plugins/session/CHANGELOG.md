@@ -22,9 +22,10 @@ A thread's handoff stays the current state of its subject instead of growing.
   unless given `--accept-check "<reason>"`, which is written into the header.
   Off by default.
 - `save` refuses odd shapes outright (`bad-shape`): any code fence, an indented
-  heading, a second `## Standing rules` heading, a second `# ` title, a header
+  or malformed heading, any `## ` section twice, a rule continued onto a second
+  line, a second `# ` title, a header
   line not in its exact `**Label:** value` form, a project rules entry that is
-  not an absolute path. The parsers read plain text and exact header lines; `constraints --thread` reports a
+  not an absolute or `~/` path. The parsers read plain text and exact header lines; `constraints --thread` reports a
   hand-edited file in one of these shapes as `shapeProblems`. Only word counts
   can refuse under enforcement; the log and old-row flags are advice.
 - `/wrap` sorts every rule into this week, standing or done, proposes standing

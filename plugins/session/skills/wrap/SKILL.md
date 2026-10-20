@@ -435,10 +435,12 @@ Read what comes back:
   `--accept-check "<one-line reason>"`; the reason is written into the saved
   document's header.
 - `reason: "bad-shape"`: the draft has a shape every reader would get wrong: a
-  code fence anywhere, a heading with spaces before it, a second
-  `## Standing rules` heading, a second `# ` title, a header line not written
+  code fence anywhere, a heading with spaces before it or not written as
+  hashes, one space and text, any `## ` section twice, a rule continued onto a
+  second line or a subheading inside the constraints, a second `# ` title, a
+  header line not written
   exactly as `**Label:** value`, or a project rules entry that is not an
-  absolute path. `problems` names each line. Fix them in the draft and save
+  absolute path or a path starting with `~/`. `problems` names each line. Fix them in the draft and save
   again. `--accept-check` does not cover this.
 - `reason: "standing-dropped"`: the thread has standing rules and the draft has
   none and names no project rules file. Carry them into the draft, or name the
@@ -505,7 +507,7 @@ not:
 - [Retired this session: the constraint quoted exactly, because the reason. Drop this line unless something was actually retired.]
 
 ## Standing rules
-[Threads only. Outside threads this section is never read, so a rule put here there stops binding. Drop the section outside threads. One such section per document, plain bullets. A thread's handoff carries no code fences anywhere, and every header line is written exactly as **Label:** value.]
+[Threads only. Outside threads this section is never read, so a rule written into it in a handoff outside a thread stops binding. Drop the section outside threads. One such section per document, plain bullets. A thread's handoff carries no code fences anywhere, and every header line is written exactly as **Label:** value.]
 ### [area the rules govern]
 - [a rule that stays true as long as the subject does]
 

@@ -571,11 +571,13 @@ The pooled answer outside threads never reads `## Standing rules`, so the
 section is for thread handoffs only.
 
 **Shapes are refused at save (`bad-shape`), whatever the budget says:** a code
-fence anywhere in the document, a heading with spaces before it, a second
-`## Standing rules` heading, a second `# ` title, a header line not written
+fence anywhere in the document, a heading with spaces before it or not written
+as hashes, one space and text, any `## ` section twice, a rule continued onto
+a second line or a subheading inside the constraints, a second `# ` title, a
+header line not written
 exactly as `**Label:** value` (one spelling per label, at the start of the line,
 with a value on that line, once), and a `**Project rules:**` entry that is not
-an absolute path. Each is a shape a plain reading gets wrong or would have to be
+an absolute path or a path starting with `~/`. Each is a shape a plain reading gets wrong or would have to be
 lenient about, and `/wrap` is the only writer, so the readers stay exact and
 the writer is held to the shape. If a
 thread file is edited by hand into one of these shapes, `constraints --thread`

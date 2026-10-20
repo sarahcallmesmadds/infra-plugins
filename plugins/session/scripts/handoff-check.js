@@ -66,7 +66,7 @@ function sections(text) {
   const raw = String(text).replace(/\r\n/g, '\n').split('\n');
   const out = [{ heading: null, lines: [] }];
   raw.forEach((line) => {
-    const m = /^##\s+(.+?)\s*$/.exec(line);
+    const m = /^## (.+?)\s*$/.exec(line);
     if (m) out.push({ heading: m[1], lines: [] });
     else out[out.length - 1].lines.push(line);
   });

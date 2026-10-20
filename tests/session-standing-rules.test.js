@@ -191,12 +191,21 @@ const SHAPES = [
   ['tab-indented fence in a rule section', 'fence', (h) => doc(h, { rules: ['R.'], format: 2, standing: { A: ['S.'] } }).replace('- S.', '- S.\n\t```\n## Example\n```')],
   ['fence in the notes', 'fence', (h) => doc(h, { rules: ['R.'], format: 2, extra: '\n## Notes\n```markdown\n## Standing rules\n- Example only.\n- Retired this session: S., because example.\n```\n' })],
   ['indented heading', 'indented-heading', (h) => doc(h, { rules: ['R.'], format: 2, standing: { A: ['S.'] } }).replace('- S.', '- S.\n  ## Notes\n- Example only.')],
-  ['second Standing rules heading', 'standing-repeated', (h) => `${doc(h, { rules: ['R.'], format: 2, standing: { A: ['S.'] } })}\n## Standing rules\n- T.\n`],
+  ['second Standing rules heading', 'section-repeated', (h) => `${doc(h, { rules: ['R.'], format: 2, standing: { A: ['S.'] } })}\n## Standing rules\n- T.\n`],
+  ['heading with no space', 'malformed-heading', (h) => doc(h, { rules: ['R.'], format: 2 }).replace('## Constraints still in force', '##Standing rules\n- Example only.\n\n## Constraints still in force')],
+  ['empty heading', 'malformed-heading', (h) => doc(h, { rules: ['R.'], format: 2 }).replace('## What was worked on', '##\n\n## What was worked on')],
+  ['second constraints section', 'section-repeated', (h) => doc(h, { rules: ['Keep A.'], format: 2 }).replace('## Next actions', '## Constraints still in force\n- Keep B.\n\n## Next actions')],
+  ['rule continued onto a second line', 'rule-line', (h) => doc(h, { rules: ['R.'], format: 2, standing: { A: ['Deploy production'] } }).replace('- Deploy production', '- Deploy production\n  only after approval.')],
+  ['subheading inside the constraints', 'rule-line', (h) => doc(h, { rules: ['Keep A.'], format: 2 }).replace('- Keep A.', '### Area\n- Keep A.')],
+  ['heading of spaces only', 'malformed-heading', (h) => doc(h, { rules: ['Keep A.', 'Keep B.'], format: 2 }).replace('- Keep B.', '## \n- Keep B.')],
+  ['rule section name used as an area', 'rule-line', (h) => doc(h, { rules: ['R.'], format: 2, standing: { 'Constraints still in force': ['S.'] } })],
   ['second title', 'extra-title', (h) => `${doc(h, { rules: ['R.'], format: 2 })}\n# Notes\n${'more words '.repeat(50)}\n`],
   ['indented header label', 'header-line', (h) => doc(h, { rules: ['R.'] }).replace(/(\*\*Working directory:\*\*.*)/, '$1\n  **Format:** 2')],
   ['empty header value', 'header-line', (h) => doc(h, { rules: ['R.'], format: 2 }).replace(/(\*\*Working directory:\*\*.*)/, '$1\n**Last session:**')],
   ['second header label', 'header-line', (h) => doc(h, { rules: ['R.'], format: 2 }).replace(/(\*\*Working directory:\*\*.*)/, '$1\n**Format:** 2')],
   ['Repository spelling', 'header-line', (h) => doc(h, { rules: ['R.'], format: 2 }).replace(/(\*\*Working directory:\*\*.*)/, `$1\n**Repository:** \`${h}\``)],
+  ['label in another spelling', 'header-line', (h) => doc(h, { rules: ['R.'] }).replace(/(\*\*Working directory:\*\*.*)/, '$1\n**Format**: 2')],
+  ['label without bold', 'header-line', (h) => doc(h, { rules: ['R.'] }).replace(/(\*\*Working directory:\*\*.*)/, '$1\nProject rules: /r/CLAUDE.md')],
   ['Check accepted not in its exact form', 'header-line', (h) => doc(h, { rules: ['R.'], format: 2 }).replace(/(\*\*Working directory:\*\*.*)/, '$1\n **Check accepted:** old')],
   ['placeholder on the project rules line', 'project-rules-entry', (h) => doc(h, { rules: ['R.'], format: 2, projectRules: '[for a thread: the files]' })],
   ['relative project rules entry', 'project-rules-entry', (h) => doc(h, { rules: ['R.'], format: 2, projectRules: 'repo/CLAUDE.md' })],
@@ -230,9 +239,9 @@ check('handoff-check reports the same shapes, so the wrap can fix the draft firs
 });
 check('a thread file edited into an odd shape is reported at pickup, not read as whole', () => {
   const home = migrated((h) => [['site-thread', doc(h)]]);
-  fs.writeFileSync(docPath(home, 'site-thread'), SHAPES.find(([, k]) => k === 'standing-repeated')[2](home));
+  fs.writeFileSync(docPath(home, 'site-thread'), SHAPES.find(([, k]) => k === 'section-repeated')[2](home));
   const r = json(home, ['constraints', '--thread', 'site-thread']).body;
-  assert.ok(r.shapeProblems.some((p) => p.kind === 'standing-repeated'), JSON.stringify(r.shapeProblems));
+  assert.ok(r.shapeProblems.some((p) => p.kind === 'section-repeated'), JSON.stringify(r.shapeProblems));
   const text = run(home, ['constraints', '--thread', 'site-thread']).stdout;
   const warn = text.indexOf('may be incomplete');
   const list = text.indexOf('in force this week');
@@ -343,6 +352,17 @@ check('an acceptance is written only when something was excused, and goes once t
   const r = save(home, 'site-thread', doc(home, { rules: ['R.', 'Q.'], format: 2 }), ['--accept-check', 'nothing to excuse']);
   assert.strictEqual(r.body.check.accepted, null);
   assert.doesNotMatch(fs.readFileSync(docPath(home, 'site-thread'), 'utf8'), /Check accepted/);
+});
+
+check('a thread whose marker on disk is in another spelling keeps its protection', () => {
+  // Only possible by hand editing, and it fails closed: the guard reads the
+  // document on disk loosely, so an older-shape draft still cannot replace it.
+  const home = migrated((h) => [['brand-thread', doc(h)]]);
+  fs.writeFileSync(docPath(home, 'brand-thread'), doc(home, { rules: ['R.'] }).replace(/(\*\*Working directory:\*\*.*)/, '$1\n  **Format:** 2'));
+  const before = snapshot(docPath(home, 'brand-thread'));
+  const r = save(home, 'brand-thread', doc(home, { rules: ['R.'] }));
+  assert.strictEqual(r.body.reason, 'format-downgrade', JSON.stringify(r.body));
+  assert.deepStrictEqual(snapshot(docPath(home, 'brand-thread')), before);
 });
 
 check('a thread still in the older shape can be saved either way', () => {

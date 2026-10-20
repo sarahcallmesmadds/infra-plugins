@@ -710,7 +710,9 @@ function saveThread({
       try { currentText = fs.readFileSync(target, 'utf8'); } catch (e) {
         return refuse('unreadable', `${target} could not be read to check its format: ${e.message}`, { draft: from });
       }
-      const was = handoffs.handoffFormat(currentText);
+      // Read loosely, failing closed: a marker on disk in any spelling keeps
+      // its protection. The draft's own marker is read exactly.
+      const was = handoffs.looseFormat(currentText);
       const now2 = handoffs.handoffFormat(draft);
       if (was !== null && was >= 2 && !(now2 !== null && now2 >= was)) {
         return refuse('format-downgrade',
