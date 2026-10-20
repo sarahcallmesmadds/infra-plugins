@@ -5,27 +5,33 @@ const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { isWithin, physicalPath } = require('./worktree-location');
+const { resolveRoots } = require('./worktree-location');
 
 const CONFIG_FILE = path.join(os.homedir(), '.claude', 'git-hygiene.config.json');
 
-function expandHome(value) {
-  if (value === '~') return os.homedir();
-  if (value.startsWith(`~${path.sep}`)) return `${os.homedir()}${path.sep}${value.slice(2)}`;
-  return value;
+function readRaw() {
+  try { return fs.readFileSync(CONFIG_FILE, 'utf8'); }
+  catch (error) {
+    if (error.code === 'ENOENT') return null;
+    throw new Error(`Cannot read ${CONFIG_FILE}: ${error.message}`);
+  }
 }
 
-function readConfig() {
+function parseConfig(raw) {
+  if (raw === null) return {};
   try {
-    const parsed = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
+    const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
       throw new Error('the config must contain a JSON object');
     }
     return parsed;
   } catch (error) {
-    if (error.code === 'ENOENT') return {};
     throw new Error(`Cannot read ${CONFIG_FILE}: ${error.message}`);
   }
+}
+
+function readConfig() {
+  return parseConfig(readRaw());
 }
 
 function show() {
@@ -58,52 +64,15 @@ function parseArgs(argv) {
     throw new Error('Provide --project-root and --worktree-root, or use --show');
   }
   return {
-    projectRoot: expandHome(values['--project-root']),
-    worktreeRoot: expandHome(values['--worktree-root']),
+    projectRoot: values['--project-root'],
+    worktreeRoot: values['--worktree-root'],
     replace: Boolean(values.replace),
   };
 }
 
-function normalizeRoots(projectRootInput, worktreeRootInput) {
-  if (!path.isAbsolute(projectRootInput) || !path.isAbsolute(worktreeRootInput)) {
-    throw new Error('Both paths must be absolute paths (or begin with ~/).');
-  }
-  const projectRoot = physicalPath(projectRootInput);
-  const worktreeRoot = physicalPath(worktreeRootInput);
-  requireExistingDirectory(projectRoot, 'Project root');
-  requireDirectoryOrMissing(worktreeRoot, 'Worktree root');
-  if (projectRoot === worktreeRoot || !isWithin(worktreeRoot, projectRoot)) {
-    throw new Error('Worktree root must be a different folder inside the project root.');
-  }
-  return { projectRoot, worktreeRoot };
-}
-
-function requireExistingDirectory(value, label) {
-  try {
-    if (!fs.statSync(value).isDirectory()) throw new Error('not a directory');
-  } catch (error) {
-    throw new Error(`${label} is not an existing directory: ${value} (${error.message})`);
-  }
-}
-
-function requireDirectoryOrMissing(value, label) {
-  const absolute = path.resolve(value);
-  const root = path.parse(absolute).root;
-  let current = root;
-  for (const part of absolute.slice(root.length).split(path.sep).filter(Boolean)) {
-    current = path.join(current, part);
-    try {
-      if (!fs.statSync(current).isDirectory()) {
-        throw new Error(`${label} has a non-directory path component: ${current}`);
-      }
-    } catch (error) {
-      if (error.code === 'ENOENT') return;
-      throw error;
-    }
-  }
-}
-
-function atomicWrite(config) {
+// `expected` is the file text this run read. Another session can rewrite the
+// file between that read and the rename; without this re-read, its keys vanish.
+function atomicWrite(config, expected) {
   let destination = CONFIG_FILE;
   try {
     destination = fs.realpathSync.native(CONFIG_FILE);
@@ -122,6 +91,9 @@ function atomicWrite(config) {
   const temporary = path.join(directory, `.${path.basename(destination)}.${process.pid}.${crypto.randomBytes(6).toString('hex')}.tmp`);
   try {
     fs.writeFileSync(temporary, `${JSON.stringify(config, null, 2)}\n`, { flag: 'wx', mode: 0o600 });
+    if (readRaw() !== expected) {
+      throw new Error(`${CONFIG_FILE} changed while setup was running. Nothing was written; run setup again.`);
+    }
     fs.renameSync(temporary, destination);
   } catch (error) {
     try { fs.unlinkSync(temporary); } catch (_) { /* No temporary file remains. */ }
@@ -130,13 +102,14 @@ function atomicWrite(config) {
 }
 
 function configure(options) {
-  const roots = normalizeRoots(options.projectRoot, options.worktreeRoot);
-  const config = readConfig();
+  const roots = resolveRoots(options.projectRoot, options.worktreeRoot);
+  const raw = readRaw();
+  const config = parseConfig(raw);
   if (Object.prototype.hasOwnProperty.call(config, 'worktreeLocation') && !options.replace) {
     throw new Error('A worktreeLocation setting already exists. Review it, then rerun with --replace-existing to change it.');
   }
   config.worktreeLocation = roots;
-  atomicWrite(config);
+  atomicWrite(config, raw);
   process.stdout.write(`Configured worktreeLocation in ${CONFIG_FILE}.\n`);
 }
 

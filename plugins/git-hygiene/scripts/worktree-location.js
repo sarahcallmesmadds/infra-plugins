@@ -6,8 +6,10 @@ const path = require('path');
 
 const CONFIG_FILE = path.join(os.homedir(), '.claude', 'git-hygiene.config.json');
 
+// Never path.resolve() here: it collapses `link/..` lexically before the walk
+// below can follow `link`, which lands on the wrong side of a symlink.
 function physicalPath(value, seenLinks = new Set()) {
-  const absolute = path.isAbsolute(value) ? value : path.resolve(value);
+  const absolute = path.isAbsolute(value) ? value : `${process.cwd()}${path.sep}${value}`;
   const root = path.parse(absolute).root;
   let current = root;
   for (const part of absolute.slice(root.length).split(path.sep).filter(Boolean)) {
@@ -46,19 +48,54 @@ function isWithin(candidate, root) {
     && relative !== '..' && !path.isAbsolute(relative));
 }
 
+// Accepts `~/` on every platform and `~\` on Windows, so a path the setup
+// writer accepts is always one this loader expands the same way.
+function expandConfigHome(value) {
+  if (typeof value !== 'string') return value;
+  if (value === '~') return os.homedir();
+  if (value.startsWith('~/') || value.startsWith(`~${path.sep}`)) {
+    return `${os.homedir()}${path.sep}${value.slice(2)}`;
+  }
+  return value;
+}
+
+// The one validation both the setup writer and the hook use. If they ever
+// diverge, a hand-edited config activates a policy setup would have refused.
+function resolveRoots(projectRootInput, worktreeRootInput) {
+  const projectRoot = expandConfigHome(projectRootInput);
+  const worktreeRoot = expandConfigHome(worktreeRootInput);
+  if (typeof projectRoot !== 'string' || typeof worktreeRoot !== 'string'
+      || !path.isAbsolute(projectRoot) || !path.isAbsolute(worktreeRoot)) {
+    throw new Error('Both paths must be absolute paths (or begin with ~/).');
+  }
+  const project = physicalPath(projectRoot);
+  const worktrees = physicalPath(worktreeRoot);
+  let projectIsDirectory = false;
+  try { projectIsDirectory = fs.statSync(project).isDirectory(); } catch (_) { /* reported below */ }
+  if (!projectIsDirectory) throw new Error(`Project root is not an existing directory: ${project}`);
+  const root = path.parse(worktrees).root;
+  let current = root;
+  for (const part of worktrees.slice(root.length).split(path.sep).filter(Boolean)) {
+    current = path.join(current, part);
+    try {
+      if (!fs.statSync(current).isDirectory()) {
+        throw new Error(`Worktree root has a non-directory path component: ${current}`);
+      }
+    } catch (error) {
+      if (error.code === 'ENOENT') break;
+      throw error;
+    }
+  }
+  if (worktrees === project || !isWithin(worktrees, project)) {
+    throw new Error('Worktree root must be a different folder inside the project root.');
+  }
+  return { projectRoot: project, worktreeRoot: worktrees };
+}
+
 function loadPolicy() {
   try {
     const section = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')).worktreeLocation;
-    const expand = (value) => typeof value === 'string'
-      ? value.replace(/^~(?=\/|$)/, os.homedir()) : value;
-    const projectRoot = expand(section && section.projectRoot);
-    const worktreeRoot = expand(section && section.worktreeRoot);
-    if (typeof projectRoot !== 'string' || typeof worktreeRoot !== 'string'
-        || !path.isAbsolute(projectRoot) || !path.isAbsolute(worktreeRoot)) return null;
-    const project = physicalPath(projectRoot);
-    const worktrees = physicalPath(worktreeRoot);
-    if (!isWithin(worktrees, project) || worktrees === project) return null;
-    return { projectRoot: project, worktreeRoot: worktrees };
+    return resolveRoots(section && section.projectRoot, section && section.worktreeRoot);
   } catch (_) { return null; }
 }
 
@@ -280,4 +317,4 @@ function misplacedTarget(command, cwd, policy) {
   return worktreeArgs(words, gitIndex + 1, cwd ? physicalPath(cwd) : null, policy, parsed.unsupported);
 }
 
-module.exports = { loadPolicy, misplacedTarget, physicalPath, isWithin };
+module.exports = { loadPolicy, misplacedTarget, physicalPath, isWithin, resolveRoots };

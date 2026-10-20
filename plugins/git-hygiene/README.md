@@ -227,8 +227,10 @@ in your user-owned configuration. You can also add `worktreeLocation` to
 }
 ```
 
-The worktree folder must be inside the project folder. If the setting is
-missing or invalid, the hook does not block worktree commands. Claude Code and
+The project folder must already exist, and the worktree folder must be inside
+it. The hook applies the same checks as setup, so a hand-written setting setup
+would refuse is treated as invalid. If the setting is missing or invalid, the
+hook does not block worktree commands. Claude Code and
 Codex read the same file. Codex asks you to review and trust the hook before its
 first use.
 

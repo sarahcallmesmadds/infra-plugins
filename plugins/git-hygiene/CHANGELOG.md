@@ -3,12 +3,18 @@
 Upgrade notes for past versions, moved out of the README so that file stays
 focused on current installation, configuration and behavior.
 
-## 0.4.2 — 2026-09-28
+## 0.4.2 — 2026-10-19
 
 **Configure the worktree guard with `/git-hygiene:setup`.** The skill proposes
 the project and worktree roots, asks before changing user-owned configuration,
-and preserves other Git Hygiene settings. The README now clarifies how shell
-syntax affects commands the hook can check.
+and preserves other Git Hygiene settings. If another session changes the file
+while setup runs, setup writes nothing and asks you to run it again. The README
+now clarifies how shell syntax affects commands the hook can check.
+
+**A hand-written setting is checked the way setup checks it.** The hook now
+ignores a `worktreeLocation` whose project folder does not exist or whose
+worktree folder runs through a file. Before, it enforced such a setting. Check
+yours with `/git-hygiene:setup` if the guard stops blocking misplaced worktrees.
 
 ## 0.4.1 — 2026-09-28
 

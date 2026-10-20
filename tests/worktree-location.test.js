@@ -236,16 +236,77 @@ check('loads only an absolute worktree policy nested inside the project root', (
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'worktree-policy-')));
   try {
     fs.mkdirSync(path.join(root, '.claude'), { recursive: true });
-    fs.writeFileSync(path.join(root, '.claude', 'git-hygiene.config.json'), JSON.stringify({
-      worktreeLocation: { projectRoot: path.join(root, 'Projects'), worktreeRoot: path.join(root, 'Projects', 'Worktrees') },
-    }));
-    const result = spawnSync(process.execPath, ['-e', `process.stdout.write(JSON.stringify(require(${JSON.stringify(path.resolve(__dirname, '../plugins/git-hygiene/scripts/worktree-location.js'))}).loadPolicy()))`], {
-      env: { ...process.env, HOME: root }, encoding: 'utf8',
+    fs.mkdirSync(path.join(root, 'Projects'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'Projects', 'a-file'), 'file');
+    const load = (worktreeLocation) => {
+      fs.writeFileSync(path.join(root, '.claude', 'git-hygiene.config.json'), JSON.stringify({ worktreeLocation }));
+      const result = spawnSync(process.execPath, ['-e', `process.stdout.write(JSON.stringify(require(${JSON.stringify(path.resolve(__dirname, '../plugins/git-hygiene/scripts/worktree-location.js'))}).loadPolicy()))`], {
+        env: { ...process.env, HOME: root }, encoding: 'utf8',
+      });
+      assert.strictEqual(result.status, 0, result.stderr);
+      return JSON.parse(result.stdout);
+    };
+    const project = path.join(root, 'Projects');
+    assert.deepStrictEqual(load({ projectRoot: project, worktreeRoot: path.join(project, 'Worktrees') }), {
+      projectRoot: project, worktreeRoot: path.join(project, 'Worktrees'),
     });
-    assert.strictEqual(result.status, 0);
-    assert.deepStrictEqual(JSON.parse(result.stdout), {
-      projectRoot: path.join(root, 'Projects'), worktreeRoot: path.join(root, 'Projects', 'Worktrees'),
+    assert.deepStrictEqual(load({ projectRoot: '~/Projects', worktreeRoot: '~/Projects/Worktrees' }), {
+      projectRoot: project, worktreeRoot: path.join(project, 'Worktrees'),
     });
+    // Each of these is refused by setup, so the hook must refuse it too.
+    assert.strictEqual(load({ projectRoot: 'Projects', worktreeRoot: path.join(project, 'Worktrees') }), null);
+    assert.strictEqual(load({ projectRoot: project, worktreeRoot: path.join(root, 'Outside') }), null);
+    assert.strictEqual(load({ projectRoot: project, worktreeRoot: project }), null);
+    assert.strictEqual(load({ projectRoot: path.join(root, 'Missing'), worktreeRoot: path.join(root, 'Missing', 'W') }), null);
+    assert.strictEqual(load({ projectRoot: project, worktreeRoot: path.join(project, 'a-file', 'Worktrees') }), null);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+check('resolves a relative path by following a symlink before applying ..', () => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'worktree-relative-')));
+  try {
+    const project = path.join(root, 'P');
+    fs.mkdirSync(project, { recursive: true });
+    fs.mkdirSync(path.join(root, 'Outside', 'nested'), { recursive: true });
+    fs.symlinkSync(path.join(root, 'Outside', 'nested'), path.join(project, 'link'));
+    const script = path.resolve(__dirname, '../plugins/git-hygiene/scripts/worktree-location.js');
+    const result = spawnSync(process.execPath, ['-e',
+      `process.stdout.write(require(${JSON.stringify(script)}).physicalPath('link/../Worktrees'))`], {
+      cwd: project, encoding: 'utf8',
+    });
+    assert.strictEqual(result.status, 0, result.stderr);
+    assert.strictEqual(result.stdout, path.join(root, 'Outside', 'Worktrees'));
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+check('setup refuses to write when the config changed after it was read', () => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'worktree-race-')));
+  try {
+    const home = path.join(root, 'home');
+    const project = path.join(root, 'Projects');
+    const configFile = path.join(home, '.claude', 'git-hygiene.config.json');
+    fs.mkdirSync(path.dirname(configFile), { recursive: true });
+    fs.mkdirSync(project, { recursive: true });
+    fs.writeFileSync(configFile, JSON.stringify({ first: true }));
+    // Stand in for another session: rewrite the file the moment setup creates
+    // its temporary file, which is after its read and before its rename.
+    const script = path.resolve(__dirname, '../plugins/git-hygiene/scripts/configure-worktree-location.js');
+    const driver = `
+      const fs = require('fs');
+      const real = fs.writeFileSync;
+      fs.writeFileSync = function (file, ...rest) {
+        const out = real.call(fs, file, ...rest);
+        if (String(file).endsWith('.tmp')) real.call(fs, ${JSON.stringify(configFile)}, JSON.stringify({ first: true, other: 60 }));
+        return out;
+      };
+      process.argv = [process.argv[0], ${JSON.stringify(script)}, '--project-root', ${JSON.stringify(project)},
+        '--worktree-root', ${JSON.stringify(path.join(project, 'Worktrees'))}];
+      require(${JSON.stringify(script)});`;
+    const run = spawnSync(process.execPath, ['-e', driver], { env: { ...process.env, HOME: home }, encoding: 'utf8' });
+    assert.strictEqual(run.status, 1, run.stdout);
+    assert.match(run.stderr, /changed while setup was running/);
+    assert.deepStrictEqual(JSON.parse(fs.readFileSync(configFile, 'utf8')), { first: true, other: 60 });
+    assert.deepStrictEqual(fs.readdirSync(path.dirname(configFile)).filter((name) => name.endsWith('.tmp')), []);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -392,6 +453,7 @@ check('hook emits the documented PreToolUse denial shape for an unapproved path'
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'worktree-hook-')));
   try {
     fs.mkdirSync(path.join(root, '.claude'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'Projects'), { recursive: true });
     fs.writeFileSync(path.join(root, '.claude', 'git-hygiene.config.json'), JSON.stringify({
       worktreeLocation: { projectRoot: path.join(root, 'Projects'), worktreeRoot: path.join(root, 'Projects', 'Worktrees') },
     }));
