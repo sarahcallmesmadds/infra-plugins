@@ -1373,6 +1373,54 @@ check('a negative followed by a participle is not a reversal',
 check('the two-sentence reversal in the present still reports',
   softNames('It is not a leaving move. It is a way to keep the work.').includes('antithesis-copular'), true);
 
+console.log('\nreview round 2: hidden spans, paragraph and section boundaries');
+
+check('a spaced comment inside a word leaves the word whole',
+  choppy('We can re<!-- hidden -->try. Go now. Try again.'), true);
+
+check('a spaced comment inside a word cannot hide a choppy run',
+  choppy('Go. Now. Re<!-- -->try this tomorrow.'), true);
+
+check('a fence opened inside a list item does not shift the lines after it',
+  choppy('- ```\n  code\n  ```\nGo now.\nWe win.\nTry it.'), true);
+
+check('a raw HTML block opened inside a list item does not shift the lines after it',
+  choppy('- <pre>\nx\n</pre>\nGo now.\nIt ran.\nDo so.'), true);
+
+check('a code span wrapping onto a line that starts with - still closes there',
+  choppy('Example `Go now. Try again. Stop here.\n-beta` ends.'), false);
+
+check('a code span over a non-1 ordered line inside a paragraph is still code',
+  softNames('Run `delve\n3. into this rich tapestry, crucial and pivotal\nand vibrant` now.')
+    .includes('generic-vocabulary'), false);
+
+check('a whole-line comment inside a paragraph does not split the run',
+  askedNamesEarly('Leaders make careful choices when the evidence remains incomplete.\n<!-- hidden -->\nTeams learn sound judgment by seeing those choices repeated. Good operators explain their reasoning before the outcome is known.')
+    .includes('near-equal-declarative-run'), true);
+
+check('a heading between sentences ends the paragraph for the run',
+  askedNamesEarly('Leaders make careful choices when the evidence remains incomplete.\n## Notes\nTeams learn sound judgment by seeing those choices repeated. Good operators explain their reasoning before the outcome is known.')
+    .includes('near-equal-declarative-run'), false);
+
+check('a bridge opening a section is not judged against the section above',
+  softNames('The deployment date is Friday. The process has two reviewers.\n\n# Proposal\n\nThis is the same question.')
+    .includes('empty-bridge-sentence'), false);
+
+for (const [label, text] of [
+  ['a present participle', "It isn't ready. It is failing."],
+  ['an adjective', "It isn't fixed. It is broken."],
+  ['a confirmation with that', "It isn't a drill. That's normal."],
+  ['an unrelated present fact', "It isn't ready. It's raining outside."],
+  ['an exclamation in between', "It isn't ready! Honestly. It is fine."],
+]) {
+  check(`a negative followed by ${label} is not a reversal`,
+    softNames(text).includes('antithesis-copular'), false);
+}
+
+check('the reversal the check was written for still reports',
+  softNames("It isn't a skills day. It's about deciding when nobody's certain.")
+    .includes('antithesis-copular'), true);
+
 console.log('\nstructural prose tells from rejected application drafts');
 
 check('an empty bridge sentence is reported',

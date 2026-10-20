@@ -16,37 +16,50 @@ const EM_DASH = String.fromCharCode(0x2014);
 
 // Strip anything that is not prose: code, quotes, headings, lists, tables.
 // A style rule about sentence rhythm has no business judging a bullet list.
+// Filled into the columns of an inline comment instead of spaces, so the
+// prose pass can delete the span outright: "re<!-- x -->try" is one word on
+// the page. Every other caller keeps the default space and its columns.
+const HIDDEN_SPAN = '\u0003';
+
 // The document as a reader sees it: fenced code, raw HTML blocks and HTML
 // comments, whole-line, inline or spanning lines, are gone. Indented code is
-// still read, as it was before this pass was used here.
-// The visibility pass is the one the brochure check and structure.js use.
-// proseOf used to strip only fenced code with a regex of its own, so a draft
-// note left in a comment ("<!-- delve into the tapestry here -->") was read
-// as prose by every lexical check and could raise the reading of a document
-// whose visible text was clean, or break the choppy-run rule the hook
-// enforces.
+// still read, as it was before this pass was used here. The visibility pass
+// is the one the brochure check and structure.js use. proseOf used to strip
+// only fenced code with a regex of its own, so a draft note left in a comment
+// ("<!-- delve into the tapestry here -->") was read as prose by every soft
+// check and could raise the reading of a document whose visible text was
+// clean, or break the choppy-run rule the hook enforces.
 //
-// The pass keeps columns: a hidden span comes back as spaces of the same
-// width (measured over 51,699 lines of the author's documents, every visible
-// line kept its length). Those spaces are dropped here rather than read,
-// because "re<!---->try" is one word on the page and three columns of
-// padding would make it two. Each line comes back with a flag saying it
-// continues a paragraph after an inline comment closed: its text is prose
-// however it starts, so "-->- wait here" is not a list item.
+// Each line comes back with a flag saying it continues a paragraph after an
+// inline comment closed: its text is prose however it starts, so "-->- wait
+// here" is not a list item. An inline comment is deleted from its line, so
+// "re<!-- x -->try" reads as one word. A comment that opens on one line and
+// closes on the next still leaves the two halves as separate words.
 function visibleLines(text) {
-  const source = String(text || '').replace(/\r\n?/g, '\n').split('\n');
-  return withoutFencedBlocks(source.join('\n')).map((line, i) => {
-    if (line.startsWith(MARKDOWN_BOUNDARY)) return { text: '', continues: false };
-    const continues = line.startsWith(MARKDOWN_PARAGRAPH_CONTINUATION);
-    const shown = continues ? line.slice(1) : line;
-    const original = source[i] || '';
-    if (shown.length !== original.length) return { text: shown, continues };
-    let out = '';
-    for (let c = 0; c < shown.length; c += 1) {
-      if (shown[c] === original[c]) out += shown[c];
+  const rows = withoutFencedBlocks(String(text || '').replace(/\r\n?/g, '\n'), { hiddenFill: HIDDEN_SPAN });
+  const hidden = (row) => row.startsWith(MARKDOWN_BOUNDARY);
+  const out = [];
+  rows.forEach((row, i) => {
+    if (hidden(row)) {
+      // A hidden line with visible text directly above and below it, such as
+      // a comment on its own line inside a paragraph, is dropped rather than
+      // read as a blank, which would split a paragraph the reader sees as
+      // one. structure.js reads it the same way.
+      let a = i - 1;
+      while (a >= 0 && hidden(rows[a])) a -= 1;
+      let b = i + 1;
+      while (b < rows.length && hidden(rows[b])) b += 1;
+      const above = a >= 0 && rows[a].replace(/^\u0001/, '').trim();
+      const below = b < rows.length && rows[b].replace(/^\u0001/, '').trim()
+        && !/^\s*(?:=+|-+|\*\s*\*\s*\*[\s*]*|_\s*_\s*_[\s_]*)\s*$/.test(rows[b]);
+      if (!(above && below)) out.push({ text: '', continues: false });
+      return;
     }
-    return { text: out, continues };
+    const continues = row.startsWith(MARKDOWN_PARAGRAPH_CONTINUATION);
+    const shown = continues ? row.slice(1) : row;
+    out.push({ text: shown.split(HIDDEN_SPAN).join(''), continues });
   });
+  return out;
 }
 
 // A code span is a run of backticks closed by a run of the same length, and
@@ -55,21 +68,46 @@ function visibleLines(text) {
 // hid everything between them.
 const CODE_SPAN = /`(?:[^`\n]|\n(?![ \t]*\n))*`/g;
 
+// Code spans come out before any line is judged, as they did before: a span
+// that wraps onto a line starting with "-" still closes on that line. The
+// newlines inside a span are kept, so every line keeps its continuation flag.
+// `fill` is what a span leaves behind on its first line.
+function withoutCodeSpans(lines, fill) {
+  const joined = lines.map((l) => l.text).join('\n')
+    .replace(CODE_SPAN, (span) => fill + span.replace(/[^\n]/g, ''));
+  return joined.split('\n').map((text, i) => ({ text, continues: lines[i].continues }));
+}
+
+function isProseLine({ text: line, continues }) {
+  const t = line.trim();
+  if (!t) return false;
+  if (continues) return true;
+  if (/^[-*>#|]/.test(t)) return false;
+  if (/^\d+\.\s/.test(t)) return false;
+  return true;
+}
+
 function proseOf(text) {
-  return visibleLines(text)
-    .map(({ text: line, continues }) => {
-      const t = line.trim();
-      if (!t) return '\n';
-      if (continues) return line;
-      if (/^[-*>#|]/.test(t)) return '\n';
-      if (/^\d+\.\s/.test(t)) return '\n';
-      return line;
-    })
-    .join('\n')
-    .replace(CODE_SPAN, '')
-    .split('\n')
-    .filter((line) => line.trim())
+  return withoutCodeSpans(visibleLines(text), '')
+    .filter(isProseLine)
+    .map(({ text: line }) => line)
     .join(' ');
+}
+
+// The same prose, one string per section: a heading starts a new one. The
+// bridge check compares a sentence with the two before it, and those have to
+// be in the same section, or a section that opens "This is the same
+// question." is judged against the end of the section above.
+function proseSections(text) {
+  const sections = [[]];
+  for (const row of withoutCodeSpans(visibleLines(text), '')) {
+    if (!row.continues && /^\s{0,3}#{1,6}(?:\s|$)/.test(row.text)) {
+      sections.push([]);
+      continue;
+    }
+    if (isProseLine(row)) sections[sections.length - 1].push(row.text);
+  }
+  return sections.map((lines) => lines.join(' ')).filter((t) => t.trim());
 }
 
 function sentencesOf(prose) {
@@ -254,11 +292,15 @@ function antithesis(prose) {
 // unaffected.
 function copularAntithesis(prose) {
   // The reversal split over two sentences ("It isn't a skills day. It's about
-  // deciding...") is read only when the second sentence restates in the
-  // present. "It wasn't fixed yet. It was merged anyway." and "It isn't ready.
-  // It is merged." are a negative followed by a fact, not a reversal.
+  // deciding...") is read in its spelled-out forms only when the second
+  // sentence restates what the thing is: "it is" or "it's" followed by
+  // "about", an article or a wh-word. "It wasn't fixed yet. It was merged
+  // anyway.", "It isn't ready. It is failing." and "It isn't ready. It's
+  // raining outside." are a negative followed by a fact, not a reversal. The
+  // first pattern is the 0.10.0 one, unchanged.
   const patterns = [
-    /\b(?:it'?s not|it (?:is|was) not|it (?:is|was)n'?t) (about )?[^.]{3,50}\. (?:it'?s|it is|that's)\b(?! \w+ed\b)/gi,
+    /\bit'?s not (about )?[^.]{3,50}\. it'?s\b/gi,
+    /\b(?:it (?:is|was) not|it (?:is|was)n'?t) (about )?[^.!?]{3,50}\. (?:it'?s|it is) (?:about|a|an|the|what|how|who|why|really|actually|more|less)\b/gi,
     /\b(is|are|was|were)n'?t (just |merely |only )?[^.,;]{3,50}, (?:it(?:'s| is)|they(?:'re| are)|that's)\b/gi,
     /\b(is|are) not (just |merely |only )?[^.,;]{3,50}, (?:it|they) (?:is|are)\b/gi,
   ];
@@ -393,21 +435,30 @@ function fragmentBeats(prose) {
 }
 
 function proseParagraphs(text) {
-  return visibleLines(text)
-    .map(({ text: line, continues }) => (continues ? `\u0002${line}` : line))
-    .join('\n')
-    .split(/\n\s*\n/)
-    // A code span leaves one backtick behind: its words are not prose, and
-    // the declarative-run check still needs to know the paragraph held code.
-    .map((paragraph) => paragraph.replace(CODE_SPAN, ' ` '))
-    .map((paragraph) => paragraph
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter((line) => line && (line.startsWith('\u0002')
-        || (!/^[-*>#|]/.test(line) && !/^\d+\.\s/.test(line))))
-      .map((line) => line.replace(/^\u0002/, ''))
-      .join(' '))
-    .filter(Boolean);
+  const paragraphs = [];
+  let current = [];
+  // A code span leaves one backtick behind: its words are not prose, and the
+  // declarative-run check still needs to know the paragraph held code.
+  for (const { text: line, continues } of withoutCodeSpans(visibleLines(text), ' ` ')) {
+    const t = line.trim();
+    if (!t) {
+      if (!continues) {
+        if (current.length) paragraphs.push(current.join(' '));
+        current = [];
+      }
+      continue;
+    }
+    // A heading, list item, quote or table row is a block of its own: it
+    // ends the paragraph above it rather than vanishing from the middle of it.
+    if (!continues && (/^[-*>#|]/.test(t) || /^\d+\.\s/.test(t))) {
+      if (current.length) paragraphs.push(current.join(' '));
+      current = [];
+      continue;
+    }
+    current.push(t);
+  }
+  if (current.length) paragraphs.push(current.join(' '));
+  return paragraphs;
 }
 
 function speakerParagraphTricolon(text) {
@@ -528,7 +579,7 @@ function linesWithCommentCloseOutsideCode(lines, withLaterClose) {
 }
 
 function stripInlineComments(
-  line, lineIndex, codeDelimiter, withLaterClose, commentClosesLater
+  line, lineIndex, codeDelimiter, withLaterClose, commentClosesLater, hiddenFill = ' '
 ) {
   let linkDepth = 0;
   let bracketDepth = 0;
@@ -635,7 +686,7 @@ function stripInlineComments(
           opensComment: true, codeDelimiter,
         };
       }
-      pieces.push(' '.repeat(close + 3 - index));
+      pieces.push(hiddenFill.repeat(close + 3 - index));
       cursor = close + 3;
       index = close + 2;
       continue;
@@ -707,7 +758,7 @@ function startsInlineBlock(line) {
   return Boolean(html && html.interruptsParagraph);
 }
 
-function withoutFencedBlocks(text) {
+function withoutFencedBlocks(text, { hiddenFill = ' ' } = {}) {
   let fence = null;
   let htmlComment = null;
   let rawHtml = null;
@@ -912,7 +963,7 @@ function withoutFencedBlocks(text) {
     const commentScan = lineIndent - commentParent.base <= 3
       ? stripInlineComments(
         blockLine, lineIndex, inlineCodeDelimiter, withLaterClose,
-        commentCloseOnLaterLine.has(lineIndex)
+        commentCloseOnLaterLine.has(lineIndex), hiddenFill
       )
       : {
         remaining: blockLine, foundComment: false, blockCommentLine: false,
@@ -1693,7 +1744,7 @@ function checkAll(text, config = {}) {
   band('forced-enthusiasm', P.FAKE_ENTHUSIASM, 1);
   band('melodramatic-pivot', P.MELODRAMA, 1);
 
-  const bridges = emptyBridgeSentences(rawProse);
+  const bridges = proseSections(text).flatMap((section) => emptyBridgeSentences(section));
   if (bridges.length) {
     soft.push({ name: 'empty-bridge-sentence', count: bridges.length });
   }
