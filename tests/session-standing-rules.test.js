@@ -161,6 +161,23 @@ check('the format marker and the project rules line are read from the header', (
   assert.deepStrictEqual(handoffs.projectRulesIn(text, '/h'), ['/repo/CLAUDE.md', '/h/other/AGENTS.md']);
 });
 
+check('a heading inside a code fence neither ends the standing section nor starts a fake one', () => {
+  const real = '## Standing rules\n### A\n- one\n```\n## Example\n```\n- two\n\n## Next actions\n';
+  assert.deepStrictEqual(handoffs.standingIn(real).map((r) => r.text), ['one', 'two']);
+  const fake = '## What was worked on\n```\n## Standing rules\n- not a rule\n```\n\n## Standing rules\n- the rule\n';
+  assert.deepStrictEqual(handoffs.standingIn(fake).map((r) => r.text), ['the rule']);
+});
+
+check('the format marker counts only as a real header line', () => {
+  assert.strictEqual(handoffs.handoffFormat('# H\n```\n**Format:** 2\n```\n'), null, 'a fenced example marked the document');
+  assert.strictEqual(handoffs.handoffFormat('# H\n  **Format:** 2\n'), 2, 'an indented marker was missed');
+  assert.strictEqual(handoffs.handoffFormat('# H\n**Format:**\n2\n'), null, 'the value was read from the next line');
+});
+
+check('an empty project rules line names no file', () => {
+  assert.deepStrictEqual(handoffs.projectRulesIn('**Project rules:**\n\n## What was worked on\n', '/h'), []);
+});
+
 // ------------------------------------------------- what a thread binds ----
 
 check('constraints --thread returns this week, the standing rules and the project files, labelled', () => {
@@ -199,6 +216,25 @@ check('a draft in the older shape cannot replace a thread already in the new one
   // The new shape saves, which is the other half: the guard is not a lock.
   const ok = save(home, 'brand-thread', doc(home, { rules: ['R.'], standing: { Look: ['S.', 'T.'] }, format: 2 }));
   assert.strictEqual(ok.body.saved, true, JSON.stringify(ok.body));
+});
+
+check('a draft that keeps the marker and drops every standing rule is refused', () => {
+  const home = migrated((h) => [['brand-thread', doc(h)]]);
+  fs.writeFileSync(docPath(home, 'brand-thread'), doc(home, { rules: ['R.'], standing: { Look: ['S.'] }, format: 2 }));
+  const before = snapshot(docPath(home, 'brand-thread'));
+  const r = save(home, 'brand-thread', doc(home, { rules: ['R.'], format: 2 }));
+  assert.strictEqual(r.body.reason, 'standing-dropped', JSON.stringify(r.body));
+  assert.deepStrictEqual(snapshot(docPath(home, 'brand-thread')), before);
+  // Naming where they went is the legitimate route, and it saves.
+  const moved = save(home, 'brand-thread', doc(home, { rules: ['R.'], format: 2, projectRules: '/repo/CLAUDE.md' }));
+  assert.strictEqual(moved.body.saved, true, JSON.stringify(moved.body));
+});
+
+check('a marker shown in a fenced example does not get an older draft past the guard', () => {
+  const home = migrated((h) => [['brand-thread', doc(h)]]);
+  fs.writeFileSync(docPath(home, 'brand-thread'), doc(home, { rules: ['R.'], standing: { Look: ['S.'] }, format: 2 }));
+  const r = save(home, 'brand-thread', doc(home, { rules: ['R.'], extra: '\n```\n**Format:** 2\n```\n' }));
+  assert.strictEqual(r.body.reason, 'format-downgrade', JSON.stringify(r.body));
 });
 
 check('a thread still in the older shape can be saved either way', () => {
@@ -257,6 +293,35 @@ check('a file row dated before the handoff is flagged; an undated one is not gue
   const row = r.flags.find((x) => x.kind === 'old-file-rows');
   assert.ok(row, JSON.stringify(r.flags));
   assert.strictEqual(row.count, 1);
+});
+
+check('dates still to come are a plan, not a log', () => {
+  const home = tmpHome();
+  const worked = 'The launch is set for 2026-11-05.\n\nThe review follows on 2026-11-12.';
+  const r = json(home, ['handoff-check', '--file', draft(home, doc(home, { rules: ['R.'], worked }))]).body;
+  assert.ok(!r.flags.some((f) => f.kind === 'log'), JSON.stringify(r.flags));
+});
+
+check('a dated filename is not an old row', () => {
+  const home = tmpHome();
+  const files = '\n## Files created or changed\n| File | What |\n|---|---|\n| 2026-01-01-plan.md | updated today |\n';
+  const r = json(home, ['handoff-check', '--file', draft(home, doc(home, { rules: ['R.'], extra: files }))]).body;
+  assert.ok(!r.flags.some((f) => f.kind === 'old-file-rows'), JSON.stringify(r.flags));
+});
+
+check('a fenced heading does not hide the narrative after it from the body cap', () => {
+  const home = tmpHome();
+  const narrative = 'Narrative that belongs in the body and is long. '.repeat(200);
+  const body = doc(home, { rules: ['R.'], extra: `\n## Notes\n\`\`\`\n## Standing rules\n\`\`\`\n${narrative}\n` });
+  const r = json(home, ['handoff-check', '--file', draft(home, body)]).body;
+  assert.ok(r.flags.some((f) => f.kind === 'body-long'), `the narrative hid behind a fenced heading: body ${r.body}`);
+});
+
+check('a section written twice is measured as one', () => {
+  const home = tmpHome();
+  const text = doc(home, { rules: ['R.'], worked: 'Short.', extra: `\n## What was worked on\n${'More words about the work. '.repeat(30)}\n` });
+  const r = json(home, ['handoff-check', '--file', draft(home, text)]).body;
+  assert.ok(r.flags.some((f) => f.kind === 'worked-on-long'), JSON.stringify(r.flags));
 });
 
 check('handoff-check on a file that is not there says so and exits nonzero', () => {
@@ -396,6 +461,11 @@ check('pickup prints standing rules and project files in full, after this week a
   const pickup = fs.readFileSync(path.join(ROOT, 'skills', 'pickup', 'SKILL.md'), 'utf8');
   const tpl = pickup.slice(pickup.indexOf('Thread: {slug}'));
   const at = (s) => tpl.indexOf(s);
+  // Each one has to be there first: a missing heading reads as -1, which
+  // sorts ahead of everything and passes an order check.
+  for (const h of ['**Still binding:**', '**Standing rules:**', '**Project rules files:**', '**Next actions per the handoff:**']) {
+    assert.ok(at(h) !== -1, `${h} is gone from the pickup output`);
+  }
   assert.ok(at('**Still binding:**') < at('**Standing rules:**') && at('**Standing rules:**') < at('**Project rules files:**')
     && at('**Project rules files:**') < at('**Next actions per the handoff:**'), 'the order of the binding lists changed');
   assert.match(pickup, /each is printed in\s+full/);

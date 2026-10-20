@@ -1221,6 +1221,27 @@ function bulletsIn(text) {
   return { live, retired };
 }
 
+// The text with every fenced code block blanked line for line, so a heading
+// or a header line shown as an example inside a fence is not read as the real
+// thing. Line count is kept, so nothing after a fence moves.
+//
+// Used by the parsers added for standing rules and by the handoff check. Not
+// by bulletsIn: the constraints parser outside threads is the pooled answer,
+// and changing what it reads would change what a project handoff binds.
+function withoutFences(text) {
+  const lines = String(text || '').replace(/\r\n/g, '\n').split('\n');
+  let fence = null;
+  return lines.map((line) => {
+    const m = /^\s{0,3}(`{3,}|~{3,})/.exec(line);
+    if (fence) {
+      if (m && m[1][0] === fence[0] && m[1].length >= fence.length) fence = null;
+      return '';
+    }
+    if (m) { fence = m[1]; return ''; }
+    return line;
+  }).join('\n');
+}
+
 // Rules a thread keeps beyond the current piece of work, under a
 // `## Standing rules` heading, grouped by `### <area>` subheadings.
 //
@@ -1234,7 +1255,7 @@ function bulletsIn(text) {
 // reads this section, so a project handoff that happens to carry one binds
 // exactly what it did before.
 function standingIn(text) {
-  const src = String(text || '').replace(/\r\n/g, '\n');
+  const src = withoutFences(text);
   const m = src.match(/^#{2}\s*Standing rules\s*$([\s\S]*?)(?=^#{1,2}\s|$(?![\s\S]))/mi);
   if (!m) return [];
   const out = [];
@@ -1261,7 +1282,9 @@ function standingIn(text) {
 // Format 2 is the shape with a standing rules section; a document without the
 // line is the older shape, which every handoff written before 0.10 is.
 function handoffFormat(text) {
-  const m = /^\*\*Format:\*\*\s*(\d+)\s*$/mi.exec(String(text || ''));
+  // Same line only, leading spaces allowed, and never inside a fence: an
+  // example of the header must not mark a document as the new shape.
+  const m = /^[ \t]*\*\*Format:\*\*[ \t]*(\d+)[ \t]*$/mi.exec(withoutFences(text));
   return m ? parseInt(m[1], 10) : null;
 }
 
@@ -1270,11 +1293,13 @@ function handoffFormat(text) {
 // once they moved into a repository's own instructions, and pickup names them
 // so a rule that left the handoff does not leave the session's view with it.
 function projectRulesIn(text, home = os.homedir()) {
-  const m = /^\*\*Project rules:\*\*\s*(.+)$/mi.exec(String(text || ''));
+  // The value ends at its own line. With `\s*` an empty line handed back the
+  // next heading as a file path.
+  const m = /^[ \t]*\*\*Project rules:\*\*[ \t]*(.*)$/mi.exec(withoutFences(text));
   if (!m) return [];
   return m[1].split(',')
     .map((p) => p.trim().replace(/^`+|`+$/g, '').trim())
-    .filter(Boolean)
+    .filter((p) => p && !p.startsWith('#'))
     .map((p) => (p === '~' ? home : (p.startsWith('~/') ? path.join(home, p.slice(2)) : p)));
 }
 
@@ -1551,6 +1576,7 @@ module.exports = {
   handoffDir,
   bulletsIn,
   standingIn,
+  withoutFences,
   handoffFormat,
   projectRulesIn,
   constraintsIn,

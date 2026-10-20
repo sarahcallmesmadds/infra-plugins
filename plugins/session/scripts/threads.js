@@ -673,6 +673,16 @@ function saveThread({
           + 'a session running the older skill cannot write over it. Update the session plugin, restart, and wrap again',
           { draft: from });
       }
+      // The marker alone is not the rules. A draft that keeps the line and
+      // loses every standing rule, naming no project file they moved to, is
+      // the same loss by another route, and a rule leaving by omission is the
+      // one thing a retirement line exists to prevent.
+      if (was !== null && was >= 2 && handoffs.standingIn(currentText).length
+        && !handoffs.standingIn(draft).length && !handoffs.projectRulesIn(draft, home).length) {
+        return refuse('standing-dropped',
+          `${target} holds standing rules and the draft has none and names no project rules file; carry them, or say where they went`,
+          { draft: from });
+      }
     }
     if (lockLost(handoffs.indexLockPath(home))) return refuse('lock-lost', 'the handoff lock was taken over', { draft: from });
 

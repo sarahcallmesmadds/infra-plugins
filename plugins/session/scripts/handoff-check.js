@@ -18,6 +18,8 @@
 
 const fs = require('fs');
 
+const { withoutFences } = require('./handoffs');
+
 const DEFAULT_BUDGET = {
   // Off by default: a check that refuses most real handoffs on its first day
   // gets switched off, and then nothing measures them at all. The numbers are
@@ -58,15 +60,28 @@ function words(text) {
 // Splits on level-two headings only. A `###` inside a section belongs to it:
 // the standing rules section carries its areas that way, and splitting there
 // would report each area as a section of its own.
+// Headings inside a fenced block are examples, not sections: one there either
+// hid the narrative after it under a fake rule section or exposed real rules
+// to the body cap. The fence decides where sections split; the words counted
+// are the document's own, fences included.
 function sections(text) {
-  const lines = String(text).replace(/\r\n/g, '\n').split('\n');
+  const raw = String(text).replace(/\r\n/g, '\n').split('\n');
+  const bare = withoutFences(text).split('\n');
   const out = [{ heading: null, lines: [] }];
-  for (const line of lines) {
-    const m = /^##\s+(.+?)\s*$/.exec(line);
-    if (m && !/^###/.test(line)) out.push({ heading: m[1], lines: [] });
+  raw.forEach((line, i) => {
+    const m = /^##\s+(.+?)\s*$/.exec(bare[i]);
+    if (m) out.push({ heading: m[1], lines: [] });
     else out[out.length - 1].lines.push(line);
+  });
+  // A heading written twice is one section. Measured separately, a short
+  // first copy let a long second one escape its cap.
+  const merged = [];
+  for (const s of out) {
+    const prior = s.heading && merged.find((x) => x.heading && x.heading.trim().toLowerCase() === s.heading.trim().toLowerCase());
+    if (prior) prior.lines.push('', ...s.lines);
+    else merged.push({ heading: s.heading, lines: [...s.lines] });
   }
-  return out.map((s) => ({ heading: s.heading, body: s.lines.join('\n') }));
+  return merged.map((s) => ({ heading: s.heading, body: s.lines.join('\n') }));
 }
 
 function key(heading) {
@@ -101,11 +116,15 @@ function checkText(text, budget = DEFAULT_BUDGET) {
   // A log, measured three ways, each of which is what a rewrite in place does
   // not produce: two Last session lines, two dated paragraphs describing what
   // was worked on, or two dated headings.
-  const lastLines = (String(text).match(/^\*\*Last session:\*\*/gmi) || []).length;
+  // Only dates on or before the handoff's own count: a paragraph naming a
+  // date still to come is a plan, not a record of a session.
+  const bare = withoutFences(text);
+  const past = (s) => (s.match(ISO_ALL) || []).some((d) => !date || d <= date);
+  const lastLines = (bare.match(/^\*\*Last session:\*\*/gmi) || []).length;
   const worked = all.find((s) => key(s.heading) === 'what was worked on');
-  const datedParas = worked ? paragraphs(worked.body).filter((p) => ISO.test(p)).length : 0;
-  const datedHeadings = String(text).split(/\r?\n/)
-    .filter((l) => /^#{2,6}\s/.test(l) && ISO.test(l)).length;
+  const datedParas = worked ? paragraphs(withoutFences(worked.body)).filter(past).length : 0;
+  const datedHeadings = bare.split('\n')
+    .filter((l) => /^#{2,6}\s/.test(l) && past(l)).length;
   const entries = Math.max(lastLines, datedParas, datedHeadings);
   if (entries > 1) {
     flags.push({
@@ -126,9 +145,15 @@ function checkText(text, budget = DEFAULT_BUDGET) {
   // row with no date cannot be told apart, so it is not guessed at.
   const files = all.find((s) => key(s.heading) === 'files created or changed');
   if (files && date) {
+    // The first column is the file, and a dated filename says when the file
+    // was named, not which session touched it. Only the other cells count,
+    // and only a date standing on its own there.
     const older = files.body.split('\n')
       .filter((l) => /^\s*\|/.test(l) && !/^\s*\|[\s:|-]+\|\s*$/.test(l))
-      .filter((l) => (l.match(ISO_ALL) || []).some((d) => d < date));
+      .filter((l) => {
+        const cells = l.trim().replace(/^\||\|$/g, '').split('|').slice(1).join(' ');
+        return (cells.match(/(?<![\w./-])\d{4}-\d{2}-\d{2}(?![\w/-])/g) || []).some((d) => d < date);
+      });
     if (older.length) {
       flags.push({ kind: 'old-file-rows', section: files.heading, count: older.length, detail: `${older.length} row${older.length === 1 ? '' : 's'} in "Files created or changed" dated before ${date}; list this session's files only` });
     }

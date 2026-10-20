@@ -194,9 +194,9 @@ and keeps reporting both until the save.
 ### Outside threads only
 
 Everything from here to the end of this step is about handoffs outside threads,
-with one exception: the rules for moving a rule into a project's instructions
-file (reachability, asking first, writing it before retiring it) also govern
-the batch a thread proposes above. Nothing else below applies to a thread.
+except where a paragraph names threads itself, and except the rules for moving a
+rule into a project's instructions file (reachability, asking first, writing it
+before retiring it), which also govern the batch a thread proposes above.
 
 
 ```bash
@@ -405,8 +405,9 @@ It reports words per section and flags a session log (more than one dated
 session entry), "What was worked on" over its limit, file rows dated before this
 session, a body over its limit without the two rule sections, and any section
 over its limit except Standing rules. Fix every flag in the draft, then check
-again. The check is the enforcement of "current state, not a log": a draft it
-flags is a log, whatever it was meant to be. `save` measures the same way and
+again. The check is how "current state, not a log" is enforced. Its flags are
+structural, so read each one against the draft: a `log` flag means fold the
+dated entries into one current account; a size flag means cut what is history. `save` measures the same way and
 reports what it found.
 
 Write the whole document to a draft file outside `~/.planning/handoffs` (in
@@ -430,6 +431,9 @@ Read what comes back:
   Only when a flag cannot be fixed this session, save with
   `--accept-check "<one-line reason>"`; the reason is written into the saved
   document's header.
+- `reason: "standing-dropped"`: the thread has standing rules and the draft has
+  none and names no project rules file. Carry them into the draft, or name the
+  file they went to, and save again.
 - `reason: "format-downgrade"`: the thread is already in the new shape and this
   draft is not. That means the skill text running here is older than the
   document. Stop and say the session plugin needs updating and a restart.
@@ -569,8 +573,8 @@ guards it:
   no dated incident, no quote unless the quote is the rule.
 - **A correction becomes a standing rule in these notes only when the user says
   it is a rule.** A correction given about one draft, one deck or one email
-  belongs to that thread: write it into the thread's handoff, as a this-week
-  constraint or a standing rule there. Recording every correction here as a
+  belongs to the handoff for that work: in a thread, as a this-week constraint
+  or a standing rule there; outside threads, as a constraint in that handoff. Recording every correction here as a
   permanent rule is how these notes grow until the important rules are lost
   among the one-off ones.
 - Never rewrite the whole thing.
