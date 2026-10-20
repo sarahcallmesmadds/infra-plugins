@@ -1293,10 +1293,6 @@ const FENCE_LINE = /^\s*(`{3,}|~{3,})/;
 // One spelling per header label, written exactly as `**Label:** value`.
 const HEADER_LABELS = ['Date', 'Working directory', 'Last session', 'Format', 'Project rules', 'Check accepted'];
 const LABEL_LIKE = /^\s*\*\*([^*]+?):\*\*/;
-// Any spelling of a reserved label: bold or not, a colon inside or outside
-// the bold, spaces anywhere. A header line like this that is not the exact
-// form is a shape problem, because the exact readers would silently miss it.
-const LOOSE_LABEL = /^[\s*_>\-+]*(\d+[.)]\s*)?[\s*_]*(date|working\s+directory|last\s+session|format|project\s+rules|check\s+accepted)[\s*_]*:/i;
 // Line breaks other than \n and \r\n. A bare \r or a Unicode line or
 // paragraph separator is a line end to some readers and not to others, so a
 // heading or bullet could be seen by one and missed by the next.
@@ -1453,31 +1449,26 @@ function threadShapeProblems(text) {
       if (loose) add('header-line', n, `is a **${loose[1]}:** line below the header; header lines go above the first "## " heading only`);
       return;
     }
-    const lab = LABEL_LIKE.exec(line);
-    // A header line starts at the margin. An indented one reads as a
-    // continuation of the line above to a person, and as nothing to a reader,
-    // so a second project rules path written that way was silently lost.
-    if (/^\s+\S/.test(line) && !lab) {
-      add('header-line', n, 'is an indented line in the header; header lines start at the beginning of the line, and project rules files go on one line, separated by commas');
+    // The header is an allowed list: between the title and the first "## "
+    // heading, only blank lines and the label lines the wrap writes, each
+    // exactly "**Label:** value" at the start of the line. Catching
+    // near-misses one at a time (a numbered label, a word broken inside a
+    // label, a second path on an indented line) drew a new one every round,
+    // and each was a header value no reader saw.
+    if (!line.trim()) return;
+    const exactLine = /^\*\*(Date|Working directory|Last session|Format|Project rules|Check accepted):\*\* \S/.exec(line);
+    if (!exactLine) {
+      // The reason says what the line looks like, so the wrap can fix it in one pass.
+      const lab = LABEL_LIKE.exec(line) || /^[\s*_>\-+]*(?:\d+[.)]\s*)?[\s*_]*([A-Za-z][A-Za-z0-9 ]*?)[\s*_]*:/.exec(line);
+      const near = lab && HEADER_LABELS.find((l) => letters(l) === letters(lab[1]));
+      let hint;
+      if (near) hint = `it looks like a **${near}:** line; write it exactly as "**${near}:** value" at the start of the line`;
+      else if (lab && /^(repository|repo)$/i.test(lab[1].trim())) hint = 'a thread names its folder on a **Working directory:** line';
+      else hint = 'move this text into a section, such as "## Context to reload"';
+      add('header-line', n, `is not a header line; between the title and the first "## " heading a thread's handoff has only blank lines and ${HEADER_LABELS.map((l) => `**${l}:**`).join(', ')} lines. ${hint[0].toUpperCase()}${hint.slice(1)}`);
       return;
     }
-    if (!lab) {
-      const loose = LOOSE_LABEL.exec(line);
-      if (loose) add('header-line', n, `looks like a **${loose[2]}:** line but is not written exactly as "**Label:** value"; the readers would not see it`);
-      return;
-    }
-    const name = lab[1].trim();
-    // Case and spacing are ignored here only to recognise a reserved label
-    // written wrongly, which is then refused below; it is never read.
-    // Letters only, so a word broken by a space or a stray digit
-    // (`**For mat:**`, `**Format2:**`) is still recognised, and refused below.
-    const known = HEADER_LABELS.find((l) => letters(l) === letters(name));
-    if (!known) {
-      if (/^(repository|repo)$/i.test(name)) add('header-line', n, `uses **${name}:**; a thread names its folder on a **Working directory:** line`);
-      return;
-    }
-    const exact = new RegExp(`^\\*\\*${known.replace(/ /g, ' ')}:\\*\\* \\S`);
-    if (!exact.test(line)) { add('header-line', n, `is a **${known}:** line not written exactly as "**${known}:** value" at the start of the line with a value`); return; }
+    const known = exactLine[1];
     if (labelsSeen.has(known)) { add('header-line', n, `is a second **${known}:** line`); return; }
     labelsSeen.add(known);
     // A small whole number: a long one reads back rounded, so two different

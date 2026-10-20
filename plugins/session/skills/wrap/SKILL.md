@@ -386,6 +386,8 @@ this session. Rewrite it from the version read in Step 1:
 - replace "Verified vs assumed" with what is true now;
 - set `**Last session:**` to today's date and one line on what changed;
 - set `**Format:** 2` in the header;
+- keep the header to the template's label lines, each exactly
+  `**Label:** value`; any other text goes in a section;
 - use the template's `## ` sections and no others; anything else, a dated
   session section included, folds into one of them under a `### ` heading;
 - replace or delete every bracketed placeholder; save refuses one left in a

@@ -28,8 +28,8 @@ A thread's handoff stays the current state of its subject instead of growing.
   wholly in brackets (it reads as the template placeholder), a retirement line
   not in its exact `- Retired this session:` form at the start of a line, an
   HTML comment or HTML block tag such as `<pre>`, a heading underlined with
-  `---` or `===`, a header label behind a bullet, number or quote
-  mark or with a word broken inside it, an indented header line, a subheading inside What was worked on, a `**Format:**` value
+  `---` or `===`, any header line that is not blank or one of the
+  template's label lines written exactly (prose in the header included), a subheading inside What was worked on, a `**Format:**` value
   that is not a whole number from 1 to 999, any code
   fence, an indented
   or malformed heading, a rule section name in any spelling but its own, any

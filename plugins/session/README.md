@@ -581,8 +581,10 @@ twice, a header label written below the header (`**Repository:**` and
 reads as the template placeholder, a retirement line not written exactly as
 `- Retired this session: ...` at the start of a line, an HTML comment or an HTML block tag such as `<pre>` (a
 commented-out or example rule or retirement is still read), a heading
-underlined with `---` or `===`, a header label behind a bullet, number or quote mark or with a word broken
-inside it, an indented header line, a subheading inside What was
+underlined with `---` or `===`, any line between the title and the first `## ` heading that is not blank or
+one of the label lines the template writes (Date, Working directory, Last
+session, Format, Project rules, and Check accepted from save), each written
+once as exactly `**Label:** value` at the start of the line, a subheading inside What was
 worked on, a `**Format:**` value that is not a whole number from 1 to 999, a code
 fence anywhere in the document, a heading with spaces before it or not written
 as hashes, one space and text, `## Standing rules` or `## Constraints still in

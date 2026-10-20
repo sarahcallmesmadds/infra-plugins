@@ -251,6 +251,8 @@ const SHAPES = [
   ['a label broken inside a word', 'header-line', (h) => doc(h, { rules: ['R.'] }).replace(/(\*\*Working directory:\*\*.*)/, '$1\n**For mat:** 2')],
   ['a label with a stray digit', 'header-line', (h) => doc(h, { rules: ['R.'] }).replace(/(\*\*Working directory:\*\*.*)/, '$1\n**Format2:** 2')],
   ['a heading run together with its label', 'header-line', (h) => doc(h, { rules: ['R.'], format: 2 }).replace(/(\*\*Working directory:\*\*.*)/, '$1\n**Projectrules:** /repo/CLAUDE.md')],
+  ['a prose line in the header', 'header-line', (h) => doc(h, { rules: ['R.'], format: 2 }).replace(/(\*\*Working directory:\*\*.*)/, '$1\nThis is the thread for the site rebuild, picked up from last week.')],
+  ['an unknown bold label in the header', 'header-line', (h) => doc(h, { rules: ['R.'], format: 2 }).replace(/(\*\*Working directory:\*\*.*)/, '$1\n**Status:** open')],
   ['Unicode paragraph separator', 'line-break', (h) => doc(h, { rules: ['R.'], format: 2 }).replace('- R.', `- R.${String.fromCharCode(0x2029)}- Q.`)],
 ];
 
@@ -389,6 +391,23 @@ check('a Standing rules heading with a tag after it still guards its rules on di
   const r = save(home, 'site-thread', doc(home, { rules: ['R.'], format: 2 }));
   assert.strictEqual(r.body.reason, 'standing-dropped', JSON.stringify(r.body));
   assert.deepStrictEqual(snapshot(docPath(home, 'site-thread')), before);
+});
+
+check('a header holding only the wrap template\'s label lines and blank lines passes', () => {
+  const wrap = fs.readFileSync(path.join(ROOT, 'skills', 'wrap', 'SKILL.md'), 'utf8');
+  const block = wrap.match(/```markdown\n([\s\S]*?)```/)[1];
+  const head = block.slice(0, block.search(/^## /m));
+  // Fill each placeholder value with a real one of its kind.
+  const filled = head.split('\n').map((l) => {
+    const m = /^\*\*([^*]+):\*\* /.exec(l);
+    if (!m) return l;
+    const value = { Format: '2', 'Project rules': '~/repo/CLAUDE.md', 'Working directory': '/x' }[m[1]] || '2026-10-20';
+    return `**${m[1]}:** ${value}`;
+  }).join('\n');
+  const labels = [...filled.matchAll(/^\*\*([^*]+):\*\*/gm)].map((m) => m[1]);
+  assert.ok(labels.length >= 5, labels.join(', '));
+  const text = `${filled}\n**Check accepted:** a reason\n\n## What was worked on\nThe subject.\n`;
+  assert.deepStrictEqual(handoffs.threadShapeProblems(text), []);
 });
 
 check('a Windows line ending is not a shape problem', () => {
