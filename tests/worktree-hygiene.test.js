@@ -874,7 +874,9 @@ check('a project folder that cannot be searched is reported, not dropped', () =>
     assert.deepStrictEqual(found.repositories.map((repo) => path.resolve(repo)), [path.resolve(f.repo)]);
     assert.deepStrictEqual(found.unreadable.map((repo) => path.resolve(repo)), [path.resolve(closed)]);
   } finally {
-    fs.chmodSync(closed, 0o755);
+    // Restore access first so cleanup can delete it, without letting a missing
+    // folder replace the failure that stopped the test.
+    try { fs.chmodSync(closed, 0o755); } catch (_) { /* never created */ }
     f.cleanup();
   }
 });
