@@ -753,7 +753,9 @@ function saveThread({
       // starts with the section's name: a missing title reported at line 1,
       // or a "## Notes on standing rules" section, is not a hidden section.
       const curLines = String(currentText).replace(/\r\n/g, '\n').split('\n');
-      const HEADING_KINDS = new Set(['malformed-heading', 'unknown-section', 'indented-heading', 'line-break']);
+      // A `# ` or `### ` Standing rules heading is read by no reader either.
+      // A missing title has its own kind, reported at line 1 whatever is there.
+      const HEADING_KINDS = new Set(['malformed-heading', 'unknown-section', 'indented-heading', 'line-break', 'extra-title', 'rule-line']);
       const unreadable = handoffs.threadShapeProblems(currentText)
         .filter((p) => HEADING_KINDS.has(p.kind))
         .map((p) => curLines[p.line - 1] || '')

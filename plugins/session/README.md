@@ -579,7 +579,9 @@ reused at a deeper level, a `# ` title that is not the first line or comes
 twice, a header label written below the header (`**Repository:**` and
 `**Repo:**` included), a rule bullet or `### ` area wholly in brackets, which
 reads as the template placeholder, a retirement line not written exactly as
-`- Retired this session: ...` at the start of a line, a code
+`- Retired this session: ...` at the start of a line, an HTML comment (a
+commented-out rule or retirement is still read), a subheading inside What was
+worked on, a `**Format:**` value that is not a whole number from 1 to 999, a code
 fence anywhere in the document, a heading with spaces before it or not written
 as hashes, one space and text, `## Standing rules` or `## Constraints still in
 force` in any other spelling or case, any `## ` section twice, a heading deeper

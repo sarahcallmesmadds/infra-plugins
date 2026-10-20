@@ -1306,7 +1306,7 @@ const RULE_SECTIONS = ['Constraints still in force', 'Standing rules'];
 // A retirement line in any form, and the one form that counts.
 // Only a line that starts like one: after any spacing, bullet, number or
 // bracket. A sentence that mentions the phrase is prose, not a retirement.
-const RETIRED_LIKE = /^[\s>*_\-+\[]*(\d+[.)]\s*)?\[?\s*retired\s+this\s+session\s*:/i;
+const RETIRED_LIKE = /^[\s>*_\-+\[]*(\d+[.)]\s*)?(\[[ xX]?\]\s*)?\[?\s*retired\s+this\s+session\s*:/i;
 const RETIRED_EXACT = /^- Retired this session: \S/;
 // A header label below the header, the two folder spellings included: the
 // pooled reader takes **Repository:** and **Repo:** as the working directory.
@@ -1324,16 +1324,21 @@ const letters = (s) => String(s).replace(/[^a-z]/gi, '').toLowerCase();
 // with a section's name is that section misspelled, so it is renamed: a
 // `### ` inside the constraints is itself refused. Anything else is folded
 // under Context to reload.
-function foldAdvice(name) {
+// If that section is already in the document, renaming would repeat it, so
+// the text moves into the existing one instead.
+function foldAdvice(name, present) {
   const l = letters(name);
   const near = TEMPLATE_SECTIONS.find((t) => l.startsWith(letters(t)));
-  return near
-    ? `rename it to exactly "## ${near}"`
-    : 'fold it under "## Context to reload" as a "### " heading or as text';
+  if (near && present.has(near)) return `move its text into the existing "## ${near}" and delete this heading`;
+  if (near) return `rename it to exactly "## ${near}"`;
+  return present.has('Context to reload')
+    ? 'move its text into the existing "## Context to reload" as a "### " heading or as text, and delete this heading'
+    : 'rename it to "## Context to reload" and keep its text there';
 }
 function threadShapeProblems(text) {
   const lines = String(text || '').replace(/\r\n/g, '\n').split('\n');
   const out = [];
+  const present = new Set(lines.map((l) => /^## (.+?)\s*$/.exec(l)).filter(Boolean).map((m) => m[1]).filter((n) => TEMPLATE_SECTIONS.includes(n)));
   const add = (kind, n, detail) => out.push({ kind, line: n, detail: `line ${n} ${detail}` });
   let inHeader = true;
   let seenTitle = false;
@@ -1350,6 +1355,9 @@ function threadShapeProblems(text) {
       add('rule-line', n, 'is a retirement line not written exactly as "- Retired this session: <rule>, because <reason>" at the start of the line; an indented or reworded one is an example and does not retire anything');
       return;
     }
+    // An HTML comment hides text from a person reading the rendered page and
+    // from no reader here, so a commented example retires or binds for real.
+    if (/<!--|-->/.test(line)) { add('fence', n, 'holds an HTML comment; a thread\'s handoff carries none, because a commented-out rule or retirement is still read'); return; }
     if (FENCE_LINE.test(line)) { add('fence', n, 'is a code fence; a thread\'s handoff carries none, because a fenced example heading or rule reads as a real one'); return; }
     // Any leading space, a no-break space included: the readers want a
     // heading at the start of the line, so an indented one is read by none.
@@ -1374,7 +1382,7 @@ function threadShapeProblems(text) {
         const named = TEMPLATE_SECTIONS.find((r) => r.toLowerCase() === section);
         if (named && h[1] !== named) add('malformed-heading', n, `is "## ${h[1]}"; write the section name exactly as "## ${named}"`);
         else if (!named) {
-          add('unknown-section', n, `is "## ${h[1]}", which is not a section of a thread's handoff; ${foldAdvice(h[1])}. The sections are: ${TEMPLATE_SECTIONS.join(', ')}`);
+          add('unknown-section', n, `is "## ${h[1]}", which is not a section of a thread's handoff; ${foldAdvice(h[1], present)}. The sections are: ${TEMPLATE_SECTIONS.join(', ')}`);
         }
         // Any section twice, not only the standing one: every reader takes
         // the first and drops the rest.
@@ -1403,6 +1411,11 @@ function threadShapeProblems(text) {
       }
       if (section === 'constraints still in force') {
         add('rule-line', n, 'is a subheading inside "## Constraints still in force", which ends that section and drops the rules after it; areas belong in Standing rules');
+      }
+      // "What was worked on" is a few sentences. The thread list reads its
+      // subject up to the first heading, so a subheading there cuts it off.
+      if (section === 'what was worked on') {
+        add('rule-line', n, 'is a subheading inside "## What was worked on", which is two or three sentences; move it under "## Context to reload"');
       }
       return;
     }
@@ -1446,7 +1459,9 @@ function threadShapeProblems(text) {
     if (!exact.test(line)) { add('header-line', n, `is a **${known}:** line not written exactly as "**${known}:** value" at the start of the line with a value`); return; }
     if (labelsSeen.has(known)) { add('header-line', n, `is a second **${known}:** line`); return; }
     labelsSeen.add(known);
-    if (known === 'Format' && !/^\*\*Format:\*\* \d+\s*$/.test(line)) add('header-line', n, 'has a **Format:** value that is not a number');
+    // A small whole number: a long one reads back rounded, so two different
+    // markers could compare equal in the downgrade guard.
+    if (known === 'Format' && !/^\*\*Format:\*\* [1-9]\d{0,2}\s*$/.test(line)) add('header-line', n, 'has a **Format:** value that is not a whole number from 1 to 999');
     if (known === 'Project rules') {
       for (const entry of line.replace(/^\*\*Project rules:\*\* /, '').split(',').map((e) => e.trim().replace(/^`+|`+$/g, '').trim())) {
         if (!(entry.startsWith('~/') || path.isAbsolute(entry))) {
@@ -1455,7 +1470,7 @@ function threadShapeProblems(text) {
       }
     }
   });
-  if (!seenTitle) add('extra-title', 1, 'is not a "# " title; a thread\'s handoff starts with one title line');
+  if (!seenTitle) add('no-title', 1, 'is not a "# " title; a thread\'s handoff starts with one title line');
   return out;
 }
 

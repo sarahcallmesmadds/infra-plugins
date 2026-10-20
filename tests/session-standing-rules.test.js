@@ -227,7 +227,7 @@ const SHAPES = [
   ['worked-on heading with a colon', 'unknown-section', (h) => doc(h, { rules: ['R.'], format: 2 }).replace('## What was worked on', '## What was worked on:')],
   ['a section name used at level three', 'rule-line', (h) => doc(h, { rules: ['R.'], format: 2 }).replace('1. Something.', '1. Something.\n\n### What was worked on\nMore.')],
   ['a title line inside a rule section', 'extra-title', (h) => doc(h, { rules: ['R.'], format: 2, standing: { A: ['S.'] } }).replace('# Session Handoff\n', '').replace('- S.', '- S.\n# Notes\n- T.')],
-  ['no title', 'extra-title', (h) => doc(h, { rules: ['R.'], format: 2 }).replace('# Session Handoff\n', '')],
+  ['no title', 'no-title', (h) => doc(h, { rules: ['R.'], format: 2 }).replace('# Session Handoff\n', '')],
   ['a header label in the body', 'header-line', (h) => doc(h, { rules: ['R.'], format: 2 }).replace(/\*\*Working directory:\*\*.*\n/, '').replace('1. Something.', `1. Something.\n\n## Context to reload\n**Working directory:** ${h}`)],
   ['a bare ~ as a project rules file', 'project-rules-entry', (h) => doc(h, { rules: ['R.'], format: 2, projectRules: '~' })],
   ['a rule written as a reference link', 'rule-line', (h) => doc(h, { rules: ['R.'], format: 2, standing: { Deploy: ['[Obtain approval before deploying][policy]'] } })],
@@ -238,6 +238,10 @@ const SHAPES = [
   ['Repository below the header', 'header-line', (h) => doc(h, { rules: ['R.'], format: 2 }).replace(/\*\*Working directory:\*\*.*\n/, '').replace('1. Something.', `1. Something.\n\n## Context to reload\n**Repository:** ${h}`)],
   ['Repo below the header', 'header-line', (h) => doc(h, { rules: ['R.'], format: 2 }).replace('1. Something.', '1. Something.\n\n## Context to reload\n**Repo:** /elsewhere')],
   ['a heading after a no-break space', 'indented-heading', (h) => doc(h, { rules: ['R.'], format: 2, extra: `\n## Context to reload\n${String.fromCharCode(0xa0)}## Standing rules\n- Obtain approval.\n` })],
+  ['a commented-out retirement', 'fence', (h) => doc(h, { rules: ['R.'], format: 2, extra: '\n## Context to reload\n<!-- Example only:\n- Retired this session: R., because example.\n-->\n' })],
+  ['a Format number too long to read exactly', 'header-line', (h) => doc(h, { rules: ['R.'], format: '9007199254740993' })],
+  ['a subheading inside What was worked on', 'rule-line', (h) => doc(h, { rules: ['R.'], format: 2, worked: '### Rebuild\nThe homepage rebuild is three pages in.' })],
+  ['a checkbox retirement line', 'rule-line', (h) => doc(h, { rules: ['R.', '[x] Retired this session: Q., because done.'], format: 2 })],
   ['Unicode paragraph separator', 'line-break', (h) => doc(h, { rules: ['R.'], format: 2 }).replace('- R.', `- R.${String.fromCharCode(0x2029)}- Q.`)],
 ];
 
@@ -245,9 +249,9 @@ check('a section that is not in the template is told which section to fold into'
   const at = (heading) => handoffs.threadShapeProblems(doc('/x', { rules: ['R.'], format: 2, extra: `\n## ${heading}\nText.\n` }))
     .find((p) => p.kind === 'unknown-section').detail;
   // A misspelled section is renamed: a `### ` inside the constraints is itself refused.
-  assert.match(at('Constraints still in force, carried'), /rename it to exactly "## Constraints still in force"/);
+  assert.match(at('Constraints still in force, carried'), /move its text into the existing "## Constraints still in force"/);
   assert.match(at('Open loops and next session'), /rename it to exactly "## Open loops"/);
-  assert.match(at('Logo comparison completed, 27 September 2026'), /fold it under "## Context to reload"/);
+  assert.match(at('Logo comparison completed, 27 September 2026'), /rename it to "## Context to reload"/);
   assert.match(at('Notes'), /The sections are: What was worked on, Constraints still in force, Standing rules/);
 });
 
@@ -336,6 +340,26 @@ check('handoff-check and save measure a carried acceptance line the same way', (
   const hc = require(path.join(ROOT, 'scripts', 'handoff-check.js'));
   const plain = hc.checkText(doc('/x', { rules: ['R.'], format: 2 }));
   assert.strictEqual(hc.checkText(text).body, plain.body);
+});
+
+check('the advice for a near-miss section never produces a repeated section', () => {
+  const text = doc('/x', { rules: ['R.'], format: 2, extra: '\n## Open loops\n- One.\n\n## Open loops and next session\n- Two.\n' });
+  const detail = handoffs.threadShapeProblems(text).find((p) => p.kind === 'unknown-section').detail;
+  assert.match(detail, /move its text into the existing "## Open loops" and delete this heading/);
+  const fixed = text.replace('\n## Open loops and next session\n- Two.\n', '').replace('- One.', '- One.\n- Two.');
+  assert.deepStrictEqual(handoffs.threadShapeProblems(fixed), []);
+});
+
+check('a thread hand-edited to a # or ### Standing rules heading still guards its rules', () => {
+  for (const heading of ['# Standing rules', '### Standing rules']) {
+    const home = migrated((h) => [['site-thread', doc(h)]]);
+    fs.writeFileSync(docPath(home, 'site-thread'), doc(home, { rules: ['R.'], format: 2, standing: { Deploy: ['Obtain approval.'] } })
+      .replace('## Standing rules', heading));
+    const before = snapshot(docPath(home, 'site-thread'));
+    const r = save(home, 'site-thread', doc(home, { rules: ['R.'], format: 2 }));
+    assert.strictEqual(r.body.reason, 'standing-dropped', `${heading}: ${JSON.stringify(r.body)}`);
+    assert.deepStrictEqual(snapshot(docPath(home, 'site-thread')), before);
+  }
 });
 
 check('a Windows line ending is not a shape problem', () => {
