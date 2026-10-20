@@ -542,9 +542,13 @@ all three in full: this week's constraints, the standing rules, and the project
 rules files.
 
 A thread in this shape carries `**Format:** 2` in its header, and `save` refuses
-to replace it with a draft that lacks the line. That is the guard against a
-session still running an older skill, which writes the older shape and would
-drop every standing rule in one save.
+to replace it with a draft that lacks the line. That is the guard against older
+skill text writing the older shape, which would drop every standing rule in one
+save. It only works where `save` runs this version's scripts. A session started
+before the update keeps running the older scripts, which do not know the line,
+so moving existing threads to the new shape also has to bump the thread list's
+generation: those sessions' drafts were prepared under the old one, and the
+generation check they already run refuses them.
 
 ```bash
 cli.js handoff-check --file <draft>   # words per section, and what makes a draft a log

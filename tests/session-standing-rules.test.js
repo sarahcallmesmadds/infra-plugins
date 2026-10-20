@@ -295,6 +295,26 @@ check('with a reason given, the over-budget draft saves and the reason is in its
   assert.strictEqual(r.body.check.accepted, 'the fold is next session');
 });
 
+check('a reason holding replacement patterns is written as typed', () => {
+  // String.replace expands `$&` and `$1` in its replacement, so a reason
+  // carrying either came out as some other text in the saved header.
+  const home = migrated((h) => [['site-thread', doc(h)]]);
+  fs.writeFileSync(docPath(home, 'site-thread'), doc(home, { rules: ['R.'], format: 2 }));
+  writeConfig(home, { handoffBudget: { enforce: true } });
+  const reason = 'costs $& and $1 to fix';
+  assert.strictEqual(save(home, 'site-thread', logShaped(home), ['--accept-check', reason]).body.saved, true);
+  assert.ok(fs.readFileSync(docPath(home, 'site-thread'), 'utf8').includes(`**Check accepted:** ${reason}\n`));
+});
+
+check('a draft that cannot be saved for a plainer reason says that, not its word count', () => {
+  // Before migration the answer is pre-migration whatever the draft weighs.
+  const home = tmpHome();
+  write(home, [['site-thread', doc(home)]]);
+  writeConfig(home, { handoffBudget: { enforce: true } });
+  const r = json(home, ['save', '--thread', 'site-thread', '--from', draft(home, logShaped(home)), '--base', 'none', '--generation', '1']);
+  assert.strictEqual(r.body.reason, 'pre-migration', JSON.stringify(r.body));
+});
+
 check('with the budget not enforced, save reports the flags and saves', () => {
   const home = migrated((h) => [['site-thread', doc(h)]]);
   fs.writeFileSync(docPath(home, 'site-thread'), doc(home, { rules: ['R.'], format: 2 }));

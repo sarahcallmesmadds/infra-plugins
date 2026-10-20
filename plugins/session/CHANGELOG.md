@@ -11,7 +11,10 @@ A thread's handoff stays the current state of its subject instead of growing.
   `**Project rules:**` header line.
 - `**Format:** 2` in a thread's header marks the new shape. `save` refuses to
   replace a format 2 document with a draft that lacks it (`format-downgrade`),
-  so a session running the older skill cannot drop the standing rules.
+  so older skill text cannot drop the standing rules. A session still running
+  the 0.9 scripts does not know the marker; moving threads to the new shape has
+  to bump the thread list's generation so those sessions are refused by the
+  generation check instead. Nothing in this release moves a thread.
 - `cli.js handoff-check --file <draft>` measures a draft: words per section, a
   session log, an oversize summary or section, file rows from earlier sessions.
   `save` measures every draft the same way and reports it. With

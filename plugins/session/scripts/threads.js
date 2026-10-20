@@ -514,6 +514,22 @@ function refuse(reason, detail, extra = {}) {
   return { saved: false, declared: false, indexUpdated: false, reason, detail, ...extra };
 }
 
+// The header line that records why a draft was saved over its check. Written
+// into the document itself, so the reason travels with the revision it
+// excused rather than living in a transcript nobody reads again.
+function withAcceptance(draft, reason) {
+  const line = `**Check accepted:** ${reason}`;
+  const lf = draft.replace(/\r\n/g, '\n');
+  const crlf = lf !== draft;
+  let out;
+  // Function replacers, because a reason is free text and a `$&` or `$1` in
+  // it would otherwise be expanded as a replacement pattern.
+  if (/^\*\*Check accepted:\*\*.*$/mi.test(lf)) out = lf.replace(/^\*\*Check accepted:\*\*.*$/mi, () => line);
+  else if (/^\*\*Working directory:\*\*.*$/mi.test(lf)) out = lf.replace(/^(\*\*Working directory:\*\*.*)$/mi, (m) => `${m}\n${line}`);
+  else out = `${line}\n${lf}`;
+  return crlf ? out.replace(/\n/g, '\r\n') : out;
+}
+
 // The only way a thread's document is written.
 //
 // The model writes the whole new handoff to a draft file, then this swaps it in
@@ -525,20 +541,6 @@ function refuse(reason, detail, extra = {}) {
 // Everything that can be refused is refused before anything is written, and the
 // result reports each part on its own, because "saved" and "the index knows"
 // and "declared as a thread" can each fail without the others.
-// The header line that records why a draft was saved over its check. Written
-// into the document itself, so the reason travels with the revision it
-// excused rather than living in a transcript nobody reads again.
-function withAcceptance(draft, reason) {
-  const line = `**Check accepted:** ${reason}`;
-  const lf = draft.replace(/\r\n/g, '\n');
-  const crlf = lf !== draft;
-  let out;
-  if (/^\*\*Check accepted:\*\*.*$/mi.test(lf)) out = lf.replace(/^\*\*Check accepted:\*\*.*$/mi, line);
-  else if (/^\*\*Working directory:\*\*.*$/mi.test(lf)) out = lf.replace(/^(\*\*Working directory:\*\*.*)$/mi, `$1\n${line}`);
-  else out = `${line}\n${lf}`;
-  return crlf ? out.replace(/\n/g, '\r\n') : out;
-}
-
 function saveThread({
   slug, from, base, generation, create = false, home = os.homedir(), now = Date.now(), acceptCheck = null,
 }) {
@@ -557,22 +559,6 @@ function saveThread({
   }
   if (!draft.trim()) return refuse('draft-missing', `the draft at ${from} is empty`);
 
-  // The draft is measured before anything else touches it. When the budget is
-  // enforced and the draft is over, it is refused and kept, unless the caller
-  // gives a reason, which goes into the saved document's header. When it is
-  // not enforced the measurement still comes back, so the wrap can act on it.
-  const accept = typeof acceptCheck === 'string' ? acceptCheck.replace(/\s+/g, ' ').trim() : '';
-  if (acceptCheck !== null && acceptCheck !== undefined && !accept) {
-    return refuse('bad-input', '--accept-check needs a one-line reason', { draft: from });
-  }
-  const budget = handoffCheck.budgetFrom(config.load(home).handoffBudget);
-  const measured = handoffCheck.checkText(draft, budget);
-  if (budget.enforce && measured.flags.length && !accept) {
-    return refuse('check-failed',
-      `the draft is over its budget: ${measured.flags.map((f) => f.detail).join('; ')}`,
-      { draft: from, flags: measured.flags });
-  }
-  if (accept) draft = withAcceptance(draft, accept);
   if (!inHomeScope(draft, home)) {
     return refuse('out-of-scope',
       handoffs.handoffDir(draft)
@@ -592,6 +578,25 @@ function saveThread({
     : (registryMod.declaredBySlug(pre.registry, key) || {}).path;
   if (!target) return refuse('not-declared', `${key} is not a declared thread`, { draft: from });
   if (config.isProtected(protection, target, home)) return refuse('protected', `${target} is protected`, { draft: from });
+
+  // Measured last of the checks made before the lock, so a draft that cannot
+  // be saved for a plainer reason (not set up, out of scope, protected) says
+  // that rather than reporting its word counts. When the budget is
+  // enforced and the draft is over, it is refused and kept, unless the caller
+  // gives a reason, which goes into the saved document's header. When it is
+  // not enforced the measurement still comes back, so the wrap can act on it.
+  const accept = typeof acceptCheck === 'string' ? acceptCheck.replace(/\s+/g, ' ').trim() : '';
+  if (acceptCheck !== null && acceptCheck !== undefined && !accept) {
+    return refuse('bad-input', '--accept-check needs a one-line reason', { draft: from });
+  }
+  const budget = handoffCheck.budgetFrom(config.load(home).handoffBudget);
+  const measured = handoffCheck.checkText(draft, budget);
+  if (budget.enforce && measured.flags.length && !accept) {
+    return refuse('check-failed',
+      `the draft is over its budget: ${measured.flags.map((f) => f.detail).join('; ')}`,
+      { draft: from, flags: measured.flags });
+  }
+  if (accept) draft = withAcceptance(draft, accept);
 
   return handoffs.mutateIndex(home, (index, saveIndex) => {
     // Everything checked again under the lock, because every answer above was
@@ -654,8 +659,12 @@ function saveThread({
     // a document that has it. Checked here, under the lock and after the rev
     // matched, so it is judged against exactly the file about to be replaced.
     if (exists) {
-      let currentText = '';
-      try { currentText = fs.readFileSync(target, 'utf8'); } catch (_) { /* rev above already read it */ }
+      let currentText;
+      // Fails closed: a document that cannot be read now cannot be shown to be
+      // in the older shape, and skipping the guard would let it be replaced.
+      try { currentText = fs.readFileSync(target, 'utf8'); } catch (e) {
+        return refuse('unreadable', `${target} could not be read to check its format: ${e.message}`, { draft: from });
+      }
       const was = handoffs.handoffFormat(currentText);
       const now2 = handoffs.handoffFormat(draft);
       if (was !== null && was >= 2 && !(now2 !== null && now2 >= was)) {
