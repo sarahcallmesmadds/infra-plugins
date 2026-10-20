@@ -1648,5 +1648,479 @@ console.log('\nthe half that does not apply prints nothing');
     runCli(['--technical'], POST).includes('Nothing else worth flagging'), true);
 }
 
+// --- structural tells --------------------------------------------------------
+//
+// Shapes above the sentence. A document with every lexical check clean was
+// rejected on sight for these on 2026-10-19. Fixtures here are written for the
+// test; nothing from that document is in this repository.
+
+console.log('\nannounce-then-explain: a short sentence whose content arrives in the next one');
+const structural = (text) => checkAll(text);
+const softOf = (text) => structural(text).soft.map((s) => s.name);
+const questionsOf = (text) => (structural(text).questions || []).map((q) => q.name);
+const hitsOf = (text, name) => {
+  const r = structural(text);
+  const f = [...r.soft, ...(r.questions || [])].find((x) => x.name === name);
+  return f ? f.hits : [];
+};
+
+const ANNOUNCE = 'It matters now because of what the change removes. When a person does the work by hand, '
+  + 'they set the pace, catch what looks wrong and pass it along, so none of that has to be designed.';
+check('a pronoun subject with a forward tail, filled by a longer next sentence, reports',
+  softOf(ANNOUNCE).includes('announce-then-explain'), true);
+check('...and quotes the announcing sentence',
+  hitsOf(ANNOUNCE, 'announce-then-explain')[0], '"It matters now because of what the change removes."');
+check('an abstract head noun with a forward tail reports too',
+  softOf('Two examples make the decision concrete. A forecast for the board depends on the ledger, '
+    + 'on the finance numbers and on who holds budget authority, so it was never one person to build.')
+    .includes('announce-then-explain'), true);
+// Review supplied this one: a short sentence that states the problem outright
+// has an abstract subject and no forward tail, and must stay quiet whatever
+// the length of the sentence after it.
+check('a short sentence that says the thing is not an announcement',
+  softOf('The problem is a leak. Water enters through the damaged seal whenever the pump runs under '
+    + 'pressure for more than a few minutes at a time.').includes('announce-then-explain'), false);
+check('a plain subject with no forward tail is not an announcement',
+  softOf('The queue is empty. Nothing has been written to it since the last run finished at midnight, '
+    + 'which is what the schedule says should happen.').includes('announce-then-explain'), false);
+check('a forward tail with a short next sentence is not an announcement',
+  softOf('It matters now because of what the change removes. Nobody designs the pace.')
+    .includes('announce-then-explain'), false);
+check('one hit in the middle of a paragraph does not report',
+  softOf('The pump has run since March without a fault. It matters now because of what the change removes. '
+    + 'When a person does the work by hand, they set the pace, catch what looks wrong and pass it along.')
+    .includes('announce-then-explain'), false);
+check('two hits in the middle of paragraphs do report',
+  softOf('The pump has run since March without a fault. It matters now because of what the change removes. '
+    + 'When a person does the work by hand, they set the pace, catch what looks wrong and pass it along.\n\n'
+    + 'The seal was replaced in June. The reason it still leaks is simple. The housing was machined to the '
+    + 'old tolerance and the new seal was cut to the revised one, so the two never met.')
+    .includes('announce-then-explain'), true);
+// Found by review: the tail was matched anywhere in the sentence, so a short
+// sentence carrying its content after "is simple" reported as announcing it.
+check('a forward tail followed by the content is not an announcement',
+  softOf('It is simple because the seal shrank. The housing was machined to the old tolerance and the '
+    + 'new seal was cut to the revised one, so the two never met.').includes('announce-then-explain'), false);
+check('...even when that content is three words long',
+  softOf('It is simple because seals shrink. The housing was machined to the old tolerance and the '
+    + 'new seal was cut to the revised one, so the two never met.').includes('announce-then-explain'), false);
+// Found by review: the announce path never folded typographic apostrophes.
+check('a curly apostrophe in the tail is read like a straight one',
+  JSON.stringify(softOf('It\u2019s worth naming here. The queue that fills faster than it drains fails on '
+    + 'the Tuesday after a long weekend, every time.')),
+  JSON.stringify(softOf("It's worth naming here. The queue that fills faster than it drains fails on "
+    + 'the Tuesday after a long weekend, every time.')));
+check('...and that sentence does report',
+  softOf("It's worth naming here. The queue that fills faster than it drains fails on the Tuesday after "
+    + 'a long weekend, every time.').includes('announce-then-explain'), true);
+// Found by review, twice: the object of "comes down to" is the answer.
+check('"comes down to" followed by the answer is not an announcement',
+  softOf('It comes down to the damaged seal. The housing was machined to the old tolerance and the '
+    + 'replacement seal was cut to a new profile, so neither fits.').includes('announce-then-explain'), false);
+// Found by review: nothing stripped HTML comments, so a drafting note fed the
+// counted checks.
+check('a sentence inside an HTML comment is not read by the structural checks',
+  softOf('<!-- ' + ANNOUNCE + ' -->\n\nThe pump has run since March without a fault, and the seal was '
+    + 'replaced in June.').includes('announce-then-explain'), false);
+// Found by review: a line that starts and ends with emphasis read as a
+// heading, which hid it from the prose checks and cut a section boundary.
+check('a sentence that starts and ends with bold is prose, not a heading',
+  require(path.join(base, 'structure.js')).blocksOf('Choose **the fast path** over **the safe path**')[0].kind, 'text');
+check('a sentence opening with a digit is its own sentence',
+  softOf('It matters now because of what the change removes. 3 steps that a person took without noticing '
+    + 'have to be designed on purpose once the work runs without them.').includes('announce-then-explain'), true);
+// Found by review: the fault set as its own one-line paragraph could never hit.
+check('an announcement set as its own paragraph is read against the next one',
+  softOf('It matters now because of what the change removes.\n\nWhen a person does the work by hand, they set '
+    + 'the pace, catch what looks wrong and pass it along, so none of that has to be designed.')
+    .includes('announce-then-explain'), true);
+check('...but not against the first paragraph of the next section',
+  softOf('It matters now because of what the change removes.\n\n## Later\n\nWhen a person does the work by '
+    + 'hand, they set the pace, catch what looks wrong and pass it along, so none of that has to be designed.')
+    .includes('announce-then-explain'), false);
+// Found by review: a comment that closed after a blank line was literal, and
+// the hidden note surfaced as prose.
+// An inline comment cannot cross a blank line, as CommonMark and tells.js both
+// read it: the opener is literal and the text after it is prose. This is the
+// settled convention in the sibling file and is kept rather than relitigated.
+check('a comment after visible text that reaches past a blank line is literal, as in tells.js',
+  softOf('Intro text here. <!--\n\n' + ANNOUNCE + '\n\nstill hidden -->\n\nThe pump has run since March '
+    + 'without a fault, and the seal was replaced in June.').includes('announce-then-explain'), true);
+check('...while a closer pages below does not pair with it',
+  softOf('Intro text mentions the <!-- marker.\n\n' + ANNOUNCE + '\n\nOne more paragraph of ordinary prose '
+    + 'about the pump.\n\nAnd another about the seal.\n\nAnd a closer at the end -->').includes('announce-then-explain'), true);
+check('a leading "so" does not hide the subject',
+  softOf('So it matters now because of what the change removes. When a person does the work by hand, they set '
+    + 'the pace, catch what looks wrong and pass it along, so none of that has to be designed.')
+    .includes('announce-then-explain'), true);
+check('an indefinite article before the tail noun still reads as a tail',
+  softOf("There's a catch. The housing was machined to the old tolerance and the new seal was cut to the "
+    + 'revised one, so the two never met at full pressure.').includes('announce-then-explain'), true);
+check('a straight single quote can open a sentence',
+  softOf("It is simple. 'The housing was machined to the old tolerance and the new seal was cut to the revised "
+    + "one, so the two never met.'").includes('announce-then-explain'), true);
+check('"Here\'s the thing." is an announcement',
+  softOf("Here's the thing. The queue that fills faster than it drains fails on the Tuesday after a long "
+    + 'weekend, every time.').includes('announce-then-explain'), true);
+check('a sentence ending before emphasis is split there',
+  softOf('It matters now because of what the change removes. **Nobody** designs the pace, catches what looks '
+    + 'wrong or passes it along, so none of that exists until someone builds it.').includes('announce-then-explain'), true);
+check('an abbreviation does not end a sentence',
+  questionsOf('We met Mr. Smith at the gate, and nothing leaves until a person has read the list.\n\n'
+    + 'We saw Dr. Jones at noon, and the summary names what would have moved.')
+    .includes('short-claim-opener'), false);
+check('a sentence may open lowercase',
+  softOf('It is simple. iOS removes the manual approval step and routes each request to the person '
+    + 'responsible for the account.').includes('announce-then-explain'), true);
+check('a sentence in a fenced block is not read',
+  softOf('```\n' + ANNOUNCE + '\n```').includes('announce-then-explain'), false);
+// Found by review: plain() kept the words inside backticks, so an announcing
+// sentence shown as a code example raised the reading of the prose around it.
+check('a sentence in a code span is not read either',
+  softOf('The example reads `' + ANNOUNCE + '` and nothing else here announces.')
+    .includes('announce-then-explain'), false);
+check('...and the prose beside a code span is still read',
+  JSON.stringify(softOf(ANNOUNCE + ' A note holds `some code` as well.')), JSON.stringify(softOf(ANNOUNCE)));
+
+console.log('\nlist-enumerated-twice: a table or list said again as a paragraph elsewhere');
+const PARTS_TABLE = '# A framework\n\n## The parts\n\n'
+  + '| Part | The question |\n|---|---|\n'
+  + '| Where the records live | Which system holds the row of record? |\n'
+  + '| Who reads them next | Which team opens the record after this one? |\n'
+  + '| How many arrive each week | What volume does the step have to carry? |\n'
+  + '| How anyone knows it worked | Which number says the step did its job? |\n';
+const PARTS_PROSE = '\n## Why it matters\n\nBefore building anything, an operator asks where the records live, '
+  + 'who reads them next, how many arrive each week, and how anyone knows it worked. '
+  + 'Those four questions are the whole method, and a system that skips one of them fails quietly.\n';
+check('a table column restated in one paragraph of another section reports',
+  softOf(PARTS_TABLE + PARTS_PROSE).includes('list-enumerated-twice'), true);
+check('...and quotes both sides: the items and the paragraph they reappear in',
+  hitsOf(PARTS_TABLE + PARTS_PROSE, 'list-enumerated-twice')[0],
+  '4 of 4 items in the table column "Part" ("Where the records live", "Who reads them next", '
+  + '"How many arrive each week", "How anyone knows it worked") are said again in one paragraph of '
+  + 'another section, the one beginning "Before building anything, an operator asks where the..."');
+// Found by review: the classifier read one line at a time, so a table written
+// without its outer pipes was prose, and its column was never a sequence.
+check('a table without outer pipes is still a table',
+  softOf(PARTS_TABLE.replace(/^\| (.*) \|$/gm, '$1').replace('|---|---|', '--- | ---') + PARTS_PROSE)
+    .includes('list-enumerated-twice'), true);
+// Found by review: candidates were paragraphs only, so a bullet list repeated
+// under a later heading was never compared with itself.
+check('a bullet list repeated under another heading reports',
+  softOf('# Audit\n\n## First\n\n- Audit the system logs\n- Audit the server logs\n- Audit the access logs\n\n'
+    + '## Second\n\n- Audit the system logs\n- Audit the server logs\n- Audit the access logs\n')
+    .includes('list-enumerated-twice'), true);
+// Found by review: a heading holding a pipe was swept into the table run
+// under it, which erased the section boundary the comparison depends on.
+check('a heading holding a pipe is still a heading',
+  softOf('# Audit\n\n## First\n\n- Audit the system logs\n- Audit the server logs\n- Audit the access logs\n\n'
+    + '## Second | Location\nItem | Note\n--- | ---\nAudit the system logs | nightly\nAudit the server logs | weekly\n'
+    + 'Audit the access logs | daily\n').includes('list-enumerated-twice'), true);
+// Found by review: one entry sharing three words with three source items was
+// counted three times, so a single unrelated list reported as a repeat.
+check('one entry cannot stand for three source items',
+  softOf('# Audit\n\n## First\n\n- Review system audit logs\n- Archive system audit logs\n- Scan system audit logs\n\n'
+    + '## Second\n\n- Inspect system audit logs\n- Check firewall configuration\n- Verify database backups\n')
+    .includes('list-enumerated-twice'), false);
+check('two lists repeating each other are one repetition',
+  hitsOf('# Audit\n\n## First\n\n- Audit the system logs\n- Audit the server logs\n- Audit the access logs\n\n'
+    + '## Second\n\n- Audit the system logs\n- Audit the server logs\n- Audit the access logs\n', 'list-enumerated-twice').length, 1);
+check('a restated table column is called a column',
+  hitsOf('# Audit\n\n## First\n\n- Audit the system logs\n- Audit the server logs\n- Audit the access logs\n\n'
+    + '## Second\n\n| Task | When |\n|---|---|\n| Audit the system logs | nightly |\n| Audit the server logs | weekly |\n'
+    + '| Audit the access logs | daily |\n', 'list-enumerated-twice')[0].includes('in one column of another section'), true);
+check('a definition-style list keeps its descriptions',
+  softOf('# Fields\n\n## Items\n\n- owner: the person who signs the record off\n- source: the system the record came from\n'
+    + '- volume: how many records arrive each week\n\n## Later\n\nEvery record names the person who signs it off, the '
+    + 'system it came from and how many arrive each week.\n').includes('list-enumerated-twice'), true);
+check('a lone line starting with a pipe is prose',
+  JSON.stringify(require(path.join(base, 'structure.js')).blocksOf('It matters now because of what the change removes.\n| and the pipe wraps here.')
+    .map((b) => b.kind)), JSON.stringify(['text']));
+check('...and says it was a list',
+  hitsOf('# Audit\n\n## First\n\n- Audit the system logs\n- Audit the server logs\n- Audit the access logs\n\n'
+    + '## Second\n\n- Audit the system logs\n- Audit the server logs\n- Audit the access logs\n', 'list-enumerated-twice')[0]
+    .includes('in one list of another section'), true);
+check('the same paragraph inside the list\'s own section is not a repeat',
+  softOf(PARTS_TABLE + '\nBefore building anything, an operator asks where the records live, '
+    + 'who reads them next, how many arrive each week, and how anyone knows it worked.\n')
+    .includes('list-enumerated-twice'), false);
+// Review supplied this one: a checklist followed by one instruction per item
+// is the list being used, and each item lands in its own paragraph.
+check('items each used in their own paragraph are not the list said again',
+  softOf('# Checklist\n\n## Items\n\n- Emergency contact number\n- Battery charge level\n- Radio channel assignment\n\n'
+    + '## Before leaving\n\nConfirm the emergency contact number with dispatch before leaving the yard.\n\n'
+    + 'Check the battery charge level against the reading taken the night before.\n\n'
+    + 'Use the radio channel assignment printed on the day sheet, not the one from last week.\n')
+    .includes('list-enumerated-twice'), false);
+// Found by review: a setext heading read as prose plus a rule, so a document
+// organised that way had no sections and the list could never reappear.
+check('setext headings make sections too',
+  softOf(PARTS_TABLE.replace('# A framework\n', 'A framework\n===========\n').replace('## The parts\n', 'The parts\n---------\n')
+    + PARTS_PROSE.replace('## Why it matters\n', 'Why it matters\n--------------\n')).includes('list-enumerated-twice'), true);
+check('a setext heading directly under another heading is a heading',
+  softOf('# Framework\nThe parts\n---------\n\n- Emergency contact number\n- Battery charge level\n- Radio channel assignment\n\n'
+    + 'Why it matters\n--------------\n\nConfirm the emergency contact number, the battery charge level and the '
+    + 'radio channel assignment before leaving.\n').includes('list-enumerated-twice'), true);
+check('a sentence that starts and ends with bold does not make a section',
+  softOf(PARTS_TABLE + '\nChoose **the fast path** over **the safe path**\n\nBefore building anything, an '
+    + 'operator asks where the records live, who reads them next, how many arrive each week, and how anyone '
+    + 'knows it worked.\n').includes('list-enumerated-twice'), false);
+// Found by review: a fence marker inside one comment paired with one in the
+// next, and the visible section between them vanished.
+check('backticks inside two comments do not fence the text between them',
+  softOf('<!-- ``` -->\n' + PARTS_TABLE + PARTS_PROSE + '\n<!-- ``` -->\n').includes('list-enumerated-twice'), true);
+check('a comment opener inside a fence is not a comment',
+  softOf('```\n<!--\n```\n\n' + PARTS_TABLE + PARTS_PROSE).includes('list-enumerated-twice'), true);
+// Found by review: a bold heading holding an italic word read as prose and
+// lost its section boundary.
+check('a bold heading holding italics is still a heading',
+  softOf(PARTS_TABLE + '\n**Why *it* matters**\n\nBefore building anything, an operator asks where the records '
+    + 'live, who reads them next, how many arrive each week, and how anyone knows it worked.\n')
+    .includes('list-enumerated-twice'), true);
+// Found by review: a comment opener shown in a code span opened a comment
+// that ran to the end of the document.
+check('a comment opener inside a code span is not a comment',
+  softOf('The marker `<!--` opens a comment.\n\n' + PARTS_TABLE + PARTS_PROSE).includes('list-enumerated-twice'), true);
+// Found by review: four columns of indent is code, not a list.
+check('an indented code block is not a list',
+  softOf('# Audit\n\n## First\n\n    - Audit the system logs\n    - Audit the server logs\n    - Audit the access logs\n\n'
+    + '## Second\n\n- Audit the system logs\n- Audit the server logs\n- Audit the access logs\n')
+    .includes('list-enumerated-twice'), false);
+// Found by review: a wrapped line indented four spaces was dropped as code.
+check('an indented line continuing an open paragraph stays in it',
+  softOf('# Audit\n\n## First\n\n- Audit the system logs\n- Audit the server logs\n- Audit the access logs\n\n'
+    + '## Second\n\nThis operation audits the system logs, audits the server logs,\n'
+    + '    and audits the access logs before releasing the report.\n').includes('list-enumerated-twice'), true);
+// Found by review: a bare bold heading touching its paragraph lost its
+// section boundary once bold-over-prose became a label.
+check('a bold sentence on its own is prose, not a heading',
+  softOf('**The reason it matters now is simple.**\n\nThe housing was machined to the old tolerance and the '
+    + 'replacement seal was cut to a new profile, so neither fits.').includes('announce-then-explain'), true);
+check('a wrapped item is its whole text up to the first sentence end',
+  softOf('# Items\n\n- Emergency\n  contact number\n- Battery\n  charge level\n- Radio\n  channel assignment\n\n'
+    + '# Again\n\nCheck the emergency contact number, battery charge level and radio channel assignment before '
+    + 'departure.\n').includes('list-enumerated-twice'), true);
+check('a stem never shortens a word below five letters',
+  softOf('# A\n\n- News desk\n- Evening classes\n- United front\n\n# B\n\n- New desk\n- Even classes\n- Unit front\n')
+    .includes('list-enumerated-twice'), false);
+check('negation is kept',
+  softOf('# A\n\n- Permit checks are required\n- Identity checks are required\n- Safety checks are required\n\n'
+    + '# B\n\n- Permit checks are not required\n- Identity checks are not required\n- Safety checks are not required\n')
+    .includes('list-enumerated-twice'), false);
+check('a literal predicate is not an announcement',
+  softOf('It is clear. The inspector recorded the observation in the log before moving to the next item on '
+    + 'the shelf.').includes('announce-then-explain'), false);
+check('multi-sentence cells match prose by their first sentence',
+  softOf('# Items\n\n| Item |\n|---|\n| Emergency contact number? Ask dispatch. |\n| Battery charge level? Inspect '
+    + 'meter. |\n| Radio channel assignment? Read schedule. |\n\n# Again\n\nEmergency contact number? Ask dispatch. '
+    + 'Battery charge level? Inspect meter. Radio channel assignment? Read schedule.\n').includes('list-enumerated-twice'), true);
+check('a bare bold heading touching its paragraph is still a heading',
+  softOf('# Audit\n\n## First\n\n- Audit the system logs\n- Audit the server logs\n- Audit the access logs\n\n'
+    + '**Second**\nAudit the system logs, audit the server logs, and audit the access logs.\n')
+    .includes('list-enumerated-twice'), true);
+// Found by review: the shared-word guard protected list candidates only.
+check('three items sharing three words are not found again in one sentence about those words',
+  softOf('# Audit\n\n## First\n\n- Review system audit logs\n- Archive system audit logs\n- Scan system audit logs\n\n'
+    + '## Second\n\nThe nightly job inspects system audit logs and rotates them out.\n')
+    .includes('list-enumerated-twice'), false);
+check('...while a sentence that names each item still counts',
+  softOf('# Audit\n\n## First\n\n- Review system audit logs\n- Archive system audit logs\n- Scan system audit logs\n\n'
+    + '## Second\n\nThe nightly job reviews, archives and scans the system audit logs before the report.\n')
+    .includes('list-enumerated-twice'), true);
+// Found by review: a literal "<!--" in running text ate the document.
+check('a comment opener in running text with no closer in its block is literal',
+  softOf('Intro text mentions the <!-- marker.\n\n' + ANNOUNCE).includes('announce-then-explain'), true);
+check('a code span may close on a later line of its block',
+  softOf('The marker `<!--\nliteral` opens a comment.\n\n' + ANNOUNCE).includes('announce-then-explain'), true);
+// Found by review: an indented wrapped line under a list item was an item.
+check('a wrapped line under a list item belongs to the item',
+  hitsOf('# Audit\n\n## First\n\n- Audit the system logs\n    rotate them weekly\n- Audit the server logs\n- Audit the access logs\n\n'
+    + '## Second\n\n- Audit the system logs\n- Audit the server logs\n- Audit the access logs\n', 'list-enumerated-twice')[0]
+    .includes('3 of 3 items'), true);
+check('an intraword underscore is not emphasis',
+  require(path.join(base, 'structure.js')).blocksOf('the snake_case_field name')[0].text, 'the snake_case_field name');
+check('many code spans are stripped in linear time', (() => {
+  const started = process.hrtime.bigint();
+  structural(('a `b` c `d` e. ').repeat(20000));
+  return Number(process.hrtime.bigint() - started) / 1e6 < 2000;
+})(), true);
+check('a contraction is not a content word',
+  JSON.stringify(require(path.join(base, 'structure.js')).contentWords("Don't skip, it's late")),
+  JSON.stringify(['not', 'skip', 'late']));
+check('two of four items reappearing is not enough',
+  softOf(PARTS_TABLE + '\n## Why it matters\n\nAn operator asks where the records live and who reads them next, '
+    + 'and leaves the rest to the build.\n').includes('list-enumerated-twice'), false);
+
+console.log('\nquestions are printed and never counted');
+const SHORT_OPENERS = 'It never pushes. The branch is left exactly where it was, and the summary names what '
+  + 'would have moved.\n\nThat is the whole point. Nothing leaves the machine until a person has read the '
+  + 'list and said yes to it.';
+check('two short pronoun openers raise the question',
+  questionsOf(SHORT_OPENERS).includes('short-claim-opener'), true);
+check('...and are quoted',
+  JSON.stringify(hitsOf(SHORT_OPENERS, 'short-claim-opener')),
+  JSON.stringify(['"It never pushes."', '"That is the whole point."']));
+check('one short opener does not',
+  questionsOf('It never pushes. The branch is left exactly where it was, and the summary names what '
+    + 'would have moved.').includes('short-claim-opener'), false);
+// Review supplied this one: a short factual opener without a pronoun subject
+// is ordinary good writing and stays out even twice.
+check('short openers without a pronoun subject do not',
+  questionsOf('The bridge is closed. Drivers should follow the signed diversion through the village until '
+    + 'repairs are complete.\n\nThe ferry is still running. Sailings leave on the hour and take foot passengers '
+    + 'only while the ramp is out.').includes('short-claim-opener'), false);
+// One sentence is one piece of evidence: an opener the announce check already
+// reported does not also count toward the short-opener question.
+check('a sentence the announce check took does not count again as a short opener',
+  questionsOf('That changes who builds. Building a system used to be one team\'s job, and now anyone '
+    + 'on the team can put one together in an afternoon without calling it a system.\n\n'
+    + 'It never pushes. The branch is left exactly where it was, and the summary names what '
+    + 'would have moved.').includes('short-claim-opener'), false);
+check('"here" and "there" open a claim too',
+  questionsOf('Here we go. The branch is left exactly where it was, and the summary names what '
+    + 'would have moved.\n\nThere it goes. Nothing leaves the machine until a person has read the list.')
+    .includes('short-claim-opener'), true);
+check('"here" or "there" with a time word is a fragment',
+  questionsOf('Here tomorrow. The shipment arrives after the gate closes and the yard empties.\n\n'
+    + 'There next week. The cargo stays in storage until collection by the carrier.')
+    .includes('short-claim-opener'), false);
+check('a pronoun and an adverb is a fragment, not a claim',
+  questionsOf('This too. The branch is left exactly where it was, and the summary names what '
+    + 'would have moved.\n\nThat often. Nothing leaves the machine until a person has read the list.')
+    .includes('short-claim-opener'), false);
+check('a short opener is not a soft category',
+  softOf(SHORT_OPENERS).includes('short-claim-opener'), false);
+check('...and leaves the reading at little',
+  structural(SHORT_OPENERS).reading, 'little');
+
+const LABELS = '**How things connect.** Every record depends on one before it and feeds one after.\n\n'
+  + '**How things behave over time.** A queue that fills faster than it drains fails on a Tuesday.\n\n'
+  + '**What we assume.** Every build carries a belief nobody wrote down.\n';
+check('three run-in labels sharing their first two words raise the question',
+  questionsOf(LABELS).includes('run-in-labels-sharing-a-stem'), true);
+check('...never a category',
+  softOf(LABELS).includes('run-in-labels-sharing-a-stem'), false);
+// Review supplied this one: a procedure organised the same way on purpose,
+// sharing only its first word.
+// Found by review: a bold label on its own line over its paragraph read as a
+// heading, so the label checks never saw it.
+check('a bold label on its own line above its paragraph is a run-in label',
+  questionsOf('**Setup.**\nInspect the mounting surface for cracks.\n\n**Setup.**\nDisconnect the supply '
+    + 'and tag the valve.\n\n**Setup.**\nCheck for leaks at full pressure.\n')
+    .includes('run-in-labels-sharing-a-stem'), true);
+check('three identical one-word labels share a stem',
+  questionsOf('**Setup.** Inspect the mounting surface for cracks.\n\n**Setup.** Disconnect the supply '
+    + 'and tag the valve.\n\n**Setup.** Check for leaks at full pressure.\n')
+    .includes('run-in-labels-sharing-a-stem'), true);
+check('the most repeated stem is the one reported',
+  hitsOf('**How things connect.** One.\n\n**How things behave.** Two.\n\n**What we assume.** Three.\n\n'
+    + '**What we measure.** Four.\n\n**What we test.** Five.\n', 'run-in-labels-sharing-a-stem')[0]
+    .includes('3 of them starting "what we"'), true);
+check('labels sharing one word do not',
+  questionsOf('**Before installation.** Inspect the mounting surface for cracks.\n\n'
+    + '**Before removal.** Disconnect the supply and tag the valve.\n\n'
+    + '**After repair.** Check for leaks at full pressure.\n')
+    .includes('run-in-labels-sharing-a-stem'), false);
+check('two labelled paragraphs do not',
+  questionsOf(LABELS.split('\n\n').slice(0, 2).join('\n\n')).includes('run-in-labels-sharing-a-stem'), false);
+
+const LOGISTICS = '# Capacity planning\n\nFramed for team leads\n\nDraft, circulated 19 October. Shared with '
+  + 'anyone asked for feedback.\n\n## The session\n\nThis is a 90 minute session for the guests of the '
+  + 'spring dinner, run in the small room, and the host co-teaches it.\n\n## What capacity planning is\n\n'
+  + 'Capacity planning is deciding how much work a step can carry before the queue behind it grows.\n';
+check('event tokens before the second heading raise the question',
+  questionsOf(LOGISTICS).includes('logistics-before-the-subject'), true);
+check('...naming what it found',
+  hitsOf(LOGISTICS, 'logistics-before-the-subject')[0],
+  'is the opening about the event rather than the subject? it names a date, minutes, the session, the room, co-teaching, guests, the dinner');
+// The date is load-bearing here: without it these carry two tokens.
+check('an ISO date and an abbreviated month both count as a date',
+  questionsOf('# Capacity planning\n\nThe session on 2026-10-28 is for the guests.\n')
+    .includes('logistics-before-the-subject')
+  && questionsOf('# Capacity planning\n\nThe session on Oct 28 is for the guests.\n')
+    .includes('logistics-before-the-subject')
+  && !questionsOf('# Capacity planning\n\nThe session on the hill is for the guests.\n')
+    .includes('logistics-before-the-subject'), true);
+check('a fraction and a word beginning with a month stem are not dates',
+  questionsOf('# Capacity planning\n\nThe session reserves 1/2 of capacity for 10 marvelous guests.\n')
+    .includes('logistics-before-the-subject'), false);
+check('a numbered room and a logistics table are read',
+  questionsOf('# Capacity planning\n\n*90 minutes, Room 4, Oct 28*\n').includes('logistics-before-the-subject')
+  && questionsOf('# Capacity planning\n\n| Date | Oct 28 |\n|---|---|\n| Room | 4 |\n| Duration | 90 minutes |\n')
+    .includes('logistics-before-the-subject'), true);
+check('CRLF line endings are read like LF',
+  JSON.stringify(softOf((PARTS_TABLE + PARTS_PROSE).replace(/\n/g, '\r\n'))), JSON.stringify(softOf(PARTS_TABLE + PARTS_PROSE)));
+check('"I\'m done." carries a verb',
+  questionsOf("I'm done. The branch is left exactly where it was, and the summary names what would have moved.\n\n"
+    + 'Now we ship. Nothing leaves the machine until a person has read the list.').includes('short-claim-opener'), true);
+check('a bold line directly under prose continues the paragraph',
+  JSON.stringify(require(path.join(base, 'structure.js')).blocksOf('First sentence here.\n<!-- note -->\n**Not a heading**\nSecond sentence here.')
+    .map((b) => b.kind)), JSON.stringify(['text']));
+check('"Room B2" is a room',
+  hitsOf('# Capacity planning\n\nThe session for the guests runs in Room B2.\n', 'logistics-before-the-subject')[0]
+    .includes('the room'), true);
+check('a comment dropped from above a rule does not make the prose a heading',
+  JSON.stringify(require(path.join(base, 'structure.js')).blocksOf('First sentence.\n<!-- note -->\n---\n\nMore.')
+    .map((b) => b.kind)), JSON.stringify(['text', 'text']));
+check('text after a comment closed mid-line opens no block',
+  JSON.stringify(require(path.join(base, 'structure.js')).blocksOf('Intro text <!--\n-->## Not a section\nmore')
+    .map((b) => b.kind)), JSON.stringify(['text']));
+check('frontmatter lists are not sequences',
+  softOf('---\nauthors:\n- Sarah Madden\n- Jane Doe\n- Alex Kim\n---\n\n# Paper\n\n## Byline\n\nWritten by Sarah Madden, '
+    + 'Jane Doe and Alex Kim.\n').includes('list-enumerated-twice'), false);
+check('"Here are the reasons." and "It\'s simple." are announcements',
+  softOf('Here are the reasons. The queue that fills faster than it drains fails on the Tuesday after a long '
+    + 'weekend, every time.').includes('announce-then-explain')
+  && softOf("It's simple. The queue that fills faster than it drains fails on the Tuesday after a long weekend.")
+    .includes('announce-then-explain'), true);
+check('"room for" and "room to" are not rooms',
+  questionsOf('# Capacity planning\n\nThe session leaves room for the guests to talk, and room to grow.\n')
+    .includes('logistics-before-the-subject'), false);
+check('a comment on its own line inside a paragraph does not split it',
+  JSON.stringify(require(path.join(base, 'structure.js')).blocksOf('First sentence here.\n<!-- note -->\nSecond sentence here.')
+    .map((b) => b.text)), JSON.stringify(['First sentence here. Second sentence here.']));
+check('frontmatter above the title does not switch the question off',
+  questionsOf('---\ntitle: Capacity planning\n---\n\n# Capacity planning\n\nThis is a 90 minute session for the '
+    + 'guests in the room.\n').includes('logistics-before-the-subject'), true);
+check('a one-sentence italic line is a paragraph, not a subtitle',
+  questionsOf('# Capacity planning\n\n*A 90 minute session in the room for the dinner guests.*\n')
+    .includes('logistics-before-the-subject'), true);
+check('the same tokens after the second heading do not',
+  questionsOf('# Capacity planning\n\nCapacity planning is deciding how much work a step can carry.\n\n'
+    + '## What it is\n\nA queue that fills faster than it drains fails on a Tuesday.\n\n## Where it was taught\n\n'
+    + 'This is a 90 minute session for the guests of the spring dinner, run in the small room.\n')
+    .includes('logistics-before-the-subject'), false);
+check('two tokens are not enough',
+  questionsOf('# Capacity planning\n\nThe session covers one question: how much work a step can carry. '
+    + 'Guests leave with an exercise.\n').includes('logistics-before-the-subject'), false);
+// Found by review: with no second heading the whole document was the opening.
+check('without a second heading the window closes after six blocks',
+  questionsOf('# Capacity planning\n\n' + 'A step can carry only so much work before the queue behind it grows.\n\n'.repeat(6)
+    + 'The session for the guests runs on 2026-10-28 in the room.\n').includes('logistics-before-the-subject'), false);
+check('logistics set as a list or an italic line are read',
+  questionsOf('# Capacity planning\n\n- 90 minutes\n- the small room\n- for the dinner guests\n')
+    .includes('logistics-before-the-subject')
+  && questionsOf('# Capacity planning\n\n*90 minutes, the room, Oct 28*\n').includes('logistics-before-the-subject'), true);
+check('a document with no title is not asked',
+  questionsOf('Capacity planning is deciding how much work a step can carry.\n\n'
+    + 'This is a 90 minute session for the guests of the spring dinner, run in the small room, '
+    + 'and the host co-teaches it.').includes('logistics-before-the-subject'), false);
+check('questions alone leave categories at zero',
+  structural(LOGISTICS + '\n' + LABELS).categories, 0);
+
+console.log('\nthe structural findings reach the report');
+const structuralReport = runCli(['--prose'], LOGISTICS + '\n' + ANNOUNCE);
+check('an announce hit prints under the softer tells',
+  structuralReport.includes('announce-then-explain: "It matters now because of what the change removes."'), true);
+check('a question prints under its own heading',
+  structuralReport.includes('Worth asking about the structure, counted against nothing:'), true);
+check('...with its evidence',
+  structuralReport.includes('logistics-before-the-subject: is the opening about the event'), true);
+check('a questions-only report does not call them aggregate signals',
+  runCli(['--prose'], '# Capacity planning\n\nThe session on Oct 28 is for the guests.\n')
+    .includes('counted against nothing, however many there are'), true);
+check('a report with no questions has no such heading',
+  runCli(['--prose'], ANNOUNCE).includes('Worth asking about the structure'), false);
+
 console.log(`\n${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

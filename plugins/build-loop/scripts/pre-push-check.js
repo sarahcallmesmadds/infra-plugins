@@ -9,12 +9,15 @@ const { sanitizedGitEnvironment } = require('./git-environment');
 const {
   APP_KEYS,
   CLI_KEYS,
+  PRE_RECONCILIATION_CLI_KEYS,
   DEVIN_REVIEWER_ID,
   MAX_REPORT_COUNT,
   classifyCliExecution,
   collectAppEvidence,
   normalizeAppPayload,
+  observedTerminationSignal,
   parseCliCompletion,
+  validatePartialReconciliation,
 } = require('./review-evidence');
 
 const SHA = /^[0-9a-f]{40}$/i;
@@ -29,6 +32,7 @@ const CLI_RUN_KEYS = [
   'id', 'source', 'purpose', 'capture', 'status', 'outcome',
   'reported_finding_count', 'evidence', 'superseded_by',
 ];
+const LEGACY_CLI_KEYS = CLI_KEYS.slice(0, 16);
 const APP_REPORT_KEYS = ['id', 'run_id', 'capture_report_id', 'finding_id', 'same_as'];
 const CLI_REPORT_KEYS = ['id', 'run_id', 'ordinal', 'finding_id', 'same_as'];
 const FINDING_BASE_KEYS = [
@@ -374,7 +378,14 @@ function validateCliCapture(run, round, roundFile, errors) {
     return null;
   }
   const capture = readJson(capturePath, `${run.id} capture`, errors);
-  if (!capture || !checkKeys(capture, CLI_KEYS, [], `${run.id} capture`, errors)) return capture;
+  if (!capture) return capture;
+  const currentKeys = sameJson(Object.keys(capture).sort(), [...CLI_KEYS].sort());
+  const previousKeys = sameJson(Object.keys(capture).sort(), [...PRE_RECONCILIATION_CLI_KEYS].sort());
+  const legacyKeys = sameJson(Object.keys(capture).sort(), [...LEGACY_CLI_KEYS].sort());
+  if (!currentKeys && !previousKeys && !legacyKeys) {
+    checkKeys(capture, CLI_KEYS, [], `${run.id} capture`, errors);
+    return capture;
+  }
   if (capture.schema_version !== 1 || capture.kind !== 'devin_cli_capture') errors.push(`${run.id}: capture has an unknown schema`);
   if (!text(capture.repository_root)) errors.push(`${run.id}: capture repository_root is required`);
   if (capture.purpose !== run.purpose) errors.push(`${run.id}: purpose differs from its capture`);
@@ -382,7 +393,11 @@ function validateCliCapture(run, round, roundFile, errors) {
   if (!Array.isArray(capture.start_git_status) || capture.start_git_status.length !== 0) errors.push(`${run.id}: CLI did not start from a clean worktree`);
   if (!Array.isArray(capture.finish_git_status) || capture.finish_git_status.length !== 0) errors.push(`${run.id}: CLI did not finish with a clean worktree`);
   if (capture.finish_head_sha !== capture.review_head_sha) errors.push(`${run.id}: repository HEAD changed during the CLI run`);
-  if (!Number.isSafeInteger(capture.exit_code) || capture.exit_code < 0) {
+  if (capture.status === 'interrupted' && capture.exit_code !== null
+      && (!Number.isSafeInteger(capture.exit_code) || capture.exit_code < 0)) {
+    errors.push(`${run.id}: interrupted capture exit_code must be non-negative or null`);
+  } else if (capture.status !== 'interrupted'
+      && (!Number.isSafeInteger(capture.exit_code) || capture.exit_code < 0)) {
     errors.push(`${run.id}: capture exit_code must be a non-negative integer`);
   }
   if (capture.status !== run.status) errors.push(`${run.id}: status differs from its capture`);
@@ -396,6 +411,27 @@ function validateCliCapture(run, round, roundFile, errors) {
   } else if (finishedAt < startedAt) {
     errors.push(`${run.id}: capture finished before it started`);
   }
+  if (capture.status === 'interrupted') {
+    const interruptedAt = Date.parse(capture.interrupted_at);
+    if (!text(capture.interrupted_at) || !Number.isFinite(interruptedAt)
+        || !Number.isFinite(startedAt) || interruptedAt < startedAt
+        || (Number.isFinite(finishedAt) && interruptedAt > finishedAt)) {
+      errors.push(`${run.id}: interruption time must fall within the recorded run`);
+    }
+    if (!text(capture.interruption_reason)) errors.push(`${run.id}: interrupted capture needs a reason`);
+    if (capture.termination_signal !== null && capture.termination_signal !== 'SIGINT') {
+      errors.push(`${run.id}: interruption signal must be SIGINT or null`);
+    }
+    if (!currentKeys || !object(capture.partial_reconciliation)) {
+      errors.push(`${run.id}: interrupted capture requires transcript-linked partial reconciliation`);
+    }
+  } else if ((currentKeys || previousKeys) && (capture.interrupted_at !== null
+      || capture.interruption_reason !== null || capture.termination_signal !== null)) {
+    errors.push(`${run.id}: non-interrupted capture cannot have interruption fields`);
+  }
+  if (currentKeys && capture.status !== 'interrupted' && capture.partial_reconciliation !== null) {
+    errors.push(`${run.id}: non-interrupted capture cannot have partial reconciliation`);
+  }
   if (!text(capture.raw_output_path) || !text(capture.raw_output_sha256)) {
     errors.push(`${run.id}: raw CLI output evidence is required`);
   } else {
@@ -404,13 +440,24 @@ function validateCliCapture(run, round, roundFile, errors) {
       const outputStat = fs.statSync(capture.raw_output_path);
       const digest = crypto.createHash('sha256').update(output).digest('hex');
       if (digest !== capture.raw_output_sha256) errors.push(`${run.id}: raw CLI output checksum differs from its capture`);
+      if (capture.status === 'interrupted' && capture.termination_signal !== null
+          && observedTerminationSignal(output) !== capture.termination_signal) {
+        errors.push(`${run.id}: interruption signal is not proved by the native transcript`);
+      }
       if (Number.isFinite(startedAt) && outputStat.mtimeMs < startedAt) {
         errors.push(`${run.id}: raw CLI output predates the capture start`);
       }
-      if (Number.isSafeInteger(capture.exit_code) && capture.exit_code >= 0) {
+      if (Number.isSafeInteger(capture.exit_code) || capture.status === 'interrupted') {
         const derivedStatus = classifyCliExecution(capture.exit_code, output);
         if (capture.status !== derivedStatus) {
           errors.push(`${run.id}: capture status disagrees with its exit code and raw CLI output`);
+        }
+        if (derivedStatus === 'interrupted' && currentKeys) {
+          const reconciliation = validatePartialReconciliation(output, digest, capture.partial_reconciliation);
+          errors.push(...reconciliation.errors.map((error) => `${run.id}: ${error}`));
+          if (reconciliation.findings.length !== capture.reported_finding_count) {
+            errors.push(`${run.id}: finding count differs from transcript-linked reconciliation`);
+          }
         }
         const completion = parseCliCompletion(output);
         if (derivedStatus === 'complete' && completion
@@ -467,7 +514,7 @@ function validateRuns(round, roundFile, app, errors) {
       const captureIdentity = fileIdentity(roundFile, run.capture);
       claimEvidenceFile(captureIdentity, 'CLI capture', label);
       if (!['proactive', 'recovery'].includes(run.purpose)) errors.push(`${label}: invalid CLI purpose`);
-      if (!['complete', 'incomplete', 'preflight-failed'].includes(run.status)) errors.push(`${label}: invalid CLI status`);
+      if (!['complete', 'incomplete', 'preflight-failed', 'interrupted'].includes(run.status)) errors.push(`${label}: invalid CLI status`);
       if (!Number.isInteger(run.reported_finding_count) || run.reported_finding_count < 0
         || run.reported_finding_count > MAX_REPORT_COUNT) {
         errors.push(`${label}: finding count must be an integer from 0 to ${MAX_REPORT_COUNT}`);
@@ -478,8 +525,9 @@ function validateRuns(round, roundFile, app, errors) {
         if (run.superseded_by !== null) errors.push(`${label}: a complete CLI run cannot be superseded`);
       } else {
         if (run.outcome !== null) errors.push(`${label}: non-complete CLI outcome must be null`);
-        if (run.reported_finding_count !== 0) errors.push(`${label}: non-complete CLI finding count must be zero`);
+        if (run.status !== 'interrupted' && run.reported_finding_count !== 0) errors.push(`${label}: non-complete CLI finding count must be zero`);
         if (run.status === 'incomplete' && run.superseded_by !== null) errors.push(`${label}: an incomplete CLI run cannot be superseded`);
+        if (run.status === 'interrupted' && !text(run.superseded_by)) errors.push(`${label}: interrupted CLI run must be superseded by a later complete run`);
       }
       if (run.status === 'complete' && run.outcome === 'clean' && run.reported_finding_count !== 0) errors.push(`${label}: clean CLI run must report zero findings`);
       if (run.status === 'complete' && run.outcome === 'findings' && run.reported_finding_count < 1) errors.push(`${label}: findings CLI run must report at least one finding`);
@@ -509,9 +557,10 @@ function validateRuns(round, roundFile, app, errors) {
 
 function validateSupersession(runs, runMap, cliCaptures, errors) {
   for (const [index, run] of runs.entries()) {
-    if (!object(run) || run.source !== 'devin_cli' || run.status !== 'preflight-failed') continue;
+    if (!object(run) || run.source !== 'devin_cli'
+        || !['preflight-failed', 'interrupted'].includes(run.status)) continue;
     if (!text(run.superseded_by)) {
-      errors.push(`${run.id}: preflight failure must be superseded by a later complete run`);
+      errors.push(`${run.id}: ${run.status} run must be superseded by a later complete run`);
       continue;
     }
     const target = runMap.get(run.superseded_by);
@@ -527,11 +576,12 @@ function validateSupersession(runs, runMap, cliCaptures, errors) {
         errors.push(`${run.id}: superseded_by target has a different SHA`);
       }
       if (sourceCapture && targetCapture) {
-        const sourceFinished = Date.parse(sourceCapture.finished_at);
+        const sourceFinished = Date.parse(run.status === 'interrupted'
+          ? sourceCapture.interrupted_at : sourceCapture.finished_at);
         const targetStarted = Date.parse(targetCapture.started_at);
         if (Number.isFinite(sourceFinished) && Number.isFinite(targetStarted)
           && targetStarted < sourceFinished) {
-          errors.push(`${run.id}: superseded_by target started before the preflight failure finished`);
+          errors.push(`${run.id}: superseded_by target started before the earlier run ended`);
         }
       }
     }
@@ -600,6 +650,17 @@ function validateReports(round, runState, app, errors) {
       const ordinals = reports.map((report) => report.ordinal).sort((a, b) => a - b);
       if (!ordinals.every((ordinal, index) => ordinal === index + 1)) {
         errors.push(`${run.id}: report ordinals must be contiguous from 1`);
+      }
+      if (run.status === 'interrupted') {
+        const capture = runState.cliCaptures.get(run.id);
+        const expectedIds = capture && object(capture.partial_reconciliation)
+          && Array.isArray(capture.partial_reconciliation.findings)
+          ? capture.partial_reconciliation.findings.filter(object).map((finding) => finding.id) : [];
+        const reportedIds = reports.slice().sort((left, right) => left.ordinal - right.ordinal)
+          .map((report) => report.id);
+        if (!sameJson(expectedIds, reportedIds)) {
+          errors.push(`${run.id}: CLI report IDs must match the transcript reconciliation in order`);
+        }
       }
     }
   }
