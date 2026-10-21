@@ -1359,7 +1359,8 @@ function threadShapeProblems(text) {
     // At the start of the line only, where an HTML block opens. A tag named in
     // a sentence opens nothing.
     if (/^\s*<\/?(pre|code|textarea|script|style|xmp|details)\b/i.test(line)) { add('fence', n, 'holds an HTML block tag; a thread\'s handoff carries none, because an example rule or retirement inside one is still read'); return; }
-    if (/<!--|-->/.test(line)) { add('fence', n, 'holds an HTML comment; a thread\'s handoff carries none, because a commented-out rule or retirement is still read'); return; }
+    // The opener only: a lone "-->" (an arrow in prose) hides nothing.
+    if (/<!--/.test(line)) { add('fence', n, 'holds an HTML comment; a thread\'s handoff carries none, because a commented-out rule or retirement is still read'); return; }
     if (FENCE_LINE.test(line)) { add('fence', n, 'is a code fence; a thread\'s handoff carries none, because a fenced example heading or rule reads as a real one'); return; }
     // Any leading space, a no-break space included: the readers want a
     // heading at the start of the line, so an indented one is read by none.
@@ -1398,9 +1399,14 @@ function threadShapeProblems(text) {
         sectionsSeen.add(section);
         return;
       }
-      // The two rule section names belong to level two only. A `###` with
-      // either name is read by the constraints parser as its section, so its
-      // bullets would bind twice.
+      // The header is blank lines and label lines only, so a subheading there
+      // is refused too. Checked here, because headings return before the
+      // header check below: a `### **Project rules:**` line was otherwise
+      // let through and its file never read.
+      if (inHeader) {
+        add('header-line', n, 'is a heading in the header; between the title and the first "## " heading a thread\'s handoff has only blank lines and its label lines');
+        return;
+      }
       // A section name belongs to level two only. A `###` with a rule
       // section's name is read by the constraints parser as its section, so
       // its bullets would bind twice; one with another section's name is

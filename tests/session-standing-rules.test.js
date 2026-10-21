@@ -253,6 +253,8 @@ const SHAPES = [
   ['a heading run together with its label', 'header-line', (h) => doc(h, { rules: ['R.'], format: 2 }).replace(/(\*\*Working directory:\*\*.*)/, '$1\n**Projectrules:** /repo/CLAUDE.md')],
   ['a prose line in the header', 'header-line', (h) => doc(h, { rules: ['R.'], format: 2 }).replace(/(\*\*Working directory:\*\*.*)/, '$1\nThis is the thread for the site rebuild, picked up from last week.')],
   ['an unknown bold label in the header', 'header-line', (h) => doc(h, { rules: ['R.'], format: 2 }).replace(/(\*\*Working directory:\*\*.*)/, '$1\n**Status:** open')],
+  ['a project rules line written as a heading in the header', 'header-line', (h) => doc(h, { rules: ['R.'], format: 2 }).replace(/(\*\*Format:\*\* 2)/, '$1\n### **Project rules:** /repo/CLAUDE.md')],
+  ['a bare heading in the header', 'header-line', (h) => doc(h, { rules: ['R.'], format: 2 }).replace(/(\*\*Format:\*\* 2)/, '$1\n### Project rules: /repo/CLAUDE.md')],
   ['Unicode paragraph separator', 'line-break', (h) => doc(h, { rules: ['R.'], format: 2 }).replace('- R.', `- R.${String.fromCharCode(0x2029)}- Q.`)],
 ];
 
@@ -407,6 +409,11 @@ check('a header holding only the wrap template\'s label lines and blank lines pa
   const labels = [...filled.matchAll(/^\*\*([^*]+):\*\*/gm)].map((m) => m[1]);
   assert.ok(labels.length >= 5, labels.join(', '));
   const text = `${filled}\n**Check accepted:** a reason\n\n## What was worked on\nThe subject.\n`;
+  assert.deepStrictEqual(handoffs.threadShapeProblems(text), []);
+});
+
+check('an arrow in prose is not an HTML comment', () => {
+  const text = doc('/x', { rules: ['R.'], format: 2, worked: 'The export runs collect --> clean --> merge nightly.' });
   assert.deepStrictEqual(handoffs.threadShapeProblems(text), []);
 });
 
