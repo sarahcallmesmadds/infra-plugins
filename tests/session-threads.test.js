@@ -615,7 +615,9 @@ check('inserting into a CRLF handoff keeps CRLF', () => {
 
 check('capabilities answers in JSON', () => {
   const home = tmpHome();
-  assert.deepStrictEqual(json(home, ['capabilities']).body, { threads: 1 });
+  // 2 since the standing rules section and the format guard: a skill that
+  // writes that shape stops on scripts answering 1.
+  assert.deepStrictEqual(json(home, ['capabilities']).body, { threads: 2 });
 });
 
 check('an unknown flag or a missing value is an error, never an argument', () => {

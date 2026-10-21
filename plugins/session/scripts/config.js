@@ -113,6 +113,19 @@ const DEFAULTS = {
   // into a session log.
   memoryBudget: {},
 
+  // Word budgets for a thread's handoff, measured by `cli.js handoff-check` and
+  // by `save` on every draft.
+  //
+  // Empty here means the defaults in handoff-check.js apply: 1,500 words of
+  // body without the two rule sections, 600 per section, 80 for "What was
+  // worked on". Each key is taken on its own, so setting one keeps the others.
+  //
+  // `enforce: true` makes `save` refuse a draft that is over budget unless
+  // `--accept-check "<reason>"` is passed. It is off by default because the
+  // measured threads it would meet first are mostly over, and a check that
+  // refuses most saves on day one gets switched off rather than met.
+  handoffBudget: {},
+
   // Where repositories live, for finding a project handoff by name.
   //
   // A project handoff sits next to the work, so reconstructing its path from a

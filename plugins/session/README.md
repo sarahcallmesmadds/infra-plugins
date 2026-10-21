@@ -522,6 +522,89 @@ Before the migration, nothing changes. `constraints --thread` gives the older
 pooled answer for the handoff's own working directory, and `/wrap` writes the
 way it always has.
 
+### Standing rules, and keeping a thread short
+
+A thread rewritten in place can still grow without limit if every rule ever
+written stays in its constraints list and every session adds a paragraph about
+itself. So a thread's document has two rule sections:
+
+- `## Constraints still in force` holds this week's: true now, false once the
+  current piece of work ends.
+- `## Standing rules` holds the rules that last as long as the subject, grouped
+  under `### <area>` headings. Area headings belong here only; the constraints
+  section ends at any heading, so one written there cuts it short.
+
+`/wrap` sorts every rule into one of the two, or retires it. A standing rule
+about one repository's code is proposed, once per wrap and as one batch, for
+that repository's own instructions file, moved by a pull request on a yes, and
+then named on the thread's `**Project rules:**` header line. `/pickup` prints
+all three in full: this week's constraints, the standing rules, and the project
+rules files.
+
+A thread in this shape carries `**Format:** 2` in its header, and `save` refuses
+to replace it with a draft that lacks the line. That is the guard against older
+skill text writing the older shape, which would drop every standing rule in one
+save. It only works where `save` runs this version's scripts. A session started
+before the update keeps running the older scripts, which do not know the line,
+so moving existing threads to the new shape also has to bump the thread list's
+generation: those sessions' drafts were prepared under the old one, and the
+generation check they already run refuses them.
+
+```bash
+cli.js handoff-check --file <draft>   # words per section, and what makes a draft a log
+```
+
+The check is structural: more than one dated session entry, a "What was worked
+on" over its limit, file rows dated before the handoff, a body over its limit
+without the two rule sections, and any section over its limit except standing
+rules. It does not judge whether a constraint is still true; that stays with
+the wrap. `/wrap` runs it on the draft and fixes what it flags, and `save` runs
+it again and reports the result.
+
+The budgets are set by `handoffBudget` in `~/.claude/session.config.json`
+(`bodyWords` 1500, `sectionWords` 600, `workedOnWords` 80 by default). With
+`"enforce": true`, `save` refuses a draft that is over budget unless given
+`--accept-check "<one-line reason>"`, and writes the reason into the saved
+document's header. Enforcement is off by default.
+
+The pooled answer outside threads never reads `## Standing rules`, so the
+section is for thread handoffs only.
+
+**Shapes are refused at save (`bad-shape`), whatever the budget says:** a `## `
+section that is not one of the template's nine (What was worked on,
+Constraints still in force, Standing rules, Decisions made, Files created or
+changed, Verified vs assumed, Open loops, Next actions, Context to reload; the
+reason names the one to fold it under as a `### ` heading), a section name
+reused at a deeper level, a `# ` title that is not the first line or comes
+twice, a header label written below the header (`**Repository:**` and
+`**Repo:**` included), a rule bullet or `### ` area wholly in brackets, which
+reads as the template placeholder, a retirement line not written exactly as
+`- Retired this session: ...` at the start of a line, an HTML comment or an HTML block tag such as `<pre>` (a
+commented-out or example rule or retirement is still read), a heading
+underlined with `---` or `===`, any line between the title and the first `## ` heading that is not blank or
+one of the label lines the template writes (Date, Working directory, Last
+session, Format, Project rules, and Check accepted from save), each written
+once as exactly `**Label:** value` at the start of the line, a subheading inside What was
+worked on, a `**Format:**` value that is not a whole number from 1 to 999, a code
+fence anywhere in the document, a heading with spaces before it or not written
+as hashes, one space and text, `## Standing rules` or `## Constraints still in
+force` in any other spelling or case, any `## ` section twice, a heading deeper
+than `###` inside Standing rules, a rule continued onto a second line or a
+subheading inside the constraints, a second `# ` title, a line break other
+than a plain newline (a bare carriage return or a Unicode separator), a
+header line not written
+exactly as `**Label:** value` (one spelling per label, at the start of the line,
+with a value on that line, once), and a `**Project rules:**` entry that is not
+an absolute path or a path starting with `~/`. Each is a shape a plain reading gets wrong or would have to be
+lenient about, and `/wrap` is the only writer, so the readers stay exact and
+the writer is held to the shape. If a
+thread file is edited by hand into one of these shapes, `constraints --thread`
+reports it as `shapeProblems` and `/pickup` says the lists may be incomplete.
+
+Only the word counts can refuse a save when the budget is enforced. The log and
+old-row flags are judgements made by pattern, so they are reported and never
+refuse.
+
 ### A project named like a thread
 
 `/pickup <name>` opens the thread, so a project whose folder has a thread's name

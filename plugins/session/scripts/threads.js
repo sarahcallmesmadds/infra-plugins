@@ -26,6 +26,7 @@ const os = require('os');
 const path = require('path');
 
 const handoffs = require('./handoffs');
+const handoffCheck = require('./handoff-check');
 const registryMod = require('./registry');
 const config = require('./config');
 const { lockLost, refreshLock } = require('./index-lock');
@@ -481,6 +482,11 @@ function threadConstraints({ slug, home = os.homedir() }) {
   }
   const { live, retired } = handoffs.bulletsIn(text);
   const constraints = live.map((c) => ({ text: c, from: declared.slug, path: declared.path }));
+  // Both lists come from the same read of the same file, so they always
+  // describe one revision; a pickup can never pair this week's constraints
+  // with another save's standing rules.
+  const standing = handoffs.standingIn(text).map((s) => ({ ...s, from: declared.slug, path: declared.path }));
+  const projectRules = handoffs.projectRulesIn(text, home).map(projectRuleState);
   return {
     mode: 'threads',
     kind: 'thread',
@@ -489,9 +495,16 @@ function threadConstraints({ slug, home = os.homedir() }) {
     path: declared.path,
     rev: rev(text),
     generation: reg.registry.generation,
+    format: handoffs.handoffFormat(text),
+    // A shape save would refuse, in the file as it stands. Possible only by
+    // hand editing, and reported rather than read around, so a pickup says
+    // the lists below may be incomplete instead of presenting them as whole.
+    shapeProblems: handoffs.threadShapeProblems(text),
     constraints,
+    standing,
+    projectRules,
     retiredHere: retired,
-    nearDuplicates: handoffs.nearDuplicateConstraints(constraints),
+    nearDuplicates: handoffs.nearDuplicateConstraints([...constraints, ...standing]),
   };
 }
 
@@ -499,6 +512,44 @@ function threadConstraints({ slug, home = os.homedir() }) {
 
 function refuse(reason, detail, extra = {}) {
   return { saved: false, declared: false, indexUpdated: false, reason, detail, ...extra };
+}
+
+// Whether a project rules entry names a file that is there. A relative entry
+// is reported as such and never looked up, because it would be found or not
+// depending on the folder the command ran in.
+function projectRuleState(p) {
+  if (!path.isAbsolute(p)) return { path: p, exists: false, relative: true };
+  let exists = false;
+  try { exists = fs.statSync(p).isFile(); } catch (_) { /* not there */ }
+  return { path: p, exists };
+}
+
+// The header line that records why a draft was saved over its check. Written
+// into the document itself, so the reason travels with the revision it
+// excused rather than living in a transcript nobody reads again.
+// The header and the rest, split where the header reader splits, so an
+// example of the line further down the document is never edited.
+function splitHeader(lf) {
+  const at = handoffs.headerOf(lf).length;
+  return [lf.slice(0, at), lf.slice(at)];
+}
+
+function withAcceptance(draft, reason) {
+  const line = `**Check accepted:** ${reason}`;
+  const all = draft.replace(/\r\n/g, '\n');
+  const crlf = all !== draft;
+  const [lf, rest] = splitHeader(all);
+  let out;
+  // Function replacers, because a reason is free text and a `$&` or `$1` in
+  // it would otherwise be expanded as a replacement pattern. Exact forms only:
+  // any other spelling of either line is a shape save has already refused.
+  if (/^\*\*Check accepted:\*\* \S.*$/m.test(lf)) out = lf.replace(/^\*\*Check accepted:\*\* \S.*$/m, () => line);
+  else if (/^\*\*Working directory:\*\* \S.*$/m.test(lf)) out = lf.replace(/^(\*\*Working directory:\*\* \S.*)$/m, (m) => `${m}\n${line}`);
+  // No folder line: after the title, which save holds to the first line with
+  // text. Above it, the saved document would fail its own shape check.
+  else out = lf.replace(/^# .*$/m, (m) => `${m}\n${line}`);
+  out += rest;
+  return crlf ? out.replace(/\n/g, '\r\n') : out;
 }
 
 // The only way a thread's document is written.
@@ -512,8 +563,16 @@ function refuse(reason, detail, extra = {}) {
 // Everything that can be refused is refused before anything is written, and the
 // result reports each part on its own, because "saved" and "the index knows"
 // and "declared as a thread" can each fail without the others.
+function withoutAcceptance(draft) {
+  const all = draft.replace(/\r\n/g, '\n');
+  const crlf = all !== draft;
+  const [head, rest] = splitHeader(all);
+  const out = head.replace(/^\*\*Check accepted:\*\* \S.*(\n|$)/gm, '') + rest;
+  return crlf ? out.replace(/\n/g, '\r\n') : out;
+}
+
 function saveThread({
-  slug, from, base, generation, create = false, home = os.homedir(), now = Date.now(),
+  slug, from, base, generation, create = false, home = os.homedir(), now = Date.now(), acceptCheck = null,
 }) {
   const key = String(slug || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60);
   if (!key) return refuse('bad-input', 'no thread slug given');
@@ -529,6 +588,7 @@ function saveThread({
     return refuse('draft-missing', `the draft at ${from} could not be read: ${e.message}`);
   }
   if (!draft.trim()) return refuse('draft-missing', `the draft at ${from} is empty`);
+
   if (!inHomeScope(draft, home)) {
     return refuse('out-of-scope',
       handoffs.handoffDir(draft)
@@ -548,6 +608,50 @@ function saveThread({
     : (registryMod.declaredBySlug(pre.registry, key) || {}).path;
   if (!target) return refuse('not-declared', `${key} is not a declared thread`, { draft: from });
   if (config.isProtected(protection, target, home)) return refuse('protected', `${target} is protected`, { draft: from });
+
+  // Measured last of the checks made before the lock, so a draft that cannot
+  // be saved for a plainer reason (not set up, out of scope, protected) says
+  // that rather than reporting its word counts. When the budget is
+  // enforced and the draft is over, it is refused and kept, unless the caller
+  // gives a reason, which goes into the saved document's header. When it is
+  // not enforced the measurement still comes back, so the wrap can act on it.
+  const accept = typeof acceptCheck === 'string' ? acceptCheck.replace(/\s+/g, ' ').trim() : '';
+  if (acceptCheck !== null && acceptCheck !== undefined && !accept) {
+    return refuse('bad-input', '--accept-check needs a one-line reason', { draft: from });
+  }
+  // Shapes first, on the draft as written: a Check accepted line in any form
+  // but the exact one is a shape problem, not something to strip.
+  const shape = handoffs.threadShapeProblems(draft);
+  if (shape.length) {
+    return refuse('bad-shape', shape.map((p) => p.detail).join('; '), { draft: from, problems: shape });
+  }
+  // A line carried over from an earlier save, in its exact form, is not part
+  // of this revision, so it comes off before the draft is measured.
+  draft = withoutAcceptance(draft);
+  const budget = handoffCheck.budgetFrom(config.load(home).handoffBudget);
+  const measured = handoffCheck.checkText(draft, budget);
+  // Only the counts can refuse. The log and old-row flags are judgements made
+  // by pattern, and a pattern's edge case must never stop a save.
+  const blocking = measured.flags.filter((f) => f.enforceable);
+  if (budget.enforce && blocking.length && !accept) {
+    return refuse('check-failed',
+      `the draft is over its budget: ${blocking.map((f) => f.detail).join('; ')}`,
+      { draft: from, flags: blocking });
+  }
+  // An acceptance describes the revision it excused. Written only when there
+  // is something to excuse, and a line carried over from an earlier save is
+  // dropped, so the header never shows a reason for a problem the document no
+  // longer has.
+  const accepted = Boolean(accept && blocking.length);
+  if (accepted) {
+    draft = withAcceptance(draft, accept);
+    // The reason is free text written into the header, so the document it
+    // makes is checked again: saved, it must pass the check it passed here.
+    const after = handoffs.threadShapeProblems(draft);
+    if (after.length) {
+      return refuse('bad-input', `the --accept-check reason would write a line save refuses: ${after.map((p) => p.detail).join('; ')}`, { draft: from, problems: after });
+    }
+  }
 
   return handoffs.mutateIndex(home, (index, saveIndex) => {
     // Everything checked again under the lock, because every answer above was
@@ -603,6 +707,65 @@ function saveThread({
         'the thread changed since this session read it; re-read it, merge this session into it, and save again',
         { draft: from, currentRev: current, base });
     }
+    // A session still running the older skill writes the older shape, with no
+    // standing rules section, and would put that over a thread already moved
+    // to the new one, dropping every standing rule in a single save. The
+    // marker is what tells the two apart, so a draft without it cannot replace
+    // a document that has it. Checked here, under the lock and after the rev
+    // matched, so it is judged against exactly the file about to be replaced.
+    if (exists) {
+      let currentText;
+      // Fails closed: a document that cannot be read now cannot be shown to be
+      // in the older shape, and skipping the guard would let it be replaced.
+      try { currentText = fs.readFileSync(target, 'utf8'); } catch (e) {
+        return refuse('unreadable', `${target} could not be read to check its format: ${e.message}`, { draft: from });
+      }
+      // Read loosely, failing closed: a marker on disk in any spelling keeps
+      // its protection. The draft's own marker is read exactly.
+      const was = handoffs.looseFormat(currentText);
+      const now2 = handoffs.handoffFormat(draft);
+      if (was !== null && was >= 2 && !(now2 !== null && now2 >= was)) {
+        return refuse('format-downgrade',
+          `${target} is format ${was} and the draft ${now2 === null ? 'has no **Format:** line' : `is format ${now2}`}; `
+          + 'a session running the older skill cannot write over it. Update the session plugin, restart, and wrap again',
+          { draft: from });
+      }
+      // The marker alone is not the rules. A draft that keeps the line and
+      // loses every standing rule, naming no project file they moved to, is
+      // the same loss by another route, and a rule leaving by omission is the
+      // one thing a retirement line exists to prevent.
+      // Judged on the rules, not the marker: a document can carry a standing
+      // section without the line, and its rules bind all the same. The way out
+      // is a project rules file that is really there.
+      const movedTo = handoffs.projectRulesIn(draft, home).map(projectRuleState).filter((p) => p.exists);
+      // A rule retired with its line has left on purpose, which is the wrap's
+      // "done" route, so only rules that vanished without one count.
+      const retired = new Set(handoffs.retiredAnywhere(draft));
+      const vanished = handoffs.standingIn(currentText)
+        .filter((r) => !retired.has(handoffs.normalizeConstraint(r.text)));
+      // A file on disk hand-edited so its Standing rules heading is not the
+      // exact one (save never writes that) cannot be read exactly, so it
+      // counts as holding standing rules. Fails closed, like the format
+      // guard. Decided from the lines the shape check already flags, not by
+      // a second pattern: a separate regex here missed a no-break space and
+      // caught a `# Standing rules` title.
+      // Only heading problems on a heading line count, and only one that
+      // starts with the section's name: a missing title reported at line 1,
+      // or a "## Notes on standing rules" section, is not a hidden section.
+      const curLines = String(currentText).replace(/\r\n/g, '\n').split('\n');
+      // A `# ` or `### ` Standing rules heading is read by no reader either.
+      // A missing title has its own kind, reported at line 1 whatever is there.
+      const HEADING_KINDS = new Set(['malformed-heading', 'unknown-section', 'indented-heading', 'line-break', 'extra-title', 'rule-line']);
+      const unreadable = handoffs.threadShapeProblems(currentText)
+        .filter((p) => HEADING_KINDS.has(p.kind))
+        .map((p) => curLines[p.line - 1] || '')
+        .some((l) => /^\s*#/.test(l) && l.replace(/[^a-z]/gi, '').toLowerCase().startsWith('standingrules'));
+      if ((vanished.length || unreadable) && !handoffs.standingIn(draft).length && !movedTo.length) {
+        return refuse('standing-dropped',
+          `${target} holds standing rules and the draft has none and names no project rules file that is there; carry them, or name the file they went to`,
+          { draft: from });
+      }
+    }
     if (lockLost(handoffs.indexLockPath(home))) return refuse('lock-lost', 'the handoff lock was taken over', { draft: from });
 
     let written;
@@ -657,6 +820,9 @@ function saveThread({
       // recorded against another handoff, which `find` will report as a
       // conflict. Said here, at the one moment it can still be dealt with.
       indexConflict,
+      // What the draft measured, enforced or not, so a wrap that saved over
+      // budget is told so by the save itself.
+      check: { enforced: budget.enforce, body: measured.body, flags: measured.flags, accepted: accepted ? accept : null },
       ...(saved ? {} : { reason: 'verify-failed', detail: 'what is on disk is not the draft', draft: from }),
       ...(create && saved && !declaredOk
         ? { reason: 'not-declared-yet', detail: `saved, but not added to the thread list; run cli.js declare ${key}` }

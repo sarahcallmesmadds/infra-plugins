@@ -1221,6 +1221,334 @@ function bulletsIn(text) {
   return { live, retired };
 }
 
+// Rules a thread keeps beyond the current piece of work, under a
+// `## Standing rules` heading, grouped by `### <area>` subheadings.
+//
+// A separate section from the constraints on purpose. The constraints section
+// ends at any heading, `###` included (see bulletsIn), so area subheadings
+// written there would cut it short and drop every rule under them. Here the
+// section runs to the next heading of level one or two, and a `###` only
+// changes the area the following bullets belong to.
+//
+// Plain text, no reading around code fences. A thread's document is written
+// by one writer, and save refuses the shapes that would make a plain read
+// wrong (see threadShapeProblems), so this parser supports only the shape
+// save lets through. Reading around fences was tried and drew a new edge
+// case every review round.
+//
+// Read for declared threads only. The pooled answer outside threads never
+// reads this section, so a project handoff that happens to carry one binds
+// exactly what it did before.
+function standingIn(text) {
+  const src = String(text || '').replace(/\r\n/g, '\n');
+  // The first section only. A second one is a shape save refuses and
+  // threadShapeProblems reports, so a hand-edited file says so instead of
+  // having its sections merged under the wrong areas.
+  const m = src.match(/^## Standing rules\s*$([\s\S]*?)(?=^#{1,2} |$(?![\s\S]))/m);
+  if (!m) return [];
+  const out = [];
+  let area = null;
+  for (const raw of m[1].split('\n')) {
+    const line = raw.trim();
+    const h = /^#{3,6}\s+(.+?)\s*$/.exec(line);
+    if (h) {
+      // A placeholder area such as `### [area]` names no area.
+      area = /^\[.*\]$/.test(h[1]) ? null : h[1];
+      continue;
+    }
+    if (!line.startsWith('- ')) continue;
+    const b = line.slice(2).trim();
+    if (!b || /^\[.*\]$/.test(b)) continue;
+    // A retirement line is a note, not a rule, in either section.
+    if (/^retired this session\s*:/i.test(b)) continue;
+    out.push({ area, text: b });
+  }
+  return out;
+}
+
+// The header: everything before the first level-two heading. The two marker
+// lines are read here only, so the same words further down mark nothing. A
+// code fence in the header is a shape save refuses, so a plain split is exact
+// and its length is an offset into the original text.
+function headerOf(text) {
+  const src = String(text || '').replace(/\r\n/g, '\n');
+  // The same boundary sections() splits on, so the two cannot disagree about
+  // where the header ends.
+  const m = /^## \S/m.exec(src);
+  return m ? src.slice(0, m.index) : src;
+}
+
+// The shapes a thread's handoff may not have, with the line each sits on.
+//
+// Each one is a shape a plain reading gets wrong, or a header line written in
+// a form the readers would have to be lenient about. The wrap is the only
+// writer, so save refuses them and every reader stays exact. Measured on 33
+// real thread handoffs: no code fence anywhere, one title each, no repeated
+// rule section. Two review rounds found that allowing fences anywhere still
+// let a fenced example heading or retirement line read as real, so none are
+// allowed. Detection is deliberately generous (any indentation, tabs too),
+// because over-detecting only asks the writer to change a line, and
+// under-detecting is a silent misread.
+const FENCE_LINE = /^\s*(`{3,}|~{3,})/;
+// One spelling per header label, written exactly as `**Label:** value`.
+const HEADER_LABELS = ['Date', 'Working directory', 'Last session', 'Format', 'Project rules', 'Check accepted'];
+const LABEL_LIKE = /^\s*\*\*([^*]+?):\*\*/;
+// Line breaks other than \n and \r\n. A bare \r or a Unicode line or
+// paragraph separator is a line end to some readers and not to others, so a
+// heading or bullet could be seen by one and missed by the next.
+const ODD_BREAK = /[\r\u2028\u2029]/;
+// The two rule sections, each with one spelling.
+const RULE_SECTIONS = ['Constraints still in force', 'Standing rules'];
+// A retirement line in any form, and the one form that counts.
+// Only a line that starts like one: after any spacing, bullet, number or
+// bracket. A sentence that mentions the phrase is prose, not a retirement.
+const RETIRED_LIKE = /^[\s>*_\-+\[]*(\d+[.)]\s*)?(\[[ xX]?\]\s*)?\[?\s*retired\s+this\s+session\s*:/i;
+const RETIRED_EXACT = /^- Retired this session: \S/;
+// A header label below the header, the two folder spellings included: the
+// pooled reader takes **Repository:** and **Repo:** as the working directory.
+// Bold or bare at the start of the line only: a prose bullet such as
+// "- Repo: ..." is not read by any reader, and real handoffs carry them.
+const BODY_LABEL = /^[\s*_]*(date|working\s+directory|last\s+session|format|project\s+rules|check\s+accepted|repository|repo)[\s*_]*:/i;
+const squash = (s) => s.trim().replace(/\s+/g, ' ').toLowerCase();
+// The only level-two sections a thread's handoff has: the wrap template's.
+// Allowing any name and then catching near-misses of the reserved ones drew
+// a new near-miss every review round (a trailing colon, closing hashes, a
+// suffix), each one a section whose rules no reader saw. Anything else goes
+// under a `### ` heading inside one of these.
+const TEMPLATE_SECTIONS = ['What was worked on', 'Constraints still in force', 'Standing rules', 'Decisions made',
+  'Files created or changed', 'Verified vs assumed', 'Open loops', 'Next actions', 'Context to reload'];
+const letters = (s) => String(s).replace(/[^a-z]/gi, '').toLowerCase();
+// What to do with a heading that is not a template section. One that starts
+// with a section's name is that section misspelled, so it is renamed: a
+// `### ` inside the constraints is itself refused. Anything else is folded
+// under Context to reload.
+// If that section is already in the document, renaming would repeat it, so
+// the text moves into the existing one instead.
+function foldAdvice(name, present) {
+  const l = letters(name);
+  const near = TEMPLATE_SECTIONS.find((t) => l.startsWith(letters(t)));
+  if (near && present.has(near)) return `move its text into the existing "## ${near}" and delete this heading`;
+  if (near) return `rename it to exactly "## ${near}"`;
+  return present.has('Context to reload')
+    ? 'move its text into the existing "## Context to reload" as a "### " heading or as text, and delete this heading'
+    : 'rename it to "## Context to reload" and keep its text there';
+}
+function threadShapeProblems(text) {
+  const lines = String(text || '').replace(/\r\n/g, '\n').split('\n');
+  const out = [];
+  const present = new Set(lines.map((l) => /^## (.+?)\s*$/.exec(l)).filter(Boolean).map((m) => m[1]).filter((n) => TEMPLATE_SECTIONS.includes(n)));
+  const add = (kind, n, detail) => out.push({ kind, line: n, detail: `line ${n} ${detail}` });
+  let inHeader = true;
+  let seenTitle = false;
+  let seenText = false;
+  let section = null;
+  const sectionsSeen = new Set();
+  const labelsSeen = new Set();
+  lines.forEach((line, i) => {
+    const n = i + 1;
+    const first = !seenText && line.trim() !== '';
+    if (line.trim()) seenText = true;
+    if (ODD_BREAK.test(line)) { add('line-break', n, 'holds a carriage return or a Unicode line separator; end lines with a plain newline'); return; }
+    if (RETIRED_LIKE.test(line) && !RETIRED_EXACT.test(line)) {
+      add('rule-line', n, 'is a retirement line not written exactly as "- Retired this session: <rule>, because <reason>" at the start of the line; an indented or reworded one is an example and does not retire anything');
+      return;
+    }
+    // An HTML comment hides text from a person reading the rendered page and
+    // from no reader here, so a commented example retires or binds for real.
+    // The HTML blocks that show their text as an example do the same.
+    // At the start of the line only, where an HTML block opens. A tag named in
+    // a sentence opens nothing.
+    if (/^\s*<\/?(pre|code|textarea|script|style|xmp|details)\b/i.test(line)) { add('fence', n, 'holds an HTML block tag; a thread\'s handoff carries none, because an example rule or retirement inside one is still read'); return; }
+    // The opener only: a lone "-->" (an arrow in prose) hides nothing.
+    if (/<!--/.test(line)) { add('fence', n, 'holds an HTML comment; a thread\'s handoff carries none, because a commented-out rule or retirement is still read'); return; }
+    if (FENCE_LINE.test(line)) { add('fence', n, 'is a code fence; a thread\'s handoff carries none, because a fenced example heading or rule reads as a real one'); return; }
+    // Any leading space, a no-break space included: the readers want a
+    // heading at the start of the line, so an indented one is read by none.
+    // A line of only - or = under a line of text underlines it into a
+    // heading, which no reader here sees as one, so the boundary moves.
+    if (i > 0 && /^\s*(=+|-+)\s*$/.test(line) && lines[i - 1].trim() !== '') {
+      add('malformed-heading', n, 'underlines the line above into a heading; write headings as hashes, one space, then text, and leave a blank line before a "---" rule');
+      return;
+    }
+    if (/^\s+#/.test(line)) { add('indented-heading', n, 'is a heading with spaces before it; start headings at the beginning of the line'); return; }
+    // Any line starting with # is a heading written exactly: hashes, one
+    // space, then text. `##Standing rules` or a bare `##` read as a heading to
+    // one reader and as text to another.
+    if (/^#/.test(line)) {
+      if (!/^#{1,6} \S/.test(line)) { add('malformed-heading', n, 'starts with # but is not a heading written as hashes, one space, then text'); return; }
+      if (/^# /.test(line)) {
+        // One title, on the first line with text. A `# ` line anywhere else
+        // ends a rule section for the readers but not for this check.
+        if (seenTitle) add('extra-title', n, 'is a second level-one heading; a thread\'s handoff has one title line');
+        else if (!first) add('extra-title', n, 'is a level-one heading that is not the first line; the title is the first line and comes once');
+        seenTitle = true;
+        return;
+      }
+      const h = /^## (.+?)\s*$/.exec(line);
+      if (h) {
+        inHeader = false;
+        section = squash(h[1]);
+        const named = TEMPLATE_SECTIONS.find((r) => r.toLowerCase() === section);
+        if (named && h[1] !== named) add('malformed-heading', n, `is "## ${h[1]}"; write the section name exactly as "## ${named}"`);
+        else if (!named) {
+          add('unknown-section', n, `is "## ${h[1]}", which is not a section of a thread's handoff; ${foldAdvice(h[1], present)}. The sections are: ${TEMPLATE_SECTIONS.join(', ')}`);
+        }
+        // Any section twice, not only the standing one: every reader takes
+        // the first and drops the rest.
+        if (sectionsSeen.has(section)) add('section-repeated', n, `is a second "## ${h[1]}" heading; keep one section of each name`);
+        sectionsSeen.add(section);
+        return;
+      }
+      // The header is blank lines and label lines only, so a subheading there
+      // is refused too. Checked here, because headings return before the
+      // header check below: a `### **Project rules:**` line was otherwise
+      // let through and its file never read.
+      if (inHeader) {
+        add('header-line', n, 'is a heading in the header; between the title and the first "## " heading a thread\'s handoff has only blank lines and its label lines');
+        return;
+      }
+      // A section name belongs to level two only. A `###` with a rule
+      // section's name is read by the constraints parser as its section, so
+      // its bullets would bind twice; one with another section's name is
+      // read as that section by subject display and missed by the measure.
+      const sub = /^#{3,6} (.+)$/.exec(line);
+      if (sub && TEMPLATE_SECTIONS.some((t) => letters(t) === letters(sub[1]))) {
+        add('rule-line', n, 'reuses a section name below level two; use it only as a "## " heading');
+        return;
+      }
+      if (section === 'standing rules') {
+        if (/^### \[.*\]\s*$/.test(line)) { add('rule-line', n, 'is a bracketed area, which reads as the template placeholder; name the area without brackets or delete the line'); return; }
+        // One level of area only. A deeper heading reads as an area to the
+        // parser but looks nested to a person, so the two disagree.
+        if (!/^### /.test(line)) add('rule-line', n, 'is a heading deeper than ### inside "## Standing rules"; areas are "### " headings only');
+        return;
+      }
+      if (section === 'constraints still in force') {
+        add('rule-line', n, 'is a subheading inside "## Constraints still in force", which ends that section and drops the rules after it; areas belong in Standing rules');
+      }
+      // "What was worked on" is a few sentences. The thread list reads its
+      // subject up to the first heading, so a subheading there cuts it off.
+      if (section === 'what was worked on') {
+        add('rule-line', n, 'is a subheading inside "## What was worked on", which is two or three sentences; move it under "## Context to reload"');
+      }
+      return;
+    }
+    // Inside a rule section a line is blank or a one-line bullet. A bullet
+    // continued onto the next line is read without its continuation, which
+    // can turn a conditional rule into an unconditional one.
+    if (section === 'constraints still in force' || section === 'standing rules') {
+      // A bullet wholly in brackets is the template placeholder to every
+      // reader, so a real rule written that way (a reference link) is skipped.
+      if (/^- \[.*\]\s*$/.test(line)) {
+        add('rule-line', n, 'is a bullet wholly in brackets, which reads as the template placeholder; write the rule so it does not start and end with a bracket, or delete the placeholder');
+        return;
+      }
+      if (line.trim() && !/^- \S/.test(line)) {
+        add('rule-line', n, `is neither a "- " bullet nor blank inside "## ${section === 'standing rules' ? 'Standing rules' : 'Constraints still in force'}"; write each rule on one line`);
+      }
+      return;
+    }
+    if (!inHeader) {
+      // Header labels live in the header only. A pooled reader searches the
+      // whole document, so one in the body can stand in for a missing one.
+      const loose = BODY_LABEL.exec(line);
+      if (loose) add('header-line', n, `is a **${loose[1]}:** line below the header; header lines go above the first "## " heading only`);
+      return;
+    }
+    // The header is an allowed list: between the title and the first "## "
+    // heading, only blank lines and the label lines the wrap writes, each
+    // exactly "**Label:** value" at the start of the line. Catching
+    // near-misses one at a time (a numbered label, a word broken inside a
+    // label, a second path on an indented line) drew a new one every round,
+    // and each was a header value no reader saw.
+    if (!line.trim()) return;
+    const exactLine = /^\*\*(Date|Working directory|Last session|Format|Project rules|Check accepted):\*\* \S/.exec(line);
+    if (!exactLine) {
+      // The reason says what the line looks like, so the wrap can fix it in one pass.
+      const lab = LABEL_LIKE.exec(line) || /^[\s*_>\-+]*(?:\d+[.)]\s*)?[\s*_]*([A-Za-z][A-Za-z0-9 ]*?)[\s*_]*:/.exec(line);
+      const near = lab && HEADER_LABELS.find((l) => letters(l) === letters(lab[1]));
+      let hint;
+      if (near) hint = `it looks like a **${near}:** line; write it exactly as "**${near}:** value" at the start of the line`;
+      else if (lab && /^(repository|repo)$/i.test(lab[1].trim())) hint = 'a thread names its folder on a **Working directory:** line';
+      else hint = 'move this text into a section, such as "## Context to reload"';
+      add('header-line', n, `is not a header line; between the title and the first "## " heading a thread's handoff has only blank lines and ${HEADER_LABELS.map((l) => `**${l}:**`).join(', ')} lines. ${hint[0].toUpperCase()}${hint.slice(1)}`);
+      return;
+    }
+    const known = exactLine[1];
+    if (labelsSeen.has(known)) { add('header-line', n, `is a second **${known}:** line`); return; }
+    labelsSeen.add(known);
+    // A small whole number: a long one reads back rounded, so two different
+    // markers could compare equal in the downgrade guard.
+    if (known === 'Format' && !/^\*\*Format:\*\* [1-9]\d{0,2}\s*$/.test(line)) add('header-line', n, 'has a **Format:** value that is not a whole number from 1 to 999');
+    if (known === 'Project rules') {
+      for (const entry of line.replace(/^\*\*Project rules:\*\* /, '').split(',').map((e) => e.trim().replace(/^`+|`+$/g, '').trim())) {
+        if (!(entry.startsWith('~/') || path.isAbsolute(entry))) {
+          add('project-rules-entry', n, `names "${entry}" as a project rules file; each entry is an absolute path or starts with ~/`);
+        }
+      }
+    }
+  });
+  if (!seenTitle) add('no-title', 1, 'is not a "# " title; a thread\'s handoff starts with one title line');
+  return out;
+}
+
+// The format a document's header shows in any spelling, for the downgrade
+// guard only. The one deliberate tolerance in these readers, and it fails
+// closed: an existing thread whose marker was written in some other form
+// still counts as marked, so an older-shape draft cannot replace it. Drafts
+// are held to the exact form by threadShapeProblems; this is only for what is
+// already on disk.
+function looseFormat(text) {
+  const head = headerOf(text);
+  const exact = handoffFormat(text);
+  const m = /^[\s*_]*format[\s*_]*:[\s*_]*(\d+)/im.exec(head);
+  const loose = m ? parseInt(m[1], 10) : null;
+  if (exact === null) return loose;
+  if (loose === null) return exact;
+  return Math.max(exact, loose);
+}
+
+// Every `Retired this session:` line, wherever it sits, with its reason cut
+// off the way retiredTarget cuts it. Used to tell a standing rule that was
+// retired on purpose from one that was dropped. A thread's handoff carries no
+// code fences, so no line here can be an example.
+function retiredAnywhere(text) {
+  // Exact form at the start of the line only. An indented one is a code
+  // example, and an example must not excuse dropping a real rule; any other
+  // form is a shape save refuses.
+  return String(text || '').replace(/\r\n/g, '\n').split('\n')
+    .map((l) => /^- Retired this session: (\S.*)$/.exec(l))
+    .filter(Boolean)
+    .map((m) => retiredTarget(m[1]));
+}
+
+// The format a handoff declares with `**Format:** N` in its header, or null.
+// Format 2 is the shape with a standing rules section; a document without the
+// line is the older shape, which every handoff written before 0.10 is.
+function handoffFormat(text) {
+  // Exactly as the wrap writes it, header only. Any other form is a shape
+  // save refuses, so it is never read leniently here.
+  const m = /^\*\*Format:\*\* (\d+)\s*$/m.exec(headerOf(text));
+  return m ? parseInt(m[1], 10) : null;
+}
+
+// Project rules files a thread names on a `**Project rules:**` header line,
+// comma separated, backticks allowed. Returned as written after `~` is
+// expanded; a relative entry is kept so it can be reported, never resolved
+// against whichever folder the command happens to run in. These are where standing rules went
+// once they moved into a repository's own instructions, and pickup names them
+// so a rule that left the handoff does not leave the session's view with it.
+function projectRulesIn(text, home = os.homedir()) {
+  // The value ends at its own line. With `\s*` an empty line handed back the
+  // next heading as a file path.
+  const m = /^\*\*Project rules:\*\* (\S.*)$/m.exec(headerOf(text));
+  if (!m) return [];
+  return m[1].split(',')
+    .map((p) => p.trim().replace(/^`+|`+$/g, '').trim())
+    .filter((p) => p && !p.startsWith('#'))
+    .map((p) => (p === '~' ? home : (p.startsWith('~/') ? path.join(home, p.slice(2)) : p)));
+}
+
 // Bullets under the heading that are live constraints. Retirements are not
 // constraints, so they do not appear here.
 function constraintsIn(text) {
@@ -1493,6 +1821,13 @@ module.exports = {
   scopeKey,
   handoffDir,
   bulletsIn,
+  standingIn,
+  threadShapeProblems,
+  headerOf,
+  retiredAnywhere,
+  looseFormat,
+  handoffFormat,
+  projectRulesIn,
   constraintsIn,
   retiredIn,
   carriedConstraints,

@@ -16,8 +16,10 @@
 //                                the rules one thread binds, from its own file
 //   cli.js capabilities          what this copy of the scripts can do
 //   cli.js threads               the declared threads, for wrap to pick from
-//   cli.js save --thread <slug> --from <draft> --base <rev|none> --generation N [--create]
+//   cli.js save --thread <slug> --from <draft> --base <rev|none> --generation N [--create] [--accept-check <reason>]
 //                                the only way a thread's handoff is written
+//   cli.js handoff-check --file <draft>
+//                                words per section and what makes a draft a log
 //   cli.js declare <slug>        add an existing home handoff to the thread list
 //   cli.js migrate plan --threads a,b [--out plan.json]
 //   cli.js migrate apply <plan.json> --accept-narrowing --confirm-sessions-restarted
@@ -55,7 +57,9 @@ const registryMod = require(path.join(__dirname, 'registry.js'));
 // older copy, or a host that has not updated yet. An older script prints its
 // command list for an unknown command and exits 1, which no skill can mistake
 // for this object.
-const CAPABILITIES = { threads: 1 };
+// threads 2 adds the standing rules section, the format marker the save
+// guards, and handoff-check. A skill that writes the new shape needs 2.
+const CAPABILITIES = { threads: 2 };
 
 // Flags that take a value, and flags that stand alone. Anything else starting
 // with `--` is an error rather than an argument.
@@ -64,14 +68,14 @@ const CAPABILITIES = { threads: 1 };
 // list, so `constraints --thread site-thread` run against a copy that did not
 // know `--thread` quietly answered a different question, the whole pool for the
 // working directory, and printed it as if it were the thread's rules.
-const VALUE_FLAGS = new Set(['--days', '--cwd', '--home', '--self', '--thread', '--from', '--base', '--generation', '--out', '--threads', '--file']);
+const VALUE_FLAGS = new Set(['--days', '--cwd', '--home', '--self', '--thread', '--from', '--base', '--generation', '--out', '--threads', '--file', '--accept-check']);
 const BOOL_FLAGS = new Set(['--json', '--dry-run', '--no-record', '--fix', '--create', '--accept-narrowing', '--confirm-sessions-restarted']);
 
 function parseArgs(argv) {
   const out = {
     command: null, rest: [], json: false, dryRun: false, self: null, noRecord: false, fix: false,
     days: handoffs.DEFAULT_STALE_DAYS, cwd: process.cwd(), home: os.homedir(),
-    thread: null, file: null, from: null, base: null, generation: null, out: null, threads: null,
+    thread: null, file: null, from: null, base: null, generation: null, out: null, threads: null, acceptCheck: null,
     create: false, acceptNarrowing: false, sessionsRestarted: false, error: null,
   };
   for (let i = 0; i < argv.length; i += 1) {
@@ -86,7 +90,7 @@ function parseArgs(argv) {
         i += 1;
         if (a === '--days') out.days = parseInt(v, 10);
         else if (a === '--generation') out.generation = /^\d+$/.test(v) ? parseInt(v, 10) : NaN;
-        else out[{ '--cwd': 'cwd', '--home': 'home', '--self': 'self', '--thread': 'thread', '--from': 'from', '--base': 'base', '--out': 'out', '--threads': 'threads', '--file': 'file' }[a]] = v;
+        else out[{ '--cwd': 'cwd', '--home': 'home', '--self': 'self', '--thread': 'thread', '--from': 'from', '--base': 'base', '--out': 'out', '--threads': 'threads', '--file': 'file', '--accept-check': 'acceptCheck' }[a]] = v;
       } else if (BOOL_FLAGS.has(a)) {
         if (a === '--json') out.json = true;
         else if (a === '--dry-run') out.dryRun = true;
@@ -147,17 +151,39 @@ function printThreadConstraints(opts, t) {
     ]);
   }
   const lines = [];
+  // First, before anything else: a shape that makes everything below
+  // unreliable, the near-duplicate notes included.
+  if ((t.shapeProblems || []).length) {
+    lines.push(`${t.path} has a shape the rule lists below may be read wrongly from, so they may be incomplete:`,
+      ...t.shapeProblems.map((p) => `  ${p.detail}`), '  The next wrap fixes it; save refuses this shape.', '');
+  }
   for (const p of t.nearDuplicates || []) {
     lines.push('Two constraints look like one rule in two wordings, differing only here:',
       `  "${p.a.differs}"`, `  "${p.b.differs}"`,
       '  Retire one by deleting it and recording the retirement.', '');
   }
-  if (!t.constraints.length) {
-    lines.push(`No constraints recorded in ${t.slug} (${t.path}).`);
-    return emit(opts, {}, lines);
+  const standing = t.standing || [];
+  const projectRules = t.projectRules || [];
+  // This week's constraints first, then the standing rules, then the project
+  // files that hold the rest. All three bind, so none is shortened or left
+  // out because another one is long.
+  if (!t.constraints.length) lines.push(`No constraints this week in ${t.slug} (${t.path}).`);
+  else {
+    lines.push(`${t.constraints.length} constraint${t.constraints.length === 1 ? '' : 's'} in force this week for thread ${t.slug}:`,
+      ...t.constraints.map((c) => `  - ${c.text}`));
   }
-  lines.push(`${t.constraints.length} constraint${t.constraints.length === 1 ? '' : 's'} in force for thread ${t.slug}:`,
-    ...t.constraints.map((c) => `  - ${c.text}`));
+  if (standing.length) {
+    lines.push('', `${standing.length} standing rule${standing.length === 1 ? '' : 's'}:`);
+    let area;
+    for (const r of standing) {
+      if (r.area !== area) { area = r.area; lines.push(`  ${area || 'General'}`); }
+      lines.push(`    - ${r.text}`);
+    }
+  }
+  if (projectRules.length) {
+    lines.push('', 'Project rules files this thread names, which govern work in their repositories:',
+      ...projectRules.map((p) => `  ${p.path}${p.relative ? '  (NOT AN ABSOLUTE PATH, so not looked up)' : (p.exists ? '' : '  (NOT THERE)')}`));
+  }
   return emit(opts, {}, lines);
 }
 
@@ -1056,11 +1082,14 @@ const COMMANDS = {
       generation: opts.generation,
       create: opts.create,
       home: opts.home,
+      acceptCheck: opts.acceptCheck,
     });
     if (!result.saved || (opts.create && !result.declared)) process.exitCode = 1;
     if (opts.json) return emit(opts, result, []);
     if (!result.saved) {
       const lines = [`Not saved (${result.reason}): ${result.detail}`];
+      if (result.reason === 'check-failed') lines.push('Fix the draft, or save with --accept-check "<one-line reason>".');
+      if (result.reason === 'bad-shape') lines.push('Fix those lines in the draft and save again. --accept-check does not cover a shape.');
       if (result.previousUnchanged === true) lines.push('The previous handoff is unchanged.');
       if (result.nothingWritten === true) lines.push(`Nothing was written to ${result.path || 'the thread path'}.`);
       if (result.draft) lines.push(`The draft is kept at ${result.draft}.`);
@@ -1073,6 +1102,55 @@ const COMMANDS = {
         : '  The index was not updated. The thread is still found by name.');
     }
     if (opts.create && !result.declared) lines.push(`  Not yet declared as a thread: run cli.js declare ${result.slug}`);
+    // Saved over budget is said, enforced or not: the numbers are the point.
+    // Budget counts and advice are listed apart: only the counts are over a
+    // budget, and only they can be accepted.
+    if (result.check) {
+      const counts = result.check.flags.filter((f) => f.enforceable);
+      const advice = result.check.flags.filter((f) => !f.enforceable);
+      if (counts.length) {
+        lines.push(`  Over budget${result.check.accepted ? `, accepted: ${result.check.accepted}` : ''}:`,
+          ...counts.map((f) => `    ${f.detail}`));
+      }
+      if (advice.length) lines.push('  Advice, not a budget:', ...advice.map((f) => `    ${f.detail}`));
+    }
+    emit(opts, {}, lines);
+  },
+
+  // Measures a draft the way save does, without saving it. Read-only.
+  'handoff-check': function handoffCheckCmd(opts) {
+    const hc = require(path.join(__dirname, 'handoff-check.js'));
+    if (!opts.file) {
+      process.exitCode = 1;
+      return emit(opts, { ok: false, error: 'no file given' }, ['Which file? Usage: cli.js handoff-check --file <draft>']);
+    }
+    const file = opts.file === '~' || opts.file.startsWith('~/') ? path.join(opts.home, opts.file.slice(2)) : opts.file;
+    const r = hc.checkFile(file, hc.budgetFrom(configMod.load(opts.home).handoffBudget));
+    if (!r.ok) {
+      process.exitCode = 1;
+      return emit(opts, r, [r.error]);
+    }
+    if (opts.json) return emit(opts, r, []);
+    const lines = [`${r.total} words, ${r.body} in the body without the two rule sections (budget ${r.budget.bodyWords}).`, ''];
+    for (const s of r.sections) lines.push(`  ${String(s.words).padStart(6)}  ${s.heading}`);
+    lines.push('');
+    // Three kinds, and what save does with each is different, so they are
+    // listed apart rather than under one line that is true of none of them.
+    const shapes = r.flags.filter((f) => f.kind === 'shape');
+    const counts = r.flags.filter((f) => f.enforceable);
+    const advice = r.flags.filter((f) => f.kind !== 'shape' && !f.enforceable);
+    if (!r.flags.length) lines.push('Nothing over budget, no shape problem, and no sign of a session log.');
+    if (shapes.length) {
+      lines.push('Shape problems. save refuses these whatever the budget, and --accept-check does not cover them:', ...shapes.map((f) => `  ${f.detail}`), '');
+    }
+    if (counts.length) {
+      lines.push(r.budget.enforce
+        ? 'Over budget. save refuses these unless given --accept-check "<reason>":'
+        : 'Over budget. save reports these and does not refuse (handoffBudget.enforce is off):', ...counts.map((f) => `  ${f.detail}`), '');
+    }
+    if (advice.length) {
+      lines.push('Advice. save reports these and never refuses for them:', ...advice.map((f) => `  ${f.detail}`));
+    }
     emit(opts, {}, lines);
   },
 

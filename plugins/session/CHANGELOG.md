@@ -1,5 +1,54 @@
 # session release notes
 
+## 0.10.0 — 2026-10-20
+
+A thread's handoff stays the current state of its subject instead of growing.
+
+- A thread's document has a second rule section, `## Standing rules`, grouped
+  under `### <area>` headings, for rules that last as long as the subject.
+  `## Constraints still in force` keeps this week's only. `constraints --thread`
+  returns both, labelled, plus the project rules files the thread names on its
+  `**Project rules:**` header line.
+- `**Format:** 2` in a thread's header marks the new shape. `save` refuses to
+  replace a format 2 document with a draft that lacks it (`format-downgrade`),
+  so older skill text cannot drop the standing rules. A session still running
+  the 0.9 scripts does not know the marker; moving threads to the new shape has
+  to bump the thread list's generation so those sessions are refused by the
+  generation check instead. Nothing in this release moves a thread.
+- `cli.js handoff-check --file <draft>` measures a draft: words per section, a
+  session log, an oversize summary or section, file rows from earlier sessions.
+  `save` measures every draft the same way and reports it. With
+  `handoffBudget.enforce` on it refuses an over-budget draft (`check-failed`)
+  unless given `--accept-check "<reason>"`, which is written into the header.
+  Off by default.
+- `save` refuses odd shapes outright (`bad-shape`): a `## ` section that is not
+  one of the template's nine (the reason names the one to fold it under), a
+  title that is not the first line, a header label below the header (the
+  `**Repository:**` and `**Repo:**` spellings included), a rule or area
+  wholly in brackets (it reads as the template placeholder), a retirement line
+  not in its exact `- Retired this session:` form at the start of a line, an
+  HTML comment or HTML block tag such as `<pre>`, a heading underlined with
+  `---` or `===`, any header line that is not blank or one of the
+  template's label lines written exactly (prose in the header included), a subheading inside What was worked on, a `**Format:**` value
+  that is not a whole number from 1 to 999, any code
+  fence, an indented
+  or malformed heading, a rule section name in any spelling but its own, any
+  `## ` section twice, a heading deeper than `###` inside Standing rules, a
+  rule continued onto a second line, a second `# ` title, a line break other
+  than a plain newline (a bare carriage return or a Unicode separator), a header
+  line not in its exact `**Label:** value` form, a project rules entry that is
+  not an absolute or `~/` path. The parsers read plain text and exact header lines; `constraints --thread` reports a
+  hand-edited file in one of these shapes as `shapeProblems`. Only word counts
+  can refuse under enforcement; the log and old-row flags are advice.
+- `/wrap` sorts every rule into this week, standing or done, proposes standing
+  rules about one repository's code for that repository's instructions file as
+  one batch per wrap, and measures the draft before saving. Its memory step
+  edits in place and records a correction as a standing rule only when the user
+  says it is one.
+- `/pickup` prints this week's constraints, the standing rules and the project
+  rules files, all in full.
+- `capabilities` reports `threads: 2`, and both skills require it.
+
 ## 0.9.0 — 2026-09-25
 
 One handoff per thread, for handoffs written from the home directory.
