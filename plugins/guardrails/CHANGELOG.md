@@ -3,6 +3,15 @@
 Upgrade notes for past versions, moved out of the README so that file stays
 focused on current installation, configuration and behavior.
 
+## 0.6.0 — 2026-11-09
+
+A repository can opt itself out of the protected-branch guard by committing
+`.claude/guardrails.json` with `"blockCommitToProtectedBranch": false`. Until
+now the only switch was the user config, which turns the guard off for every
+repository on the machine and is absent in a cloud session. The file is read
+from the last commit, not the working tree, and no other key in it is honoured.
+Nothing changes for a repository without the file.
+
 ## 0.5.8 — 2026-08-27
 
 Hook failure notices keep plugin paths intact when those paths contain
