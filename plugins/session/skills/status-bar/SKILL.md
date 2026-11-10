@@ -116,7 +116,7 @@ Run:
 
 <!-- bash-approval-required -->
 ```bash
-"${CLAUDE_PLUGIN_ROOT}"/bin/hook-node "${CLAUDE_PLUGIN_ROOT}"/statusline/install.js
+"${CLAUDE_PLUGIN_ROOT}"/hooks/hook-node "${CLAUDE_PLUGIN_ROOT}"/statusline/install.js
 ```
 
 This launcher needs one normal Bash approval. Its first token is a dynamic,
@@ -125,7 +125,7 @@ portable scoped permission rule, and granting a shell broadly to suppress one
 prompt would authorize unrelated commands. The installer prints the only
 manual settings change after that approval.
 
-Through `bin/hook-node`, not directly. The installer is a Node script starting
+Through `hooks/hook-node`, not directly. The installer is a Node script starting
 `#!/usr/bin/env node`, so running it directly needs `node` on `PATH`, and the
 host that most needs this setup is the one where it is not: an app launched
 outside a terminal never reads a shell profile. Running it directly there is
@@ -201,7 +201,7 @@ Check in this order and stop at the first thing that is wrong.
 
 1. **Is the setting there.** No `statusLine` key means it was never switched on.
 2. **Does the resolver exist.** `ls ~/.claude/statusline.js`.
-3. **Is a copy installed.** `"${CLAUDE_PLUGIN_ROOT}"/bin/hook-node "${CLAUDE_PLUGIN_ROOT}"/statusline/install.js --dry-run`
+3. **Is a copy installed.** `"${CLAUDE_PLUGIN_ROOT}"/hooks/hook-node "${CLAUDE_PLUGIN_ROOT}"/statusline/install.js --dry-run`
    reports the versions it can see. An empty list means the plugin is present as
    source but not installed from a marketplace, so there is nothing to resolve.
 4. **Feed it a payload by hand.** The line is a command that reads JSON on

@@ -43,6 +43,9 @@ when the behavior needs them.
 - Add the plugin to the table in the root `README.md` so people can discover it
   before installation.
 - Keep the marketplace, Claude manifest, and Codex manifest versions equal.
+- Never add a top-level `bin/` directory to a plugin. claude.ai refuses to host
+  one, and an account that has the plugin keeps the last accepted version with
+  no error. Executables go under `hooks/` or `scripts/`.
 - Bump the plugin version whenever any file under `plugins/<plugin>/` changes,
   including its README.
 - Explain purpose, installation, invocation, configuration, runtime limits,

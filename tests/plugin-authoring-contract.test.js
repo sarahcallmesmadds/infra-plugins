@@ -51,6 +51,20 @@ for (const name of names) {
     assert.deepStrictEqual(missing, [], `missing: ${missing.join(', ')}`);
   });
 
+  // claude.ai refuses to host a plugin that has a top-level bin/ directory,
+  // because the CLI adds that directory to PATH and the approval screen does
+  // not show what is in it. The refusal is silent from the repository's side:
+  // the account keeps serving the last version it accepted and "check for
+  // updates" reports nothing new. Five plugins shipped bin/hook-node from
+  // 2026-08-14 and every release after that never reached a claude.ai session.
+  check(`${name} has no top-level bin/ directory`, () => {
+    assert.ok(
+      !fs.existsSync(path.join(PLUGINS, name, 'bin')),
+      `plugins/${name}/bin exists, so claude.ai rejects this plugin and every `
+      + 'later version of it. Put executables under hooks/ or scripts/ instead.'
+    );
+  });
+
   check(`${name} uses its directory name in both manifests`, () => {
     for (const runtime of ['.claude-plugin', '.codex-plugin']) {
       const manifest = JSON.parse(fs.readFileSync(path.join(dir, runtime, 'plugin.json'), 'utf8'));

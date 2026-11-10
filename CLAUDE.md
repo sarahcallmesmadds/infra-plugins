@@ -10,7 +10,7 @@ drifted into three different answers.
 ## Layout
 
 - `plugins/<name>/`: one plugin. Skills, hooks, scripts, its own README and two manifests
-- `plugins/<name>/bin/hook-node`: the launcher every JS hook is started through
+- `plugins/<name>/hooks/hook-node`: the launcher every JS hook is started through
 - `tests/`: one suite per subject, all of them run by `tests/run-all.js`
 - `.claude-plugin/marketplace.json`: the published catalogue
 
@@ -24,6 +24,13 @@ that lies about half its content.
 cannot reach into another, so a single shared copy at the repository root would be absent for
 anyone who installed a single plugin. `tests/hook-executable.test.js` asserts the copies stay
 byte-identical, which is what makes the duplication safe rather than a liability.
+
+**No plugin has a top-level `bin/` directory, and the launcher lives in `hooks/` because of
+it.** claude.ai refuses to host a plugin with one, since the CLI puts `bin/` on PATH and the
+approval screen does not show its contents. The refusal never reaches this repository: the
+account goes on serving the last version it accepted and reports no updates, which is how
+every release between 2026-08-14 and 2026-11-09 failed to reach a claude.ai session.
+`tests/plugin-authoring-contract.test.js` fails if the directory comes back.
 
 **Anything written into a user's own `settings.json` names an absolute interpreter, never a
 path inside the installed plugin directory.** That directory carries a version number and is
@@ -57,7 +64,7 @@ the first pass at this rule cut two warnings that a reviewer had to put back.
 **A hook that needs to warn the reader writes one line to stderr and exits 3.** Claude Code
 surfaces the first line of stderr and nothing else, so that line carries the whole message. Any
 non-zero code works except two: 2 is a blocking error and blocks the tool call on `PreToolUse`,
-and 127 is what the shell says for a command it cannot find, which is also what `bin/hook-node`
+and 127 is what the shell says for a command it cannot find, which is also what `hooks/hook-node`
 reports for its own interpreter failure. Exiting 0 on this route sends the message to the debug
 log, where nobody reads it.
 

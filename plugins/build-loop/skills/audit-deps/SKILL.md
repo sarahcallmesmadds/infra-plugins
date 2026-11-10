@@ -95,7 +95,7 @@ Use those rather than deriving a kind from the path yourself.
 **The list is generated because it used to be written out twice.**
 `/built-check` needs the same set to search for one name, so the two skills each
 carried a copy in prose. `bin/` was added to the repository on 2026-08-14 and to
-neither copy, and `bin/hook-node` is the file every hook in every plugin starts
+neither copy, and `bin/hook-node` was the file every hook in every plugin started
 through, so the map recorded nothing depending on the most depended-on file in
 the repository. The two listings that get forgotten are still the last two, and
 still for opposite reasons: `statusline/` is another place a plugin keeps

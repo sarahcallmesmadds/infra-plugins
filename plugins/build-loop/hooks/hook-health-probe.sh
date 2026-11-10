@@ -51,7 +51,7 @@ log="${log_dir}/hook-health.log"
 missing=""
 
 # Ask the launcher, because the launcher is what actually starts every JS hook
-# here. Since 2026-08-13 hooks.json runs them through bin/hook-node, which
+# here. Since 2026-08-13 hooks.json runs them through hooks/hook-node, which
 # searches $CLAUDE_HOOK_NODE, PATH, ~/.local/bin, Homebrew, /usr/local and
 # /usr/bin. Asking `command -v node` instead would report a GUI-launched
 # session as broken while its hooks ran perfectly, which is this file's own
@@ -72,7 +72,7 @@ missing=""
 # an environment variable sends somebody to fix a PATH that was never involved.
 # build-loop/README.md promises this line names what was searched, and until
 # now that promise was not kept.
-launcher="${0%/*}/../bin/hook-node"
+launcher="${0%/*}/hook-node"
 
 hook_node="unset"
 [ -n "${CLAUDE_HOOK_NODE}" ] && hook_node="set"
