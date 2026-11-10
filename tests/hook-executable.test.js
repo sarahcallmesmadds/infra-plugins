@@ -287,7 +287,15 @@ function declaredHooks() {
       for (const group of groups) {
         for (const hook of group.hooks || []) {
           const command = hook.command || '';
-          const named = command.match(/\/hooks\/([\w.-]+)/);
+          // The last `/hooks/<name>` in the command, never the first. The
+          // launcher lives in hooks/ too, and the guard in front of every
+          // command names it three times before the payload is reached, so
+          // taking the first match records hook-node as the hook's file for
+          // every hook in the repository. The existence check then passes with
+          // the payload deleted, and every check that filters on `.js` runs
+          // over an empty list. The payload is what the command ends with.
+          const all = [...command.matchAll(/\/hooks\/([\w.-]+)/g)];
+          const named = all[all.length - 1];
           if (!named) continue;
 
           found.push({
@@ -312,6 +320,16 @@ check('the sweep finds the hooks it is supposed to be checking', () => {
   const hooks = declaredHooks();
   console.log(`        (${hooks.length} hooks declared across the repository)`);
   assert.ok(hooks.length >= 8, `only ${hooks.length} hooks found, so the walk has stopped matching`);
+
+  // Found is not the same as found correctly. The launcher sits beside the
+  // hooks it starts, so a walk that mistakes it for a payload still counts
+  // eight or more and still sees every file as present.
+  const launchers = hooks.filter((h) => path.posix.basename(h.file) === 'hook-node');
+  assert.deepStrictEqual(launchers.map((h) => h.command), [],
+    'these hooks were recorded as the launcher rather than the file it starts');
+  const scripts = hooks.filter((h) => h.file.endsWith('.js'));
+  assert.ok(scripts.length >= 8,
+    `only ${scripts.length} JavaScript hooks found, so the JavaScript checks have almost nothing to look at`);
 });
 
 check('every hook file named by a manifest exists', () => {
