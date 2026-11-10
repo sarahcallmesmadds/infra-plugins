@@ -3,6 +3,15 @@
 Upgrade notes for past versions. Nothing here is needed to install or run the
 plugin.
 
+## Upgrading to 0.10.1
+
+The hook launcher moved from `bin/hook-node` to `hooks/hook-node`, and the
+plugin no longer has a `bin/` directory. claude.ai refuses to host a plugin
+with a top-level `bin/`, so an account that installed this plugin there kept
+receiving the last version from before the launcher existed. Nothing to change
+on your side: `hooks.json` points at the new location. A session that was open
+across the update needs a restart, as with any update.
+
 ## Upgrading to 0.10.0
 
 **Two structural tells join the soft categories, and three structural questions

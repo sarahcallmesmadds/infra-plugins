@@ -41,7 +41,7 @@ const PROBE = path.join(ROOT, 'plugins', 'build-loop', 'hooks', 'hook-health-pro
 // The copy the probe actually calls, since it resolves its launcher relative to
 // its own directory. hook-executable.test.js asserts all five copies are
 // identical, so reading this one reads all of them.
-const LAUNCHER = path.join(ROOT, 'plugins', 'build-loop', 'bin', 'hook-node');
+const LAUNCHER = path.join(ROOT, 'plugins', 'build-loop', 'hooks', 'hook-node');
 
 const EXPECTED_CHECKS = 26;
 
@@ -163,7 +163,7 @@ function runProbe(home, {
     : (withNode ? `${NODE_BIN}:${BIN}` : BIN);
   parts.push(`PATH=${searchPath}`);
 
-  // The probe asks bin/hook-node whether node can be found, and that search
+  // The probe asks hooks/hook-node whether node can be found, and that search
   // reaches past PATH into ~/.local/bin, Homebrew, /usr/local and /usr/bin.
   // HOME is a sandbox here so the first is empty, but the others are real
   // absolute paths, and whether they hold a node is a property of whoever runs
@@ -239,12 +239,11 @@ function launcherFailureLine() {
 //
 // The probe itself is symlinked rather than copied, so there is no version of
 // it in a temporary directory that could differ from the one that ships. It
-// resolves its launcher as `${0%/*}/../bin/hook-node`, which follows the path it
+// resolves its launcher as `${0%/*}/hook-node`, which follows the path it
 // was started with, so the tree below is enough to redirect it.
 function probeBesideFailingLauncher(message) {
   const tree = fs.mkdtempSync(path.join(os.tmpdir(), 'probe-tree-'));
   fs.mkdirSync(path.join(tree, 'hooks'));
-  fs.mkdirSync(path.join(tree, 'bin'));
 
   const probe = path.join(tree, 'hooks', 'hook-health-probe.sh');
   fs.symlinkSync(PROBE, probe);
@@ -252,7 +251,7 @@ function probeBesideFailingLauncher(message) {
   // Single-quoted, so $CLAUDE_HOOK_NODE inside the message stays literal the way
   // the launcher's own escaping keeps it literal.
   fs.writeFileSync(
-    path.join(tree, 'bin', 'hook-node'),
+    path.join(tree, 'hooks', 'hook-node'),
     `#!/bin/sh\nprintf '%s\\n' '${message}' >&2\nexit 127\n`,
     { mode: 0o755 }
   );
@@ -344,7 +343,7 @@ check('a session where PATH lacks node but the launcher finds it is not reported
   // This is every GUI-launched host on this machine, and the reason the probe
   // stopped asking PATH. Codex started from the Dock gets a bare PATH with no
   // node on it, and since 2026-08-13 its hooks run anyway, because hooks.json
-  // starts them through bin/hook-node. A probe still asking `command -v node`
+  // starts them through hooks/hook-node. A probe still asking `command -v node`
   // wrote MISSING on the first prompt of every one of those sessions while the
   // hooks it was reporting on were running perfectly.
   //
@@ -374,7 +373,7 @@ check('the probe decides node health through the launcher, not through PATH', ()
   const source = fs.readFileSync(PROBE, 'utf8');
   assert.ok(
     source.includes('--which'),
-    'the probe does not ask bin/hook-node --which, so it is deciding hook '
+    'the probe does not ask hooks/hook-node --which, so it is deciding hook '
     + 'health from something other than what starts the hooks'
   );
   const barePathCheck = /^\s*command -v node[^\n]*\|\|\s*missing=/m;

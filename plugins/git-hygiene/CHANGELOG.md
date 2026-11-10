@@ -3,6 +3,15 @@
 Upgrade notes for past versions, moved out of the README so that file stays
 focused on current installation, configuration and behavior.
 
+## 0.5.1 — 2026-11-09
+
+The hook launcher moved from `bin/hook-node` to `hooks/hook-node`, and the
+plugin no longer has a `bin/` directory. claude.ai refuses to host a plugin
+with a top-level `bin/`, so an account that installed this plugin there kept
+receiving the last version from before the launcher existed. Nothing to change
+on your side: `hooks.json` points at the new location. A session that was open
+across the update needs a restart, as with any update.
+
 ## 0.5.0 — 2026-10-19
 
 **Git Hygiene now cleans up linked worktrees as well as branches.** The new

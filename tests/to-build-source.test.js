@@ -304,10 +304,10 @@ check('no skill names a shell command its allowed-tools does not grant', () => {
 
 check('quoted path commands remain visible to the grant check', () => {
   const parsed = commandForGrantCheck(
-    '"${CLAUDE_PLUGIN_ROOT}"/bin/hook-node "${CLAUDE_PLUGIN_ROOT}"/statusline/install.js'
+    '"${CLAUDE_PLUGIN_ROOT}"/hooks/hook-node "${CLAUDE_PLUGIN_ROOT}"/statusline/install.js'
   );
   assert.deepStrictEqual(parsed, {
-    command: '""/bin/hook-node ""/statusline/install.js',
+    command: '""/hooks/hook-node ""/statusline/install.js',
     executable: 'hook-node',
   });
   assert.ok(!commandIsGranted(parsed.command, ['node']));
@@ -328,8 +328,8 @@ check('status-bar scopes ls and marks its dynamic launcher as approval-required'
   );
   const frontmatter = statusBar.slice(0, statusBar.indexOf('---', 4));
   assert.match(frontmatter, /Bash\(ls:\*\)/);
-  assert.doesNotMatch(frontmatter, /Bash\(\*\/bin\/hook-node:\*\)/);
-  assert.match(statusBar, /<!-- bash-approval-required -->\s*```bash\n"\$\{CLAUDE_PLUGIN_ROOT\}"\/bin\/hook-node/);
+  assert.doesNotMatch(frontmatter, /Bash\(\*\/hooks\/hook-node:\*\)/);
+  assert.match(statusBar, /<!-- bash-approval-required -->\s*```bash\n"\$\{CLAUDE_PLUGIN_ROOT\}"\/hooks\/hook-node/);
 });
 
 check('quoted separators do not invent shell commands', () => {

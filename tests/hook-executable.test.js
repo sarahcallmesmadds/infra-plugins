@@ -51,7 +51,7 @@ function indexMode(file) {
 
 // The guard every hook command carries in front of the work it does.
 //
-// The guard cannot live in bin/hook-node, which is the obvious place for it.
+// The guard cannot live in hooks/hook-node, which is the obvious place for it.
 // The launcher is inside the directory that vanished, so it is not there to
 // run. It has to be in the command string, which the host builds from an
 // environment variable it still holds.
@@ -76,7 +76,7 @@ function indexMode(file) {
 // Edit for the rest of the session rather than merely failing to guard them.
 //
 // Not 127 either, which is the code this entry exists because of: the shell says
-// it when it cannot find a command, and bin/hook-node deliberately reuses it for
+// it when it cannot find a command, and hooks/hook-node deliberately reuses it for
 // its own interpreter-not-found failure. A third meaning would make the
 // ambiguity that cost four diagnosis rounds worse rather than better.
 //
@@ -111,7 +111,7 @@ const notRunnableMessage = (target) => `Plugin hooks are off because ${target} i
 
 // Escaping it in shell was the first answer and the wrong one. It needs sed,
 // which means it needs PATH, and a broken PATH is a live case here rather than
-// a hypothetical: bin/hook-node searches six places for node precisely because
+// a hypothetical: hooks/hook-node searches six places for node precisely because
 // PATH cannot be trusted. With sed unreachable the escaped message came back
 // empty, which is valid JSON carrying nothing, so the fix would have reproduced
 // the fault it was written to cure.
@@ -230,7 +230,7 @@ function matchGuard(command) {
   };
 }
 
-// `"${CLAUDE_PLUGIN_ROOT}"/bin/hook-node` and `"${CLAUDE_PLUGIN_ROOT}/bin/hook-node"`
+// `"${CLAUDE_PLUGIN_ROOT}"/hooks/hook-node` and `"${CLAUDE_PLUGIN_ROOT}/hooks/hook-node"`
 // are the same path written two ways, and the two appear in the same command.
 const unquote = (token) => token.replace(/"/g, '');
 
@@ -287,7 +287,15 @@ function declaredHooks() {
       for (const group of groups) {
         for (const hook of group.hooks || []) {
           const command = hook.command || '';
-          const named = command.match(/\/hooks\/([\w.-]+)/);
+          // The last `/hooks/<name>` in the command, never the first. The
+          // launcher lives in hooks/ too, and the guard in front of every
+          // command names it three times before the payload is reached, so
+          // taking the first match records hook-node as the hook's file for
+          // every hook in the repository. The existence check then passes with
+          // the payload deleted, and every check that filters on `.js` runs
+          // over an empty list. The payload is what the command ends with.
+          const all = [...command.matchAll(/\/hooks\/([\w.-]+)/g)];
+          const named = all[all.length - 1];
           if (!named) continue;
 
           found.push({
@@ -312,6 +320,16 @@ check('the sweep finds the hooks it is supposed to be checking', () => {
   const hooks = declaredHooks();
   console.log(`        (${hooks.length} hooks declared across the repository)`);
   assert.ok(hooks.length >= 8, `only ${hooks.length} hooks found, so the walk has stopped matching`);
+
+  // Found is not the same as found correctly. The launcher sits beside the
+  // hooks it starts, so a walk that mistakes it for a payload still counts
+  // eight or more and still sees every file as present.
+  const launchers = hooks.filter((h) => path.posix.basename(h.file) === 'hook-node');
+  assert.deepStrictEqual(launchers.map((h) => h.command), [],
+    'these hooks were recorded as the launcher rather than the file it starts');
+  const scripts = hooks.filter((h) => h.file.endsWith('.js'));
+  assert.ok(scripts.length >= 8,
+    `only ${scripts.length} JavaScript hooks found, so the JavaScript checks have almost nothing to look at`);
 });
 
 check('every hook file named by a manifest exists', () => {
@@ -445,7 +463,7 @@ check('every executed hook names an interpreter a GUI-launched host can find', (
   assert.deepStrictEqual(unresolvable, [],
     'a hook names an interpreter that is not on the PATH a GUI-launched host gets, '
     + `so it exits 127 there and the failure is discarded:\n        ${unresolvable.join('\n        ')}\n`
-    + '        Invoke it through bin/hook-node instead of naming node in the shebang.');
+    + '        Invoke it through hooks/hook-node instead of naming node in the shebang.');
 });
 
 check('every JavaScript hook is invoked through the launcher, not directly', () => {
@@ -459,7 +477,7 @@ check('every JavaScript hook is invoked through the launcher, not directly', () 
 
   assert.deepStrictEqual(direct, [],
     'a JavaScript hook depends on node being on PATH:\n        '
-    + `${direct.join('\n        ')}\n        Use: "\${CLAUDE_PLUGIN_ROOT}"/bin/hook-node "\${CLAUDE_PLUGIN_ROOT}"/hooks/<file>`);
+    + `${direct.join('\n        ')}\n        Use: "\${CLAUDE_PLUGIN_ROOT}"/hooks/hook-node "\${CLAUDE_PLUGIN_ROOT}"/hooks/<file>`);
 });
 
 // Spawn calls, wherever the first argument sits. Written to run over the whole
@@ -480,7 +498,7 @@ check('no test suite depends on node being on PATH either', () => {
   //
   // process.execPath is the interpreter already running this suite, so it needs
   // no search and cannot be a different node from the one under test. It is
-  // also what bin/hook-node arranges in production: find an interpreter, then
+  // also what hooks/hook-node arranges in production: find an interpreter, then
   // exec it with the script.
   //
   // The limit, stated rather than left to be discovered: this reads the text,
@@ -627,7 +645,7 @@ check('the guard exits on a code that reaches the reader and blocks nothing', ()
     + 'tool call, so a plugin update would refuse every Bash, Write and Edit for the rest of '
     + 'the session rather than merely failing to guard them');
   assert.notStrictEqual(GUARD_EXIT, 127,
-    'exit 127 is what the shell says when it cannot find a command and what bin/hook-node '
+    'exit 127 is what the shell says when it cannot find a command and what hooks/hook-node '
     + 'deliberately says for its own interpreter-not-found failure. Reusing it here adds a '
     + 'third meaning to the ambiguity that cost four rounds to diagnose');
 
@@ -657,7 +675,7 @@ check('the guard actually fires, and only when it should', () => {
   // the real thing under the three states that matter.
   //
   // More than one shell, because the guard is read by whichever one the host
-  // uses and they are not the same program. bin/hook-node's own shebang is
+  // uses and they are not the same program. hooks/hook-node's own shebang is
   // #!/bin/sh, which on a Linux runner is dash and on macOS is not.
   //
   // Claude Code uses `sh -c`. The docs are specific: "The `command` string is
@@ -670,7 +688,7 @@ check('the guard actually fires, and only when it should', () => {
   // passed and this exists to catch: a partial update, an interrupted install,
   // or a file renamed between versions. It is built here rather than described,
   // by pointing the guard at a name inside a directory that really does exist.
-  const probe = `${guardFor('${CLAUDE_PLUGIN_ROOT}/bin/hook-node')}echo RAN`;
+  const probe = `${guardFor('${CLAUDE_PLUGIN_ROOT}/hooks/hook-node')}echo RAN`;
   const CANDIDATES = ['/bin/sh', '/bin/zsh', '/bin/bash'];
   const shells = CANDIDATES.filter((s) => fs.existsSync(s));
   const absent = CANDIDATES.filter((s) => !fs.existsSync(s));
@@ -706,12 +724,12 @@ check('the guard actually fires, and only when it should', () => {
     // does not, and telling someone to restart then is a confident wrong cause,
     // which is the failure this guard exists to end.
     const partial = fs.mkdtempSync(path.join(os.tmpdir(), 'partial-plugin-'));
-    const launcher = path.join(partial, 'bin', 'hook-node');
-    fs.mkdirSync(path.join(partial, 'bin'));
+    const launcher = path.join(partial, 'hooks', 'hook-node');
+    fs.mkdirSync(path.join(partial, 'hooks'));
     try {
       const incomplete = run({ ...process.env, CLAUDE_PLUGIN_ROOT: partial });
       assert.strictEqual(incomplete.out, '',
-        `${shell}: the hook body ran with the plugin directory present but bin/hook-node missing`);
+        `${shell}: the hook body ran with the plugin directory present but hooks/hook-node missing`);
       assert.strictEqual(incomplete.code, GUARD_EXIT,
         `${shell}: a half-installed plugin exited ${incomplete.code} rather than ${GUARD_EXIT}, so a `
         + 'partial update still fails with nothing said');
@@ -757,10 +775,10 @@ check('the guard actually fires, and only when it should', () => {
       `${shell}: the message is ${gone.err.trimEnd().split('\n').length} lines and only the first is shown`);
 
     // A real plugin directory, so the guarded path is a launcher that is really
-    // there. The repository root is not one: it has no bin/hook-node, which is
+    // there. The repository root is not one: it has no hooks/hook-node, which is
     // the point of the copies.
     const healthyRoot = path.join(ROOT, 'plugins', 'build-loop');
-    assert.ok(fs.existsSync(path.join(healthyRoot, 'bin', 'hook-node')),
+    assert.ok(fs.existsSync(path.join(healthyRoot, 'hooks', 'hook-node')),
       'the healthy case points at a directory with no launcher in it, so it proves nothing');
     const healthy = run({ ...process.env, CLAUDE_PLUGIN_ROOT: healthyRoot });
     assert.strictEqual(healthy.out.trim(), 'RAN',
@@ -776,7 +794,7 @@ check('the guard actually fires, and only when it should', () => {
     // takes away the stderr line Claude Code does show. So each is asserted
     // under an environment that differs only by PLUGIN_ROOT.
     const EVENT = 'UserPromptSubmit';
-    const sayProbe = `${guardFor('${CLAUDE_PLUGIN_ROOT}/bin/hook-node', EVENT)}echo RAN`;
+    const sayProbe = `${guardFor('${CLAUDE_PLUGIN_ROOT}/hooks/hook-node', EVENT)}echo RAN`;
     const sayRun = (env) => {
       const result = spawnSync(shell, ['-lc', sayProbe], { env, encoding: 'utf8' });
       if (result.error) throw new Error(`${shell} could not be run: ${result.error.message}`);
@@ -839,8 +857,8 @@ check('the guard actually fires, and only when it should', () => {
     for (const awkward of ['quote"root', 'back\\nbreak', 'tab\there']) {
       const odd = fs.mkdtempSync(path.join(os.tmpdir(), 'odd-plugin-'));
       const oddRoot = path.join(odd, awkward);
-      fs.mkdirSync(path.join(oddRoot, 'bin'), { recursive: true });
-      const oddLauncher = path.join(oddRoot, 'bin', 'hook-node');
+      fs.mkdirSync(path.join(oddRoot, 'hooks'), { recursive: true });
+      const oddLauncher = path.join(oddRoot, 'hooks', 'hook-node');
       fs.writeFileSync(oddLauncher, '#!/bin/sh\n');
       fs.chmodSync(oddLauncher, 0o644);
       try {
@@ -863,7 +881,7 @@ check('the guard actually fires, and only when it should', () => {
           throw new Error(`${shell}: with ${JSON.stringify(awkward)} in the plugin root the announcement carried no `
             + `sentence at all: ${JSON.stringify(oddCodex.out)}`);
         }
-        assert.strictEqual(oddAnnounced.hookSpecificOutput.additionalContext, announcedNotRunnable('${CLAUDE_PLUGIN_ROOT}/bin/hook-node'),
+        assert.strictEqual(oddAnnounced.hookSpecificOutput.additionalContext, announcedNotRunnable('${CLAUDE_PLUGIN_ROOT}/hooks/hook-node'),
           `${shell}: with ${JSON.stringify(awkward)} in the plugin root the announcement carried `
           + `${JSON.stringify(oddAnnounced.hookSpecificOutput.additionalContext)}`);
 
@@ -921,7 +939,7 @@ check('every launcher copy is identical', () => {
   // into another, so a single shared copy at the repository root would be
   // absent for anyone who installed one plugin. Copies drift, so this is what
   // stops them.
-  const launchers = executedFiles().filter((file) => file.endsWith('/bin/hook-node'));
+  const launchers = executedFiles().filter((file) => file.endsWith('/hooks/hook-node'));
   assert.ok(launchers.length >= 5,
     `only ${launchers.length} launchers are referenced by a manifest, so the copies have stopped being used`);
 
@@ -943,7 +961,7 @@ check('every plugin that ships a JavaScript hook documents how node is found', (
     if (!fs.existsSync(readme)) { problems.push(`${dir}/README.md does not exist`); continue; }
     const text = fs.readFileSync(readme, 'utf8');
 
-    const absent = ['CLAUDE_HOOK_NODE', 'bin/hook-node'].filter((s) => !text.includes(s));
+    const absent = ['CLAUDE_HOOK_NODE', 'hooks/hook-node'].filter((s) => !text.includes(s));
     if (absent.length) problems.push(`${dir}/README.md never mentions ${absent.join(' or ')}`);
 
     if (/`?node`? has to be on your/.test(text)) {
@@ -993,8 +1011,8 @@ check('the three command forms are told apart', () => {
   // fed straight to the parser, so the bare-interpreter case is covered before
   // a manifest contains one rather than after.
   const dir = 'plugins/example';
-  const launched = parseCommand('"${CLAUDE_PLUGIN_ROOT}"/bin/hook-node "${CLAUDE_PLUGIN_ROOT}"/hooks/x.js', dir);
-  assert.strictEqual(launched.executed, 'plugins/example/bin/hook-node',
+  const launched = parseCommand('"${CLAUDE_PLUGIN_ROOT}"/hooks/hook-node "${CLAUDE_PLUGIN_ROOT}"/hooks/x.js', dir);
+  assert.strictEqual(launched.executed, 'plugins/example/hooks/hook-node',
     'the launcher form does not resolve to the launcher, so the wrong file is being checked');
   assert.strictEqual(launched.viaInterpreter, false);
 
@@ -1019,10 +1037,10 @@ check('the three command forms are told apart', () => {
   // review found it, not because the earlier loop could have.
   for (const [what, event] of [['announcing', 'PostToolUse'], ['stderr-only', undefined]]) {
     for (const [kind, target] of [
-      ['under the plugin directory', '${CLAUDE_PLUGIN_ROOT}/bin/hook-node'],
+      ['under the plugin directory', '${CLAUDE_PLUGIN_ROOT}/hooks/hook-node'],
       ['not under it', 'node'],
     ]) {
-      const built = `${guardFor(target, event)}"\${CLAUDE_PLUGIN_ROOT}"/bin/hook-node "\${CLAUDE_PLUGIN_ROOT}"/hooks/x.js`;
+      const built = `${guardFor(target, event)}"\${CLAUDE_PLUGIN_ROOT}"/hooks/hook-node "\${CLAUDE_PLUGIN_ROOT}"/hooks/x.js`;
       const read = matchGuard(built);
       assert.ok(read, `the ${what} guard the generator writes for a target ${kind} is not recognised by the `
         + 'guard reader, so a hook carrying it would be reported as having no guard at all');
@@ -1040,7 +1058,7 @@ check('the three command forms are told apart', () => {
           `the ${what} guard for a target ${kind} was read back announcing `
           + `${JSON.stringify(read.execAnnounced)}`);
       }
-      assert.strictEqual(parseCommand(built, dir).executed, 'plugins/example/bin/hook-node',
+      assert.strictEqual(parseCommand(built, dir).executed, 'plugins/example/hooks/hook-node',
         `the parser did not see through the ${what} guard for a target ${kind}, so the file it protects `
         + 'escapes every check built on the parser while those checks report a pass over nothing');
     }
@@ -1059,9 +1077,9 @@ check('the three command forms are told apart', () => {
   // rather than fail. The bare-interpreter case matters most: it is the one the
   // guard could hide, because it is caught by recognising the first token
   // rather than by finding a file that is missing.
-  const launchGuard = guardFor('${CLAUDE_PLUGIN_ROOT}/bin/hook-node');
-  const guardedLaunch = parseCommand(`${launchGuard}"\${CLAUDE_PLUGIN_ROOT}"/bin/hook-node "\${CLAUDE_PLUGIN_ROOT}"/hooks/x.js`, dir);
-  assert.strictEqual(guardedLaunch.executed, 'plugins/example/bin/hook-node',
+  const launchGuard = guardFor('${CLAUDE_PLUGIN_ROOT}/hooks/hook-node');
+  const guardedLaunch = parseCommand(`${launchGuard}"\${CLAUDE_PLUGIN_ROOT}"/hooks/hook-node "\${CLAUDE_PLUGIN_ROOT}"/hooks/x.js`, dir);
+  assert.strictEqual(guardedLaunch.executed, 'plugins/example/hooks/hook-node',
     'the guard hid the launcher from the parser, so every check built on it examines nothing');
   assert.strictEqual(guardedLaunch.viaInterpreter, false);
 
@@ -1079,10 +1097,10 @@ check('the three command forms are told apart', () => {
   // stepped over so the check above can report it as wrong rather than absent.
   const wrongEverything = parseCommand(
     `[ -n "\${CLAUDE_PLUGIN_ROOT}" ] || { printf '%s\\n' "nope" >&2; exit 7; }; `
-    + `[ -e "\${CLAUDE_PLUGIN_ROOT}/bin/hook-node" ] || { printf '%s\\n' "other" >&2; exit 9; }; `
-    + `[ -x "\${CLAUDE_PLUGIN_ROOT}/bin/hook-node" ] || { printf '%s\\n' "different" >&2; exit 8; }; `
-    + `"\${CLAUDE_PLUGIN_ROOT}"/bin/hook-node "\${CLAUDE_PLUGIN_ROOT}"/hooks/x.js`, dir);
-  assert.strictEqual(wrongEverything.executed, 'plugins/example/bin/hook-node',
+    + `[ -e "\${CLAUDE_PLUGIN_ROOT}/hooks/hook-node" ] || { printf '%s\\n' "other" >&2; exit 9; }; `
+    + `[ -x "\${CLAUDE_PLUGIN_ROOT}/hooks/hook-node" ] || { printf '%s\\n' "different" >&2; exit 8; }; `
+    + `"\${CLAUDE_PLUGIN_ROOT}"/hooks/hook-node "\${CLAUDE_PLUGIN_ROOT}"/hooks/x.js`, dir);
+  assert.strictEqual(wrongEverything.executed, 'plugins/example/hooks/hook-node',
     'a guard with the wrong messages and codes was not recognised as a guard, so the command '
     + 'behind it would be reported as unguarded rather than as misconfigured');
 
@@ -1091,8 +1109,8 @@ check('the three command forms are told apart', () => {
   // behind a half-guard parses fine and the missing clause is never reported.
   const halfGuard = parseCommand(
     `[ -n "\${CLAUDE_PLUGIN_ROOT}" ] || { printf '%s\\n' "${UNSET_MESSAGE}" >&2; exit ${GUARD_EXIT}; }; `
-    + `[ -e "\${CLAUDE_PLUGIN_ROOT}/bin/hook-node" ] || { printf '%s\\n' "${GONE_MESSAGE}" >&2; exit ${GUARD_EXIT}; }; `
-    + `"\${CLAUDE_PLUGIN_ROOT}"/bin/hook-node "\${CLAUDE_PLUGIN_ROOT}"/hooks/x.js`, dir);
+    + `[ -e "\${CLAUDE_PLUGIN_ROOT}/hooks/hook-node" ] || { printf '%s\\n' "${GONE_MESSAGE}" >&2; exit ${GUARD_EXIT}; }; `
+    + `"\${CLAUDE_PLUGIN_ROOT}"/hooks/hook-node "\${CLAUDE_PLUGIN_ROOT}"/hooks/x.js`, dir);
   assert.strictEqual(halfGuard.executed, null,
     'a guard missing its not-runnable clause was treated as complete, so the command behind it '
     + 'would be reported as fine rather than as half-guarded');
@@ -1100,9 +1118,9 @@ check('the three command forms are told apart', () => {
   // And missing the first clause, which is the one that was absent for four
   // rounds and whose absence produced a confidently wrong cause.
   const noUnsetClause = parseCommand(
-    `[ -e "\${CLAUDE_PLUGIN_ROOT}/bin/hook-node" ] || { printf '%s\\n' "${GONE_MESSAGE}" >&2; exit ${GUARD_EXIT}; }; `
-    + `[ -x "\${CLAUDE_PLUGIN_ROOT}/bin/hook-node" ] || { printf '%s\\n' "${notRunnableMessage('${CLAUDE_PLUGIN_ROOT}/bin/hook-node')}" >&2; exit ${GUARD_EXIT}; }; `
-    + `"\${CLAUDE_PLUGIN_ROOT}"/bin/hook-node "\${CLAUDE_PLUGIN_ROOT}"/hooks/x.js`, dir);
+    `[ -e "\${CLAUDE_PLUGIN_ROOT}/hooks/hook-node" ] || { printf '%s\\n' "${GONE_MESSAGE}" >&2; exit ${GUARD_EXIT}; }; `
+    + `[ -x "\${CLAUDE_PLUGIN_ROOT}/hooks/hook-node" ] || { printf '%s\\n' "${notRunnableMessage('${CLAUDE_PLUGIN_ROOT}/hooks/hook-node')}" >&2; exit ${GUARD_EXIT}; }; `
+    + `"\${CLAUDE_PLUGIN_ROOT}"/hooks/hook-node "\${CLAUDE_PLUGIN_ROOT}"/hooks/x.js`, dir);
   assert.strictEqual(noUnsetClause.executed, null,
     'a guard with no unset clause was treated as complete, so an unset CLAUDE_PLUGIN_ROOT would be '
     + 'blamed on a plugin update with nothing reporting it');
@@ -1148,8 +1166,8 @@ check('the guard survives a plugin root holding a backslash', () => {
   // saying to run chmod.
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hook-awkward-'));
   const root = path.join(dir, 'awk\\nward');           // one literal backslash, then n
-  fs.mkdirSync(path.join(root, 'bin'), { recursive: true });
-  const launcher = path.join(root, 'bin', 'hook-node');
+  fs.mkdirSync(path.join(root, 'hooks'), { recursive: true });
+  const launcher = path.join(root, 'hooks', 'hook-node');
   fs.writeFileSync(launcher, '#!/bin/sh\n', { mode: 0o644 });   // present, not executable
 
   const fire = (command) => spawnSync('/bin/sh', ['-c', command], {
@@ -1157,7 +1175,7 @@ check('the guard survives a plugin root holding a backslash', () => {
     env: Object.assign({}, process.env, { CLAUDE_PLUGIN_ROOT: root }),
   });
 
-  const good = fire(guardFor('${CLAUDE_PLUGIN_ROOT}/bin/hook-node'));
+  const good = fire(guardFor('${CLAUDE_PLUGIN_ROOT}/hooks/hook-node'));
   const stderr = good.stderr.replace(/\n$/, '');
 
   assert.strictEqual(stderr.split('\n').length, 1,

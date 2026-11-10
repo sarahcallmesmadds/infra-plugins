@@ -163,7 +163,7 @@ process.stdin.on('end', function () {
 // system-wide the status line dies with 127. A status line that fails is even
 // quieter than a hook that fails, because there is nothing there to notice.
 //
-// bin/hook-node is deliberately not used here, though it solves the same
+// hooks/hook-node is deliberately not used here, though it solves the same
 // problem for hooks. It lives inside the installed plugin, whose path carries a
 // version number and is replaced on the next update, and this string is written
 // into the user's settings.json where it has to keep working afterwards.

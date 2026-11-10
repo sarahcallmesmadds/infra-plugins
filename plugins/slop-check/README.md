@@ -302,7 +302,7 @@ arrive, and the install fails.
 
 **Requires Node.js.** The hooks are plain Node scripts with no dependencies
 to install, and `node` does not have to be on your `PATH`. Each hook is
-started by `bin/hook-node`, which tries `$CLAUDE_HOOK_NODE`, then your
+started by `hooks/hook-node`, which tries `$CLAUDE_HOOK_NODE`, then your
 `PATH`, then `~/.local/bin`, `/opt/homebrew/bin`, `/usr/local/bin` and
 `/usr/bin`, and uses the first one it finds.
 

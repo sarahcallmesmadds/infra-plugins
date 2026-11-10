@@ -1,6 +1,6 @@
 {
   "name": "git-hygiene",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Tells you which branches are proved safe to delete, keeps project worktrees in one configured folder, and cleans up finished worktrees. It removes only the branches and worktrees you approve, re-checks each one first, and keeps anything it cannot prove safe.",
   "author": {
     "name": "Sarah Madden",

@@ -781,7 +781,7 @@ session that was already open, and the plugin will look broken until you do.
 
 **Requires Node.js.** The hooks are plain Node scripts with no dependencies
 to install, and `node` does not have to be on your `PATH`. Each hook is
-started by `bin/hook-node`, which tries `$CLAUDE_HOOK_NODE`, then your
+started by `hooks/hook-node`, which tries `$CLAUDE_HOOK_NODE`, then your
 `PATH`, then `~/.local/bin`, `/opt/homebrew/bin`, `/usr/local/bin` and
 `/usr/bin`, and uses the first one it finds.
 
@@ -818,14 +818,14 @@ and silently getting a different one hides the mistake, and a directory passes
 an executable check while starting nothing.
 
 **The status line is separate.** It is not a hook, so what ends up in your
-settings does not go through `bin/hook-node`. `/status-bar` prints a
+settings does not go through `hooks/hook-node`. `/status-bar` prints a
 `settings.json` fragment naming your node by absolute path, resolved when the
 installer runs, because that string lives in your settings and has to keep
-working after the plugin updates, and `bin/hook-node` sits in a directory whose
+working after the plugin updates, and `hooks/hook-node` sits in a directory whose
 name carries a version number. If node moves, re-run `/status-bar` and replace
 the value. A status line that cannot start shows nothing and reports nothing,
 so there is no error to see.
 
-The installer itself is run through `bin/hook-node`, since it is a Node script
+The installer itself is run through `hooks/hook-node`, since it is a Node script
 like any other and the host that most needs it is the one with no `node` on
 `PATH`.

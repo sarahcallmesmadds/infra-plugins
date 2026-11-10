@@ -3,6 +3,15 @@
 Upgrade notes for past versions, moved out of the README so that file says what
 the plugin is and how to use it. Nothing here is needed to install or run it.
 
+## Upgrading to 0.10.24
+
+The hook launcher moved from `bin/hook-node` to `hooks/hook-node`, and the
+plugin no longer has a `bin/` directory. claude.ai refuses to host a plugin
+with a top-level `bin/`, so an account that installed this plugin there kept
+receiving the last version from before the launcher existed. Nothing to change
+on your side: `hooks.json` points at the new location. A session that was open
+across the update needs a restart, as with any update.
+
 ## Upgrading to 0.10.23
 
 **The skill frontmatter check no longer embeds the repository's current skill
