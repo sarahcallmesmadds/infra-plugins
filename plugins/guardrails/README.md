@@ -214,6 +214,30 @@ key at a time, so setting one option does not reset the others.
 | `scanForInjection` | `true` | Turn content scanning off entirely |
 | `injectionExcludePaths` | `[]` | Extra regex patterns to skip when scanning |
 
+### A repository that takes direct commits on purpose
+
+Some repositories are meant to be committed to on `main`: notes, a personal
+knowledge base, anything where git history is the safety net and nobody reviews
+a merge. Turning `blockCommitToProtectedBranch` off in your own config would
+drop the guard for every repository on the machine, so the repository says it
+for itself instead. Commit this as `.claude/guardrails.json` at its root:
+
+```json
+{
+  "blockCommitToProtectedBranch": false
+}
+```
+
+The file travels with the repository, so it holds on every machine and in a
+cloud session that starts with no home directory config.
+
+Two limits, both deliberate. The file is read from the last commit, not from
+the working tree, so writing it does nothing until it is committed, and on a
+protected branch that first commit has to arrive from another branch. And this
+is the only key a repository file can set. The delete prompt, the `--no-verify`
+prompt and content scanning stay under your own config, whatever a cloned
+project's file says.
+
 ### Governed resources
 
 A resource carries one rule, `requiresRead`.

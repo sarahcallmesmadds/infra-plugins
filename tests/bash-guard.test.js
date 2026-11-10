@@ -183,6 +183,89 @@ check('committing on a protected branch is denied', () => {
   fs.rmSync(repo, { recursive: true, force: true });
 });
 
+// --- a repository that takes direct commits on purpose --------------------
+//
+// The opt-out is read from HEAD. These pin both halves of that: a committed
+// file lets the commit through, and the same file sitting uncommitted in the
+// working tree does not, because that is the spelling a session could write
+// for itself a moment before committing.
+function writeRepoConfig(repo, value) {
+  fs.mkdirSync(path.join(repo, '.claude'), { recursive: true });
+  fs.writeFileSync(path.join(repo, '.claude', 'guardrails.json'), JSON.stringify(value));
+}
+
+// Lands the file in HEAD on `main` the way it would really arrive: committed
+// on another branch and merged, never committed on main directly.
+function commitRepoConfig(repo, value) {
+  execFileSync('git', ['-C', repo, 'checkout', '-b', 'setup'], { stdio: 'ignore' });
+  writeRepoConfig(repo, value);
+  execFileSync('git', ['-C', repo, 'add', '.claude/guardrails.json'], { stdio: 'ignore' });
+  execFileSync('git', ['-C', repo, 'commit', '-m', 'opt out'], { stdio: 'ignore' });
+  execFileSync('git', ['-C', repo, 'checkout', 'main'], { stdio: 'ignore' });
+  execFileSync('git', ['-C', repo, 'merge', 'setup'], { stdio: 'ignore' });
+}
+
+check('a repository that committed its opt-out takes commits on a protected branch', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrails-repo-'));
+  initRepo(repo, 'main');
+  commitRepoConfig(repo, { blockCommitToProtectedBranch: false });
+  assert.strictEqual(
+    runHook(`git -C ${repo} commit -m "wip"`),
+    null,
+    'the committed opt-out did not let a commit on main through'
+  );
+  assert.strictEqual(
+    runHook('git commit -m "wip"', { eventCwd: repo }),
+    null,
+    'the opt-out was not found when the repository came from the event cwd'
+  );
+  fs.rmSync(repo, { recursive: true, force: true });
+});
+
+check('an opt-out that is only in the working tree changes nothing', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrails-repo-'));
+  initRepo(repo, 'main');
+  writeRepoConfig(repo, { blockCommitToProtectedBranch: false });
+  assertDenies(runHook(`git -C ${repo} commit -m "wip"`), 'uncommitted opt-out');
+  // Staged is still not committed.
+  execFileSync('git', ['-C', repo, 'add', '.claude/guardrails.json'], { stdio: 'ignore' });
+  assertDenies(runHook(`git -C ${repo} commit -m "wip"`), 'staged opt-out');
+  fs.rmSync(repo, { recursive: true, force: true });
+});
+
+check('a committed repository file that does not cleanly opt out leaves the guard on', () => {
+  for (const [label, write] of [
+    ['key set to true', (repo) => commitRepoConfig(repo, { blockCommitToProtectedBranch: true })],
+    ['key set to a string', (repo) => commitRepoConfig(repo, { blockCommitToProtectedBranch: 'false' })],
+    ['a different key', (repo) => commitRepoConfig(repo, { protectedBranches: [] })],
+    ['not an object', (repo) => commitRepoConfig(repo, null)],
+  ]) {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrails-repo-'));
+    initRepo(repo, 'main');
+    write(repo);
+    assertDenies(runHook(`git -C ${repo} commit -m "wip"`), label);
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+check('a repository opt-out reaches the branch guard and nothing else', () => {
+  // The file may describe the repository's branch workflow. It may not switch
+  // off the guards that are about the machine, so every other key is ignored.
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrails-repo-'));
+  initRepo(repo, 'main');
+  commitRepoConfig(repo, {
+    blockCommitToProtectedBranch: false,
+    blockCommitHookSkip: false,
+    blockDestructiveCommands: false,
+  });
+  assertAsks(
+    runHook(`git -C ${repo} commit --no-verify -m "wip"`),
+    'commit --no-verify in an opted-out repository'
+  );
+  assertAsks(runHook('rm -rf ~/live', { eventCwd: repo }), 'rm -rf in an opted-out repository');
+  fs.rmSync(repo, { recursive: true, force: true });
+});
+
 // --- the reason text has to be answerable --------------------------------
 //
 // `git branch -D` had no coverage at this layer, and it is the command that

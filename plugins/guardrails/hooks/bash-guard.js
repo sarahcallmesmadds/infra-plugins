@@ -138,28 +138,68 @@ function resolveAgainst(named, base) {
 // So the advice the guard prints was always actionable, including on the very
 // first commit, and the exception did nothing but wave through the one commit
 // that establishes main as the branch everybody then keeps committing to.
-function currentBranch(command, eventCwd) {
+function commandRepoDir(command, eventCwd) {
   const named = targetRepoDir(command || '');
   const base = eventCwd || process.cwd();
 
-  let dir = null;
   if (named) {
     const candidate = resolveAgainst(named, base);
     try {
-      if (fs.statSync(candidate).isDirectory()) dir = candidate;
+      if (fs.statSync(candidate).isDirectory()) return candidate;
     } catch (_) {
-      // Leave dir null and fall back to base, below.
+      // Fall back to base, below.
     }
   }
+  return base;
+}
 
+function currentBranch(command, eventCwd) {
   try {
     return execSync('git symbolic-ref --short HEAD', {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
-      cwd: dir || base,
+      cwd: commandRepoDir(command, eventCwd),
     }).trim();
   } catch (_) {
     return null; // not a repository, or a detached HEAD
+  }
+}
+
+// A repository can say that direct commits to its protected branches are how
+// it works, by committing `.claude/guardrails.json` holding
+// `{ "blockCommitToProtectedBranch": false }`. The user config cannot do this
+// job: it is one file for every repository on the machine, so the only switch
+// it offers turns the guard off everywhere, and it lives in a home directory
+// that a cloud session starts without.
+//
+// The file is read from HEAD, never from the working tree. Read from the
+// working tree, the guard could be switched off by the very session it is
+// guarding: write the file, then commit on main, and the refusal never
+// happens. A committed copy on a protected branch can only have got there by
+// a route the guard already allowed, such as a merge or a commit made before
+// the rule applied, so its being in HEAD is the evidence that somebody chose
+// it.
+//
+// Only this one key is honoured. A repository is entitled to describe its own
+// branch workflow, and nothing else in the config is about the repository:
+// letting a cloned project switch off the delete guard or the injection scan
+// would hand those decisions to whoever wrote the project.
+//
+// Anything short of a clean `false` leaves the guard on: no file, no commits
+// yet, unparseable JSON, or the key set to something else.
+const REPO_CONFIG_PATH = '.claude/guardrails.json';
+
+function repoAllowsProtectedCommits(command, eventCwd) {
+  try {
+    const text = execSync(`git show HEAD:${REPO_CONFIG_PATH}`, {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      cwd: commandRepoDir(command, eventCwd),
+    });
+    const parsed = JSON.parse(text);
+    return Boolean(parsed) && parsed.blockCommitToProtectedBranch === false;
+  } catch (_) {
+    return false;
   }
 }
 
@@ -228,13 +268,19 @@ readEvent((event) => {
     // 2. Protected branches.
     if (config.blockCommitToProtectedBranch) {
       const branch = currentBranch(command, event.cwd);
-      if (branch && config.protectedBranches.includes(branch)) {
+      if (
+        branch &&
+        config.protectedBranches.includes(branch) &&
+        !repoAllowsProtectedCommits(command, event.cwd)
+      ) {
         block(
           `You are on "${branch}", which is a protected branch.\n\n` +
           `Branch first, then commit:\n` +
           `  git checkout -b <short-description-of-the-change>\n\n` +
           `To change which branches are protected, edit protectedBranches in ` +
-          `~/.claude/guardrails.config.json.`
+          `~/.claude/guardrails.config.json. A repository that takes direct ` +
+          `commits on purpose says so in a committed ${REPO_CONFIG_PATH}; ` +
+          `see the README.`
         );
         return;
       }
